@@ -351,7 +351,20 @@ class BearyProfileViewController: UIViewController {
     private var bookmarkSeqById: [String: Int] = [:]
     private var bookmarkConfirmedSeqById: [String: Int] = [:]
     private var confirmedBookmarkedById: [String: Bool] = [:]
-    private var emoteBusyIds: Set<String> = []
+    /// 个人页回应快连点代次（2026-11-21 Li 定，详情页串行同款）：写请求一次只发
+    /// 一个，在途点按只记最新意图（按 key 去重、FIFO 排队），回包后逐条补发；
+    /// 过期回包直接丢弃，不覆盖更新的点按态；失败回滚到页签模型确认态。
+    /// 键均为 entryId；确认态来源是页签模型（点赞同款口径：先行态只写可见行，
+    /// 从不先行改页签模型）。
+    private var emoteSeqById: [String: Int] = [:]
+    private var emoteInFlightById: Set<String> = []
+    /// 在途点按的最新意图（FIFO，按 key 去重、最新意图覆盖旧的）：回包后逐条补发；
+    /// 失败时清空（回滚已恢复确认态，用户重拍即可）。
+    private var emotePendingById: [String: [(key: String, added: Bool)]] = [:]
+    /// 摘下退场动画进行中（请求尚未发出）：值是该 key 的退场点按代次。行内仍是
+    /// 摘下前的值，新点按按“已摘下”的有效态算；动画完成时按代次校验，过期动画
+    /// 不碰新态、不发旧请求。键为 "\(entryId):\(key)"。
+    private var emoteRemovalStagedSeq: [String: Int] = [:]
     private var pubBusyIds: Set<String> = []
     /// 置顶全局互斥（第九轮 06）：同一时刻只允许一篇置顶／取消置顶在途。
     /// 旧 pinBusyIds 只按单篇防重复，两篇不同日记可同时在途、后回包会把先
@@ -8508,7 +8521,16 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             if let value = likeCount { copy.likeCount = value }
             if let value = likedByMe { copy.likedByMe = value }
             if let value = bookmarkedByMe { copy.bookmarkedByMe = value }
-            if let value = emotes { copy.emotes = BearyEmoteOrder.merged(previous: copy.emotes, server: value) }
+            if let value = emotes {
+                // 回应代次守卫：本页有在途回应操作时不拿外页值覆盖先行态
+                // （回包对齐时再以服务端值为准）；settled 时以外页服务端值刷新模型。
+                let emoteSettled = emoteInFlightById.contains(entryId) == false
+                    && (emotePendingById[entryId]?.isEmpty ?? true)
+                    && stagedRemovalKeys(entryId: entryId).isEmpty
+                if emoteSettled {
+                    copy.emotes = BearyEmoteOrder.merged(previous: copy.emotes, server: value)
+                }
+            }
             return copy
         }
         var updatedEntry: Entry?
@@ -8549,15 +8571,15 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     /// 重建会重设图片槽/引用卡并重启全部表情播放器）。返回可见 cell
     /// （供成功后直接补爆点/pop）；行不可见时返回 nil，模型已由
     /// updateEntryInAllTabs 改好，滑回显示时 configure 自然取新值。
-    /// interactionDisabled 未传时只看回应在途——点赞/收藏在途不再禁用
-    /// 按钮，快连点每次都必须立即落地，防重入只靠代次守卫。
+    /// interactionDisabled 未传时不禁用行内按钮——快连点每次都必须立即落地，
+    /// 防重入只靠代次守卫（旧 emoteBusyIds 单飞锁已随代次改版删掉）。
     @discardableResult
     private func syncVisibleCell(entry: Entry, interactionDisabled: Bool? = nil, animatedEmoteLayout: Bool = false) -> BearyDiaryCardCell? {
         guard let entryId = entry.id,
               let index = displayedEntries.firstIndex(where: { $0.id == entryId }),
               let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyDiaryCardCell,
               cell.cellEntryId == entryId else { return nil }
-        let disabled = interactionDisabled ?? emoteBusyIds.contains(entryId)
+        let disabled = interactionDisabled ?? false
         cell.syncInteraction(entry: entry, interactionDisabled: disabled, animatedEmoteLayout: animatedEmoteLayout)
         return cell
     }
@@ -9395,34 +9417,66 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     /// 多选回应：POST 同一回应即撤下该只，POST 未贴过的回应只新增该只；
     /// 已贴的其他回应不动。先行反馈（点赞/收藏同款口径）：贴上立即进场、
     /// 摘下先播退场动画再离行，API 在后台跑；成功对齐、失败回滚 + 拒绝动效。
+    /// 快连点代次（2026-11-21 Li 定，详情页串行同款）：写请求一次只发一个，
+    /// 在途点按只记最新意图（按 key 去重、FIFO 排队），回包后逐条补发；
+    /// 过期回包直接丢弃，不覆盖更新的点按态；失败回滚到页签模型确认态。
     private func handleCellEmote(entry: Entry, key: String) {
         guard let entryId = entry.id, !entryId.isEmpty, !key.isEmpty else { return }
         guard requireLoginForCellAction() else { return }
         // 审计 P0-4：有效态门控（过期限时篇不放行分享/回应）；仅好友篇互关好友可贴（v15）。
         guard BearyEphemeral.isEffectivelyPublic(entry) || (entry.isFriendsOnly && isMutualFriend) else { return }
-        guard !emoteBusyIds.contains(entryId) else { return }
-        emoteBusyIds.insert(entryId)
-        let mine = (entry.emotes ?? []).contains(where: { ($0.emote ?? "") == key && ($0.mine ?? false) })
-        var optimistic = entry
-        optimistic.emotes = emoteDelta(entry.emotes ?? [], key: key, added: mine == false)
-        if mine {
-            // 摘下：可见行先播退场动画再离行；无可见行时直接发请求。
+        // 及时性口径：方向按最新点按态算——cell 的 onEmoteTap 闭包捕获的是
+        // configure 时的旧 entry，快连点下第二次点按若用它算方向会算错；
+        // 可见行优先读 cell 的先行态，否则读页签模型（确认态）。
+        // 退场动画进行中又点同一只即重新贴上（卡片同款 restage 口径）。
+        let base = currentEmoteList(entryId: entryId, fallback: entry.emotes ?? [])
+        let restagingSameKey = emoteRemovalStagedSeq["\(entryId):\(key)"] != nil
+        let mine = restagingSameKey ? false : base.contains(where: { ($0.emote ?? "") == key && ($0.mine ?? false) })
+        let added = !mine
+        // 代次 +1：每次点按都立即落地；退场动画的代次校验共用本代次。
+        let tapSeq = (emoteSeqById[entryId] ?? 0) + 1
+        emoteSeqById[entryId] = tapSeq
+        // 重贴退场中的同只时，先按“已摘下”算有效态再 +1，否则计数会多 +1；
+        // 其他退场中的回应不动，等各自动画完成时再离行。
+        let optimisticBase = restagingSameKey ? emoteDelta(base, key: key, added: false) : base
+        let optimistic = emoteDelta(optimisticBase, key: key, added: added)
+        if added == false {
+            // 摘下：可见行先播退场动画再离行；无可见行直接走提交。
+            // 动画期间行内仍是摘下前的值（与卡片同款），新点按按有效态算。
             if let cell = visibleCell(for: entryId) {
+                emoteRemovalStagedSeq["\(entryId):\(key)"] = tapSeq
                 cell.animateEmoteChipOut(key: key) { [weak self] in
                     guard let strongSelf = self else { return }
-                    strongSelf.syncVisibleCell(entry: optimistic, interactionDisabled: false, animatedEmoteLayout: true)
-                    strongSelf.postCellEmote(entry: entry, key: key)
+                    // 代次守卫：已有更新点按时，过期动画不碰新态、不发旧请求。
+                    guard strongSelf.emoteRemovalStagedSeq["\(entryId):\(key)"] == tapSeq else { return }
+                    strongSelf.emoteRemovalStagedSeq.removeValue(forKey: "\(entryId):\(key)")
+                    // 动画完成才把摘下写进可见行：以行内最新先行态为底，只动本只，
+                    // 不动其他在途／退场中的增量；页签模型不动，成功对齐时才改。
+                    if var latest = strongSelf.latestConfirmedEntry(entryId) {
+                        let base = strongSelf.currentEmoteList(entryId: entryId, fallback: latest.emotes ?? [])
+                        latest.emotes = strongSelf.emoteDelta(base, key: key, added: false)
+                        strongSelf.syncVisibleCell(entry: latest, interactionDisabled: false, animatedEmoteLayout: true)
+                    }
+                    strongSelf.submitCellEmote(entryId: entryId, key: key, added: false)
                 }
                 return
             }
-            postCellEmote(entry: entry, key: key)
+            // 无可见行：直接走提交（先行态无行可画，成功对齐时再同步）。
+            submitCellEmote(entryId: entryId, key: key, added: false)
             return
         }
         // 贴上：可见行立即进场 + 计数 +1（位移带动画），无可见行只发请求。
-        if let cell = syncVisibleCell(entry: optimistic, interactionDisabled: false, animatedEmoteLayout: true) {
-            cell.animateEmoteChipIn(key: key)
+        // 重贴退场中的同只时先清掉旧退场记录，旧动画完成时不再发摘下请求。
+        if restagingSameKey {
+            emoteRemovalStagedSeq.removeValue(forKey: "\(entryId):\(key)")
         }
-        postCellEmote(entry: entry, key: key)
+        if var latest = latestConfirmedEntry(entryId) {
+            latest.emotes = optimistic
+            if let cell = syncVisibleCell(entry: latest, interactionDisabled: false, animatedEmoteLayout: true) {
+                cell.animateEmoteChipIn(key: key)
+            }
+        }
+        submitCellEmote(entryId: entryId, key: key, added: added)
     }
 
     /// 先行增量（与 cell 内 emoteDelta 同款口径）：贴上 +1/mine，摘下 −1（到 0 消失）。
@@ -9465,45 +9519,148 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         return cell
     }
 
-    private func postCellEmote(entry: Entry, key: String) {
-        guard let entryId = entry.id else { return }
-        let mine = (entry.emotes ?? []).contains(where: { ($0.emote ?? "") == key && ($0.mine ?? false) })
+    /// 页签模型里的条目（确认态来源；先行态只写可见行，从不写页签模型）。
+    private func latestConfirmedEntry(_ entryId: String) -> Entry? {
+        displayedEntries.first(where: { $0.id == entryId })
+            ?? diaryEntries.first(where: { $0.id == entryId })
+            ?? likedEntries.first(where: { $0.id == entryId })
+            ?? savedEntries.first(where: { $0.id == entryId })
+    }
+
+    /// 当前有效回应态：可见行优先读 cell 的最新先行态，否则读页签模型。
+    private func currentEmoteList(entryId: String, fallback: [EmoteCount]) -> [EmoteCount] {
+        if let cell = visibleCell(for: entryId) {
+            return cell.profileEmoteState
+        }
+        return latestConfirmedEntry(entryId)?.emotes ?? fallback
+    }
+
+    private func stagedRemovalKeys(entryId: String) -> [String] {
+        let prefix = entryId + ":"
+        return emoteRemovalStagedSeq.keys.compactMap { $0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : nil }
+    }
+
+    /// 串行提交：在途有请求时只把最新意图排队（按 key 去重、FIFO），不等回包。
+    private func submitCellEmote(entryId: String, key: String, added: Bool) {
+        if emoteInFlightById.contains(entryId) {
+            enqueueEmotePending(entryId: entryId, key: key, added: added)
+            return
+        }
+        _ = sendCellEmoteIfNeeded(entryId: entryId, key: key, added: added)
+    }
+
+    /// 同 key 的最新意图覆盖旧的（两次点按互相抵消时只留最后一次），不同 key 按序排队。
+    private func enqueueEmotePending(entryId: String, key: String, added: Bool) {
+        var queue = emotePendingById[entryId] ?? []
+        if let index = queue.firstIndex(where: { $0.key == key }) {
+            queue[index] = (key: key, added: added)
+        } else {
+            queue.append((key: key, added: added))
+        }
+        emotePendingById[entryId] = queue
+    }
+
+    /// 与服务端确认态（页签模型）相同（两次点按互相抵消）时不发；否则发请求。
+    /// 返回是否发出了请求。
+    @discardableResult
+    private func sendCellEmoteIfNeeded(entryId: String, key: String, added: Bool) -> Bool {
+        guard let latest = latestConfirmedEntry(entryId) else { return false }
+        let confirmedMine = (latest.emotes ?? []).contains(where: { ($0.emote ?? "") == key && ($0.mine ?? false) })
+        guard added != confirmedMine else { return false }
+        sendCellEmote(entryId: entryId, key: key, added: added)
+        return true
+    }
+
+    private func sendCellEmote(entryId: String, key: String, added: Bool) {
+        let reqSeq = emoteSeqById[entryId] ?? 0
+        emoteInFlightById.insert(entryId)
         BearyAPI.shared.postEmote(id: entryId, emote: key) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                strongSelf.emoteBusyIds.remove(entryId)
+                strongSelf.emoteInFlightById.remove(entryId)
+                // 代次守卫：已有更新点按时，过期回包不对齐模型、不回滚；
+                // 但在途位已空出，排队意图仍须继续走（见下方 drain）。
+                let isLatest = reqSeq == (strongSelf.emoteSeqById[entryId] ?? 0)
                 switch result {
                 case .success(let resp):
-                    var updated = entry
-                    if let emotes = resp.emotes {
-                        // 表情排序批：回包先按已显示顺序合并（新贴追加末尾），
-                        // 再同步；直接覆盖回包顺序会把刚贴的顶到前面。
-                        updated.emotes = BearyEmoteOrder.merged(previous: entry.emotes, server: emotes)
+                    if isLatest {
+                        if let emotes = resp.emotes, var updated = strongSelf.latestConfirmedEntry(entryId) {
+                            // 表情排序批：回包先按已显示顺序合并（新贴追加末尾），
+                            // 再同步；直接覆盖回包顺序会把刚贴的顶到前面。
+                            updated.emotes = BearyEmoteOrder.merged(previous: strongSelf.currentEmoteList(entryId: entryId, fallback: updated.emotes ?? []), server: emotes)
+                            strongSelf.updateEntryInAllTabs(entry: updated)
+                            strongSelf.notifyInteraction(entry: updated)
+                            // 先行值与服务端值一致时 syncInteraction 判等跳过，不重建不重播。
+                            strongSelf.syncVisibleCell(entry: updated)
+                        } else if var updated = strongSelf.latestConfirmedEntry(entryId) {
+                            // 回包无 emotes：本次写请求已成功，按已知目标态对齐确认态。
+                            updated.emotes = strongSelf.emoteDelta(updated.emotes ?? [], key: key, added: added)
+                            strongSelf.updateEntryInAllTabs(entry: updated)
+                            strongSelf.notifyInteraction(entry: updated)
+                            strongSelf.syncVisibleCell(entry: updated)
+                        }
                     }
-                    strongSelf.updateEntryInAllTabs(entry: updated)
-                    strongSelf.notifyInteraction(entry: updated)
-                    // 先行值与服务端值一致时 syncInteraction 判等跳过，不重建不重播。
-                    strongSelf.syncVisibleCell(entry: updated)
+                    // 成功：继续排队。
+                    strongSelf.drainEmotePending(entryId: entryId, reapplyFromConfirmed: isLatest)
                 case .failure(let err):
-                    if case .unauthorized = err {
-                        // 未登录：先行态静默复原，再走登录页。
-                        strongSelf.syncVisibleCell(entry: entry)
-                        strongSelf.onRequireLogin?()
+                    if isLatest {
+                        if case .unauthorized = err {
+                            // 未登录：先行态静默复原，再走登录页；排队意图丢弃（登录后再点）。
+                            strongSelf.emotePendingById.removeValue(forKey: entryId)
+                            strongSelf.rollbackCellEmote(entryId: entryId)
+                            strongSelf.onRequireLogin?()
+                            return
+                        }
+                        // 失败回滚到最后确认态（页签模型）：可见行恢复原值（位移带动画），
+                        // 摘下失败时被摘 chip 带出现动画回来，再补拒绝动效（摇头 + toast）。
+                        let cell = strongSelf.rollbackCellEmote(entryId: entryId)
+                        if added == false {
+                            cell?.animateEmoteChipIn(key: key)
+                            cell?.shakeEmoteChip(key: key)
+                        } else {
+                            cell?.shakeEmoteAddButton()
+                        }
+                        BearyToast.show(in: strongSelf.view, message: "操作失败，请重试")
+                        // 失败：排队意图丢弃（回滚已恢复确认态，用户重拍即可），不继续补发。
+                        strongSelf.emotePendingById.removeValue(forKey: entryId)
                         return
                     }
-                    // 失败回滚：可见行恢复原值（位移带动画），摘下失败时被摘 chip
-                    // 带出现动画回来，再补拒绝动效（摇头 + toast）。
-                    let cell = strongSelf.syncVisibleCell(entry: entry, animatedEmoteLayout: true)
-                    if mine {
-                        cell?.animateEmoteChipIn(key: key)
-                        cell?.shakeEmoteChip(key: key)
-                    } else {
-                        cell?.shakeEmoteAddButton()
-                    }
-                    BearyToast.show(in: strongSelf.view, message: "操作失败，请重试")
+                    // 过期回包的失败同样丢弃：已有更新点按接管了界面，不回滚、不提示；
+                    // 但排队意图仍须继续走。
+                    strongSelf.drainEmotePending(entryId: entryId, reapplyFromConfirmed: false)
                 }
             }
         }
+    }
+
+    /// 回包后按排队意图逐条补发：每条先按确认态重算先行态（成功对齐可能已把它
+    /// 刷回服务端值），与确认态相同则跳过、继续下一条，发出一条即停下等回包。
+    private func drainEmotePending(entryId: String, reapplyFromConfirmed: Bool) {
+        while var queue = emotePendingById[entryId], let first = queue.first {
+            queue.removeFirst()
+            if queue.isEmpty {
+                emotePendingById.removeValue(forKey: entryId)
+            } else {
+                emotePendingById[entryId] = queue
+            }
+            if reapplyFromConfirmed, var latest = latestConfirmedEntry(entryId) {
+                // 先行态已在点按时给过；但成功对齐可能已把它刷回服务端值，
+                // 这里按确认态重算一次再发，不重播动效与音效。
+                latest.emotes = emoteDelta(latest.emotes ?? [], key: first.key, added: first.added)
+                syncVisibleCell(entry: latest, interactionDisabled: false, animatedEmoteLayout: true)
+            }
+            // 过期回包：可见行里的先行态仍是最新点按的，不重算，只补发。
+            if sendCellEmoteIfNeeded(entryId: entryId, key: first.key, added: first.added) {
+                break
+            }
+        }
+    }
+
+    /// 失败回滚：可见行恢复页签模型里的确认态（位移带动画），返回可见行供补动效。
+    @discardableResult
+    private func rollbackCellEmote(entryId: String) -> BearyDiaryCardCell? {
+        guard let latest = latestConfirmedEntry(entryId) else { return nil }
+        return syncVisibleCell(entry: latest, animatedEmoteLayout: true)
     }
 
     private func handleCellFoldToggle(entryId: String) {
@@ -9780,7 +9937,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         cellValue.configure(
             entry: entryValue,
             isExpanded: expandedEntryIds.contains(entryId),
-            interactionDisabled: emoteBusyIds.contains(entryId)
+            // 回应快连点改代次后行初次配置即全量可点，防重入只靠代次守卫。
+            interactionDisabled: false
         )
         cellValue.onLike = { [weak self] in self?.handleCellLike(entry: entryValue) }
         cellValue.onBookmark = { [weak self] in self?.handleCellBookmark(entry: entryValue) }
