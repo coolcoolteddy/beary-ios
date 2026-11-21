@@ -3003,13 +3003,21 @@ class BearyDiaryCardCell: UITableViewCell {
     ///   曾公开“该日记已设为私密”＋提醒句，从未公开“该日记未公开”），点按无动作；
     /// - 正文空：未公开→未公开占位，其余→已删占位；
     /// - 正文非空但 viewer 非作者且未公开：占位（绝不凭“正文非空”推断作者身份，fail-closed）。
+    /// - 限时过期：quoteEphemeralUntil 非空且已过 → 与未公开同口径占位（复用“已设为私密”
+    ///   占位文案，不新造文案）；互关通道同样受过期门控。落卡时按当前时间重算有效态，
+    ///   不只信调用方传的 isPublic 快照（缓存旧条目原篇存活时 is_public=true）。
     /// 缩略图门控：仅被引公开或 viewer 为作者时出。
-    private func presentQuoteCard(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int?, isPublic: Bool?, gone: Bool?, locked: Bool?, quoteId: String?, quoteAuthorId: Int?, quoteIsMine: Bool?, hostIsPublic: Bool, quotePublishedAt: Int? = nil, authorHandle: String? = nil, quoteVisibility: String? = nil) {
+    private func presentQuoteCard(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int?, isPublic: Bool?, gone: Bool?, locked: Bool?, quoteId: String?, quoteAuthorId: Int?, quoteIsMine: Bool?, hostIsPublic: Bool, quotePublishedAt: Int? = nil, authorHandle: String? = nil, quoteVisibility: String? = nil, quoteEphemeralUntil: Int? = nil) {
         // 112：落卡即不再等待，回包补刷不再重复命中本卡。
         quoteAwaitingId = nil
         quoteTapId = quoteId
         quoteTapGoneOrLocked = false
         quoteTapLoadFailed = false
+        // 限时过期（dsh v27 审校新问题 1）：调用方传的 isPublic 可能是拉取时刻的快照，
+        // 凭 quoteEphemeralUntil 按当前时间再验一次；过期即非有效公开。
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let quoteExpired = quoteEphemeralUntil.map { $0 <= nowMs } ?? false
+        let effectivelyPublic = isPublic == true && !quoteExpired
         if gone == true {
             quoteTapGoneOrLocked = true
             quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
@@ -3025,7 +3033,7 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         if content.isEmpty {
             quoteTapGoneOrLocked = true
-            if isPublic == false {
+            if effectivelyPublic == false {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: false, visibility: quoteVisibility)
                 quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
             } else {
@@ -3036,7 +3044,7 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         let viewerId = SessionManager.shared.currentUser?.id
         let viewerIsAuthor = quoteIsMine == true || (quoteAuthorId != nil && viewerId != nil && quoteAuthorId == viewerId)
-        guard viewerIsAuthor || isPublic == true else {
+        guard viewerIsAuthor || effectivelyPublic else {
             quoteTapGoneOrLocked = true
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: false, visibility: quoteVisibility)
             quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
@@ -3064,7 +3072,8 @@ class BearyDiaryCardCell: UITableViewCell {
                         hostIsPublic: hostIsPublic,
                         quotePublishedAt: quotePublishedAt,
                         authorHandle: authorHandle,
-                        quoteVisibility: quoteVisibility
+                        quoteVisibility: quoteVisibility,
+                        quoteEphemeralUntil: quoteEphemeralUntil
                     )
                     return
                 }
@@ -3091,7 +3100,8 @@ class BearyDiaryCardCell: UITableViewCell {
                             hostIsPublic: hostIsPublic,
                             quotePublishedAt: quotePublishedAt,
                             authorHandle: authorHandle,
-                            quoteVisibility: quoteVisibility
+                            quoteVisibility: quoteVisibility,
+                            quoteEphemeralUntil: quoteEphemeralUntil
                         )
                         strongSelf.updateDiaryStackSpacing()
                         strongSelf.onNeedsRowReload?()
@@ -3107,7 +3117,7 @@ class BearyDiaryCardCell: UITableViewCell {
             images: images,
             dims: dims,
             createdAt: createdAt,
-            allowThumbs: isPublic == true || viewerIsAuthor,
+            allowThumbs: effectivelyPublic || viewerIsAuthor,
             authorHandle: authorHandle,
             sourceTappable: true,
             quoteId: quoteId
@@ -3217,7 +3227,8 @@ class BearyDiaryCardCell: UITableViewCell {
                 hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
                 quotePublishedAt: quoteValue.publishedAt,
                 authorHandle: quoteValue.authorHandle,
-                quoteVisibility: quoteValue.visibility
+                quoteVisibility: quoteValue.visibility,
+                quoteEphemeralUntil: quoteValue.ephemeralUntil
             )
             return
         }
@@ -3244,7 +3255,8 @@ class BearyDiaryCardCell: UITableViewCell {
                 hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
                 quotePublishedAt: cachedEntry.publishedAt,
                 authorHandle: cachedEntry.authorHandle,
-                quoteVisibility: cachedEntry.visibility
+                quoteVisibility: cachedEntry.visibility,
+                quoteEphemeralUntil: cachedEntry.ephemeralUntil
             )
             return
         }
@@ -3303,7 +3315,8 @@ class BearyDiaryCardCell: UITableViewCell {
                         hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
                         quotePublishedAt: fetchedEntry.publishedAt,
                         authorHandle: fetchedEntry.authorHandle,
-                        quoteVisibility: fetchedEntry.visibility
+                        quoteVisibility: fetchedEntry.visibility,
+                        quoteEphemeralUntil: fetchedEntry.ephemeralUntil
                     )
                     strongSelf.updateDiaryStackSpacing()
                     strongSelf.onNeedsRowReload?()
