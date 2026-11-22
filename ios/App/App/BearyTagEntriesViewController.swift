@@ -165,11 +165,7 @@ final class BearyTagEntriesViewController: UIViewController {
     func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
         guard let row = entries.firstIndex(where: { $0.id == entryId }) else { return }
         tableView.layoutIfNeeded()
-        let targetY = tableView.rectForRow(at: IndexPath(row: row, section: 0)).origin.y - viewportOffset
-        guard abs(targetY - tableView.contentOffset.y) >= 1 else { return }
-        let minY = -tableView.contentInset.top
-        let maxY = max(minY, tableView.contentSize.height - tableView.bounds.height + tableView.contentInset.bottom)
-        tableView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+        BearyScrollAnchor.restoreDetailReturn(in: tableView, rowTop: tableView.rectForRow(at: IndexPath(row: row, section: 0)).origin.y, viewportOffset: viewportOffset)
     }
 
     private func loadFirstPage() {
@@ -255,10 +251,7 @@ final class BearyTagEntriesViewController: UIViewController {
               let row = entries.firstIndex(where: { $0.id == anchor.entryId }) else { return }
         tableView.layoutIfNeeded()
         let rect = tableView.rectForRow(at: IndexPath(row: row, section: 0))
-        var offsetY = rect.minY - anchor.topOffset
-        let topLimit = -tableView.adjustedContentInset.top
-        let bottomLimit = max(topLimit, tableView.contentSize.height - tableView.bounds.height + tableView.adjustedContentInset.bottom)
-        offsetY = min(max(offsetY, topLimit), bottomLimit)
+        let offsetY = BearyScrollAnchor.clampedOffsetY(in: tableView, rowTop: rect.minY, viewportOffset: anchor.topOffset, contentInset: tableView.adjustedContentInset)
         tableView.setContentOffset(CGPoint(x: 0, y: offsetY), animated: false)
     }
 

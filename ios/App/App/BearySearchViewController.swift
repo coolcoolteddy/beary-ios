@@ -464,11 +464,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
               let row = entryRowById[entryId] else { return }
         scrollView.layoutIfNeeded()
         let frame = row.convert(row.bounds, to: scrollView)
-        let targetY = frame.minY - viewportOffset
-        guard abs(targetY - scrollView.contentOffset.y) >= 1 else { return }
-        let minY = -scrollView.contentInset.top
-        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
-        scrollView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+        BearyScrollAnchor.restoreDetailReturn(in: scrollView, rowTop: frame.minY, viewportOffset: viewportOffset)
     }
 
     /// 详情内编辑/可见性变化按 id 定向同步本页：模型原地改字段，

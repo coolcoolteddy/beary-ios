@@ -6074,11 +6074,7 @@ class BearyTimelineViewController: UIViewController {
         for (sectionIndex, section) in sections.enumerated() {
             guard let row = section.entries.firstIndex(where: { $0.id == entryId }) else { continue }
             tableView.layoutIfNeeded()
-            let targetY = tableView.rectForRow(at: IndexPath(row: row, section: sectionIndex)).origin.y - viewportOffset
-            guard abs(targetY - tableView.contentOffset.y) >= 1 else { return }
-            let minY = -tableView.contentInset.top
-            let maxY = max(minY, tableView.contentSize.height - tableView.bounds.height + tableView.contentInset.bottom)
-            tableView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+            BearyScrollAnchor.restoreDetailReturn(in: tableView, rowTop: tableView.rectForRow(at: IndexPath(row: row, section: sectionIndex)).origin.y, viewportOffset: viewportOffset)
             return
         }
     }

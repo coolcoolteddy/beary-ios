@@ -1098,11 +1098,7 @@ final class BearyProfilePhotosViewController: UIViewController {
               let path = indexPath(forFlatIndex: index) else { return }
         collectionView.layoutIfNeeded()
         guard let frame = collectionView.layoutAttributesForItem(at: path)?.frame else { return }
-        let targetY = frame.minY - viewportOffset
-        guard abs(targetY - collectionView.contentOffset.y) >= 1 else { return }
-        let minY = -collectionView.contentInset.top
-        let maxY = max(minY, collectionView.contentSize.height - collectionView.bounds.height + collectionView.contentInset.bottom)
-        collectionView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+        BearyScrollAnchor.restoreDetailReturn(in: collectionView, rowTop: frame.minY, viewportOffset: viewportOffset)
     }
 
     /// 详情内编辑/可见性变化按 id 定向同步：模型原地改字段后重算照片索引；

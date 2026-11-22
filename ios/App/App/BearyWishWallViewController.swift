@@ -898,9 +898,7 @@ final class BearyWishWallViewController: UIViewController {
         }
         guard let row = rowViews[targetId] else { return }
         let frame = row.convert(row.bounds, to: scrollView)
-        let minY = -scrollView.contentInset.top
-        let maxY = max(scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom, minY)
-        scrollView.contentOffset = CGPoint(x: scrollView.contentOffset.x, y: min(max(frame.minY - anchor.viewportY, minY), maxY))
+        scrollView.contentOffset = CGPoint(x: scrollView.contentOffset.x, y: BearyScrollAnchor.clampedOffsetY(in: scrollView, rowTop: frame.minY, viewportOffset: anchor.viewportY, contentInset: scrollView.contentInset))
     }
 
     private func indexOfWish(_ id: Int) -> Int? { wishes.firstIndex { $0.id == id } }
