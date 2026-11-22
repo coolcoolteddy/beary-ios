@@ -639,6 +639,8 @@ final class BearyNotificationsViewController: UIViewController {
     /// 回前台的轻量门控，容器想切回瞬间必刷时调 refreshListIfUnreadChanged()。
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // 首次挂载／模态 dismiss 的兜底：与 pageDidEnter 同口径清图标角标。
+        BearyAppIconBadge.clear()
         startPolling()
         refreshListIfUnreadChanged()
         // 回页兜底重验：从个人页取关回来时，关注卡不靠下次整页重拉才变。
@@ -665,6 +667,8 @@ final class BearyNotificationsViewController: UIViewController {
     /// showPage(.notif) 分支调用，见 SceneDelegate）。timer 回调自身也
     /// 有可见性门控，本方法只是让停表后不依赖下一次回调才恢复。
     func pageDidEnter() {
+        // 进消息页：图标未读角标清零（App 内未读态不动，新未读进来才再亮起）。
+        BearyAppIconBadge.clear()
         startPolling()
         // 容器切 tab 回消息页：关注卡实时状态重验一次（只验动作区，不整页重拉）。
         revalidateFollowCardStates()

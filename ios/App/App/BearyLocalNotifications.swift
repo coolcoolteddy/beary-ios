@@ -118,7 +118,8 @@ final class BearyLocalNotifications: NSObject {
     /// 弹窗出错（如被系统打断）不记已问、不走 onDenied，下次满足条件可再问。
     func requestAuthorizationIfNeeded(force: Bool = false, onDenied: (() -> Void)? = nil) {
         guard force || !UserDefaults.standard.bool(forKey: Self.permissionRequestedKey) else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
+        // .badge 与提醒同批申请：图标未读角标用（只补权限项，不改其他行为）。
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, error in
             if granted {
                 UserDefaults.standard.set(true, forKey: Self.permissionRequestedKey)
                 self?.refreshAll(force: true)
@@ -528,6 +529,69 @@ extension BearyLocalNotifications: UNUserNotificationCenterDelegate {
         guard let target = target else { return }
         DispatchQueue.main.async {
             Self.openTarget(target)
+        }
+    }
+}
+
+// MARK: - App 图标未读角标
+
+/// App 图标未读角标：跟消息页统一未读数（BearyMessagesViewController.unreadMessagesCount，
+/// 通知卡＋信件行＋各会话未读之和），与底栏消息角标同数；本类型是图标角标的唯一写点。
+/// 进消息页清零后角标保持 0，直到未读数较清零后的最低点上涨（即有新未读进来）才再亮起；
+/// App 内未读态本身不动（行仍显示未读，直到真正已读／全部已读）。
+/// 设角标走 UNUserNotificationCenter.setBadgeCount（iOS 16＋）；部署目标仍是 15.0
+///（#2054 未合入），iOS 15 走 applicationIconBadgeNumber 兜底。
+enum BearyAppIconBadge {
+    /// 清零后的未读数最低点：同步来的数高于它才算新未读。首次同步前未知时为 .max，
+    /// 首次同步即把水位记为当时数、角标保持 0。
+    private static var lowWaterMark: Int = .max
+    /// 最近一次同步来的统一未读数（清零时取作水位基准）。
+    private static var lastSyncedCount: Int?
+    /// 清零后抑制中：角标保持 0，直到有新未读。
+    private static var suppressed = false
+    /// 上次实际写到图标上的数（去重：同值不反复写）。
+    private static var lastApplied: Int?
+
+    /// 未读数变化／回前台时调：按当前统一未读数同步图标角标。
+    static func sync(count: Int) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { sync(count: count) }
+            return
+        }
+        let count = max(0, count)
+        lastSyncedCount = count
+        if suppressed {
+            if count > lowWaterMark {
+                suppressed = false
+                apply(count)
+            } else {
+                lowWaterMark = min(lowWaterMark, count)
+                apply(0)
+            }
+        } else {
+            apply(count)
+        }
+    }
+
+    /// 进消息页时调：角标清零；之后未读数较清零后的最低点上涨才再亮起。
+    static func clear() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { clear() }
+            return
+        }
+        suppressed = true
+        lowWaterMark = lastSyncedCount ?? .max
+        apply(0)
+    }
+
+    private static func apply(_ value: Int) {
+        let value = max(0, value)
+        guard value != lastApplied else { return }
+        lastApplied = value
+        if #available(iOS 16.0, *) {
+            UNUserNotificationCenter.current().setBadgeCount(value) { _ in }
+        } else {
+            UIApplication.shared.applicationIconBadgeNumber = value
         }
     }
 }
