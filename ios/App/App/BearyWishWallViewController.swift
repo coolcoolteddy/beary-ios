@@ -379,11 +379,7 @@ private final class WishRowView: UIView {
     /// 22(a)：补减动效早退——与标准 playDenyShake 一致，减动效时只跳视觉抖动；
     /// 本处调用点（voteTapped 失败分支）已另给 warning 震动，shake 本身不补震动/音效。
     func shake() {
-        if UIAccessibility.isReduceMotionEnabled { return }
-        let anim = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        anim.values = [0, -8, 8, -5, 5, 0]
-        anim.duration = BearyMotion.screen
-        layer.add(anim, forKey: "wish-row-shake")
+        BearyIconMotion.denyShake(on: self, key: "wish-row-shake")
     }
 }
 

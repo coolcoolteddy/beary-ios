@@ -516,13 +516,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
     private func playDenyShake(on button: UIButton) {
         BearyHaptics.rejectionWarning()
         BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled { return }
-        button.layer.removeAnimation(forKey: "bearyDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        button.layer.add(shake, forKey: "bearyDenyShake")
+        BearyIconMotion.denyShake(on: button, key: "bearyDenyShake")
     }
 
     /// 116 数据填入动效：文案变化时只淡入该 label 本身（alpha 0→1、

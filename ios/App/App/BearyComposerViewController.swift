@@ -9070,12 +9070,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             BearyHaptics.rejectionWarning()
                             BearySoundPlayer.play(.refuseBonk)
                             if !UIAccessibility.isReduceMotionEnabled {
-                                self.cancelButton.layer.removeAnimation(forKey: "bearyDenyShake")
-                                let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-                                shake.values = [0, -8, 8, -5, 5, 0]
-                                shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-                                shake.duration = BearyMotion.screen
-                                self.cancelButton.layer.add(shake, forKey: "bearyDenyShake")
+                                BearyIconMotion.denyShake(on: self.cancelButton, key: "bearyDenyShake")
                             }
                             self.showToast(message: result.hadPreviousSavedVersion
                                 ? "草稿保存失败，当前内容仍保留在此页，上次保存的草稿未受影响，再点一次保留并新建重试"
@@ -9893,12 +9888,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 BearyHaptics.rejectionWarning()
                 BearySoundPlayer.play(.refuseBonk)
                 if !UIAccessibility.isReduceMotionEnabled {
-                    self.cancelButton.layer.removeAnimation(forKey: "bearyDenyShake")
-                    let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-                    shake.values = [0, -8, 8, -5, 5, 0]
-                    shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-                    shake.duration = BearyMotion.screen
-                    self.cancelButton.layer.add(shake, forKey: "bearyDenyShake")
+                    BearyIconMotion.denyShake(on: self.cancelButton, key: "bearyDenyShake")
                 }
                 // 审计 M2：保存失败留页——边缘跟手若已把视图滑出，滑回原位
                 //（与 BearyEdgeDismiss 的复位同口径：拖拽收尾统一弹簧 0.26s／

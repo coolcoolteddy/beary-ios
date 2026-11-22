@@ -1098,17 +1098,6 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
         BearySoundPlayer.play(.refuseBonk)
     }
 
-    /// 仅视觉摇头（0.4s）；减动效时跳过。调用方须先调 playDenyFeedback 给震动＋音效。
-    private func denyShake(on view: UIView) {
-        if UIAccessibility.isReduceMotionEnabled { return }
-        view.layer.removeAnimation(forKey: "bearyDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        view.layer.add(shake, forKey: "bearyDenyShake")
-    }
-
     private func chipShell() -> UIView {
         let chip = UIView()
         chip.backgroundColor = BearyColors.surface2
@@ -1653,7 +1642,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
                 playDenyFeedback()
                 resetDraftDragCard(cardView) { [weak self] in
                     guard let strongSelf = self else { return }
-                    strongSelf.denyShake(on: cardView)
+                    BearyIconMotion.denyShake(on: cardView, key: "bearyDenyShake")
                 }
             }
             showDraftToast(message: "发布中…")
@@ -1706,7 +1695,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
                     //（与发布中拒删分支同口径，免得摇头与归位抢 transform）。
                     strongSelf.resetDraftDragCard(cardView) { [weak self] in
                         guard let strongSelf = self else { return }
-                        strongSelf.denyShake(on: cardView)
+                        BearyIconMotion.denyShake(on: cardView, key: "bearyDenyShake")
                     }
                 }
                 if let deleteButton = strongSelf.deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {

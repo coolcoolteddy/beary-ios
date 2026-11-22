@@ -188,6 +188,20 @@ enum BearyIconMotion {
     static func stopSpin(on view: UIView, key: String) {
         view.layer.removeAnimation(forKey: key)
     }
+
+    /// 拒绝摇头（0.38s，values [0,-8,8,-5,5,0]／keyTimes 0／0.2／0.4／0.6／0.8／1）：
+    /// 先清同 key 在途动画再播；key 作参数，各调用点原 key 不变；
+    /// 减动效时跳过视觉摇头（震动／音效由调用方另给，不在此补）。
+    static func denyShake(on view: UIView?, key: String) {
+        guard let view = view else { return }
+        guard BearyMotion.animated(true) else { return }
+        view.layer.removeAnimation(forKey: key)
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        view.layer.add(shake, forKey: key)
+    }
 }
 
 extension UIButton {

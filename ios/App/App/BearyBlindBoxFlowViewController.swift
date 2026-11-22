@@ -1607,13 +1607,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private func playDenyShake(on view: UIView) {
         BearyHaptics.rejectionWarning()
         BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled { return }
-        view.layer.removeAnimation(forKey: "bearyBlindBoxDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        view.layer.add(shake, forKey: "bearyBlindBoxDenyShake")
+        BearyIconMotion.denyShake(on: view, key: "bearyBlindBoxDenyShake")
     }
 
     /// 摇头目标必须是当前在树上的 chip：renderEmoteChips() 全量重建，

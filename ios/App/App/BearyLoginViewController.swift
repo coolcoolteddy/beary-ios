@@ -994,13 +994,7 @@ final class BearyLoginViewController: UIViewController {
     private func playDenyShake() {
         BearyHaptics.rejectionWarning()
         BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled { return }
-        stackView.layer.removeAnimation(forKey: "bearyLoginDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        stackView.layer.add(shake, forKey: "bearyLoginDenyShake")
+        BearyIconMotion.denyShake(on: stackView, key: "bearyLoginDenyShake")
     }
 
     private func setLoginTitle(_ text: String, for button: UIButton) {

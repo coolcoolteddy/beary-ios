@@ -3664,13 +3664,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // 拒绝震动不拿减动效门控：减动效只跳过视觉抖动，震动照常给。
         BearyHaptics.rejectionWarning()
         BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled { return }
-        button.layer.removeAnimation(forKey: "bearyDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        button.layer.add(shake, forKey: "bearyDenyShake")
+        BearyIconMotion.denyShake(on: button, key: "bearyDenyShake")
     }
 
     /// 2026-10-31 卡片 ⋯ 显隐（时间线风格）：本人卡或他人公开卡显，其余藏；

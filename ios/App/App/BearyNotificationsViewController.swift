@@ -2764,12 +2764,7 @@ final class BearyNotificationsViewController: UIViewController {
         guard let index = items.firstIndex(where: { $0.id == notificationId }),
               let rowIndex = displayRows.firstIndex(where: { $0.itemIndex == index }),
               let cell = tableView.cellForRow(at: IndexPath(row: rowIndex, section: 0)) else { return }
-        cell.layer.removeAnimation(forKey: "bearyNotifDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        cell.layer.add(shake, forKey: "bearyNotifDenyShake")
+        BearyIconMotion.denyShake(on: cell, key: "bearyNotifDenyShake")
     }
 
     // MARK: - 角标与顶栏
