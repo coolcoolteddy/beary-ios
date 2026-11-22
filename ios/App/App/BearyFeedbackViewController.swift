@@ -1613,22 +1613,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         // 不再大值垫 inset。贴底键盘的重叠量口径与旧代码一致。
         view.layoutIfNeeded()
         let inputFrame = view.convert(textView.bounds, from: textView)
-        let overlapsInput = frameInView.isEmpty == false && frameInView.intersects(inputFrame)
-        let bottom = overlapsInput ? max(0, view.bounds.maxY - view.safeAreaInsets.bottom - frameInView.minY) : 0
-        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
-        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
-            self.scrollView.contentInset.bottom = bottom
-            self.scrollView.verticalScrollIndicatorInsets.bottom = bottom
-        })
+        KeyboardInset.apply(to: scrollView, keyboardFrame: frameInView, inputFrame: inputFrame, in: view, note: note)
     }
 
     @objc private func keyboardWillHide(_ note: Notification) {
-        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
-        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
-            self.scrollView.contentInset.bottom = 0
-            self.scrollView.verticalScrollIndicatorInsets.bottom = 0
-        })
+        KeyboardInset.reset(scrollView, note: note)
     }
 }
