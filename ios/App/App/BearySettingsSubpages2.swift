@@ -8,10 +8,16 @@ import UIKit
 // MARK: - 子页共用小件
 
 /// 行按压视觉反馈（设置主页 settingsRowPressDown/Up 同款：只降透明度）。
+/// 两段时长与全站按压口径一致：按下 0.1s、抬手 0.18s（BearyMotion.micro），
+/// 与 ID 卡黑钮的 alpha 做法同款。
 final class BearySettingsRowPressTarget: NSObject {
     static let shared = BearySettingsRowPressTarget()
-    @objc func pressDown(_ sender: UIButton) { sender.superview?.alpha = 0.55 }
-    @objc func pressUp(_ sender: UIButton) { sender.superview?.alpha = 1 }
+    @objc func pressDown(_ sender: UIButton) {
+        UIView.animate(withDuration: 0.1) { sender.superview?.alpha = 0.55 }
+    }
+    @objc func pressUp(_ sender: UIButton) {
+        UIView.animate(withDuration: BearyMotion.micro) { sender.superview?.alpha = 1 }
+    }
 }
 
 func bearySettingsRowChevron() -> UIImageView {
