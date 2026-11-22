@@ -8171,8 +8171,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         retryButton.tintColor = BearyColors.ink
         retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         retryButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        retryButton.layer.borderWidth = 1
-        retryButton.layer.bearyDynamicBorderColor = BearyColors.line
+        retryButton.layer.applyLineBorder()
         retryButton.layer.cornerRadius = BearyCorners.single
         retryButton.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()

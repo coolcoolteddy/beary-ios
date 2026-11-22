@@ -2331,8 +2331,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientClearButton.bearyAddPressFeedback()
         notifyCheckButton.layer.cornerRadius = 4
         notifyCheckButton.layer.masksToBounds = true
-        notifyCheckButton.layer.borderWidth = 1
-        notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
+        notifyCheckButton.layer.applyLineBorder()
         notifyCheckButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
         notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
         notifyCheckButton.bearyAddPressFeedback()

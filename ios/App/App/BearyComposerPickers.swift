@@ -237,8 +237,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         notifyRow.isHidden = true
         notifyCheckButton.layer.cornerRadius = 4
         notifyCheckButton.layer.masksToBounds = true
-        notifyCheckButton.layer.borderWidth = 1
-        notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
+        notifyCheckButton.layer.applyLineBorder()
         notifyCheckButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 14))
         notifyCheckButton.titleLabel?.adjustsFontForContentSizeCategory = true
         notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)

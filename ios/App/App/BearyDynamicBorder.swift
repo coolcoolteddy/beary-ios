@@ -41,6 +41,15 @@ extension CALayer {
     }
 }
 
+extension CALayer {
+    /// 1pt 线色边框（可复用资源 27 遍 B-A1）：粗细 1 ＋ BearyColors.line 动态色；
+    /// 深色切换由 bearyDynamicBorderColor 机制重刷，不退回 borderColor = cgColor。
+    func applyLineBorder() {
+        borderWidth = 1
+        bearyDynamicBorderColor = BearyColors.line
+    }
+}
+
 enum BearyDynamicBorder {
     private static var installed = false
 

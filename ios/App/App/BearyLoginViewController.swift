@@ -361,8 +361,7 @@ final class BearyLoginViewController: UIViewController {
         emailLoginButton.translatesAutoresizingMaskIntoConstraints = false
         emailLoginButton.backgroundColor = BearyColors.bg
         emailLoginButton.layer.cornerRadius = 12
-        emailLoginButton.layer.borderWidth = 1
-        emailLoginButton.layer.bearyDynamicBorderColor = BearyColors.line
+        emailLoginButton.layer.applyLineBorder()
         emailLoginButton.setTitle("使用其他邮箱登录", for: .normal)
         emailLoginButton.setTitleColor(BearyColors.ink, for: .normal)
         emailLoginButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
