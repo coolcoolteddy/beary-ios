@@ -1097,27 +1097,23 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
         switch mergedRows[indexPath.row] {
         case .notifLetter(let item):
             guard let notificationId = item.id else { return nil }
-            let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
-                guard let self = self else { done(false); return }
-                BearyHaptics.press()
-                done(true)
+            let delete = BearySwipeActions.delete(accessibilityLabel: "删除这条通知") { [weak self] in
+                guard let self = self else { return false }
                 DispatchQueue.main.async {
                     self.notifChild.deleteNotification(id: notificationId) { _ in }
                 }
+                return true
             }
-            delete.accessibilityLabel = "删除这条通知"
             return UISwipeActionsConfiguration(actions: [delete])
         case .conversation(let conv):
             guard let peerId = conv.peer?.id else { return nil }
-            let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
-                guard let self = self else { done(false); return }
-                BearyHaptics.press()
-                done(true)
+            let delete = BearySwipeActions.delete(accessibilityLabel: "删除这个会话") { [weak self] in
+                guard let self = self else { return false }
                 DispatchQueue.main.async {
                     self.conversationsChild.deleteConversation(peerId: peerId) { _ in }
                 }
+                return true
             }
-            delete.accessibilityLabel = "删除这个会话"
             return UISwipeActionsConfiguration(actions: [delete])
         case .notifCard, .notifFailure, .dmFailure, .sentinel:
             return nil

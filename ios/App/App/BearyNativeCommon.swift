@@ -3615,6 +3615,26 @@ enum BearyHaptics {
     }
 }
 
+// MARK: - 左滑删除小工厂（Messages 通知行／会话行、DM 会话行三处同形骨架收一处）
+// Notifications 变体（乐观删行＋失败回滚）与 Timeline 极简形（无震动／guard／a11y）各留，不收。
+enum BearySwipeActions {
+    /// 左滑删除：onDelete 回 false（宿主已释放）时 done(false)、不震动；
+    /// 否则震动＋删动作＋done(true)。删动作本身由调用方给：
+    /// Messages 两处仍是 main.async 延后一拍（等左滑收起再走快照 diff），
+    /// DM 处仍是同步乐观删（deleteConversation 内先行移除＋快照通知）。
+    /// 与原地相比唯一时序差：震动与 done(true) 落在删动作发起之后（同一 tick 内）；
+    /// Messages 的 dispatch 块仍在左滑收起后跑，语义不变。
+    static func delete(accessibilityLabel: String, onDelete: @escaping () -> Bool) -> UIContextualAction {
+        let action = UIContextualAction(style: .destructive, title: "删除") { _, _, done in
+            guard onDelete() else { done(false); return }
+            BearyHaptics.press()
+            done(true)
+        }
+        action.accessibilityLabel = accessibilityLabel
+        return action
+    }
+}
+
 // MARK: - iCity 共享助手（可见性相对时间 / 已举报本地态 / 举报与拉黑流程）
 
 /// 广场卡相对时间：“X 分钟 / 小时 / 天前”；1 分钟内为“刚刚”。
