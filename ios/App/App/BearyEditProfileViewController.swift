@@ -210,6 +210,35 @@ class BearyEditProfileViewController: UIViewController {
     /// 故标题恒为“保存”，不再改“保存中…”而被裁字）。
     private let savingSpinner = BearyRefreshIconView()
 
+    /// F9：头像／封面上传行内进度——保存 PUT 的上传字节进度（接线见 saveProfile
+    /// 的 uploadProgress，传输层 BearyAPI.request 已有该回调）。只在本次保存
+    /// 改了头像／封面时亮对应行；纯文字保存不亮，仍只走保存钮旁转圈兜底。
+    /// 进度封顶 0.95（字节发完、等回包期间不先满格），成功／失败回包即撤。
+    private let avatarUploadProgressView: UIProgressView = {
+        let progressViewValue = UIProgressView(progressViewStyle: .default)
+        progressViewValue.translatesAutoresizingMaskIntoConstraints = false
+        progressViewValue.progressTintColor = BearyColors.orange
+        progressViewValue.trackTintColor = UIColor(white: 1, alpha: 0.4)
+        progressViewValue.progress = 0
+        progressViewValue.isHidden = true
+        progressViewValue.accessibilityLabel = "正在上传头像"
+        return progressViewValue
+    }()
+
+    private let coverUploadProgressView: UIProgressView = {
+        let progressViewValue = UIProgressView(progressViewStyle: .default)
+        progressViewValue.translatesAutoresizingMaskIntoConstraints = false
+        progressViewValue.progressTintColor = BearyColors.orange
+        progressViewValue.trackTintColor = UIColor(white: 1, alpha: 0.4)
+        progressViewValue.progress = 0
+        progressViewValue.isHidden = true
+        progressViewValue.accessibilityLabel = "正在上传封面"
+        return progressViewValue
+    }()
+
+    /// 上传字节进度已展示到的最大值（单调递增，防回包抖动回退）。
+    private var uploadProgressValue: Float = 0
+
     private let titleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -664,6 +693,16 @@ class BearyEditProfileViewController: UIViewController {
         avatarWrap.translatesAutoresizingMaskIntoConstraints = false
         avatarWrap.addSubview(avatarImageView)
         avatarWrap.addSubview(avatarCamBadge)
+        // F9：头像上传进度条——贴头像圆底边（上 1pt 压圆、下 2pt 伸进与表单
+        // 间的 16pt 空隙，不撑高 wrap、不动静置布局）；插在相机角标之下，
+        // 条的右端藏进角标后，不横穿角标。平时隐藏（isHidden），不占位。
+        avatarWrap.insertSubview(avatarUploadProgressView, belowSubview: avatarCamBadge)
+        NSLayoutConstraint.activate([
+            avatarUploadProgressView.topAnchor.constraint(equalTo: avatarImageView.bottomAnchor, constant: -1),
+            avatarUploadProgressView.leadingAnchor.constraint(equalTo: avatarImageView.leadingAnchor),
+            avatarUploadProgressView.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
+            avatarUploadProgressView.heightAnchor.constraint(equalToConstant: 3),
+        ])
         NSLayoutConstraint.activate([
             avatarImageView.topAnchor.constraint(equalTo: avatarWrap.topAnchor),
             avatarImageView.leadingAnchor.constraint(equalTo: avatarWrap.leadingAnchor),
@@ -805,6 +844,15 @@ class BearyEditProfileViewController: UIViewController {
         // 头像按钮后加（层级在封面之上），故头像区点按仍走换头像、不与封面冲突。
         coverImageView.isUserInteractionEnabled = true
         coverImageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(presentCoverSourcePicker)))
+        // F9：封面上传进度条——贴封面底边（coverImageView clipsToBounds，条全宽
+        // 可见；封面点按钮是透明覆盖层，条在其下、不挡点按）。平时隐藏，不占位。
+        coverImageView.addSubview(coverUploadProgressView)
+        NSLayoutConstraint.activate([
+            coverUploadProgressView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+            coverUploadProgressView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+            coverUploadProgressView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+            coverUploadProgressView.heightAnchor.constraint(equalToConstant: 3),
+        ])
         scrollView.addSubview(coverImageView)
         // 头像半压封面：封面后加会盖住头像的上半 28pt（内容列先加、封面后加，
         // 层级上封面在内容列之上），故内容列须提至封面之上，头像整圆才可见；
@@ -1284,6 +1332,38 @@ class BearyEditProfileViewController: UIViewController {
         }
     }
 
+    /// F9：保存 PUT 发起时，只亮本次改了的行（头像／封面）；都没改不亮条。
+    private func showUploadProgress(for snapshot: SaveSnapshot) {
+        uploadProgressValue = 0
+        avatarUploadProgressView.setProgress(0, animated: false)
+        coverUploadProgressView.setProgress(0, animated: false)
+        avatarUploadProgressView.isHidden = !snapshot.avatarChanged
+        coverUploadProgressView.isHidden = !snapshot.coverChanged
+    }
+
+    /// F9：上传字节进度回调（URLSession delegate 线程，非主线程）——
+    /// 回主线程、只在保存进行中更新；封顶 0.95，成功／失败回包才撤条。
+    private func updateUploadProgress(sent: Int64, expected: Int64) {
+        guard expected > 0, sent >= 0 else { return }
+        let value = min(Float(sent) / Float(expected), 0.95)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isSaving, value > self.uploadProgressValue else { return }
+            self.uploadProgressValue = value
+            self.avatarUploadProgressView.setProgress(value, animated: true)
+            self.coverUploadProgressView.setProgress(value, animated: true)
+        }
+    }
+
+    /// F9：成功／失败回包即撤行内进度条（两处 finish 共用；保存未发 PUT 时
+    /// 条本就隐藏，此处是空操作）。
+    private func hideUploadProgress() {
+        uploadProgressValue = 0
+        avatarUploadProgressView.isHidden = true
+        coverUploadProgressView.isHidden = true
+        avatarUploadProgressView.setProgress(0, animated: false)
+        coverUploadProgressView.setProgress(0, animated: false)
+    }
+
     /// 第二步资料保存：只读点按时定格的快照，不读输入框、不读待存标记。
     private func saveProfile(snapshot: SaveSnapshot) {
         var body: [String: Any] = [:]
@@ -1322,7 +1402,13 @@ class BearyEditProfileViewController: UIViewController {
             finishSavingSuccess()
             return
         }
-        BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: body) { [weak self] (result: Result<BearyProfileUpdateResponse, APIError>) in
+        // F9：头像／封面随 PUT 一起发——发前亮对应行内进度条，上传字节进度
+        // 经 BearyAPI.request 的 uploadProgress 回调驱动（发布中心同款接线）；
+        // 保存逻辑与失败态不动（回包仍走 finishSavingSuccess／finishSavingWithError）。
+        showUploadProgress(for: snapshot)
+        BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: body, uploadProgress: { [weak self] sent, expected in
+            self?.updateUploadProgress(sent: sent, expected: expected)
+        }) { [weak self] (result: Result<BearyProfileUpdateResponse, APIError>) in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 switch result {
@@ -1402,6 +1488,7 @@ class BearyEditProfileViewController: UIViewController {
             }
             savingSnapshot = nil
             isSaving = false
+            hideUploadProgress()
             updateSaveButtonState()
             if snapshot.signatureChanged && !signatureConfirmed {
                 verifySignatureAfterSave(expected: snapshot.signatureValue.isEmpty ? nil : snapshot.signatureValue)
@@ -1412,6 +1499,7 @@ class BearyEditProfileViewController: UIViewController {
         }
         savingSnapshot = nil
         isSaving = false
+        hideUploadProgress()
         updateSaveButtonState()
         onSaved?()
     }
@@ -1451,6 +1539,7 @@ class BearyEditProfileViewController: UIViewController {
         // 全程未被清空或回滚，解冻后原样保留，可直接重试。
         savingSnapshot = nil
         isSaving = false
+        hideUploadProgress()
         updateSaveButtonState()
         // 保存失败：拒绝动效（卡片同款摇头 + warning 震动，减动效只跳过视觉抖动）；
         // 本地草稿保留在输入框内（不清空、不回滚输入），服务端未写入，可直接重试，
