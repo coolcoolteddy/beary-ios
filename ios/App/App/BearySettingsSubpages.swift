@@ -436,7 +436,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
             spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
             spinner.startSpinning()
             let loadingLabel = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
-            loadingLabel.text = "加载中…"
+            loadingLabel.text = BearyRepeatedCopy.loading
             let loadingRow = UIStackView(arrangedSubviews: [spinner, loadingLabel])
             loadingRow.axis = .horizontal
             loadingRow.spacing = 8
@@ -646,7 +646,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                     self.onSessionsChanged?()
                 case .failure(let error):
                     if case .cancelled = error { return }
-                    BearyToast.show(in: self.view, message: "操作失败，请重试")
+                    BearyToast.show(in: self.view, message: BearyRepeatedCopy.operationFailedRetry)
                 }
             }
         }

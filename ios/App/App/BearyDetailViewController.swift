@@ -2672,7 +2672,7 @@ final class BearyDetailViewController: UIViewController {
         if quote.gone == true {
             // A2：已删除为终态占位，忘掉该键的展开态。
             BearyQuoteExpandState.forget(key: detailExpandKey)
-            quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+            quoteView.showGone(message: BearyRepeatedCopy.quotedEntryDeleted, iconName: "icon_quote", sourceDeleted: true)
             quoteView.isHidden = false
             return
         }
@@ -2692,7 +2692,7 @@ final class BearyDetailViewController: UIViewController {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
                 quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
             } else {
-                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+                quoteView.showGone(message: BearyRepeatedCopy.quotedEntryDeleted, iconName: "icon_quote", sourceDeleted: true)
             }
             quoteView.isHidden = false
             return
@@ -3166,7 +3166,7 @@ final class BearyDetailViewController: UIViewController {
                         } else {
                             self.playDenyShake(on: self.likeButton)
                         }
-                        BearyToast.show(in: self.view, message: "操作失败，请重试")
+                        BearyToast.show(in: self.view, message: BearyRepeatedCopy.operationFailedRetry)
                     }
                 }
             }
@@ -3378,7 +3378,7 @@ final class BearyDetailViewController: UIViewController {
                                     self.performVisibilityToggle(targetVisibility: targetVisibility, publishTogetherSourceId: sourceId)
                                 case .failure:
                                     self.isVisibilityBusy = false
-                                    BearyToast.show(in: self.view, message: "原日记公开失败，请重试")
+                                    BearyToast.show(in: self.view, message: BearyRepeatedCopy.originalPublishFailedRetry)
                                 }
                             }
                         }
@@ -3480,8 +3480,8 @@ final class BearyDetailViewController: UIViewController {
                         // 失败原因透传：限流时服务端 message 比通用文案有用（entry_write
                         // 120/小时打满即 429）；其余失败仍走通用文案。
                         let message: String
-                        if case .server(let code, _) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
-                        else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
+                        if case .server(let code, _) = err, code == "rate_limited" { message = BearyRepeatedCopy.tooFrequentRetryLater }
+                        else if case .http(let status, _) = err, status == 429 { message = BearyRepeatedCopy.tooFrequentRetryLater }
                         else { message = "切换失败，请重试" }
                         BearyToast.show(in: self.view, message: message)
                     }
@@ -3592,7 +3592,7 @@ final class BearyDetailViewController: UIViewController {
                         self.onRequireLogin?()
                     } else {
                         self.playDenyShake(on: self.likeButton)
-                        BearyToast.show(in: self.view, message: "操作失败，请重试")
+                        BearyToast.show(in: self.view, message: BearyRepeatedCopy.operationFailedRetry)
                     }
                 }
                 self.likeInFlight = false
@@ -3667,7 +3667,7 @@ final class BearyDetailViewController: UIViewController {
                         self.onRequireLogin?()
                     } else {
                         self.playDenyShake(on: self.bookmarkButton)
-                        BearyToast.show(in: self.view, message: "操作失败，请重试")
+                        BearyToast.show(in: self.view, message: BearyRepeatedCopy.operationFailedRetry)
                     }
                 }
             }

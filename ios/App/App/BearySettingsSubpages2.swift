@@ -592,7 +592,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
         dmTextStack.spacing = 2
         dmTextStack.alignment = .fill
         let dmDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
-        dmDetail.text = dmLevel.map { dmLevelText($0) } ?? "加载中…"
+        dmDetail.text = dmLevel.map { dmLevelText($0) } ?? BearyRepeatedCopy.loading
         dmDetailLabel = dmDetail
         let dmContent = UIStackView(arrangedSubviews: [dmTextStack, bearySettingsRowSpacer(), dmDetail, bearySettingsRowChevron()])
         dmContent.translatesAutoresizingMaskIntoConstraints = false

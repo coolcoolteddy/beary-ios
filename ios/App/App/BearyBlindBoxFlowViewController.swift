@@ -1779,15 +1779,15 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private func todayErrorText(_ error: APIError) -> String {
         switch error {
         case .unauthorized, .authFailure:
-            return "登录已过期，请重新登录"
+            return BearyRepeatedCopy.sessionExpiredRelogin
         case .notFound:
             return BearyRepeatedCopy.blindBoxLoadFailed
         case .http(let code, _):
             if code == 404 { return BearyRepeatedCopy.blindBoxLoadFailed }
             if code == 409 { return BearyRepeatedCopy.blindBoxAlreadySwappedToday }
-            return "加载失败，请重试"
+            return BearyRepeatedCopy.loadFailedRetry
         default:
-            return "网络不稳定，请稍后再试"
+            return BearyRepeatedCopy.networkUnstable
         }
     }
 
@@ -1832,7 +1832,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private func actionErrorText(_ error: APIError, fallback: String) -> String {
         switch error {
         case .unauthorized, .authFailure:
-            return "登录已过期，请重新登录"
+            return BearyRepeatedCopy.sessionExpiredRelogin
         case .notFound:
             return BearyRepeatedCopy.blindBoxLoadFailed
         case .server(let code, _):

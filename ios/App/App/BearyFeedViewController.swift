@@ -421,7 +421,7 @@ class BearyFeedViewController: UIViewController {
             if SessionManager.shared.isGuestMode {
                 onRequireLogin?()
             } else {
-                BearyToast.show(in: view, message: "请先登录")
+                BearyToast.show(in: view, message: BearyRepeatedCopy.loginRequired)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                     guard let self = self else { return }
                     if SessionManager.shared.currentUser?.id == nil {
@@ -566,7 +566,7 @@ class BearyFeedViewController: UIViewController {
             feedEmptyTitleLabel?.text = "还没有关注的日记"
             feedEmptySubtitleLabel?.text = "你关注的人的日记会出现在这里"
         } else {
-            feedEmptyTitleLabel?.text = "还没有公开的日记"
+            feedEmptyTitleLabel?.text = BearyRepeatedCopy.emptyNoPublicEntries
             feedEmptySubtitleLabel?.text = "写一篇并公开试试"
         }
     }
@@ -607,7 +607,7 @@ class BearyFeedViewController: UIViewController {
         feedEmptyPencilView = pencilView
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "还没有公开的日记"
+        titleLabel.text = BearyRepeatedCopy.emptyNoPublicEntries
         feedEmptyTitleLabel = titleLabel
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         titleLabel.adjustsFontForContentSizeCategory = true
@@ -1287,7 +1287,7 @@ class BearyFeedViewController: UIViewController {
     /// 点赞／收藏失败的通用提示：只发 toast（文案原样），不弹确认。
     /// 按钮摇头已在卡片侧先做（失败按钮上 playDenyShake），这里不再重复。
     private func showActionFailedToast() {
-        BearyToast.show(in: view, message: "操作失败，请重试")
+        BearyToast.show(in: view, message: BearyRepeatedCopy.operationFailedRetry)
     }
 
     // MARK: - 广场流
@@ -2831,7 +2831,7 @@ class BearyFeedViewController: UIViewController {
             // 此处是操作点的即时反馈，不与容器回调冲突（本文件不赋值 onNetworkUnstable）。
             if SessionManager.shared.authUnknown {
                 if let strongSelf = self {
-                    BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试")
+                    BearyToast.show(in: strongSelf.view, message: BearyRepeatedCopy.networkUnstable)
                 }
                 return
             }
@@ -2842,7 +2842,7 @@ class BearyFeedViewController: UIViewController {
         }
         cell.onEmoteFailed = { [weak self] in
             guard let strongSelf = self else { return }
-            BearyToast.show(in: strongSelf.view, message: "操作失败，请重试")
+            BearyToast.show(in: strongSelf.view, message: BearyRepeatedCopy.operationFailedRetry)
         }
         cell.onShareRequested = { [weak self] entryValue in
             self?.presentShareSheet(for: entryValue)
@@ -3008,7 +3008,7 @@ class BearyFeedViewController: UIViewController {
                     // 白走一趟理由选择；现与卡片点赞/收藏未登录口径对齐：登录态未知先给
                     // 网络不稳定 toast，未登录直接走容器登录门，登录后才进举报流程。
                     if SessionManager.shared.authUnknown {
-                        BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试")
+                        BearyToast.show(in: strongSelf.view, message: BearyRepeatedCopy.networkUnstable)
                         return
                     }
                     if !SessionManager.shared.isLoggedIn {
@@ -3055,7 +3055,7 @@ class BearyFeedViewController: UIViewController {
                                     strongSelf.performVisibilityToggle(entryId: entryId, targetVisibility: targetVisibility, publishTogetherSourceId: sourceId)
                                 case .failure:
                                     strongSelf.pubBusyIds.remove(entryId)
-                                    BearyToast.show(in: strongSelf.view, message: "原日记公开失败，请重试")
+                                    BearyToast.show(in: strongSelf.view, message: BearyRepeatedCopy.originalPublishFailedRetry)
                                 }
                             }
                         }
@@ -3139,8 +3139,8 @@ class BearyFeedViewController: UIViewController {
                         // 失败原因透传：限流时服务端 message 比通用文案有用（entry_write
                         // 120/小时打满即 429）；其余失败仍走通用文案。
                         let message: String
-                        if case .server(let code, _) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
-                        else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
+                        if case .server(let code, _) = err, code == "rate_limited" { message = BearyRepeatedCopy.tooFrequentRetryLater }
+                        else if case .http(let status, _) = err, status == 429 { message = BearyRepeatedCopy.tooFrequentRetryLater }
                         else { message = "切换失败，请重试" }
                         BearyToast.show(in: strongSelf.view, message: message)
                     }

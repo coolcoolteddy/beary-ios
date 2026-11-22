@@ -1780,14 +1780,14 @@ final class BearyTimelineCell: UITableViewCell {
         quoteCard.clear()
         quoteCard.isHidden = true
         if entry.quote == nil, entry.quoteId != nil {
-            quoteCard.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+            quoteCard.showGone(message: BearyRepeatedCopy.quotedEntryDeleted, iconName: "icon_quote", sourceDeleted: true)
             quoteCard.isHidden = false
         } else if let quote = entry.quote {
             // B-G2 decision order (web tlQuoteHtml order: gone -> locked -> visibility):
             // non-empty server fields win; missing fields fall back to old heuristic.
             let quoteBody = (quote.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if quote.gone == true {
-                quoteCard.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+                quoteCard.showGone(message: BearyRepeatedCopy.quotedEntryDeleted, iconName: "icon_quote", sourceDeleted: true)
                 quoteCard.isHidden = false
             } else if quote.locked == true {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: true, visibility: quote.visibility)
@@ -1795,7 +1795,7 @@ final class BearyTimelineCell: UITableViewCell {
                 quoteCard.isHidden = false
             } else if quoteBody.isEmpty {
                 if quote.isPublic == true {
-                    quoteCard.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+                    quoteCard.showGone(message: BearyRepeatedCopy.quotedEntryDeleted, iconName: "icon_quote", sourceDeleted: true)
                 } else {
                     let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
                     quoteCard.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
@@ -6619,13 +6619,13 @@ class BearyTimelineViewController: UIViewController {
             }
         } else if timelineState == .failed && timelineEntries.isEmpty && !hasRows {
             if isLoginEmpty {
-                tableView.backgroundView = emptyView(title: "请先登录", subtitle: "时间线只放你自己的日记，登录后就能看", actionTitle: "去登录", action: { [weak self] in
+                tableView.backgroundView = emptyView(title: BearyRepeatedCopy.loginRequired, subtitle: "时间线只放你自己的日记，登录后就能看", actionTitle: "去登录", action: { [weak self] in
                     self?.onRequireLogin?()
                 }, iconName: "icon_calendar", kind: .login)
                 newBackgroundKind = "login"
             } else {
                 // W10：加载失败空态副标题为中性文案“加载失败，请重试”。
-                tableView.backgroundView = emptyView(title: "加载失败", subtitle: "加载失败，请重试", actionTitle: "重试", action: { [weak self] in
+                tableView.backgroundView = emptyView(title: "加载失败", subtitle: BearyRepeatedCopy.loadFailedRetry, actionTitle: "重试", action: { [weak self] in
                     self?.reloadTimeline()
                 }, iconName: "icon_wifi_off", kind: .error)
                 newBackgroundKind = "failed"
@@ -6786,7 +6786,7 @@ class BearyTimelineViewController: UIViewController {
                                     strongSelf.performPublishEntry(entry, targetVisibility: targetVisibility, publishTogetherSourceId: sourceId)
                                 case .failure:
                                     strongSelf.publishBusyIds.remove(entryId)
-                                    strongSelf.showTimelineToast(message: "原日记公开失败，请重试")
+                                    strongSelf.showTimelineToast(message: BearyRepeatedCopy.originalPublishFailedRetry)
                                 }
                             }
                         }
@@ -6857,8 +6857,8 @@ class BearyTimelineViewController: UIViewController {
                         }
                     } else {
                         let message: String
-                        if case .server(let code, _) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
-                        else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
+                        if case .server(let code, _) = err, code == "rate_limited" { message = BearyRepeatedCopy.tooFrequentRetryLater }
+                        else if case .http(let status, _) = err, status == 429 { message = BearyRepeatedCopy.tooFrequentRetryLater }
                         else { message = "切换失败，请重试" }
                         strongSelf.showTimelineToast(message: message)
                     }

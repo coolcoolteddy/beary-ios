@@ -242,7 +242,7 @@ final class BearySnapshotListViewController: UIViewController {
                     self.tableView.reloadData()
                     BearyToast.show(in: self.view, message: "快照已清空")
                 case .failure:
-                    BearyToast.show(in: self.view, message: "操作失败，请重试")
+                    BearyToast.show(in: self.view, message: BearyRepeatedCopy.operationFailedRetry)
                 }
             }
         }

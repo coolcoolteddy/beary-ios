@@ -332,7 +332,7 @@ final class BearyPublishCenter {
                                         runningJob.sourcePublished = true
                                         self.uploadNext(runningJob)
                                     } else {
-                                        self.fail(runningJob, message: "原日记公开失败，请重试")
+                                        self.fail(runningJob, message: BearyRepeatedCopy.originalPublishFailedRetry)
                                     }
                                 case .failure:
                                     self.fail(runningJob, message: "网络不稳定，原日记是否已公开未知，请打开草稿查看后重试")
@@ -340,7 +340,7 @@ final class BearyPublishCenter {
                             }
                         }
                     } else {
-                        self.fail(runningJob, message: "原日记公开失败，请重试")
+                        self.fail(runningJob, message: BearyRepeatedCopy.originalPublishFailedRetry)
                     }
                 }
             }

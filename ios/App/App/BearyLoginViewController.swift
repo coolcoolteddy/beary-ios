@@ -1124,7 +1124,7 @@ final class BearyLoginViewController: UIViewController {
                     strongSelf.showMessage(message)
                     strongSelf.updateButtonStates()
                 case .failure(.network):
-                    strongSelf.showMessage("网络不稳定，请稍后再试")
+                    strongSelf.showMessage(BearyRepeatedCopy.networkUnstable)
                     strongSelf.updateButtonStates()
                 case .failure:
                     strongSelf.showMessage("发送失败，请重试")
@@ -1197,7 +1197,7 @@ final class BearyLoginViewController: UIViewController {
                 case .failure(.server(let message, _)):
                     strongSelf.showMessage(message)
                 case .failure(.network):
-                    strongSelf.showMessage("网络不稳定，请稍后再试")
+                    strongSelf.showMessage(BearyRepeatedCopy.networkUnstable)
                 case .failure:
                     strongSelf.showMessage("验证失败，请重试")
                 }
@@ -1282,7 +1282,7 @@ final class BearyLoginViewController: UIViewController {
                 case .failure(.server(let message, _)):
                     strongSelf.showMessage(message)
                 case .failure(.network):
-                    strongSelf.showMessage("网络不稳定，请稍后再试")
+                    strongSelf.showMessage(BearyRepeatedCopy.networkUnstable)
                 case .failure:
                     strongSelf.showMessage("Apple 登录失败，请重试")
                 }

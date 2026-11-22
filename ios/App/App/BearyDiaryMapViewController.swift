@@ -408,7 +408,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         } else {
             // 有数据时才留“加载中…”作刷新提示（旧列表即占位）；无数据时
             // fetchAllEntries 走骨架，状态行留空。
-            if !allEntries.isEmpty { setStatusTextFaded("加载中…") }
+            if !allEntries.isEmpty { setStatusTextFaded(BearyRepeatedCopy.loading) }
             fetchAllEntries()
         }
     }
@@ -448,7 +448,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             allEntries = []
             regroupAndGeocode()
         case .loading:
-            setStatusTextFaded("加载中…")
+            setStatusTextFaded(BearyRepeatedCopy.loading)
         }
     }
 

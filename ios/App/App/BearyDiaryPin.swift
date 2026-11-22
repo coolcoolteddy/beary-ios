@@ -91,7 +91,7 @@ enum BearyDiaryPin {
     static func errorMessage(for error: APIError, pinning: Bool) -> String {
         switch error {
         case .unauthorized:
-            return "请先登录"
+            return BearyRepeatedCopy.loginRequired
         case .notFound:
             return "日记不存在"
         case .http(let status, _) where status == 403:
@@ -99,9 +99,9 @@ enum BearyDiaryPin {
         case .http(let status, _) where status == 503:
             return "置顶功能暂不可用，请稍后再试"
         case .server(let code, _) where code == "rate_limited":
-            return "操作太频繁，请稍后再试"
+            return BearyRepeatedCopy.tooFrequentRetryLater
         case .http(let status, _) where status == 429:
-            return "操作太频繁，请稍后再试"
+            return BearyRepeatedCopy.tooFrequentRetryLater
         default:
             return pinning ? "置顶失败，请重试" : "取消置顶失败，请重试"
         }
