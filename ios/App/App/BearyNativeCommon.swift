@@ -40,6 +40,16 @@ enum BearyChrome {
     }
 }
 
+/// 按钮内边距 token（可复用资源 26 遍第 3 条）：图标-文字间距 6、横向内边距 12、
+/// chip 内边距 (7,12,7,12)、宽横向内边距 16。四簇字面量原散落 38 处，改一处全站同步。
+/// 与 BearySpace（页面级档位 xs/sm/md/lg）不同：这里是按钮 content/titleEdgeInsets 专用。
+enum BearySpacing {
+    static let iconTextGap: CGFloat = 6
+    static let pillHorizontalInset: CGFloat = 12
+    static let chipInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+    static let wideHorizontalInset: CGFloat = 16
+}
+
 /// 桌面式断点（第十二轮第五轮第 3 项，#1424 同款判定）：仅 iPad 且宽 ≥821 才为真；
 /// iPhone 横屏 932/852/844/926pt 也 ≥821，但仍走 iPhone 式全宽，不进 600 居中桌面态。
 /// 宽度阈值保留作 iPad 窄屏/分屏的补充条件。内容列各页共用此入口，不再各写宽判定。

@@ -274,7 +274,7 @@ final class BearyInviteViewController: UIViewController {
         copyButton.setTitleColor(BearyColors.ink, for: .normal)
         copyButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         copyButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        copyButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        copyButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.wideHorizontalInset, bottom: 0, right: BearySpacing.wideHorizontalInset)
         copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
         copyButton.bearyAddPressFeedback()
         codeBox.addSubview(codeLabel)
@@ -320,7 +320,7 @@ final class BearyInviteViewController: UIViewController {
         bindButton.setTitleColor(BearyColors.bg, for: .normal)
         bindButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         bindButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        bindButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        bindButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.wideHorizontalInset, bottom: 0, right: BearySpacing.wideHorizontalInset)
         bindButton.addTarget(self, action: #selector(bindTapped), for: .touchUpInside)
         bindButton.bearyAddPressFeedback()
         bindRow.addSubview(bindContainer)
