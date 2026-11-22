@@ -272,26 +272,31 @@ final class BearyTagPickerViewController: UIViewController {
     private func loadMyTags() {
         BearyAPI.shared.fetchMyTags { [weak self] result in
             guard let self = self else { return }
-            switch result {
-            case .success(let tags):
-                self.serverTags = tags
-                // 服务端已有的本地行不再单存（服务端行带篇数）；服务端没有的
-                // 已选标签补进本地行，面板里有行可点才能取消选中。
-                self.localTags.removeAll { local in
-                    tags.contains { $0.tag.lowercased() == local.tag.lowercased() }
+            // 回包跑在 NSURLSession delegate 队列（后台线程）：直接碰 UI
+            // 会在 systemLayoutSizeFitting 里触发 _AssertAutoLayoutOnAllowedThreadsOnly
+            // 抛异常闪退（134 真机实证），先切回主线程再做事。
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let tags):
+                    self.serverTags = tags
+                    // 服务端已有的本地行不再单存（服务端行带篇数）；服务端没有的
+                    // 已选标签补进本地行，面板里有行可点才能取消选中。
+                    self.localTags.removeAll { local in
+                        tags.contains { $0.tag.lowercased() == local.tag.lowercased() }
+                    }
+                    for tag in self.selectedTags {
+                        let key = tag.lowercased()
+                        guard !tags.contains(where: { $0.tag.lowercased() == key }),
+                              !self.localTags.contains(where: { $0.tag.lowercased() == key }) else { continue }
+                        self.localTags.append(BearyTag(tag: tag, count: nil))
+                    }
+                    self.rebuildMyTags()
+                case .failure:
+                    // 失败保留本地行（回包前新建的标签还在首位），只刷新显示。
+                    break
                 }
-                for tag in self.selectedTags {
-                    let key = tag.lowercased()
-                    guard !tags.contains(where: { $0.tag.lowercased() == key }),
-                          !self.localTags.contains(where: { $0.tag.lowercased() == key }) else { continue }
-                    self.localTags.append(BearyTag(tag: tag, count: nil))
-                }
-                self.rebuildMyTags()
-            case .failure:
-                // 失败保留本地行（回包前新建的标签还在首位），只刷新显示。
-                break
+                self.refreshTagList()
             }
-            self.refreshTagList()
         }
     }
 
