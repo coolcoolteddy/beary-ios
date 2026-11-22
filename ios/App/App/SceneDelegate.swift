@@ -4369,7 +4369,7 @@ final class BearyChromeViewController: UIViewController {
             return
         }
         // 审计 P0-1：通知/深链/引用卡直达拉黑作者——只出占位，不出全文。
-        if isBlockedAuthor(fetched) {
+        if BearyBlockedStore.isBlockedAuthor(fetched) {
             var placeholderEntry = fetched
             placeholderEntry.placeholder = true
             presentDetail(entry: placeholderEntry, source: source)
@@ -4425,13 +4425,6 @@ final class BearyChromeViewController: UIViewController {
     /// 关闭后只恢复来源列表在打开时记下的视口位置（其余列表不动、已可见的行不动）；
     /// 编辑／删除先关详情再走既有流程；作者／引用点按先关详情再路由（防 modal 叠 modal）；
     /// 可见性与互动变化同步各列表。
-    /// 审计 P0-1：拉黑作者判定（作者本人永不命中；游客不承接拉黑表）。
-    private func isBlockedAuthor(_ entry: Entry) -> Bool {
-        if SessionManager.shared.isGuestMode { return false }
-        guard let authorId = entry.authorId else { return false }
-        if let viewerId = SessionManager.shared.currentUser?.id, viewerId == authorId { return false }
-        return BearyBlockedStore.isBlocked(authorId)
-    }
 
     @discardableResult
     private func presentDetail(entry: Entry, source: DetailReturnSource? = nil) -> BearyDetailViewController? {
@@ -4452,7 +4445,7 @@ final class BearyChromeViewController: UIViewController {
         }
         // 审计 P0-1：拉黑作者的卡片数据不得出全文——进详情前先转占位。
         var entry = entry
-        if isBlockedAuthor(entry) {
+        if BearyBlockedStore.isBlockedAuthor(entry) {
             entry.placeholder = true
         }
         let detail = BearyDetailViewController(entry: entry)

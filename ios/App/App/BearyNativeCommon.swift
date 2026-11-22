@@ -4282,6 +4282,20 @@ enum BearyBlockedStore {
         return cached?.contains(userId) ?? false
     }
 
+    /// 共享拉黑作者判定（2026-11-22：详情／搜索／SceneDelegate 三处逐字相同实现合一处）。
+    /// 口径一字不改：游客不承接拉黑表、无作者 id 不命中、作者本人永不命中；其余查拉黑表。
+    static func isBlockedAuthor(userId: Int?) -> Bool {
+        if SessionManager.shared.isGuestMode { return false }
+        guard let userId = userId else { return false }
+        if let viewerId = SessionManager.shared.currentUser?.id, viewerId == userId { return false }
+        return isBlocked(userId)
+    }
+
+    /// Entry 版便利入口（与 userId 版同口径）。
+    static func isBlockedAuthor(_ entry: Entry) -> Bool {
+        isBlockedAuthor(userId: entry.authorId)
+    }
+
     static func markBlocked(_ userId: Int) {
         ensureLoaded()
         cached?.insert(userId)

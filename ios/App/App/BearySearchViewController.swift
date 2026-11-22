@@ -409,15 +409,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         scrollView.scrollIndicatorInsets.bottom = chrome + keyboardBottomInset
     }
 
-    /// 补缺 P2-21：搜索拉黑判定（与 SceneDelegate isBlockedAuthor 同口径：游客不承接拉黑表，
-    /// 作者本人永不命中；其余走 BearyBlockedStore 同步缓存，点按路径不发网络）。
-    private func isBlockedForSearch(userId: Int?) -> Bool {
-        if SessionManager.shared.isGuestMode { return false }
-        guard let userId = userId else { return false }
-        if let viewerId = SessionManager.shared.currentUser?.id, viewerId == userId { return false }
-        return BearyBlockedStore.isBlocked(userId)
-    }
-
     /// 审计 P2-20：拉黑作者——用户行与该作者全部日记行一并清掉，引用缓存同清。
     @objc private func handleBlockedUserNotification(_ note: Notification) {
         guard let userId = note.object as? Int else { return }
@@ -2561,8 +2552,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 已在“我的”组出的篇不重复进公开组（本地公开篇进我的组后同此；
         // 与 appendResultRows 的 rowEntryIds 去重同口径）。
         let mineEntryIds = Set(mineEntries.compactMap { $0.id })
-        let publicEntries = (data.entries ?? []).filter { ($0.visibility == "public" || $0.isPublic == true) && !BearyEphemeral.isExpired($0) }.filter { !isBlockedForSearch(userId: $0.authorId) }.filter { $0.id.map { !mineEntryIds.contains($0) } ?? true }
-        let users = (data.users ?? []).filter { !isBlockedForSearch(userId: $0.id) }
+        let publicEntries = (data.entries ?? []).filter { ($0.visibility == "public" || $0.isPublic == true) && !BearyEphemeral.isExpired($0) }.filter { !BearyBlockedStore.isBlockedAuthor(userId: $0.authorId) }.filter { $0.id.map { !mineEntryIds.contains($0) } ?? true }
+        let users = (data.users ?? []).filter { !BearyBlockedStore.isBlockedAuthor(userId: $0.id) }
         if mineEntries.isEmpty && publicEntries.isEmpty && users.isEmpty {
             // 搜索审计第 3 条：空态只在两路都回完且三组都空时才亮；任一路还在
             // 路上时保持加载态（框内圈继续转），不先亮「没有找到」。
@@ -2943,7 +2934,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             // 审计 #19：与 renderResults 逐字一致——公开信号（visibility/is_public 任一）
             // 即可，不过期、不拉黑；缺 is_public 不丢行。
             if (entry.visibility == "public" || entry.isPublic == true) == false || BearyEphemeral.isExpired(entry) { continue }
-            if isBlockedForSearch(userId: entry.authorId) { continue }
+            if BearyBlockedStore.isBlockedAuthor(userId: entry.authorId) { continue }
             guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
                 publicRows.append(row)
@@ -2953,7 +2944,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         var userRows: [UIView] = []
         var newUserKeys: [String] = []
         for user in freshUsers {
-            if isBlockedForSearch(userId: user.id) { continue }
+            if BearyBlockedStore.isBlockedAuthor(userId: user.id) { continue }
             if let key = userKey(for: user), userRowByKey[key] != nil { continue }
             if let key = userKey(for: user) { newUserKeys.append(key) }
             userRows.append(makeUserRow(user: user, query: query))
@@ -3252,7 +3243,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 好友第一期：紧凑版状态机钮（仅登录、非本人、未拉黑时出现；游客/本人/
         // 拉黑无钮；按钮是行内独立 UIControl，点按不触发整行点按）。状态未到
         // 前画与按钮同宽同形的灰色圆角骨架块且不可点（r29-10），读失败画「重试」点按重拉。
-        if let myId = SessionManager.shared.currentUser?.id, let userId = user.id, userId != myId, !isBlockedForSearch(userId: userId) {
+        if let myId = SessionManager.shared.currentUser?.id, let userId = user.id, userId != myId, !BearyBlockedStore.isBlockedAuthor(userId: userId) {
             // 审计：关注钮视觉高约 28 不变，热区用 Hit44 扩到 44。
             let followButton = BearyHit44Button(type: .system)
             followButton.translatesAutoresizingMaskIntoConstraints = false
@@ -3587,7 +3578,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 // 补缺 P2-21：点按前比对拉黑表（渲染后新拉黑的竞态兜底）：命中则不行进主页，
                 // 行即时摘掉并 toast，首渲染过滤与广播清行已覆盖常规路径。
                 let user = rowUsers[index]
-                if isBlockedForSearch(userId: user.id) {
+                if BearyBlockedStore.isBlockedAuthor(userId: user.id) {
                     if let userId = user.id { removeBlockedUserFromResults(userId: userId) }
                     BearyToast.show(in: view, message: "该用户已被拉黑")
                     return
