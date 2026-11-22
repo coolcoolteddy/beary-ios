@@ -1495,74 +1495,26 @@ final class BearyTimelineCell: UITableViewCell {
         return 280
     }
 
-    /// 图片条捏合拼图（#429 卡片/详情同款口径，时间线 cell 此前根本没有捏合，
-    /// 只是点按进灯箱——Li 2026-11-12 报时间线捏不动即因此）：双指捏合把
-    /// 间距 8 → 0、圆角 12 → 0（图贴在一起且无圆角），张开恢复 8 / 12。
-    /// 只动 thumbsStack.spacing 与缩略图圆角，不动图宽/高，不缩放单张图。
-    private var stripPinchStartProgress: CGFloat = 0
-    private var stripPinchJoined = false
+    /// 图片条捏合拼图（#429 卡片/详情同款口径）：双指捏合把间距 8 → 0、圆角 12 → 0
+    /// （图贴在一起且无圆角），张开恢复 8 / 12。只动 thumbsStack.spacing 与缩略图圆角，
+    /// 不动图宽/高，不缩放单张图。状态机见共享 BearyImageStripPinch（BearyDiaryCardCell.swift）。
+    private let stripPinch = BearyImageStripPinch()
 
     private func installImageStripPinch() {
-        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(imageStripPinched(_:)))
-        pinch.delegate = self
-        thumbsScrollView.addGestureRecognizer(pinch)
+        stripPinch.install(target: self, action: #selector(imageStripPinched(_:)), delegate: self, on: thumbsScrollView)
     }
 
-    /// 捏合跟手圆角：progress 0 → 圆角 12，progress 1（贴合）→ 圆角 0，与间距同一进度走，
-    /// 不在松手瞬间跳变；只改缩略图图层圆角，不动其他圆角。
+    /// 捏合跟手圆角（共享状态机入口）。
     private func applyImageStripCornerRadius(progress: CGFloat) {
-        let radius = 12 * (1 - max(0, min(1, progress)))
-        for thumb in thumbImageViews { thumb.layer.cornerRadius = radius }
+        stripPinch.applyCornerRadius(thumbImageViews, progress: progress)
     }
 
     @objc private func imageStripPinched(_ gesture: UIPinchGestureRecognizer) {
-        // 单图时无间距可收，不接管手势（也不禁滚动）。
-        let visibleCount = thumbImageViews.count
-        guard visibleCount >= 2 else { return }
-        switch gesture.state {
-        case .began:
-            // 以当前实际间距起算，防上一轮贴合动画中途被新一轮捏合打断时跳变。
-            stripPinchStartProgress = max(0, min(1, 1 - thumbsStack.spacing / 8))
-            thumbsScrollView.isScrollEnabled = false
-        case .changed:
-            // scale < 1 为捏合（progress 增大、间距收小），scale > 1 为张开（反向）；
-            // 从贴合态起手张开同样走这条式子，不会出现“贴合后张开无效”。
-            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
-            thumbsStack.spacing = 8 * (1 - progress)
-            applyImageStripCornerRadius(progress: progress)
-            thumbsScrollView.setNeedsLayout()
-        case .ended, .cancelled, .failed:
-            thumbsScrollView.isScrollEnabled = true
-            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
-            let wasJoined = stripPinchJoined
-            stripPinchJoined = progress >= 0.5
-            // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
-            // 跟手过程、取消/失败、原地未变都不震。
-            if gesture.state == .ended && wasJoined != stripPinchJoined {
-                BearyHaptics.press()
-            }
-            // 落点走拖拽收尾统一弹簧 0.30s／damping 0.7；减动效直接落终值，不播弹簧。
-            if UIAccessibility.isReduceMotionEnabled {
-                self.thumbsStack.spacing = self.stripPinchJoined ? 0 : 8
-                self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
-                self.thumbsScrollView.layoutIfNeeded()
-            } else {
-                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
-                    self.thumbsStack.spacing = self.stripPinchJoined ? 0 : 8
-                    self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
-                    self.thumbsScrollView.layoutIfNeeded()
-                })
-            }
-        default:
-            break
-        }
+        stripPinch.handle(gesture, slots: thumbImageViews, stack: thumbsStack, scrollView: thumbsScrollView, visibleCount: thumbImageViews.count, settleDuration: 0.30)
     }
 
     private func resetImageStripPinch() {
-        stripPinchJoined = false
-        thumbsStack.spacing = 8
-        applyImageStripCornerRadius(progress: 0)
-        thumbsScrollView.isScrollEnabled = true
+        stripPinch.reset(slots: thumbImageViews, stack: thumbsStack, scrollView: thumbsScrollView)
     }
 
     /// 九宫格入口显隐：图片数 > 3 才出现；状态真变时才动（复用滚动不闪）。

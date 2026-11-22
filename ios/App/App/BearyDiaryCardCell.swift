@@ -110,6 +110,85 @@ func bearyStripWidth(forImageSize size: CGSize, height: CGFloat) -> CGFloat {
     return round(max(height * 0.55, min(height * 2.22, raw)))
 }
 
+/// 图片条捏合拼图共享状态机（卡片／详情／时间线三处共用）：
+/// 双指捏合把间距 8 → 0、圆角 12 → 0（图贴在一起且无圆角），张开恢复 8 / 12。
+/// 只动栈 spacing 与槽位圆角，不动槽宽/高，不缩放单张图；灯箱自带的单图捏合缩放不在此范围。
+/// 容器（槽位／栈／滚动视图）与落点弹簧时长作参数：卡片与详情走 BearyMotion.normal，
+/// 时间线走 0.30。单图（visibleCount < 2）不接管；落点 progress >= 0.5 拼合；
+/// 落点弹簧 damping 0.7；减动效直接落终值。滚动视图本身未开 zoom（min/max 均为 1），
+/// 其内置捏合手势不会抢占本手势。
+final class BearyImageStripPinch {
+    private var startProgress: CGFloat = 0
+    private var joined = false
+
+    func install(target: Any?, action: Selector?, delegate: UIGestureRecognizerDelegate?, on scrollView: UIScrollView) {
+        let pinch = UIPinchGestureRecognizer(target: target, action: action)
+        pinch.delegate = delegate
+        scrollView.addGestureRecognizer(pinch)
+    }
+
+    /// 捏合跟手圆角：progress 0 → 圆角 12，progress 1（贴合）→ 圆角 0，与间距同一进度走，
+    /// 不在松手瞬间跳变；只改槽位图层圆角，不动其他圆角。
+    func applyCornerRadius<S: UIView>(_ slots: [S], progress: CGFloat) {
+        let radius = 12 * (1 - max(0, min(1, progress)))
+        for slot in slots { slot.layer.cornerRadius = radius }
+    }
+
+    func handle<S: UIView>(_ gesture: UIPinchGestureRecognizer, slots: [S], stack: UIStackView, scrollView: UIScrollView, visibleCount: Int, settleDuration: TimeInterval) {
+        // 单图时无间距可收，不接管手势（也不禁滚动）。
+        guard visibleCount >= 2 else { return }
+        switch gesture.state {
+        case .began:
+            // 以当前实际间距起算，防上一轮贴合动画中途被新一轮捏合打断时跳变。
+            startProgress = max(0, min(1, 1 - stack.spacing / 8))
+            scrollView.isScrollEnabled = false
+        case .changed:
+            // scale < 1 为捏合（progress 增大、间距收小），scale > 1 为张开（反向）；
+            // 从贴合态起手张开同样走这条式子，不会出现“贴合后张开无效”。
+            let progress = max(0, min(1, startProgress + (1 - gesture.scale)))
+            stack.spacing = 8 * (1 - progress)
+            applyCornerRadius(slots, progress: progress)
+            // 跟手过程只改值 + setNeedsLayout，不逐帧强制 layout；
+            // 下一 runloop 布局即下一帧见效，跟手感不变；松手后的落点动画
+            // （.ended 的 UIView.animate 内）仍用 layoutIfNeeded 做结算。
+            scrollView.setNeedsLayout()
+        case .ended, .cancelled, .failed:
+            scrollView.isScrollEnabled = true
+            let progress = max(0, min(1, startProgress + (1 - gesture.scale)))
+            let wasJoined = joined
+            joined = progress >= 0.5
+            // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
+            // 跟手过程、取消/失败、原地未变都不震；震动走 BearyHaptics 口径，
+            // 不拿减动效门控（两者不是一回事，见 BearyHaptics 头注释）。
+            if gesture.state == .ended && wasJoined != joined {
+                BearyHaptics.press()
+            }
+            // 落点弹簧 damping 0.7（落点动画属性是间距／圆角、非缩放量，捏合速度无直接映射，初速度取 0）；减动效直接落终值，不播弹簧。
+            if UIAccessibility.isReduceMotionEnabled {
+                stack.spacing = joined ? 0 : 8
+                applyCornerRadius(slots, progress: joined ? 1 : 0)
+                scrollView.layoutIfNeeded()
+            } else {
+                UIView.animate(withDuration: settleDuration, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+                    stack.spacing = self.joined ? 0 : 8
+                    self.applyCornerRadius(slots, progress: self.joined ? 1 : 0)
+                    scrollView.layoutIfNeeded()
+                })
+            }
+        default:
+            break
+        }
+    }
+
+    func reset<S: UIView>(slots: [S], stack: UIStackView, scrollView: UIScrollView) {
+        joined = false
+        stack.spacing = 8
+        applyCornerRadius(slots, progress: 0)
+        scrollView.isScrollEnabled = true
+    }
+}
+
+
 /// 经 bearySetImage 的 onFailure 钩子加载：失败（取消除外，复用取消不算失败）时亮重试图标。
 /// blurUp=true 时走模糊到清晰（32px 小图占位 → 原图 1.04→1 缩放淡入），
 /// 只用于卡片/详情图片槽；头像等传 false，走原口径。
@@ -1426,77 +1505,24 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// 图片条捏合拼图：双指捏合把间距 8 → 0、圆角 12 → 0（图贴在一起且无圆角），张开恢复 8 / 12。
     /// 只动 imagesStack.spacing 与槽位圆角，不动槽宽/高，不缩放单张图；灯箱自带的
-    /// 单图捏合缩放不在此改动范围。滚动视图本身未开 zoom（min/max 均为 1），
-    /// 其内置捏合手势不会抢占本手势。
-    private var stripPinchStartProgress: CGFloat = 0
-    private var stripPinchJoined = false
+    /// 单图捏合缩放不在此改动范围。状态机见共享 BearyImageStripPinch（本文件顶部）。
+    private let stripPinch = BearyImageStripPinch()
 
     private func installImageStripPinch() {
-        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(imageStripPinched(_:)))
-        pinch.delegate = self
-        imagesScrollView.addGestureRecognizer(pinch)
+        stripPinch.install(target: self, action: #selector(imageStripPinched(_:)), delegate: self, on: imagesScrollView)
     }
 
-    /// 捏合跟手圆角：progress 0 → 圆角 12，progress 1（贴合）→ 圆角 0，与间距同一进度走，
-    /// 不在松手瞬间跳变；只改槽位图层圆角，不动其他圆角。
+    /// 捏合跟手圆角（共享状态机入口）。
     private func applyImageStripCornerRadius(progress: CGFloat) {
-        let radius = 12 * (1 - max(0, min(1, progress)))
-        for slot in imageSlots { slot.layer.cornerRadius = radius }
+        stripPinch.applyCornerRadius(imageSlots, progress: progress)
     }
 
     @objc private func imageStripPinched(_ gesture: UIPinchGestureRecognizer) {
-        // 单图时无间距可收，不接管手势（也不禁滚动）。
-        let visibleCount = imageSlots.filter { !$0.isHidden }.count
-        guard visibleCount >= 2 else { return }
-        switch gesture.state {
-        case .began:
-            // 以当前实际间距起算，防上一轮贴合动画中途被新一轮捏合打断时跳变。
-            stripPinchStartProgress = max(0, min(1, 1 - imagesStack.spacing / 8))
-            imagesScrollView.isScrollEnabled = false
-        case .changed:
-            // scale < 1 为捏合（progress 增大、间距收小），scale > 1 为张开（反向）；
-            // 从贴合态起手张开同样走这条式子，不会出现“贴合后张开无效”。
-            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
-            imagesStack.spacing = 8 * (1 - progress)
-            applyImageStripCornerRadius(progress: progress)
-            // 审计动效组：跟手过程只改值 + setNeedsLayout，不逐帧强制 layout；
-            // 下一 runloop 布局即下一帧见效，跟手感不变；松手后的落点动画
-            // （.ended 的 UIView.animate 内）仍用 layoutIfNeeded 做结算。
-            imagesScrollView.setNeedsLayout()
-        case .ended, .cancelled, .failed:
-            imagesScrollView.isScrollEnabled = true
-            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
-            let wasJoined = stripPinchJoined
-            stripPinchJoined = progress >= 0.5
-            // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
-            // 跟手过程、取消/失败、原地未变都不震；震动走 BearyHaptics 口径，
-            // 不拿减动效门控（两者不是一回事，见 BearyHaptics 头注释）。
-            if gesture.state == .ended && wasJoined != stripPinchJoined {
-                BearyHaptics.press()
-            }
-            // 捏合拼图落点走拖拽收尾统一弹簧 0.26s／damping 0.7（落点动画
-            // 属性是间距／圆角、非缩放量，捏合速度无直接映射，初速度取 0）；减动效直接落终值，不播弹簧。
-            if UIAccessibility.isReduceMotionEnabled {
-                self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
-                self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
-                self.imagesScrollView.layoutIfNeeded()
-            } else {
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
-                    self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
-                    self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
-                    self.imagesScrollView.layoutIfNeeded()
-                })
-            }
-        default:
-            break
-        }
+        stripPinch.handle(gesture, slots: imageSlots, stack: imagesStack, scrollView: imagesScrollView, visibleCount: imageSlots.filter { !$0.isHidden }.count, settleDuration: BearyMotion.normal)
     }
 
     private func resetImageStripPinch() {
-        stripPinchJoined = false
-        imagesStack.spacing = 8
-        applyImageStripCornerRadius(progress: 0)
-        imagesScrollView.isScrollEnabled = true
+        stripPinch.reset(slots: imageSlots, stack: imagesStack, scrollView: imagesScrollView)
     }
 
     /// 九宫格入口隐藏动画代次：收起动画完成时若已有新一轮展开，须以新态为准、不再藏。
