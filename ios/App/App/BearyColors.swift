@@ -48,6 +48,10 @@ enum BearyColors {
     /// 浅色白底对比约 7.13:1、绿底 0.12 浅底对比约 6.42:1；深色黑底对比约 9.46:1。
     /// 只用于文字前景；语义绿填充 #2fbf71 底色不动。
     static var deepGreenText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 52.0/255.0, green: 199.0/255.0, blue: 89.0/255.0, alpha: 1) : UIColor(red: 22.0/255.0, green: 101.0/255.0, blue: 52.0/255.0, alpha: 1) } }
+    /// 开关绿：iOS 系统绿 #34C759（UISwitch onTintColor 用；引导页提醒开关与
+    /// ID 卡 Plus 预览开关共用）。固定 RGB，不随深浅变——两处原值皆然；
+    /// 深色下不用 systemGreen（其深色值更亮，会改现有外观）。
+    static var switchGreen: UIColor { UIColor(red: 52.0/255.0, green: 199.0/255.0, blue: 89.0/255.0, alpha: 1) }
     /// 网页 --line：浅 #dbdbdb / 深 #3a3a40（深色带蓝偏，单 white 值复现不了）。
     static var line: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 58.0/255.0, green: 58.0/255.0, blue: 64.0/255.0, alpha: 1) : UIColor(white: 0.86, alpha: 1) } }
     /// 网页 --bg：浅 #fff / 深 #0B0B0D（2026-11-07 微明度定版推翻 2026-10-27 纯黑决定：

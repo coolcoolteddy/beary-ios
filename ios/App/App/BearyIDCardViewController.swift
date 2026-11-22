@@ -795,7 +795,7 @@ final class BearyIDCardSheetViewController: UIViewController {
         plusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         plusRow.addArrangedSubview(plusSpacer)
         plusSwitch.translatesAutoresizingMaskIntoConstraints = false
-        plusSwitch.onTintColor = UIColor(red: 52.0 / 255.0, green: 199.0 / 255.0, blue: 89.0 / 255.0, alpha: 1)
+        plusSwitch.onTintColor = BearyColors.switchGreen
         plusSwitch.isOn = false
         plusSwitch.addTarget(self, action: #selector(plusSwitchChanged(_:)), for: .valueChanged)
         plusRow.addArrangedSubview(plusSwitch)
