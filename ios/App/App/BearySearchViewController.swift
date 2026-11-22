@@ -4152,11 +4152,11 @@ private final class BearySearchImageRetry: NSObject {
         generation += 1
         let capturedGeneration = generation
         retryButton.isHidden = true
-        imageView.bearySetImage(url: imageURL, placeholder: nil) { [weak self] _ in
+        imageView.bearySetImageWithBlurUp(url: imageURL, onFailure: { [weak self] _ in
             guard let self = self else { return }
             guard capturedGeneration == self.generation else { return }
             self.retryButton.isHidden = false
-        }
+        })
     }
 
     @objc private func retryTapped() {

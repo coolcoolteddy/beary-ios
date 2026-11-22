@@ -1134,7 +1134,7 @@ class BearyEditProfileViewController: UIViewController {
            let coverPath = initialCoverUrl,
            let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
             didLoadInitialCover = true
-            coverImageView.bearySetImage(url: coverURLValue, placeholder: nil)
+            coverImageView.bearySetImageWithBlurUp(url: coverURLValue)
         }
     }
 

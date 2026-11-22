@@ -112,7 +112,7 @@ func bearyStripWidth(forImageSize size: CGSize, height: CGFloat) -> CGFloat {
 
 /// 经 bearySetImage 的 onFailure 钩子加载：失败（取消除外，复用取消不算失败）时亮重试图标。
 /// blurUp=true 时走模糊到清晰（32px 小图占位 → 原图 1.04→1 缩放淡入），
-/// 只用于卡片/详情图片槽；头像等传 false，走原口径。
+/// 只用于卡片/详情图片槽与盲盒收到的日记图；头像等传 false，走原口径。
 /// onSuccess：图到后回调（小图与原图各一次，宽高比一致），图片条用它按
 /// 实测尺寸纠槽宽；不传时行为与原来一致。
 func bearyFeedLoadImage(into imageView: UIImageView, url: URL?, retryButton: BearyFeedRetryButton, downsampleToWidth: CGFloat? = nil, blurUp: Bool = false, onSuccess: ((UIImage) -> Void)? = nil) {
