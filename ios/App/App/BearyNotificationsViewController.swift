@@ -311,6 +311,20 @@ final class BearyNotificationsViewController: UIViewController {
     private var cardAnimatingExpanding = false
     private var cardAnimationGeneration = 0
     private var cardAnimator: UIViewPropertyAnimator?
+    /// 卡片动画 animator 工厂：展开／收起两处共用曲线与代次 bookkeeping——
+    /// 建 animator 前代次 +1 并捕获，completion 先验代次（过期直接返回），
+    /// 再跑各处自己的清理动作；动画本体（addAnimations）各处自写，不动。
+    /// 错峰入场只共用曲线、不走本工厂（无代次，+1 会误杀在途卡片动画）。
+    private func makeCardAnimator(duration: TimeInterval, completion: @escaping (BearyNotificationsViewController) -> Void) -> UIViewPropertyAnimator {
+        cardAnimationGeneration += 1
+        let generation = cardAnimationGeneration
+        let animator = UIViewPropertyAnimator(duration: duration, timingParameters: BearyMotion.cardCurve)
+        animator.addCompletion({ [weak self] _ in
+            guard let strongSelf = self, generation == strongSelf.cardAnimationGeneration else { return }
+            completion(strongSelf)
+        })
+        return animator
+    }
     /// 第七轮 7：收起快照——展开区收起时先把可见子行拍成静态图贴在原位，
     /// 行表直接删行落终值（无高度插值、无约束打架），再把快照整体向上收起；
     /// 动画期间禁滚（快照贴在 view 坐标里，不跟表滚），减动效不走本路径。
@@ -1442,7 +1456,7 @@ final class BearyNotificationsViewController: UIViewController {
             cell.transform = CGAffineTransform(translationX: 0, y: -24)
             let animator = UIViewPropertyAnimator(
                 duration: BearyMotion.normal,
-                timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1))
+                timingParameters: BearyMotion.cardCurve
             )
             animator.addAnimations({
                 cell.alpha = 1
@@ -1715,16 +1729,7 @@ final class BearyNotificationsViewController: UIViewController {
                     cardCell.setChevronExpanded(true)
                 }
             }
-            cardAnimationGeneration += 1
-            let generation = cardAnimationGeneration
-            let animator = UIViewPropertyAnimator(duration: BearyMotion.localStateDuration, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
-            animator.addAnimations({
-                self.zeroHeightRows.removeAll()
-                self.tableView.beginUpdates()
-                self.tableView.endUpdates()
-            })
-            animator.addCompletion({ [weak self] _ in
-                guard let strongSelf = self, generation == strongSelf.cardAnimationGeneration else { return }
+            let animator = makeCardAnimator(duration: BearyMotion.localStateDuration) { strongSelf in
                 strongSelf.zeroHeightRows.removeAll()
                 strongSelf.cardAnimatingKind = nil
                 strongSelf.isCardAnimating = false
@@ -1732,6 +1737,11 @@ final class BearyNotificationsViewController: UIViewController {
                 for visibleCell in strongSelf.tableView.visibleCells {
                     visibleCell.accessibilityElementsHidden = false
                 }
+            }
+            animator.addAnimations({
+                self.zeroHeightRows.removeAll()
+                self.tableView.beginUpdates()
+                self.tableView.endUpdates()
             })
             cardAnimator = animator
             animator.startAnimation()
@@ -1815,18 +1825,14 @@ final class BearyNotificationsViewController: UIViewController {
             isCardAnimating = true
             cardAnimatingKind = kind
             cardAnimatingExpanding = false
-            cardAnimationGeneration += 1
-            let generation = cardAnimationGeneration
             let collapsedFrame = CGRect(x: snapshot.frame.minX, y: snapshot.frame.minY, width: snapshot.frame.width, height: 0)
-            let animator = UIViewPropertyAnimator(duration: BearyMotion.localStateDuration, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
-            animator.addAnimations({
-                snapshot.frame = collapsedFrame
-            })
-            animator.addCompletion({ [weak self] _ in
-                guard let strongSelf = self, generation == strongSelf.cardAnimationGeneration else { return }
+            let animator = makeCardAnimator(duration: BearyMotion.localStateDuration) { strongSelf in
                 strongSelf.removeCollapseSnapshot()
                 strongSelf.cardAnimatingKind = nil
                 strongSelf.isCardAnimating = false
+            }
+            animator.addAnimations({
+                snapshot.frame = collapsedFrame
             })
             collapseSnapshotAnimator = animator
             animator.startAnimation()
