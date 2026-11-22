@@ -2871,7 +2871,7 @@ final class BearyDetailViewController: UIViewController {
         }
         // 批 B：只显示熊脸（小熊回应墙同款 BearyEmoteKeys.bearFaceKeys 过滤，
         // 仅显示层过滤、服务端模型不动）；空 key 不建 chip；同 key 只留首个
-        // （模型侧 merged／emoteDelta 已按 key 去重，防重复 key 建出双 chip）。
+        // （模型侧 merged／BearyEmoteOrder.delta 已按 key 去重，防重复 key 建出双 chip）。
         var seenKeys = Set<String>()
         var list: [EmoteCount] = []
         for item in (entry.emotes ?? []).sorted(by: { ($0.count ?? 0) > ($1.count ?? 0) }) {
@@ -3088,35 +3088,6 @@ final class BearyDetailViewController: UIViewController {
         view.setNeedsLayout()
     }
 
-    private func emoteDelta(_ list: [EmoteCount], key: String, added: Bool) -> [EmoteCount] {
-        var out: [EmoteCount] = []
-        var found = false
-        for var item in list {
-            guard let itemKey = item.emote, !itemKey.isEmpty else { continue }
-            if itemKey == key {
-                found = true
-                if added {
-                    item.count = (item.count ?? 0) + 1
-                    item.mine = true
-                    out.append(item)
-                } else {
-                    let next = (item.count ?? 0) - 1
-                    if next > 0 {
-                        item.count = next
-                        item.mine = false
-                        out.append(item)
-                    }
-                }
-            } else {
-                out.append(item)
-            }
-        }
-        if added && !found {
-            out.append(EmoteCount(emote: key, count: 1, mine: true))
-        }
-        return out
-    }
-
     /// 选回应（chip 点按取下／picker 选定贴上共用）：先行增量 → POST → 成功对齐服务端值，
     /// 失败回滚＋拒绝动效；未登录走登录提示（先行态复原），非公开弹“公开后才能回应”。
     private func chooseEmote(key: String) {
@@ -3132,7 +3103,7 @@ final class BearyDetailViewController: UIViewController {
         if isEmoteBusy { return }
         let original = entry.emotes ?? []
         let mine = original.first(where: { $0.emote == key })?.mine ?? false
-        let optimistic = emoteDelta(original, key: key, added: !mine)
+        let optimistic = BearyEmoteOrder.delta(original, key: key, added: !mine)
         entry.emotes = optimistic
         renderEmotes()
         refreshActionRow()
