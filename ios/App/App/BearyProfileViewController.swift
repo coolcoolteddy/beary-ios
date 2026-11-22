@@ -8302,6 +8302,15 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         }
     }
 
+    /// 刷新结束恢复陀螺仪：仅在手指已离开且不在减速时恢复；仍在拖动／减速
+    /// 时由滚动代理按“拖动即停、停稳才重开”恢复，不在这里抢。
+    private func resumeCoverGyroAfterRefreshIfSettled() {
+        guard !tableView.isDragging && !tableView.isDecelerating else { return }
+        profileCoverScrolling = false
+        updateFestivalWallpaperVisibility()
+        updateProfileCoverVisibility()
+    }
+
     /// 自定义下拉刷新结束：回包到即复位到基线内边距（第 2 项后无最低展示）；两路回包
     /// （资料 / 标签）都走这里，先到先收（与旧标准头先到先停同口径），
     /// 旧回包丢弃时仍需走这里，不让刷新头永不结束。
@@ -8336,10 +8345,12 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             // 拉量可能又把封面拉伸+模糊，动画结束时不再有滚动事件来
             // 复位，故此处强制归自然态（无模糊、无放大）。
             self.resetCoverStretch()
+            self.resumeCoverGyroAfterRefreshIfSettled()
         } else {
             UIView.animate(withDuration: BearyMotion.normal, animations: pullOut, completion: { _ in
                 self.refreshIconView.stopSpinning()
                 self.resetCoverStretch()
+                self.resumeCoverGyroAfterRefreshIfSettled()
             })
         }
     }
@@ -9875,7 +9886,12 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             // 动画，旧口径“原样返回”会把刷新触发前的拉伸态（高 180+拉量、
             // 左右各扩一半、模糊 alpha>0）原封不动留在顶端；刷新期间封面
             // 本就应为自然态，故一律复位，不再按瞬时拉量拉伸。
-            resetCoverStretch()
+            // 2026-11-22 刷新期运动修法：复位走动画版——无动画的立即复位会
+            // 在 inset/offset 动画还没走完时把封面一帧跳回自然态，周围内容
+            // 却还在滑动，轨迹看起来就是怪的；动画版与刷新动画同为 0.28s
+            // ease-out 且 beginFromCurrentState，封面随内容一起滑回自然态，
+            // 终态仍是自然态，顶端残留修法不动。
+            resetCoverStretchAnimated()
             return
         }
         let pull = topBaseline - y
@@ -10388,9 +10404,13 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
         // 停稳：陀螺仪重画恢复（带子可见时才开，见 updateProfileCoverVisibility）。
-        profileCoverScrolling = false
-        updateFestivalWallpaperVisibility()
-        updateProfileCoverVisibility()
+        // 刷新期除外：刷新动画还没走完就恢复，景深图层边倾斜边复位，轨迹怪；
+        // 刷新期保持暂停，刷新结束由 endCustomPullRefresh 恢复。
+        if !isCustomPullRefreshing {
+            profileCoverScrolling = false
+            updateFestivalWallpaperVisibility()
+            updateProfileCoverVisibility()
+        }
         if scrollView.contentOffset.y <= -scrollView.contentInset.top && !isCustomPullRefreshing {
             resetCoverStretch()
         }
@@ -10401,9 +10421,12 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
         // 程序化滚动结束也清滚动态（与拖动不重叠，只防拖动被后台打断后状态残留）。
-        profileCoverScrolling = false
-        updateFestivalWallpaperVisibility()
-        updateProfileCoverVisibility()
+        // 刷新期除外（同 scrollViewDidEndDecelerating），由 endCustomPullRefresh 恢复。
+        if !isCustomPullRefreshing {
+            profileCoverScrolling = false
+            updateFestivalWallpaperVisibility()
+            updateProfileCoverVisibility()
+        }
         if scrollView.contentOffset.y <= -scrollView.contentInset.top && !isCustomPullRefreshing {
             resetCoverStretch()
         }
@@ -10431,8 +10454,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             beginCustomPullRefresh()
         }
         // 不减速即停稳：陀螺仪重画恢复（带子可见时才开）；减速时继续停，
-        // 由 scrollViewDidEndDecelerating 恢复。
-        if !decelerate {
+        // 由 scrollViewDidEndDecelerating 恢复。刷新期除外（同上），由
+        // endCustomPullRefresh 恢复。
+        if !decelerate && !isCustomPullRefreshing {
             profileCoverScrolling = false
             updateFestivalWallpaperVisibility()
             updateProfileCoverVisibility()

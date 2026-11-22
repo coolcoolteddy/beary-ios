@@ -357,6 +357,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             olderLoadingLabel.centerYAnchor.constraint(equalTo: olderLoadingView.centerYAnchor),
         ])
 
+        // 搜索栏容器先入树：权限横幅的 top 约束锚在 searchContainer.bottom，
+        // 约束激活时两者须已有共同祖先，否则抛 "The view hierarchy is not
+        // prepared for the constraint" 致闪退；其余搭建仍在下方搜索栏一段。
+        searchContainer.translatesAutoresizingMaskIntoConstraints = false
+        searchContainer.isHidden = true
+        view.addSubview(searchContainer)
+
         // 私信权限横幅：对方不接受私信时出现，平时高 0 不占位。
         // 显示时至少 36（沿用现行默认高度），文字随字号/窄宽度换行时横幅跟随增高；
         // 上下内边距约束用 defaultHigh：隐藏时收起约束（=0，required）优先，横幅干净归零，
@@ -490,9 +497,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
         // 会话内搜索栏（默认收起、高 0 不占位）：搜索框＋取消＋提示行。
         // 提示行明说只搜本机已有消息；结果表盖在聊天列表上方，输入条不动。
-        searchContainer.translatesAutoresizingMaskIntoConstraints = false
-        searchContainer.isHidden = true
-        view.addSubview(searchContainer)
+        // （容器已在权限横幅一段先入树，此处只搭子视图与约束。）
         searchFieldBox.translatesAutoresizingMaskIntoConstraints = false
         searchFieldBox.backgroundColor = BearyColors.surface2
         searchFieldBox.layer.cornerRadius = 18
