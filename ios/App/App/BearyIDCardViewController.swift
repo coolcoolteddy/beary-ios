@@ -893,8 +893,6 @@ final class BearyIDCardView: UIView {
     private var plusBadgeVisible = false
     private var isPlus = false
     private var plusPreviewOn = false
-    private var avatarPhotoView: UIImageView?
-    private var avatarGlyphView: UIImageView?
     private var compact = false
     /// configure 的入参存一份：layoutSubviews 里 compact 翻面时重建卡片用（M10）。
     private var configuredData: BearyIDCardData?
@@ -1135,46 +1133,21 @@ final class BearyIDCardView: UIView {
             numberLabel.trailingAnchor.constraint(equalTo: band.trailingAnchor, constant: -16),
             numberLabel.centerYAnchor.constraint(equalTo: band.centerYAnchor),
         ])
-        // 头像＋名字行。
-        let avatarCircle = UIView()
-        avatarCircle.translatesAutoresizingMaskIntoConstraints = false
-        avatarCircle.backgroundColor = BearyOnboardingPalette.blueSoft
-        avatarCircle.layer.cornerRadius = avatarDiameter / 2
-        avatarCircle.clipsToBounds = true
-        backView.addSubview(avatarCircle)
+        // 头像＋名字行：走共享组件（直径随 compact 36/46，不改布局尺寸）。
+        // 行为变化：占位由 blueSoft 底＋person.fill glyph 改为首字母占位，
+        // 失败态由“直接无图”改为首字母占位＋重试钮；加载走 BearyImageLoader
+        //（缓存＋下采样＋代次校验），不再直连取图。
+        // 名字取 data.nickname；卡面数据无用户 id，ownerID 不传（与搜索/设置页同口径）。
+        let avatarView = BearyAvatarView(diameter: avatarDiameter)
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        backView.addSubview(avatarView)
         NSLayoutConstraint.activate([
-            avatarCircle.topAnchor.constraint(equalTo: band.bottomAnchor, constant: compact ? 8 : 11),
-            avatarCircle.leadingAnchor.constraint(equalTo: backView.leadingAnchor, constant: 16),
-            avatarCircle.widthAnchor.constraint(equalToConstant: avatarDiameter),
-            avatarCircle.heightAnchor.constraint(equalToConstant: avatarDiameter),
+            avatarView.topAnchor.constraint(equalTo: band.bottomAnchor, constant: compact ? 8 : 11),
+            avatarView.leadingAnchor.constraint(equalTo: backView.leadingAnchor, constant: 16),
+            avatarView.widthAnchor.constraint(equalToConstant: avatarDiameter),
+            avatarView.heightAnchor.constraint(equalToConstant: avatarDiameter),
         ])
-        let glyphView = UIImageView(image: UIImage(systemName: "person.fill"))
-        glyphView.translatesAutoresizingMaskIntoConstraints = false
-        glyphView.tintColor = BearyOnboardingPalette.muted
-        glyphView.contentMode = .scaleAspectFit
-        avatarCircle.addSubview(glyphView)
-        NSLayoutConstraint.activate([
-            glyphView.centerXAnchor.constraint(equalTo: avatarCircle.centerXAnchor),
-            glyphView.centerYAnchor.constraint(equalTo: avatarCircle.centerYAnchor),
-            glyphView.widthAnchor.constraint(equalToConstant: avatarDiameter * 0.52),
-            glyphView.heightAnchor.constraint(equalToConstant: avatarDiameter * 0.52),
-        ])
-        avatarGlyphView = glyphView
-        let photoView = UIImageView()
-        photoView.translatesAutoresizingMaskIntoConstraints = false
-        photoView.contentMode = .scaleAspectFill
-        photoView.isHidden = true
-        avatarCircle.addSubview(photoView)
-        NSLayoutConstraint.activate([
-            photoView.topAnchor.constraint(equalTo: avatarCircle.topAnchor),
-            photoView.leadingAnchor.constraint(equalTo: avatarCircle.leadingAnchor),
-            photoView.trailingAnchor.constraint(equalTo: avatarCircle.trailingAnchor),
-            photoView.bottomAnchor.constraint(equalTo: avatarCircle.bottomAnchor),
-        ])
-        avatarPhotoView = photoView
-        if let avatarURLValue = avatarURL {
-            loadAvatar(url: avatarURLValue)
-        }
+        avatarView.configure(displayName: data.nickname, avatarURL: avatarURL)
         // 名字＋皇冠＋「今天加入 beary」。
         let nameStack = UIStackView()
         nameStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1182,9 +1155,9 @@ final class BearyIDCardView: UIView {
         nameStack.spacing = 2
         backView.addSubview(nameStack)
         NSLayoutConstraint.activate([
-            nameStack.leadingAnchor.constraint(equalTo: avatarCircle.trailingAnchor, constant: 12),
+            nameStack.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 12),
             nameStack.trailingAnchor.constraint(lessThanOrEqualTo: backView.trailingAnchor, constant: -16),
-            nameStack.centerYAnchor.constraint(equalTo: avatarCircle.centerYAnchor),
+            nameStack.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
         ])
         let nameRow = UIStackView()
         nameRow.axis = .horizontal
@@ -1214,7 +1187,7 @@ final class BearyIDCardView: UIView {
         detailsContainer.translatesAutoresizingMaskIntoConstraints = false
         backView.addSubview(detailsContainer)
         NSLayoutConstraint.activate([
-            detailsContainer.topAnchor.constraint(equalTo: avatarCircle.bottomAnchor, constant: bodyGap + 5),
+            detailsContainer.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: bodyGap + 5),
             detailsContainer.leadingAnchor.constraint(equalTo: backView.leadingAnchor, constant: 16),
             detailsContainer.trailingAnchor.constraint(equalTo: backView.trailingAnchor, constant: -16),
         ])
@@ -1366,17 +1339,5 @@ final class BearyIDCardView: UIView {
         plusLabel.text = "PLUS"
         row.addArrangedSubview(plusLabel)
         return badge
-    }
-
-    private func loadAvatar(url: URL) {
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-            guard let strongSelf = self else { return }
-            guard let dataValue = data, let image = UIImage(data: dataValue) else { return }
-            DispatchQueue.main.async {
-                strongSelf.avatarPhotoView?.image = image
-                strongSelf.avatarPhotoView?.isHidden = false
-                strongSelf.avatarGlyphView?.isHidden = true
-            }
-        }.resume()
     }
 }

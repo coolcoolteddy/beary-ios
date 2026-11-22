@@ -3660,9 +3660,9 @@ final class BearyLetterViewController: UIViewController {
 /// 依次向右散开成一排（间距 50，每个间隔 40ms），下方淡入 11pt 灰名字；
 /// 再点一次从右往左依次收回。减动效直接落终值。
 /// 圆带 2pt 页面底色描边分隔（bearyDynamicBorderColor，深浅切换自动重刷）；
-/// 头像加载走 BearyImageLoader（42×scale 下采样），失败留首字母占位、
-/// 无重试钮；复用/重配时取消在途加载、复位收起态。点按用透明 UIButton
-/// 覆盖栈区（UIControl 点按不触发 didSelectRowAt，回关钮同款原理）。
+/// 头像加载走 BearyAvatarView（42pt 直径参数，42×scale 下采样），失败留
+/// 首字母占位＋重试钮（组件统一口径）；复用/重配时取消在途加载、复位收起态。
+/// 点按用透明 UIButton 覆盖栈区（UIControl 点按不触发 didSelectRowAt，回关钮同款原理）。
 final class BearyAvatarStackView: UIView {
 
     static let avatarDiameter: CGFloat = 42
@@ -3691,12 +3691,11 @@ final class BearyAvatarStackView: UIView {
     private struct Circle {
         let container: UIView
         let nameLabel: UILabel
-        var task: URLSessionDataTask?
+        var avatarView: BearyAvatarView?
     }
 
     private var circles: [Circle] = []
     private var onToggle: (() -> Void)?
-    private var loadGeneration = 0
     private(set) var isExpanded = false
     private(set) var circleCount = 0
 
@@ -3730,7 +3729,7 @@ final class BearyAvatarStackView: UIView {
         self.onToggle = onToggle
         self.isExpanded = expanded
         for actor in actors {
-            circles.append(makeAvatarCircle(name: actor.name, avatarURL: actor.avatarURL))
+            circles.append(makeStackAvatar(name: actor.name, avatarURL: actor.avatarURL))
         }
         if overflowCount > 0 {
             circles.append(makeOverflowCircle(count: overflowCount))
@@ -3741,15 +3740,14 @@ final class BearyAvatarStackView: UIView {
         layoutCircles(animated: false)
     }
 
-    /// 复用/重配：取消在途头像加载（回调凭代次作废）、拆掉旧圆、复位收起态。
+    /// 复用/重配：取消在途头像加载（组件代次作废旧回包）、拆掉旧圆、复位收起态。
     func reset() {
         for circle in circles {
-            circle.task?.cancel()
+            circle.avatarView?.reset()
             circle.container.removeFromSuperview()
             circle.nameLabel.removeFromSuperview()
         }
         circles.removeAll()
-        loadGeneration += 1
         onToggle = nil
         isExpanded = false
         circleCount = 0
@@ -3793,54 +3791,36 @@ final class BearyAvatarStackView: UIView {
         return label
     }
 
-    private func makeAvatarCircle(name: String, avatarURL: URL?) -> Circle {
+    private func makeStackAvatar(name: String, avatarURL: URL?) -> Circle {
         let container = makeCircleContainer()
-        let imageView = UIImageView()
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.contentMode = .scaleAspectFill
-        imageView.clipsToBounds = true
-        container.addSubview(imageView)
+        // 头像位走共享组件（42pt 直径参数）：加载＋首字母占位＋失败重试全由组件管；
+        // 容器只留 2pt 描边与名字行，圆内不再手写 imageView/label。
+        let avatarView = BearyAvatarView(diameter: Self.avatarDiameter)
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(avatarView)
         NSLayoutConstraint.activate([
-            imageView.topAnchor.constraint(equalTo: container.topAnchor),
-            imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            avatarView.topAnchor.constraint(equalTo: container.topAnchor),
+            avatarView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            avatarView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            avatarView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
-        // 首字母占位与单头像同款（15/700 灰）；无图直接露占位，不走加载。
+        avatarView.configure(displayName: name, avatarURL: avatarURL)
         let displayName = name.isEmpty ? "beary 用户" : name
-        let fallbackLabel = UILabel()
-        fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
-        fallbackLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
-        fallbackLabel.textColor = BearyColors.gray
-        fallbackLabel.adjustsFontForContentSizeCategory = true
-        fallbackLabel.textAlignment = .center
-        fallbackLabel.text = String(displayName.prefix(1)).uppercased()
-        container.addSubview(fallbackLabel)
-        NSLayoutConstraint.activate([
-            fallbackLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            fallbackLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-        ])
         let nameLabel = makeNameLabel(text: displayName)
         addSubview(container)
         addSubview(nameLabel)
-        var circle = Circle(container: container, nameLabel: nameLabel, task: nil)
-        if let url = avatarURL {
-            let generation = loadGeneration
-            circle.task = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: Self.avatarDiameter * UIScreen.main.scale) { [weak self, weak imageView, weak fallbackLabel] result in
-                guard let strongSelf = self, generation == strongSelf.loadGeneration else { return }
-                guard let imageView = imageView, let fallbackLabel = fallbackLabel else { return }
-                switch result {
-                case .success(let image):
-                    imageView.image = image
-                    fallbackLabel.isHidden = true
-                case .failure:
-                    // 失败留首字母占位、无重试钮。
-                    imageView.image = nil
-                    fallbackLabel.isHidden = false
-                }
+        return Circle(container: container, nameLabel: nameLabel, avatarView: avatarView)
+    }
+
+    /// 重试钮点按透传：栈整区点按钮盖在圆上，失败态亮起的重试钮须能点到；
+    /// 点落在任一可见重试钮内时把事件交给它，其余仍走整区点按钮（展开/收起）。
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        for circle in circles {
+            if let retryButton = circle.avatarView?.retryButtonHit(at: point, from: self) {
+                return retryButton
             }
         }
-        return circle
+        return super.hitTest(point, with: event)
     }
 
     private func makeOverflowCircle(count: Int) -> Circle {
@@ -3861,7 +3841,7 @@ final class BearyAvatarStackView: UIView {
         let nameLabel = makeNameLabel(text: "")
         addSubview(container)
         addSubview(nameLabel)
-        return Circle(container: container, nameLabel: nameLabel, task: nil)
+        return Circle(container: container, nameLabel: nameLabel, avatarView: nil)
     }
 
     private func circleCenterX(at index: Int, expanded: Bool) -> CGFloat {
@@ -3894,61 +3874,17 @@ final class BearyAvatarStackView: UIView {
 
 class BearyNotificationCell: UITableViewCell {
 
-    private var avatarTask: URLSessionDataTask?
-    private var avatarLoadGeneration = 0
-    private var avatarRetryURL: URL?
-    private var avatarRetryActorName = ""
-
-    private let avatarImageView: UIImageView = {
-        let imageView = UIImageView()
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.contentMode = .scaleAspectFill
-        imageView.clipsToBounds = true
-        imageView.layer.cornerRadius = 21
-        return imageView
-    }()
-
-    private let avatarFallbackLabel: UILabel = {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
-        label.textColor = BearyColors.gray
-        label.adjustsFontForContentSizeCategory = true
-        label.textAlignment = .center
-        return label
-    }()
-
-    private let avatarIconView: UIImageView = {
-        let iconView = UIImageView()
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.tintColor = BearyColors.orange
-        iconView.contentMode = .scaleAspectFit
-        return iconView
-    }()
+    /// 单头像位（42pt 直径参数）：互动行走共享组件（加载＋首字母占位＋失败重试）；
+    /// 卡面/系统行走组件图标槽（showCategoryIcon，底色/图标色由 applyCardCategoryColors 定）。
+    private let avatarView = BearyAvatarView(diameter: 42)
 
     /// 第 17 项 B：行内 popper 动态画（网页 NB.popper 口径，见 BearyPopperView）。
-    /// 仅系统行“成就/徽章”标题时用；其余行仍走 avatarIconView 静态资产。
+    /// 仅系统行“成就/徽章”标题时用；其余行仍走 avatarView 图标槽静态资产。
     private let popperView: BearyPopperView = {
         let view = BearyPopperView()
         view.translatesAutoresizingMaskIntoConstraints = false
         view.isHidden = true
         return view
-    }()
-
-    /// 头像加载失败重试：纯图标按钮（非文字按钮），44×44 点击区居中压在头像上；
-    /// 仅失败态可见，加载中与成功态一律隐藏（见 loadAvatar）。无描边、无背景色，
-    /// 故深浅切换无需重刷；图标本身走 BearyIconImages 本地资产，不会再加载失败。
-    private let avatarRetryButton: UIButton = {
-        let button = UIButton(type: .system)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 24), for: .normal)
-        button.tintColor = BearyColors.ink
-        button.isHidden = true
-        button.accessibilityLabel = "重试"
-        button.accessibilityHint = "重新加载头像"
-        button.addTarget(self, action: #selector(avatarRetryTapped), for: .touchUpInside)
-        button.bearyAddPressFeedback()
-        return button
     }()
 
     /// 好友第一期（关注/回关模型）：关注提醒卡行内动作区（单个墨色主按钮，回关／关注；
@@ -4161,12 +4097,10 @@ class BearyNotificationCell: UITableViewCell {
         kindBadgeView.addSubview(kindIconView)
         contentView.addSubview(unreadBgView)
         contentView.sendSubviewToBack(unreadBgView)
-        contentView.addSubview(avatarImageView)
-        contentView.addSubview(avatarFallbackLabel)
-        contentView.addSubview(avatarIconView)
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(avatarView)
         contentView.addSubview(popperView)
         contentView.addSubview(kindBadgeView)
-        contentView.addSubview(avatarRetryButton)
         avatarStackView.translatesAutoresizingMaskIntoConstraints = false
         avatarStackView.isHidden = true
         contentView.addSubview(avatarStackView)
@@ -4186,7 +4120,7 @@ class BearyNotificationCell: UITableViewCell {
         // 行内边距 16/14 由 cell 自身承担（列宽已是满 600，见 contentView 注释；
         // 32 清单第 5 项：头像 x 与未读点/箭头右距统一 16，与规范 §3 内容列 16 对齐）：
         // 顶层行头像 x=16、未读点右 -16、箭头右 -16；嵌套行在此基础上再缩进（见 configure）。
-        avatarLeadingConstraint = avatarImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16)
+        avatarLeadingConstraint = avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16)
         separatorLeadingConstraint = separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0)
         dotTrailingToContentConstraint = unreadDotView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
         dotTrailingToChevronConstraint = unreadDotView.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -12)
@@ -4196,7 +4130,7 @@ class BearyNotificationCell: UITableViewCell {
         dotTrailingToChevronConstraint?.isActive = false
         // bodyStack 左缘：单头像行钉头像右缘＋12，聚合行钉头像栈右缘＋12；
         // 栈与单头像同顶（14）、同左缘（跟 avatarLeadingConstraint 走嵌套缩进）。
-        bodyStackLeadingToAvatarConstraint = bodyStack.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 12)
+        bodyStackLeadingToAvatarConstraint = bodyStack.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 12)
         bodyStackLeadingToStackConstraint = bodyStack.leadingAnchor.constraint(equalTo: avatarStackView.trailingAnchor, constant: 12)
         avatarStackWidthConstraint = avatarStackView.widthAnchor.constraint(equalToConstant: 42)
         avatarStackHeightConstraint = avatarStackView.heightAnchor.constraint(equalToConstant: 42)
@@ -4207,43 +4141,33 @@ class BearyNotificationCell: UITableViewCell {
         avatarStackHeightConstraint?.isActive = true
         NSLayoutConstraint.activate([
             avatarStackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
-            avatarStackView.leadingAnchor.constraint(equalTo: avatarImageView.leadingAnchor),
+            avatarStackView.leadingAnchor.constraint(equalTo: avatarView.leadingAnchor),
         ])
         unreadBgLeadingConstraint = unreadBgView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0)
         unreadBgLeadingConstraint?.isActive = true
         // 头像垂直锚点：默认顶锚 14（独立通知页现行）；合并消息页改居中（见 applyAvatarVerticalStyle）。
-        avatarTopConstraint = avatarImageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
-        avatarCenterYConstraint = avatarImageView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
+        avatarTopConstraint = avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
+        avatarCenterYConstraint = avatarView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
         avatarTopConstraint?.isActive = true
         // 标题栈顶锚点：默认内容顶 +14（独立通知页现行）；合并页改锚头像顶
         //（见 applyAvatarVerticalStyle），头像锚默认不激活。
         bodyStackTopToContentConstraint = bodyStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
-        bodyStackTopToAvatarConstraint = bodyStack.topAnchor.constraint(equalTo: avatarImageView.topAnchor, constant: 0)
+        bodyStackTopToAvatarConstraint = bodyStack.topAnchor.constraint(equalTo: avatarView.topAnchor, constant: 0)
         bodyStackTopToContentConstraint?.isActive = true
         NSLayoutConstraint.activate([
             unreadBgView.topAnchor.constraint(equalTo: contentView.topAnchor),
             unreadBgView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             unreadBgView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            avatarImageView.widthAnchor.constraint(equalToConstant: 42),
-            avatarImageView.heightAnchor.constraint(equalToConstant: 42),
-            avatarFallbackLabel.centerXAnchor.constraint(equalTo: avatarImageView.centerXAnchor),
-            avatarFallbackLabel.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
-            avatarIconView.centerXAnchor.constraint(equalTo: avatarImageView.centerXAnchor),
-            avatarIconView.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
-            avatarIconView.widthAnchor.constraint(equalToConstant: 19),
-            avatarIconView.heightAnchor.constraint(equalToConstant: 19),
-            popperView.centerXAnchor.constraint(equalTo: avatarImageView.centerXAnchor),
-            popperView.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
+            avatarView.widthAnchor.constraint(equalToConstant: 42),
+            avatarView.heightAnchor.constraint(equalToConstant: 42),
+            popperView.centerXAnchor.constraint(equalTo: avatarView.centerXAnchor),
+            popperView.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
             popperView.widthAnchor.constraint(equalToConstant: 19),
             popperView.heightAnchor.constraint(equalToConstant: 19),
-            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarImageView.centerXAnchor),
-            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
-            avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
-            avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
             kindBadgeView.widthAnchor.constraint(equalToConstant: 19),
             kindBadgeView.heightAnchor.constraint(equalToConstant: 19),
-            kindBadgeView.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 4),
-            kindBadgeView.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor, constant: 4),
+            kindBadgeView.trailingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 4),
+            kindBadgeView.bottomAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 4),
             kindIconView.centerXAnchor.constraint(equalTo: kindBadgeView.centerXAnchor),
             kindIconView.centerYAnchor.constraint(equalTo: kindBadgeView.centerYAnchor),
             kindIconView.widthAnchor.constraint(equalToConstant: 11),
@@ -4272,7 +4196,7 @@ class BearyNotificationCell: UITableViewCell {
             nestedLineView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
         // 底线贴行底时行高由内容撑起：头像 42 + 顶 14 + 底 16 即最小 72。
-        avatarBottomGuardConstraint = contentView.bottomAnchor.constraint(greaterThanOrEqualTo: avatarImageView.bottomAnchor, constant: 16)
+        avatarBottomGuardConstraint = contentView.bottomAnchor.constraint(greaterThanOrEqualTo: avatarView.bottomAnchor, constant: 16)
         avatarBottomGuardConstraint?.priority = UILayoutPriority(999)
         avatarBottomGuardConstraint?.isActive = true
     }
@@ -4291,17 +4215,8 @@ class BearyNotificationCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        cancelAvatarLoad()
+        avatarView.reset()
         resetAvatarStack()
-        avatarRetryURL = nil
-        avatarRetryActorName = ""
-        avatarRetryButton.isHidden = true
-        avatarImageView.image = nil
-        avatarFallbackLabel.text = nil
-        avatarFallbackLabel.isHidden = true
-        avatarIconView.image = nil
-        avatarIconView.isHidden = true
-        avatarIconView.tintColor = BearyColors.orange
         popperView.stop()
         popperView.isHidden = true
         kindBadgeView.isHidden = true
@@ -4338,55 +4253,11 @@ class BearyNotificationCell: UITableViewCell {
         hideFollowAction()
     }
 
-    /// 取消在途头像加载并作废其回调：复用/换行时旧失败回调不得亮重试图标。
-    private func cancelAvatarLoad() {
-        avatarTask?.cancel()
-        avatarTask = nil
-        avatarLoadGeneration += 1
-    }
-
-    /// 互动行头像加载：加载中与成功态沿用现有行为（首字母占位 / 落图）；
-    /// 仅失败态新增重试图标：失败时藏首字母占位、亮重试图标，点重试重新走
-    /// 本方法（重试中图标先藏、恢复首字母占位），成功后图标消失。
+    /// 互动行头像加载走共享组件：加载中与成功态沿用现有行为（首字母占位 / 落图）；
+    /// 失败态统一为组件口径——首字母占位＋重试钮（旧口径是藏占位、只亮重试图标）。
     /// 取消（复用/换图）不算失败，不亮重试图标；无图（avatarURL 为空）不走
-    /// 本方法，调用方只露首字母占位、不亮重试图标。
-    private func loadAvatar(url: URL, actorName: String) {
-        cancelAvatarLoad()
-        avatarRetryURL = url
-        // 第十三轮第 8 项：缺名（nil 或空串已在调用方回落，此处再兜底一次）不再回退字母 "T"，
-        // 与全站缺省名“beary 用户”一致（首字母占位即 "B"）。
-        let displayName = actorName.isEmpty ? "beary 用户" : actorName
-        avatarRetryActorName = displayName
-        avatarImageView.image = nil
-        avatarRetryButton.isHidden = true
-        avatarFallbackLabel.isHidden = false
-        avatarFallbackLabel.text = String(displayName.prefix(1)).uppercased()
-        let generation = avatarLoadGeneration
-        // 头像框 42pt：下采样到 42×scale 解码，不整图全解码进内存。
-        avatarTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 42 * UIScreen.main.scale) { [weak self] result in
-            guard let strongSelf = self else { return }
-            guard generation == strongSelf.avatarLoadGeneration else { return }
-            strongSelf.avatarTask = nil
-            switch result {
-            case .success(let loadedImage):
-                strongSelf.avatarImageView.image = loadedImage
-                strongSelf.avatarFallbackLabel.isHidden = true
-                strongSelf.avatarRetryButton.isHidden = true
-            case .failure(let loadError):
-                if case .cancelled = loadError {
-                    return
-                }
-                strongSelf.avatarImageView.image = nil
-                strongSelf.avatarFallbackLabel.isHidden = true
-                strongSelf.avatarRetryButton.isHidden = false
-            }
-        }
-    }
-
-    @objc private func avatarRetryTapped() {
-        guard let retryURL = avatarRetryURL else { return }
-        loadAvatar(url: retryURL, actorName: avatarRetryActorName)
-    }
+    /// 加载，调用方直接调 configure(avatarURL: nil) 只露首字母占位、不亮重试图标。
+    /// （旧私有头像加载三件套已随迁移删除，加载、代次校验与重试全在 BearyAvatarView 内。）
 
     /// 卡面箭头旋转（调用方用 UIView.animate 包裹即得展开/收起动画）。
     func setChevronExpanded(_ expanded: Bool) {
@@ -4416,14 +4287,11 @@ class BearyNotificationCell: UITableViewCell {
     /// 已读退回灰底＋墨图标，蓝色只剩未读点／未读背景承担。
     private func applyCardCategoryColors(isSystem: Bool, anyUnread: Bool) {
         if isSystem {
-            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.14)
-            avatarIconView.tintColor = BearyColors.deepOrangeText
+            avatarView.setCategoryColors(backgroundColor: BearyColors.alpha(BearyColors.orange, 0.14), tintColor: BearyColors.deepOrangeText)
         } else if anyUnread {
-            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.12)
-            avatarIconView.tintColor = BearyColors.blue
+            avatarView.setCategoryColors(backgroundColor: BearyColors.alpha(BearyColors.blue, 0.12), tintColor: BearyColors.blue)
         } else {
-            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.gray, 0.12)
-            avatarIconView.tintColor = BearyColors.ink
+            avatarView.setCategoryColors(backgroundColor: BearyColors.alpha(BearyColors.gray, 0.12), tintColor: BearyColors.ink)
         }
     }
 
@@ -4469,19 +4337,14 @@ class BearyNotificationCell: UITableViewCell {
     func configureAsCard(title: String, excerpt: String, timeMs: Int?, anyUnread: Bool, isSystem: Bool, expanded: Bool, highlight: Bool, mergedList: Bool = false) {
         applyAvatarVerticalStyle(mergedList: mergedList)
         bodyStack.spacing = mergedList ? 4 : 2
-        cancelAvatarLoad()
+        avatarView.reset()
         hideFollowAction()
-        avatarRetryURL = nil
-        avatarRetryActorName = ""
-        avatarRetryButton.isHidden = true
         applyUnreadHighlight(highlight: highlight, blueAlpha: 0.09, nested: false)
         unreadDotView.isHidden = !anyUnread
         applyCardCategoryColors(isSystem: isSystem, anyUnread: anyUnread)
         popperView.stop()
         popperView.isHidden = true
-        avatarIconView.isHidden = false
-        avatarIconView.image = BearyIconImages.image(named: isSystem ? "icon_mail" : "icon_heart", pointSize: 19)
-        avatarFallbackLabel.isHidden = true
+        avatarView.showCategoryIcon(BearyIconImages.image(named: isSystem ? "icon_mail" : "icon_heart", pointSize: 19))
         kindBadgeView.isHidden = true
         nestedLineView.isHidden = true
         titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
@@ -4618,41 +4481,32 @@ class BearyNotificationCell: UITableViewCell {
         if isSystemStyle {
             // 信件行与系统信行：橙 14% 底头像 + 19 号图（网页 .nt-sysava）。
             // 本地图标无网络加载，故无重试图标；在途互动头像加载一律取消作废。
-            cancelAvatarLoad()
-            avatarRetryURL = nil
-            avatarRetryActorName = ""
-            avatarRetryButton.isHidden = true
+            avatarView.reset()
             // system 行标题含“成就/徽章”时用 popper（礼花）图，否则 mail 图；
             // letter 行恒为 mail 图（网页 ntOne 两分支同口径）。
             // 第十轮 #13：系统图标浅色走 deepOrangeText（#C2410C，淡橙底上约 5.18:1；
             // 原 orange 亮橙仅约 2.20:1），深色与 orange 同值不变；底仍保留淡橙 14%。
-            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.14)
-            avatarIconView.tintColor = BearyColors.deepOrangeText
+            avatarView.setCategoryColors(backgroundColor: BearyColors.alpha(BearyColors.orange, 0.14), tintColor: BearyColors.deepOrangeText)
             // C-G2：同上，空串标题回退（网页 || 语义）。
             let rawTitle = item.title ?? ""
             let titleText = rawTitle.isEmpty ? (itemType == "letter" ? "消息" : "通知") : rawTitle
             // 第 17 项 B：system 行标题含“成就/徽章”时不再用静态 icon_popper，
             // 改 BearyPopperView 按网页 NB.popper 动态画；否则仍为 mail 静态图。
             if itemType == "system" && (titleText.contains("成就") || titleText.contains("徽章")) {
-                avatarIconView.image = nil
-                avatarIconView.isHidden = true
+                avatarView.showCategoryIcon(nil)
                 popperView.isHidden = false
                 popperView.start()
             } else {
                 popperView.stop()
                 popperView.isHidden = true
-                avatarIconView.isHidden = false
-                avatarIconView.image = BearyIconImages.image(named: "icon_mail", pointSize: 19)
+                avatarView.showCategoryIcon(BearyIconImages.image(named: "icon_mail", pointSize: 19))
             }
-            avatarFallbackLabel.isHidden = true
             kindBadgeView.isHidden = true
             titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         } else {
-            // 互动行：42 圆头像（无图回退首字母 15/700 灰）+ 右下角 19 号类型角标。
-            avatarImageView.backgroundColor = BearyColors.line
+            // 互动行：42 圆头像（无图回退组件首字母占位）+ 右下角 19 号类型角标。
             popperView.stop()
             popperView.isHidden = true
-            avatarIconView.isHidden = true
             kindBadgeView.isHidden = false
             // 网页 ntOne 口径：非 like / bookmark 的角标一律回退为 mood 图；@ 行补 @ 图标。
             let kindIconName: String
@@ -4677,16 +4531,9 @@ class BearyNotificationCell: UITableViewCell {
             // 与已注销（“用户已注销”）是两种状态，不混淆。
             let deletedName = bearyDeletedAuthorDisplayName(item.actorName) ?? ""
             let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
-            if let avatarURL = BearyImageURLs.avatarURL(item.actorAvatar) {
-                loadAvatar(url: avatarURL, actorName: actorName)
-            } else {
-                cancelAvatarLoad()
-                avatarRetryURL = nil
-                avatarRetryActorName = ""
-                avatarRetryButton.isHidden = true
-                avatarFallbackLabel.isHidden = false
-                avatarFallbackLabel.text = String(actorName.prefix(1)).uppercased()
-            }
+            // 缺名（nil 或空串已在调用方回落）不再回退字母 "T"，
+            // 与全站缺省名“beary 用户”一致（首字母占位即 "B"）。
+            avatarView.configure(displayName: actorName, avatarURL: BearyImageURLs.avatarURL(item.actorAvatar))
             let title = NSMutableAttributedString()
             title.append(NSAttributedString(
                 string: actorName,
@@ -4739,13 +4586,8 @@ class BearyNotificationCell: UITableViewCell {
     func configureAsGroup(representative: NotificationItem, members: [NotificationItem], nested: Bool, highlight: Bool, expanded: Bool, onToggle: @escaping () -> Void) {
         hideFollowAction()
         resetAvatarStack()
-        cancelAvatarLoad()
-        avatarRetryURL = nil
-        avatarRetryActorName = ""
-        avatarRetryButton.isHidden = true
-        avatarImageView.isHidden = true
-        avatarFallbackLabel.isHidden = true
-        avatarIconView.isHidden = true
+        avatarView.reset()
+        avatarView.isHidden = true
         popperView.stop()
         popperView.isHidden = true
         kindBadgeView.isHidden = true
@@ -4843,7 +4685,7 @@ class BearyNotificationCell: UITableViewCell {
         avatarStackBottomGuard?.isActive = false
         bodyStackLeadingToStackConstraint?.isActive = false
         bodyStackLeadingToAvatarConstraint?.isActive = true
-        avatarImageView.isHidden = false
+        avatarView.isHidden = false
         kindBadgeView.isHidden = false
     }
 
