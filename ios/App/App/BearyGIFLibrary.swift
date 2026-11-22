@@ -10,7 +10,7 @@ import UIKit
 // 库放宽到常规图片：上传端点本来就接受 jpeg/png/webp/heic/gif；
 // /add 端点放宽 .gif 校验的服务端 diff 见
 // ~/workspace/beary-gif-library-images-server.diff（部署前 add 常规图会 400，
-// 客户端静默忽略、不阻断插入）。
+// 客户端静默忽略）。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 enum BearyGIFLibrary {
