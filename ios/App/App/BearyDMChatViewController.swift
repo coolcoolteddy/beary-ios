@@ -94,7 +94,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     // U5：加载失败态（空消息时）复用 BearyStateView 的动作入口（重试钮），
     // 与 #685 的 firstLoadStateView（仅 loading 形态）分开，不动它。
     private let loadFailedStateView = BearyStateView()
-    private let placeholderLabel = UILabel()
+    private let placeholderLabel = BearyPlaceholderLabel.make(text: "输入消息")
     private let countLabel = UILabel()
     /// 2026-11-04 乐观发送：失败待发行的本地键集合（行侧边出红叹号、点按重发）。
     private var failedSendKeys = Set<String>()
@@ -276,11 +276,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         inputTextView.isScrollEnabled = true
         inputBar.addSubview(inputTextView)
         // 审计：输入框占位（空输入时显，见 updateInputChrome）。
-        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
-        placeholderLabel.adjustsFontForContentSizeCategory = true
-        placeholderLabel.textColor = BearyColors.gray
-        placeholderLabel.text = "输入消息"
         inputTextView.addSubview(placeholderLabel)
         NSLayoutConstraint.activate([
             placeholderLabel.topAnchor.constraint(equalTo: inputTextView.topAnchor, constant: 8),
