@@ -652,6 +652,10 @@ class BearyDiaryCardCell: UITableViewCell {
     private var emoteFlightAPIDone = false
     /// 摘下在途：退场动画播完前回包到达时先记结果、不抢动画中的 chip。
     private var emoteFlightRemovalStaged = false
+    /// 回应 POST 回包共用守卫（与详情同款 BearyEmoteReactionGuard）：每次 POST 前
+    /// begin() 领新代次，回包与退场动画完成回调先验代次，旧代次直接丢弃
+    /// （复用后旧回包不再碰新条目）。永不重置（复用清理也不重置），见守卫注释。
+    private let emoteReactionGuard = BearyEmoteReactionGuard()
     /// 表情 sheet 选中锁（首页模式）：选定后 140ms 内再选直接丢弃（网页 emotePickLock 同口径）。
     private var emotePickLocked = false
     /// 引用卡点按态：gone/locked 不动作；加载失败点按重试；其余一律经容器先校验再放行。
@@ -4548,6 +4552,9 @@ class BearyDiaryCardCell: UITableViewCell {
         emoteFlightUnauthorized = false
         emoteFlightAPIDone = false
         emoteFlightRemovalStaged = false
+        // 共用守卫：领新代次再发 POST（退场动画完成回调与回包都先验代次，
+        // 旧代次直接丢弃）；flight 状态机与动画分期本身不动。
+        let generation = emoteReactionGuard.begin()
         isEmoteBusy = true
         updateEmoteInteractivity()
         if tappedMine {
@@ -4555,7 +4562,7 @@ class BearyDiaryCardCell: UITableViewCell {
             // 先记结果、不抢动画中的 chip，动画完再对齐或回滚。
             emoteFlightRemovalStaged = true
             animateEmoteChipOut(key: key) { [weak self] in
-                guard let strongSelf = self, strongSelf.cellEntryId == entryIdValue else { return }
+                guard let strongSelf = self, strongSelf.cellEntryId == entryIdValue, strongSelf.emoteReactionGuard.isCurrent(generation) else { return }
                 strongSelf.emoteFlightRemovalStaged = false
                 if strongSelf.emoteFlightFailed {
                     if strongSelf.emoteFlightUnauthorized {
@@ -4578,7 +4585,7 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.alignEmoteFlight(entryIdValue: entryIdValue)
                 }
             }
-            postEmoteOnce(key: key)
+            postEmoteOnce(key: key, generation: generation)
             return
         }
         let optimistic = emoteDelta((currentEntry?.emotes ?? []), key: key, added: true)
@@ -4586,7 +4593,7 @@ class BearyDiaryCardCell: UITableViewCell {
         renderEmotes(animatedLayout: true)
         playChipIn(forKey: key)
         onEmoteChanged?(entryIdValue, optimistic)
-        postEmoteOnce(key: key)
+        postEmoteOnce(key: key, generation: generation)
     }
 
     /// 先行增量：贴上时该 key 计数 +1（无此 key 则 mine 新建 1）；摘下时
@@ -4621,12 +4628,13 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// 在途 POST（首页模式）：只发请求与终态处理，先行渲染由 chooseEmote 做。
-    /// cell 复用后回包到达时直接丢弃（不碰新条目）。
-    private func postEmoteOnce(key: String) {
+    /// cell 复用后回包到达时直接丢弃（不碰新条目）；共用守卫再验代次，
+    /// 旧代次回包同样丢弃（新一轮 flight 已开始时旧回包不再记结果、不回滚）。
+    private func postEmoteOnce(key: String, generation: Int) {
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
         BearyAPI.shared.postEmote(id: entryIdValue, emote: key) { [weak self] result in
             DispatchQueue.main.async {
-                guard let strongSelf = self, strongSelf.cellEntryId == entryIdValue else { return }
+                guard let strongSelf = self, strongSelf.cellEntryId == entryIdValue, strongSelf.emoteReactionGuard.isCurrent(generation) else { return }
                 switch result {
                 case .success(let resp):
                     // 表情排序批：回包先按已显示顺序合并（新贴追加末尾），再对齐；
@@ -4664,12 +4672,12 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// 成功对齐：服务端值与先行值一致时不动（不重建、不重播已有 chip）；
     /// 不一致时瞬时重绘（非用户动作，不带位移动画）并通知容器。
+    /// 合并＋判等走共用守卫 aligned()（与详情同款）。
     private func alignEmoteFlight(entryIdValue: String) {
-        let merged = emoteFlightServerEmotes ?? currentEntry?.emotes
-        if let merged = merged, BearyEmoteOrder.signature(merged) != BearyEmoteOrder.signature(currentEntry?.emotes) {
-            currentEntry?.emotes = merged
+        if let aligned = BearyEmoteReactionGuard.aligned(current: currentEntry?.emotes, server: emoteFlightServerEmotes) {
+            currentEntry?.emotes = aligned
             renderEmotes()
-            onEmoteChanged?(entryIdValue, merged)
+            onEmoteChanged?(entryIdValue, aligned)
         }
         clearEmoteFlight()
     }

@@ -2605,6 +2605,39 @@ enum BearyEmoteOrder {
     }
 }
 
+/// chooseEmote 回包共用守卫（详情简单版＋卡片 flight 状态机共用；盲盒沿用自有的
+/// beginBlindBoxRequest／isCurrentBlindBoxResponse——盲盒代次全流程共用；
+/// 个人页委托 cell，不另起守卫——代次见 #2093／#2095）。
+/// 代次：每次 POST 前 begin() 领新代次，回包先 isCurrent() 验代次，旧代次直接丢弃
+/// （快连点／cell 复用后，旧回包不再碰当前态、不再回滚新先行值）。
+/// 成功对齐：aligned()——服务端值与当前显示一致返回 nil（调用方不动，不重建不重播），
+/// 否则返回合并后列表。失败回滚的共享部分即这道代次门：只有最新代次的失败才回滚
+/// 先行快照；各处拒绝动效（摇头／toast／chip 进场）与动画分期仍留在各处，不动外观。
+final class BearyEmoteReactionGuard {
+    private(set) var generation = 0
+
+    /// 发出 POST 前调用：领新代次，旧代次回包即作废。
+    /// 注意：永不重置（复用／clearEmoteFlight 也不重置）——重置会让旧代次
+    /// 回包重新通过 isCurrent，比不设防更糟。
+    @discardableResult func begin() -> Int {
+        generation += 1
+        return generation
+    }
+
+    /// 回包到达时调用：非最新代次即丢弃。
+    func isCurrent(_ generation: Int) -> Bool {
+        generation == self.generation
+    }
+
+    /// 成功对齐：server 为 nil 返回 nil；合并后与当前显示一致返回 nil（不动）；
+    /// 否则返回合并后列表（调用方写回＋重绘）。
+    static func aligned(current: [EmoteCount]?, server: [EmoteCount]?) -> [EmoteCount]? {
+        guard let server = server else { return nil }
+        let merged = BearyEmoteOrder.merged(previous: current, server: server)
+        return BearyEmoteOrder.signature(merged) == BearyEmoteOrder.signature(current) ? nil : merged
+    }
+}
+
 struct UploadResponse: Decodable {
     var key: String?
     /// 实况视频 key（服务端 live_key；仅附带 videoDataUrl 的实况上传才有）。

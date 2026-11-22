@@ -89,6 +89,9 @@ final class BearyDetailViewController: UIViewController {
     private var lastImageViewerAt: Date?
     private var confirmedBookmarked = false
     private var isEmoteBusy = false
+    /// 回应 POST 回包共用守卫（与卡片同款 BearyEmoteReactionGuard）：每次 POST 前
+    /// begin() 领新代次，回包先验代次，旧代次直接丢弃。
+    private let emoteReactionGuard = BearyEmoteReactionGuard()
     private var isVisibilityBusy = false
     /// 审计三轮第二批 9：限时到期单次定时器（只按最近 ephemeralUntil 排一次，
     /// 绝不按秒/按分钟全量刷新；到点只重算有效态，见 applyEphemeralExpiryIfNeeded）。
@@ -3137,18 +3140,19 @@ final class BearyDetailViewController: UIViewController {
         renderEmotes()
         refreshActionRow()
         isEmoteBusy = true
+        // 共用守卫：领新代次再发 POST，回包先验代次（旧代次直接丢弃，
+        // 不碰当前态、不回滚新先行值）；成功对齐走 aligned()。
+        let generation = emoteReactionGuard.begin()
         BearyAPI.shared.postEmote(id: entryId, emote: key) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard self.emoteReactionGuard.isCurrent(generation) else { return }
                 self.isEmoteBusy = false
                 switch result {
                 case .success(let resp):
-                    if let server = resp.emotes {
-                        let merged = BearyEmoteOrder.merged(previous: self.entry.emotes, server: server)
-                        if BearyEmoteOrder.signature(merged) != BearyEmoteOrder.signature(self.entry.emotes) {
-                            self.entry.emotes = merged
-                            self.renderEmotes()
-                        }
+                    if let aligned = BearyEmoteReactionGuard.aligned(current: self.entry.emotes, server: resp.emotes) {
+                        self.entry.emotes = aligned
+                        self.renderEmotes()
                     }
                     self.refreshActionRow()
                     self.onInteractionChanged?(entryId, nil, nil, nil, self.entry.emotes)
