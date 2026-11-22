@@ -4075,6 +4075,22 @@ final class BearyCountdownTimer {
     deinit { timer?.invalidate() }
 }
 
+/// 停留埋点共享 plumbing(第十三批第 8 项 App 部分)：计时＋上报收一处，门槛作参数。App 保持无门槛直报（minimumMs 默认 0），不要擅自统一门槛——网页 dwellBegin／dwellFlush 只报 ≥1000ms，与 App 已分叉。事件名 dwell／search_click／app_open 三枚两面共有，均走 BearyAPI.sendEvent 共享入口；网页无 app_open 事件，不补加。
+enum BearyDwell {
+    /// 计时：自 start 到 now 的毫秒数，负值钳 0。
+    static func milliseconds(since start: Date, now: Date = Date()) -> Int {
+        max(0, Int(now.timeIntervalSince(start) * 1000))
+    }
+
+    /// 上报：ms 未达 minimumMs 时不上报；达门槛即经共享入口 sendEvent 直报。
+    /// 上报失败不得阻塞流程、不得弹 toast；游客 401 由 suppressUnauthorized 兜底。
+    static func report(entryId: String, since start: Date, minimumMs: Int = 0, now: Date = Date()) {
+        let ms = milliseconds(since: start, now: now)
+        guard ms >= minimumMs else { return }
+        BearyAPI.shared.sendEvent(eventType: "dwell", targetId: entryId, durationMs: ms, completion: nil)
+    }
+}
+
 /// 审计 2026-11-02 第十节：可见性三档共享口径（已发布日记“修改权限”四处共用）。
 /// 服务端 visibility 字段值：private / friends / public；旧行缺失时调用方按
 /// isPublic 兜底（true=公开、其余=私密），绝不把缺失误标为仅好友。
