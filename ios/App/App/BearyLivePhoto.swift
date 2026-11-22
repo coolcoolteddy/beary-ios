@@ -33,6 +33,9 @@ enum BearyLivePhoto {
     /// iOS 实况视频通常 2–5MB，10MB 覆盖绝大多数；超限在选图时直接拒收
     /// （toast 说明、不进图片条），不静默降级为静态图。
     static let maxVideoBytes = 10 * 1024 * 1024
+    /// 实况元数据加载限时 5 秒（可复用资源 27 遍 B-A3）：剥位置元数据与读
+    /// content identifier 两处信号量等待共用；导出等待 30 秒语义不同，不并入。
+    static let livePhotoLoadTimeout: TimeInterval = 5
 
     static func videoDataURL(_ data: Data) -> String {
         return "data:video/quicktime;base64," + data.base64EncodedString()
@@ -64,7 +67,7 @@ enum BearyLivePhoto {
         asset.loadValuesAsynchronously(forKeys: ["metadata"]) {
             loadSemaphore.signal()
         }
-        guard loadSemaphore.wait(timeout: .now() + 5) == .success else { return nil }
+        guard loadSemaphore.wait(timeout: .now() + livePhotoLoadTimeout) == .success else { return nil }
         var loadError: NSError?
         guard asset.statusOfValue(forKey: "metadata", error: &loadError) == .loaded else { return nil }
         let kept = asset.metadata.filter { !isLocationMetadataItem($0) }
@@ -514,7 +517,7 @@ final class BearyLivePhotoLoader {
                 }
             }
         }
-        _ = semaphore.wait(timeout: .now() + 5)
+        _ = semaphore.wait(timeout: .now() + BearyLivePhoto.livePhotoLoadTimeout)
         return identifier
     }
 
