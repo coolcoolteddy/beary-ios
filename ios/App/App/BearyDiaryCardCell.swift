@@ -3877,7 +3877,7 @@ class BearyDiaryCardCell: UITableViewCell {
         onTapImages?(currentImageKeys, index, sender.view.map { $0.convert($0.bounds, to: nil) }, (sender.view as? UIImageView)?.image)
     }
 
-    /// 按压反馈（预览 v3 定版：按下 0.95 / 0.1s、松手弹簧 1.03 → 0.99 → 1 / motion.micro 0.18s，
+    /// 按压反馈（Li 2026-11-21 点选：按下 0.95 / 0.1s、松手弹簧回 1 / 0.18s，
     /// 走按钮层，与共用按压路径同款核心；震动仍由各点按流程自理，不在此补）。
     @objc private func iconTouchDown(_ sender: UIButton) {
         BearyIconMotion.pressDownVisual(on: sender)
