@@ -4,6 +4,9 @@ import UIKit
 // 走共享底部弹窗容器 BearyBottomSheet（与登录弹窗/确认弹窗同款：弹簧 0.38s 上升、
 // 背后缩 0.92、遮罩 0.45、下拖关/弹回；右上角叉叉关闭由本 sheet 自己保留）。
 // 内容就是 admin 里写的那段原文，不自动拼 Release 说明。单“知道了”按钮。
+// 滚动结构照抄 BearyInputSheet：标题＋正文走 UIScrollView＋内容容器，
+// “知道了”按钮组固定在底部；内容短时 sheet 高跟内容走，内容长时容器按 0.88
+// 封顶、正文在滚动区内纵向滚动、按钮组贴底不动。
 // 字号走规范语义入口：标题 sheet 档 15 bold（smallActionFont），
 // 正文 15 regular（smallBodyFont）；按钮走 BearyButton 工厂（常规 16 semibold）。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
@@ -38,6 +41,8 @@ final class BearyAnnouncementSheetViewController: UIViewController {
     /// 否则容器在呈现中途释放、进退场动画丢 delegate。
     var sheetDelegate: BearyBottomSheetTransitioningDelegate?
 
+    private let scrollView = UIScrollView()
+    private let scrollContentView = UIView()
     private let grabberView = UIView()
     private let titleLabel = UILabel()
     private let bodyLabel = UILabel()
@@ -59,26 +64,33 @@ final class BearyAnnouncementSheetViewController: UIViewController {
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
 
+        // 内容区滚动容器：抓手→标题→正文挂内容容器内纵向滚动，
+        // 按钮组留在 view 上固定底部（BearyInputSheet 同款）。
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
+        scrollContentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(scrollContentView)
+
         grabberView.translatesAutoresizingMaskIntoConstraints = false
         // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #F5F5F5）
         // 对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
         grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        view.addSubview(grabberView)
+        scrollContentView.addSubview(grabberView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = announcement.title
         titleLabel.font = BearyDynamicType.smallActionFont()
         titleLabel.textColor = BearyColors.ink
         titleLabel.numberOfLines = 0
-        view.addSubview(titleLabel)
+        scrollContentView.addSubview(titleLabel)
 
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
         bodyLabel.text = announcement.content
         bodyLabel.font = BearyDynamicType.smallBodyFont()
         bodyLabel.textColor = BearyColors.gray
         bodyLabel.numberOfLines = 0
-        view.addSubview(bodyLabel)
+        scrollContentView.addSubview(bodyLabel)
 
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
         buttonStack.axis = .vertical
@@ -92,21 +104,36 @@ final class BearyAnnouncementSheetViewController: UIViewController {
         button.heightAnchor.constraint(equalToConstant: button.style.height).isActive = true
         view.addSubview(buttonStack)
 
+        // 滚动区底边贴按钮组顶边（999：容器封顶后 sheet 帧被压短时先断这条，
+        // 按钮组仍贴底可见，滚动区塌到 0 高，不动按钮高）。
+        let scrollBottom = scrollView.bottomAnchor.constraint(equalTo: buttonStack.topAnchor)
+        scrollBottom.priority = UILayoutPriority(rawValue: 999)
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollBottom,
+
+            scrollContentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            scrollContentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            scrollContentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            scrollContentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            scrollContentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+
+            grabberView.topAnchor.constraint(equalTo: scrollContentView.topAnchor, constant: BearySheetChrome.grabberTop),
+            grabberView.centerXAnchor.constraint(equalTo: scrollContentView.centerXAnchor),
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
 
             titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
-            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            titleLabel.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(equalTo: scrollContentView.trailingAnchor, constant: -16),
 
             bodyLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
-            bodyLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            bodyLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            bodyLabel.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor, constant: 16),
+            bodyLabel.trailingAnchor.constraint(equalTo: scrollContentView.trailingAnchor, constant: -16),
+            bodyLabel.bottomAnchor.constraint(equalTo: scrollContentView.bottomAnchor, constant: -16),
 
-            buttonStack.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 16),
             buttonStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             buttonStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
@@ -120,11 +147,15 @@ final class BearyAnnouncementSheetViewController: UIViewController {
 
     /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
+    /// 滚动区无固有高，整体系 fitting 算不出高：改为滚动内容高（已含内容底
+    /// 16 留白）＋按钮组高＋底边 16＋安全区底边分别相加；与改前总高一致，
+    /// 封顶 0.88 仍由容器做，超高时正文在滚动区内纵向滚动、按钮组贴底不动。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
         let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
-        let size = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
-        let height = ceil(size.height) + extraBottomInset
+        let contentHeight = scrollContentView.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
+        let buttonsHeight = buttonStack.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
+        let height = ceil(contentHeight) + ceil(buttonsHeight) + 16 + view.safeAreaInsets.bottom + extraBottomInset
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
