@@ -199,12 +199,14 @@ class BearyFeedViewController: UIViewController {
     /// 加载三件套·骨架屏：只覆盖无缓存首屏加载（isFirstLoad 且首拉未回包、
     /// 且表里尚无内容）；有缓存/后台重拉/下拉刷新/分页一律不走这里。
     /// 骨架只盖内容列表区，页面框架（顶栏/tab/分区）仍框架先行先出。
-    private var showingSkeleton: Bool {
-        isFirstLoad && !plazaFirstDone && plazaEntries().isEmpty && !plazaError
-    }
-    /// 骨架是否实际出过屏：首拉回包时若出过屏，走骨架淡出＋内容 60ms/8px 入场。
-    private var didShowSkeleton = false
-    private let skeletonRowCount = 3
+    /// 接线走共用 BearySkeletonState（BearyLoadingUX.swift）：触发谓词
+    /// 留在本页，行数／出屏旗／回包交叉溶解由模板统一管。
+    private lazy var skeletonState = BearySkeletonState(shouldShow: { [weak self] in
+        guard let self else { return false }
+        return self.isFirstLoad && !self.plazaFirstDone && self.plazaEntries().isEmpty && !self.plazaError
+    })
+    /// 骨架是否在屏（模板谓词的薄别名；出屏旗见 skeletonState.didShow）。
+    private var showingSkeleton: Bool { skeletonState.isShowing }
     /// 加载三件套·底部脚部：游客 logo 与加载更多脚部共用一个 tableFooterView。
     private let loadMoreFooterView = BearyLoadMoreFooterView()
     private var lastFeedFooterSignature = ""
@@ -1351,7 +1353,7 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaReachedEnd = true
                         strongSelf.plazaError = false
                         strongSelf.lastFeedLoadAt = Date()
-                        if !strongSelf.didShowSkeleton {
+                        if !strongSelf.skeletonState.didShow {
                             strongSelf.tableView.reloadData()
                         }
                         strongSelf.finishFirstLoadIfNeeded()
@@ -1410,7 +1412,7 @@ class BearyFeedViewController: UIViewController {
                     // 审计 13：界面先应用（落表 + 状态），写盘异步在后、不卡首帧。
                     // 加载三件套·骨架淡出：骨架出过屏时不直接 reloadData，
                     // 由 finishFirstLoadIfNeeded 经 0.26s 交叉溶解换上真实行。
-                    if !strongSelf.didShowSkeleton {
+                    if !strongSelf.skeletonState.didShow {
                         strongSelf.tableView.reloadData()
                     }
                     // B1：段守卫写盘——当前段首屏写回本段桶；save 内部只存
@@ -1435,7 +1437,7 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaFirstDone = true
                         // 加载三件套·骨架淡出：骨架出过屏时不直接 reloadData，
                         // 由 finishFirstLoadIfNeeded 经 0.26s 交叉溶解换上失败行。
-                        if !strongSelf.didShowSkeleton {
+                        if !strongSelf.skeletonState.didShow {
                             strongSelf.tableView.reloadData()
                         }
                         strongSelf.finishFirstLoadIfNeeded()
@@ -2497,22 +2499,11 @@ class BearyFeedViewController: UIViewController {
     private func finishFirstLoadIfNeeded() {
         if plazaFirstDone && isFirstLoad {
             isFirstLoad = false
-            if didShowSkeleton {
-                didShowSkeleton = false
-                // 加载三件套·骨架淡出：只做一次 0.26s 交叉溶解，真实行直接落
-                // 最终位置，不再在淡变完成后又把刚淡出的行藏起来重播一次
-                // （双重入场会闪一下；完成回调也不再补播，切页后无残留动画）。
-                if BearyMotion.animated(true) {
-                    UIView.transition(with: tableView, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
-                        self.tableView.reloadData()
-                    }, completion: nil)
-                } else {
-                    // 减动效：直接换上真实行（只跳过动画）；此前走
-                    // staggerFadeCells 会因减动效立即返回、骨架行一直留着。
-                    tableView.reloadData()
-                }
-                return
-            }
+            // 加载三件套·骨架淡出：只做一次 0.26s 交叉溶解，真实行直接落
+            // 最终位置，不再在淡变完成后又把刚淡出的行藏起来重播一次
+            // （双重入场会闪一下；完成回调也不再补播，切页后无残留动画）。
+            // 出过屏才走淡出，未出过屏走首屏错峰淡入（见下）。
+            if skeletonState.finishIfShown(tableView: tableView) { return }
             // M1：首拉完成时可见行错峰淡入一次（后续重拉/后台换新不再重播）。
             staggerFadeCells(at: (tableView.indexPathsForVisibleRows ?? []).sorted(), kind: .firstLoad)
         }
@@ -3244,9 +3235,8 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate, U
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         // 加载三件套·骨架屏：无缓存首屏加载时先出 3 张骨架卡（与真实卡片同布局）。
-        if showingSkeleton {
-            didShowSkeleton = true
-            return skeletonRowCount
+        if let skeletonRows = skeletonState.rowCountIfShowing() {
+            return skeletonRows
         }
         let count = plazaEntries().count
         if plazaError { return count + 1 }

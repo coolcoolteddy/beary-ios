@@ -651,6 +651,66 @@ final class BearyLoadMoreFooterView: UIView {
     }
 }
 
+// MARK: - 骨架屏接线模板
+
+/// 骨架屏接线模板：Feed／Profile／DM 会话列表三处同形四件套的共用件。
+/// 触发谓词由各页自供（条件不同应留），行数／出屏旗／首拉回包交叉溶解
+/// 淡出由模板统一管（模板相同不应留）。
+/// Timeline 用 backgroundView 骨架、Search 只剩关注钮高度占位，机制不同，不进本模板。
+final class BearySkeletonState {
+
+    /// 三处同款行数：3 行骨架卡夹住真实卡片高度区间。
+    static let defaultRowCount = 3
+
+    /// 各页的出骨架条件（Feed 首屏无缓存／Profile tab 加载中无行／
+    /// DM 首拉未落定无会话）；只读谓词，模板不改各页状态。
+    private let shouldShow: () -> Bool
+
+    /// 骨架行数（默认 3）。
+    let rowCount: Int
+
+    /// 骨架是否实际出过屏：numberOfRows 出骨架行时置位，回包交接时消费。
+    private(set) var didShow = false
+
+    init(rowCount: Int = defaultRowCount, shouldShow: @escaping () -> Bool) {
+        self.rowCount = rowCount
+        self.shouldShow = shouldShow
+    }
+
+    /// 当前是否应出骨架行。
+    var isShowing: Bool { shouldShow() }
+
+    /// numberOfRows 用：应出骨架时返回行数并记出屏，否则返回 nil 走真实行数。
+    func rowCountIfShowing() -> Int? {
+        guard isShowing else { return nil }
+        didShow = true
+        return rowCount
+    }
+
+    /// 首拉回包交接：出过屏时只做一次 0.26s 交叉溶解换真实行（减动效
+    /// 直接换行），否则不碰表；返回是否出过屏。
+    /// completion 只在交叉溶解完成后跑（各页的首屏入场动画放这里；
+    /// 减动效／未出过屏时不跑，与各页旧口径一致）。
+    @discardableResult
+    func finishIfShown(tableView: UITableView, completion: (() -> Void)? = nil) -> Bool {
+        guard didShow else { return false }
+        didShow = false
+        if BearyMotion.animated(true) {
+            UIView.transition(with: tableView, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+                tableView.reloadData()
+            }, completion: { _ in completion?() })
+        } else {
+            tableView.reloadData()
+        }
+        return true
+    }
+
+    /// 失败收尾：骨架随 reloadData 直接撤，不留出屏旗给下次回包。
+    func discard() {
+        didShow = false
+    }
+}
+
 // MARK: - 共享入场错峰与 300px 预加载
 
 enum BearyLoadingUX {
