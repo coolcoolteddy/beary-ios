@@ -91,7 +91,7 @@ final class BearyLocalNotifications: NSObject {
         stateLock.unlock()
     }
 
-    private init() {
+    private override init() {
         super.init()
         // 切号时按新号重算（SceneDelegate onUserChanged 在 id 真变时广播）。
         NotificationCenter.default.addObserver(forName: .bearyUserDidChange, object: nil, queue: .main) { [weak self] _ in
