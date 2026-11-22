@@ -344,7 +344,8 @@ public final class ProfileCoverView: UIView {
         currentDepth = min(1, max(-1, tilt.x + 0.16 * tilt.y))
         currentVertical = 3 * tilt.y
         updateBackdropLayers()
-        guard delta >= 0.002 else { return }
+        let timeDriven = theme == .midautumn || theme == .muertos
+        guard delta >= 0.002 || timeDriven else { return }
         overlayView.setNeedsDisplay()
     }
 
@@ -689,7 +690,7 @@ public final class ProfileCoverView: UIView {
     /// 孔明灯（sky-lantern.png，120×110）：三盏错开相位循环上飘（周期约
     /// 14 秒，底部淡入、顶部淡出）；上飘由 App 实现——ProfileCoverView
     /// 用 step() 的 dt 累一个 lanternPhase（进页／停播时复位），灯的位置
-    /// （x 180／480／760）与大小（宽 56）是我定的，想挪直接改这两个数。
+    /// （x 260／480／760）与大小（宽 56）是我定的，想挪直接改这两个数。
     private func drawMidautumn(_ ctx: CGContext, depth: CGFloat, travel: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
         let scaleY = padded.height / 323
@@ -707,7 +708,7 @@ public final class ProfileCoverView: UIView {
         let lanternHeight = lanternWidth * 110 / 120
         let period: CGFloat = 14
         let rise: CGFloat = 260
-        for (index, baseX) in [180, 480, 760].enumerated() {
+        for (index, baseX) in [260, 480, 760].enumerated() {
             let phase = (lanternPhase / period + CGFloat(index) / 3).truncatingRemainder(dividingBy: 1)
             let fade = min(phase / 0.15, (1 - phase) / 0.15, 1)
             guard fade > 0 else { continue }
@@ -898,6 +899,9 @@ public final class ProfileCoverView: UIView {
     /// 不触发任何重画。poster 层在底图未到时显示、到了即藏。
     private func updateBackdropLayers() {
         guard bounds.width > 0, bounds.height > 0 else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         let size = Self.artSize
         let canvas = CGRect(origin: .zero, size: size)
         if backdrop == nil {
@@ -966,6 +970,9 @@ public final class ProfileCoverView: UIView {
     /// 那圈暖光晕本在两片光效层之下、灯之上，改后落到两片层之下——0.30 透明度的
     /// 柔光，肉眼不可见的差别。
     private func applyStagedOverlayPoses() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         var visible = Set<String>()
         let k = coverCanvasScale
         for pose in stagedOverlayPoses {
