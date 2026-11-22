@@ -70,6 +70,14 @@ extension APIError {
               let urlError = underlying as? URLError else { return false }
         return urlError.code == .timedOut || urlError.code == .networkConnectionLost
     }
+
+    /// 离线：底层 URLError 为无网络连接（本机离线、开发者模式断网模拟亦然）。
+    /// 个人页自动重试一次的门用：离线时重试必败，不追试。
+    var isOffline: Bool {
+        guard case .network(let underlying) = self,
+              let urlError = underlying as? URLError else { return false }
+        return urlError.code == .notConnectedToInternet
+    }
 }
 
 // MARK: - 数据模型

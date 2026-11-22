@@ -281,6 +281,9 @@ class BearyProfileViewController: UIViewController {
     /// 头像失败时恢复的首字母（与当前显示名同源）。
     private var avatarFallbackLetter: String?
     private var profileLoadFailed = false
+    /// 自动重试一次（整页资料）：本轮资料失败且无旧资料可显时静默重拉一次；
+    /// 成功回包后复位（下一轮失败仍可再试一次）；离线／404／已取消不重试。
+    private var profileAutoRetryUsed = false
     /// 验证组⑨：仅 profile 接口 404 才判“用户不存在”；断网等其他失败仍属“加载失败”。
     /// 与 profileLoadFailed 分开：后者仍用于空态门控（2155 行），不受 404 区分影响。
     private var profileNotFound = false
@@ -340,6 +343,9 @@ class BearyProfileViewController: UIViewController {
 
     private var tabLoadMore = false
     private var tabError = false
+    /// 自动重试一次（标签首屏）：首屏失败时静默重拉一次；成功回包后复位；
+    /// 翻页追加失败不走这里（追加失败仍只留点按重试，不整页重拉）。
+    private var tabAutoRetryUsed = false
     private var headerLaidOutWidth: CGFloat = 0
     private var expandedEntryIds: Set<String> = []
     /// 快连点代次（2026-10-29 及时性口径）：按 entryId 计代次，每次点按 +1 并
@@ -417,6 +423,8 @@ class BearyProfileViewController: UIViewController {
     private var modulesLoadFailed = false
     /// 113 重试在途：重试行显加载态、重试钮禁用，成功/失败回包后复位。
     private var modulesRetrying = false
+    /// 自动重试一次（模块语料）：分页失败时静默重拉一次；语料到齐后复位。
+    private var modulesAutoRetryUsed = false
     /// 随机漫步当前卡片与上一次 id（换篇排除上一篇；语料刷新后当前卡仍在池内则保留，
     /// 不在用户眼皮底下换卡；单篇池换不出新篇时换篇按钮只提示、不跳空卡）。
     private var currentWalkEntry: Entry?
@@ -3927,6 +3935,16 @@ class BearyProfileViewController: UIViewController {
 
     // MARK: - 数据：资料
 
+    /// 自动重试一次的门：离线不追试（重试必败）；用户不存在（404）与已取消
+    /// 也不追试；其余失败（5xx／超时／解码等）可追试一次。重试是静默的——
+    /// 不新增任何加载态，只复用现有的骨架屏／下拉头／重试行加载态。
+    private func shouldAutoRetryLoad(error: APIError) -> Bool {
+        if error.isOffline { return false }
+        if case .notFound = error { return false }
+        if case .cancelled = error { return false }
+        return true
+    }
+
     private func loadProfile() {
         // 提速代次：每轮资料加载 +1，供模块的本轮去重守卫用。
         profileLoadCycle += 1
@@ -3999,6 +4017,7 @@ class BearyProfileViewController: UIViewController {
         switch result {
         case .success(let profileValue):
             profileLoadFailed = false
+            profileAutoRetryUsed = false
             profileNotFound = false
             profile = profileValue
             movedToHandle = profileValue.movedTo
@@ -4045,6 +4064,12 @@ class BearyProfileViewController: UIViewController {
         case .failure(let error):
             profileLoadFailed = true
             profileNotFound = { if case .notFound = error { return true } else { return false } }()
+            // 自动重试一次（整页）：无旧资料可显（整页空态）且错误可追试时，
+            // 静默重拉一次资料；有旧资料时只 toast、不追试（G12 保留旧头口径不动）。
+            if profile == nil, !profileAutoRetryUsed, shouldAutoRetryLoad(error: error) {
+                profileAutoRetryUsed = true
+                loadProfile()
+            }
             // G12：二选一取“保留整套旧头”：已有旧资料时名字/头像/封面/统计一律不动，
             // 仅 toast 说明并以脚部重试/下拉刷新作重试入口；无旧资料时才落到统一失败态。
             if profile == nil {
@@ -4665,6 +4690,7 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.modulesCorpusPartial = false
                         strongSelf.modulesLoadFailed = false
                         strongSelf.modulesRetrying = false
+                        strongSelf.modulesAutoRetryUsed = false
                         strongSelf.renderModules()
                         // r17-C7：确认到尾才覆盖快照（失败/部分语料分支不调）。
                         strongSelf.saveStatsSnapshotIfNeeded(entries: merged)
@@ -4681,12 +4707,13 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.modulesCorpusPartial = true
                         strongSelf.modulesLoadFailed = false
                         strongSelf.modulesRetrying = false
+                        strongSelf.modulesAutoRetryUsed = false
                         strongSelf.renderModules()
                         // r17-C7：本分支是部分语料，不覆盖快照——快照只认上一次
                         // 到齐的聚合（见 saveStatsSnapshotIfNeeded），半截聚合不写回。
                         strongSelf.pastSelfSyncFromServer(generation: generation)
                     }
-                case .failure:
+                case .failure(let error):
                     // 113：失败不再静默全灭——本轮已拉到的页进语料（旧全量语料在
                     // accumulated 为空时原样保留），置失败旗并渲染：已有语料照常显
                     // + 重试行，从未拉到页时只显重试行；重试行由 renderModules 管显隐。
@@ -4697,6 +4724,13 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.modulesCorpus = accumulated
                     }
                     strongSelf.modulesCorpusComplete = false
+                    // 自动重试一次（模块语料）：错误可追试时静默重拉一轮（与点按
+                    // 重试同路径）；离线不追试。失败行照常渲染——重试在途时显
+                    // “加载中…”、重试钮禁用；再失败则停在失败行等点按。
+                    if !strongSelf.modulesAutoRetryUsed, strongSelf.shouldAutoRetryLoad(error: error) {
+                        strongSelf.modulesAutoRetryUsed = true
+                        strongSelf.scheduleModulesRefresh()
+                    }
                     strongSelf.renderModules()
                 }
             }
@@ -6890,6 +6924,7 @@ class BearyProfileViewController: UIViewController {
         switch result {
         case .success(let listValue):
             tabError = false
+            tabAutoRetryUsed = false
             let freshEntries = listValue.entries ?? []
             var appendedRowCount = 0
             var oldRowCount = 0
@@ -6945,8 +6980,14 @@ class BearyProfileViewController: UIViewController {
             } else {
                 reloadAfterAppendFallback()
             }
-        case .failure:
+        case .failure(let error):
             tabError = true
+            // 自动重试一次（标签首屏）：仅首屏失败追试，翻页追加失败不追试；
+            // 失败态照常置位，点按重试保留。
+            if !appending, !tabAutoRetryUsed, shouldAutoRetryLoad(error: error) {
+                tabAutoRetryUsed = true
+                loadTab(forceReload: true)
+            }
             // 加载三件套·骨架屏：失败时骨架随 reloadData 直接撤，不留
             // didShowProfileSkeleton 给下次回包（下次成功不再走骨架过渡）。
             didShowProfileSkeleton = false
