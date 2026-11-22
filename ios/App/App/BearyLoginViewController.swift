@@ -1393,26 +1393,16 @@ final class BearyLoginViewController: UIViewController {
         // 键盘弹出时必有一个输入框持有焦点，取不到则不垫。
         view.layoutIfNeeded()
         let activeField = [emailField, codeField, inviteField].first(where: { $0.isFirstResponder })
-        let overlapsInput: Bool
-        if let activeField = activeField {
-            let inputFrame = view.convert(activeField.bounds, from: activeField)
-            overlapsInput = frameInView.isEmpty == false && frameInView.intersects(inputFrame)
-        } else {
-            overlapsInput = false
-        }
-        let bottom = overlapsInput ? max(0, view.bounds.maxY - view.safeAreaInsets.bottom - frameInView.minY) : 0
+        let inputFrame = activeField.map { view.convert($0.bounds, from: $0) }
+        let overlapsInput = inputFrame.map { KeyboardInset.overlaps(keyboardFrame: frameInView, inputFrame: $0) } ?? false
         keyboardTopY = frameInView.isEmpty ? nil : frameInView.minY
-        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        let curveRaw = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
-        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
-            self.scrollView.contentInset.bottom = bottom
-            self.scrollView.verticalScrollIndicatorInsets.bottom = bottom
+        KeyboardInset.apply(to: scrollView, keyboardFrame: frameInView, inputFrame: inputFrame, in: view, note: notification) {
             // 视线留在当前输入框附近：只垫 inset 不滚动时，被键盘盖住的框仍藏在
             // 键盘后、须用户手动拖；盖住时把它滚到键盘上方 12pt，跟键盘同动画。
             if overlapsInput, let activeField = activeField {
                 self.scrollFieldIntoView(activeField, keyboardTop: frameInView.minY, animated: false)
             }
-        })
+        }
     }
 
     @objc private func keyboardWillHide(_ notification: Notification) {

@@ -96,6 +96,52 @@ enum BearyMotion {
     static let localStateDuration: TimeInterval = micro
 }
 
+/// 键盘遮挡滚动区的共享口径（原 Feedback／Login 两份 keyboardWillShow 近乎逐字相同）：
+/// 先判键盘帧与输入框是否相交，再算重叠 bottom（键盘顶到视图底、扣安全区底），
+/// duration／curve 取通知 userInfo，动画块里同时改 contentInset.bottom 与
+/// verticalScrollIndicatorInsets.bottom。ComposerPickers 的 applyKeyboardFrame 与
+/// EditProfile 的 setEditKeyboardInset 是变体（各留自己的 iPad／滚动部分），不在此合。
+/// 私信页已改走 keyboardLayoutGuide，不动。
+enum KeyboardInset {
+    /// 键盘帧与输入框是否相交（空帧不算相交；浮动键盘停在中部未碰输入框时不垫）。
+    static func overlaps(keyboardFrame: CGRect, inputFrame: CGRect) -> Bool {
+        keyboardFrame.isEmpty == false && keyboardFrame.intersects(inputFrame)
+    }
+
+    /// 键盘与输入框重叠时应垫的 bottom inset；不重叠为 0。
+    /// keyboardFrame／inputFrame 须已转到同一视图坐标（调用方 view.convert）。
+    static func bottom(forKeyboardFrame keyboardFrame: CGRect, inputFrame: CGRect, in view: UIView) -> CGFloat {
+        guard overlaps(keyboardFrame: keyboardFrame, inputFrame: inputFrame) else { return 0 }
+        return max(0, view.bounds.maxY - view.safeAreaInsets.bottom - keyboardFrame.minY)
+    }
+
+    /// 按通知的系统时长／曲线，把 scrollView 两处 bottom inset 改到重叠量；
+    /// inputFrame 为 nil（无当前输入框）时垫 0。additionalAnimations 在同一动画块内跑
+    ///（如登录页把输入框滚到键盘上方 12pt）。
+    static func apply(to scrollView: UIScrollView, keyboardFrame: CGRect, inputFrame: CGRect?, in view: UIView, note: Notification, additionalAnimations: (@escaping () -> Void)? = nil) {
+        let bottom = inputFrame.map { bottom(forKeyboardFrame: keyboardFrame, inputFrame: $0, in: view) } ?? 0
+        animate(note: note) {
+            scrollView.contentInset.bottom = bottom
+            scrollView.verticalScrollIndicatorInsets.bottom = bottom
+            additionalAnimations?()
+        }
+    }
+
+    /// 带系统动画的复位（反馈页 keyboardWillHide 同款：时长／曲线取通知）。
+    static func reset(_ scrollView: UIScrollView, note: Notification) {
+        animate(note: note) {
+            scrollView.contentInset.bottom = 0
+            scrollView.verticalScrollIndicatorInsets.bottom = 0
+        }
+    }
+
+    private static func animate(note: Notification, animations: @escaping () -> Void) {
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
+        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: animations)
+    }
+}
+
 /// 新卡片入场统一配置（审计 r16 第 10 项，Li 定版 2026-11-06，规范 §6）：
 /// 首屏／筛子切换 60ms 步进、8pt 上移；分页追加 30ms 步进、8pt 上移；
 /// motion.normal 0.26s、封顶 0.24s、可交互。广场（BearyFeedViewController.

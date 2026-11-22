@@ -287,102 +287,17 @@ extension BearyInputSheetViewController: UITextFieldDelegate {
 
 // MARK: - 键盘跟随 presentation 控制器
 
-/// 只跟停靠键盘的 presentation 控制器（照抄登录 sheet 的键盘口径，
-/// 见 BearyLoginSheetPresentationController）：sheet 底贴键盘顶边；
+/// 只跟停靠键盘的 presentation 控制器（键盘逻辑在父类
+/// BearyBottomSheetPresentationController）：sheet 底贴键盘顶边；
 /// 浮动/分屏键盘不动 sheet。本 sheet 无玻璃/阴影 chrome，动画只落布局。
 private final class BearyInputSheetPresentationController: BearyBottomSheetPresentationController {
 
-    /// sheet 顶距容器顶的最小留白（与容器默认帧同口径）。
-    private static let topMargin: CGFloat = 56
-
-    /// 停靠键盘顶边（容器坐标）；浮动/分屏键盘不置位。
-    private var keyboardTopY: CGFloat?
-
-    override init(presentedViewController: UIViewController, presenting presentingViewController: UIViewController?) {
-        super.init(presentedViewController: presentedViewController, presenting: presentingViewController)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
+    /// 启用父类键盘停靠。
+    override var followsKeyboardTop: Bool { true }
 
     /// 默认帧改走键盘停靠：底贴键盘顶（无键盘时贴容器底），高跟内容走、顶留 56pt；
     /// 宽：<821 全宽，≥821 居中 600（与容器默认帧同口径）。
     override var frameOfPresentedViewInContainerView: CGRect {
-        guard let container = containerView else { return .zero }
-        let width: CGFloat
-        if container.bounds.width >= 821 {
-            width = min(600, container.bounds.width - 32)
-        } else {
-            width = container.bounds.width
-        }
-        let x = (container.bounds.width - width) / 2
-        let preferred = presentedViewController.preferredContentSize.height
-        let height = preferred > 0 ? preferred : container.bounds.height * 0.5
-        let bottomY = keyboardTopY ?? container.bounds.height
-        let maxHeight = bottomY - Self.topMargin
-        let h = max(0, min(height, maxHeight))
-        return CGRect(x: x, y: bottomY - h, width: width, height: h)
-    }
-
-    @objc private func keyboardWillShow(_ note: Notification) {
-        updateKeyboardTop(from: note)
-    }
-
-    @objc private func keyboardWillChangeFrame(_ note: Notification) {
-        updateKeyboardTop(from: note)
-    }
-
-    @objc private func keyboardWillHide(_ note: Notification) {
-        keyboardTopY = nil
-        animateLayoutForKeyboard(note)
-    }
-
-    /// 只跟停靠键盘：浮动/分屏键盘（底边未贴容器底）不动 sheet。
-    /// 停靠→悬浮只发 keyboardWillChangeFrame、不发 keyboardWillHide：键盘不再贴底时
-    /// 在这里把旧的停靠顶边清掉、落回容器底，否则 sheet 一直停在旧高度。
-    /// 与 Toast 同口径：帧须与容器相交且触到容器底边才认贴底；收起途中的
-    /// WillChangeFrame 终帧在屏外（minY 已过底边）同判为无，不再误认贴底。
-    /// （照抄 BearyLoginSheetPresentationController.updateKeyboardTop。）
-    private func updateKeyboardTop(from note: Notification) {
-        guard let container = containerView,
-              let value = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
-        let frameInContainer = container.convert(value.cgRectValue, from: nil)
-        let bounds = container.bounds
-        guard frameInContainer.minY < bounds.maxY - 1,
-              frameInContainer.maxY >= bounds.maxY - 1,
-              frameInContainer.intersects(bounds) else {
-            // 键盘不再贴底（iPad 悬浮/分屏／已移出屏幕）：清掉旧的停靠顶边并重算落点；
-            // 已是 nil 时不重复布局。
-            guard keyboardTopY != nil else { return }
-            keyboardTopY = nil
-            animateLayoutForKeyboard(note)
-            return
-        }
-        keyboardTopY = frameInContainer.minY
-        animateLayoutForKeyboard(note)
-    }
-
-    private func animateLayoutForKeyboard(_ note: Notification) {
-        guard let container = containerView else { return }
-        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
-        let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
-        if UIAccessibility.isReduceMotionEnabled {
-            container.layoutIfNeeded()
-            return
-        }
-        // 拖动期间不叠加键盘动画：容器拖动只改 transform、不改帧，松手复位后
-        // containerViewWillLayoutSubviews 会按最新 keyboardTopY 落帧。
-        guard let presentedView = presentedView, presentedView.transform.isIdentity else {
-            container.layoutIfNeeded()
-            return
-        }
-        UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: {
-            container.layoutIfNeeded()
-        })
+        keyboardDockedFrame()
     }
 }
