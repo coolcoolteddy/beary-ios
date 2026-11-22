@@ -136,7 +136,7 @@ enum BearyGIF {
             for k in index..<end { delay += delayForFrame(source: source, index: k) }
             guard let cg = CGImageSourceCreateImageAtIndex(source, index, nil) else { continue }
             let raw = UIImage(cgImage: cg)
-            frames.append((downsampled(raw, maxSide: maxDecodedSide) ?? raw, delay))
+            frames.append((BearyImagePrep.resized(raw, maxSide: maxDecodedSide), delay))
         }
         guard !frames.isEmpty else { return nil }
         let totalDuration = frames.reduce(0) { $0 + $1.delay }
@@ -172,20 +172,6 @@ enum BearyGIF {
         let delay = (gifProps[kCGImagePropertyGIFUnclampedDelayTime] as? Double)
             ?? (gifProps[kCGImagePropertyGIFDelayTime] as? Double) ?? 0.1
         return delay < 0.02 ? 0.1 : delay
-    }
-
-    /// 按像素缩到长边 maxSide（小图原样返回；format.scale = 1，不吃屏 scale）。
-    private static func downsampled(_ image: UIImage, maxSide: CGFloat) -> UIImage? {
-        guard let cg = image.cgImage else { return nil }
-        let longest = max(cg.width, cg.height)
-        guard longest > 0, CGFloat(longest) > maxSide else { return image }
-        let ratio = maxSide / CGFloat(longest)
-        let target = CGSize(width: max(1, round(CGFloat(cg.width) * ratio)),
-                            height: max(1, round(CGFloat(cg.height) * ratio)))
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        let renderer = UIGraphicsImageRenderer(size: target, format: format)
-        return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
     }
 
     /// 自定义心情图片后缀（GIF 与常规图；与服务端 imageKey 允许的扩展一致，
