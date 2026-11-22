@@ -389,21 +389,6 @@ enum BearyDMStore {
         }
     }
 
-    /// 审计四轮 10（完整备份）：全部本地会话（含对方信息与全部消息，
-    /// 按最后消息时间倒序）。只读，不改库；损坏文件时 loadAll 按现行
-    /// 口径回空（损坏保护另见审计四轮 01，不在本项改）。
-    /// 第七轮 #4：整库取自内存索引；同步入口经 syncOnIO 与后台读改写互斥。
-    static func allConversations(accountId: Int?) -> [StoredConversation] {
-        guard let accountId = accountId else { return [] }
-        return syncOnIO {
-            let (all, corrupt) = cachedAll(accountId: accountId)
-            guard !corrupt else { return [] }
-            return all.values.sorted {
-                ($0.messages.last?.createdAt ?? 0) > ($1.messages.last?.createdAt ?? 0)
-            }
-        }
-    }
-
     /// 仅本地有消息的会话（供会话列表与服务端列表合并；无消息的空会话不算）。
     /// 损坏时按空库处理（原文件已保留备份，不拿坏数据拼会话）。
     /// 第七轮 #4：整库取自内存索引（cachedAll）。

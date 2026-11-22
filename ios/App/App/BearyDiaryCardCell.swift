@@ -2491,12 +2491,6 @@ class BearyDiaryCardCell: UITableViewCell {
         onAuthorTapped?()
     }
 
-    /// C6 菜单编辑资格：本人即可；编辑时限（2026-11-18 Li 定版：非 Plus 发布后 1 小时内可改，
-    /// 超过 1 小时只能 Plus 改）在容器 presentComposerForEdit 门控，与可见性无关。
-    private func isCardMenuEditAvailable(entry: Entry) -> Bool {
-        entry.isMine == true
-    }
-
     // MARK: - configure（首页模式）
 
     func configure(with entry: Entry) {

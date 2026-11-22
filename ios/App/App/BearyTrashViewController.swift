@@ -177,11 +177,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         }
     }
 
-    /// 调用方重进本页时可手动刷新（首屏重置，不滚顶由调用方呈现方式保证）。
-    func reloadTrash() {
-        loadFirstPage()
-    }
-
     /// 第六轮 03：账号切换时立即清空当前 UI、作废在途结果。
     /// 旧号回收站行不得残留到新号眼前；在途旧号请求回包已由切号时
     /// bump 的 authEpoch 代次丢弃（各加载回调的 isStaleTrashRequest 门）。

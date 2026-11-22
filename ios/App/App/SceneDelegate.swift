@@ -592,8 +592,6 @@ final class BearyChromeViewController: UIViewController {
     /// 内容列 600 与底栏/FAB 原布局一字不动。官方图片资源不删除、不修改。
     private var sideDecoLeft: UIView?
     private var sideDecoRight: UIView?
-    private var sideDecoLeftWidth: NSLayoutConstraint?
-    private var sideDecoRightWidth: NSLayoutConstraint?
     /// 上次建 matrix 时的容器尺寸（bounds 变化才重建，避免布局回调里反复建图）。
     private var sideDecoBuiltSize: CGSize?
     /// 减动效变化观察者（A10）：减动效开关翻转时停/启 matrix 动画。
@@ -607,7 +605,6 @@ final class BearyChromeViewController: UIViewController {
     private var ink: UIColor { BearyColors.ink }
     private var gray: UIColor { BearyColors.gray }
     private var bearyOrange: UIColor { BearyColors.orange }
-    private var bearyBlue: UIColor { BearyColors.blue }
 
     /// 玻璃本体：iOS 26+ 为 UIGlassEffect，低版本降级系统毛玻璃；调用点一律不新增玻璃视图。
     /// 范围（视觉清单第 12 项）：本 helper 只允许用在栏（顶栏 / 底栏衬底），FAB 已改实色体，不再调用。
@@ -4133,10 +4130,6 @@ final class BearyChromeViewController: UIViewController {
         nav.transitioningDelegate = edgeDismiss
         self.letterEdgeDismiss = edgeDismiss
         topmostViewController().present(nav, animated: BearyMotion.animated(true))
-    }
-
-    @objc private func didTapUserProfileClose() {
-        dismiss(animated: BearyMotion.animated(true))
     }
 
     /// R22-A1：详情单篇请求的发起身份快照——日记 ID、账号、会话代次。

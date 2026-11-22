@@ -2075,15 +2075,6 @@ final class BearyTimelineCell: UITableViewCell {
         return row
     }
 
-    /// N1：已公开 pill 两态透明底——浅色橙 12%、深色橙 18%，动态色解析，
-    /// 主题切换自动跟随（不用 BearyColors.alpha 固定透明度，后者两态同值）。
-    static func publishedPillBackground() -> UIColor {
-        return UIColor { trait in
-            BearyColors.orange.resolvedColor(with: trait).withAlphaComponent(
-                trait.userInterfaceStyle == .dark ? 0.18 : 0.12)
-        }
-    }
-
 }
 
 // UITableViewCell 在新 SDK 下已自带 UIGestureRecognizerDelegate 遵循，
@@ -5367,13 +5358,6 @@ class BearyTimelineViewController: UIViewController {
             }
         }
         return (rows, sections, stagger)
-    }
-
-    private func notifyLoginOnce() {
-        if !loginNotified {
-            loginNotified = true
-            onRequireLogin?()
-        }
     }
 
     // MARK: - 日历拉取与渲染

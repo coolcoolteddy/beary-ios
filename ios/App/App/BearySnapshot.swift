@@ -91,13 +91,6 @@ extension BearyAPI {
         request("/beary/api/entries/\(safe)/snapshots/\(snapshotId)/star", method: "POST", completion: completion)
     }
 
-    /// 一键恢复：POST /beary/api/entries/:id/snapshots/:snapId/restore。
-    /// 服务端先自动存当前文字版为快照，再写回旧文字；只恢复文字，不动照片。
-    func restoreSnapshot(entryId: String, snapshotId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
-        let safe = entryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entryId
-        requestVoid("/beary/api/entries/\(safe)/snapshots/\(snapshotId)/restore", method: "POST", completion: completion)
-    }
-
     /// 清空全部快照：DELETE /beary/api/entries/:id/snapshots，仅作者本人。
     /// 删掉该篇全部快照（含已加星标的长期保留版），不可撤销；服务端点位见
     /// beary-snapshot-clear-server.diff，部署前调用会 404、按失败处理。
