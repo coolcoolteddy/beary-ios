@@ -3158,9 +3158,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // BearySearchImageRetry，不动；imageRetryHolders 只剩首图槽位）。
         avatarView.configure(displayName: displayName, avatarURL: user.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) })
 
+        // 文字块相对头像垂直居中：名字＋handle 进竖栈（间距 1 不变），栈中心锚头像
+        // 中心；无 handle 时栈自动塌掉 handle 行，单行名字同样居中（原顶钉
+        // row.top + 14 令块顶贴头像顶、块比头像矮，上面挤、下面空）。
+        let textStack = UIStackView()
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        textStack.axis = .vertical
+        textStack.spacing = 1
+        textStack.alignment = .fill
+        textStack.addArrangedSubview(nameLabel)
+        textStack.addArrangedSubview(handleLabel)
+
         row.addSubview(avatarView)
-        row.addSubview(nameLabel)
-        row.addSubview(handleLabel)
+        row.addSubview(textStack)
         row.addSubview(chevron)
         NSLayoutConstraint.activate([
             avatarView.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
@@ -3169,13 +3179,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),
-            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
-            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
-            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
-            handleLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
-            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
-            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -14),
+            textStack.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
+            textStack.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
+            textStack.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+            textStack.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -14),
             chevron.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             chevron.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
             chevron.widthAnchor.constraint(equalToConstant: 16),
@@ -3209,8 +3216,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 followButton.centerYAnchor.constraint(equalTo: row.centerYAnchor),
                 followButton.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: -8),
                 followButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
-                nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: followButton.leadingAnchor, constant: -8),
-                handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: followButton.leadingAnchor, constant: -8),
+                textStack.trailingAnchor.constraint(lessThanOrEqualTo: followButton.leadingAnchor, constant: -8),
             ])
             followButtonUserIds[followButton] = userId
             followButtonsByUserId[userId] = followButton
