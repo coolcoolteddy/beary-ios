@@ -1628,21 +1628,12 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             let hours = Int(floor(diff / 3600))
             return "\(hours) 小时前"
         }
-        let beijingZone = TimeZone(secondsFromGMT: 8 * 3600)
-        let timeFormatter = DateFormatter()
-        timeFormatter.locale = Locale(identifier: "zh_CN")
-        // G8（草稿箱部分）：时间显示 formatter 统一设北京时区，与服务端日界一致。
-        timeFormatter.timeZone = beijingZone
+        // G8（草稿箱部分）：时间显示走共享表北京时区，与服务端日界一致。
         // W9：原生定版统一补零（HH:mm），不再以网页昨天 H:mm 口径为准。
-        timeFormatter.dateFormat = "HH:mm"
         if calendar.isDateInYesterday(date) {
-            return "昨天 " + timeFormatter.string(from: date)
+            return "昨天 " + BearyDateFormatters.diaryHourMinutePadded.string(from: date)
         }
-        let dayFormatter = DateFormatter()
-        dayFormatter.locale = Locale(identifier: "zh_CN")
-        dayFormatter.timeZone = beijingZone
-        dayFormatter.dateFormat = "M月d日"
-        return dayFormatter.string(from: date)
+        return BearyDateFormatters.diaryMonthDay.string(from: date)
     }
 
     // MARK: - 入场/退场动效

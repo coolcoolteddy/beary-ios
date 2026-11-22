@@ -4053,12 +4053,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
+        // 绝对日期走共享表日记类（App 语言，北京时区；带空格格式与无空格
+        // 是两档，原地只设 locale 不设时区是 drift，本处统一）。
         let year = Calendar.current.component(.year, from: date)
         let currentYear = Calendar.current.component(.year, from: Date())
-        fmt.dateFormat = year == currentYear ? "M 月 d 日" : "yyyy 年 M 月 d 日"
-        return fmt.string(from: date)
+        if year == currentYear {
+            return BearyDateFormatters.diaryMonthDaySpaced.string(from: date)
+        }
+        return BearyDateFormatters.diaryYearMonthDaySpaced.string(from: date)
     }
 
     /// 网页用户行名字回退口径：display_name || ('@' + handle) || 'beary 用户'。

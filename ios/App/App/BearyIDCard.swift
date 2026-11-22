@@ -125,15 +125,13 @@ enum BearyIDCardStore {
             sinceDate = now
             joinDays = 1
         }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy.M.d"
+        // 加入日期走共享表账号类（App 语言，北京时区；纯数字固定格式）。
         let diaryCount: Int
         if let userId = userId, userId != 0 {
             diaryCount = BearyEntrySyncStore.loadAllEntries(accountId: userId)?.count ?? 0
         } else {
             diaryCount = 0
         }
-        return Stats(joinDays: joinDays, diaryCount: diaryCount, streakDays: 1, sinceText: formatter.string(from: sinceDate))
+        return Stats(joinDays: joinDays, diaryCount: diaryCount, streakDays: 1, sinceText: BearyDateFormatters.accountYearDotMonthDotDay.string(from: sinceDate))
     }
 }

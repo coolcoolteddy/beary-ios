@@ -4080,7 +4080,7 @@ class BearyProfileViewController: UIViewController {
             let dateValue = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
             // F18：网页 "2026 年 10 月加入" 口径——年 / 月前后带空格（静态 formatter 同口径）。
             joinedLabel.isHidden = false
-            setLabelTextFaded(joinedLabel, Self.profileJoinedFormatter.string(from: dateValue))
+            setLabelTextFaded(joinedLabel, BearyDateFormatters.joinedDateString(from: dateValue))
             let joinedIconWasHidden = joinedIconView.isHidden
             joinedIconView.isHidden = false
             fadeInViewIfAppearing(joinedIconView, wasHidden: joinedIconWasHidden)
@@ -4225,12 +4225,8 @@ class BearyProfileViewController: UIViewController {
     private var wallHasAnimated = false
 
     /// 80 包 B4-1：加入日期 formatter 静态复用（主线程 UI 路径使用，原每次 applyHeader 新建）。
-    private static let profileJoinedFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "yyyy 年 M 月加入"
-        return f
-    }()
+    /// 现走 BearyDateFormatters.joinedDateString（账号类：中文「yyyy 年 M 月加入」／
+    /// 英文「Joined MMMM yyyy」，北京时区；原地只设 locale 不设时区是 drift，本处统一）。
 
     private func applyWall() {
         guard let profileValue = profile else { return }

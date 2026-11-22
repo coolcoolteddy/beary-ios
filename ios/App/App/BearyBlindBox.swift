@@ -55,13 +55,9 @@ enum BlindBoxDate {
         return TimeZone(identifier: "Asia/Shanghai") ?? TimeZone.current
     }
 
-    /// 今日 key：yyyy-MM-dd（Asia/Shanghai）。
+    /// 今日 key：yyyy-MM-dd（Asia/Shanghai）。走共享表机器格式。
     static func todayKey() -> String {
-        let fmt = DateFormatter()
-        fmt.timeZone = shanghai
-        fmt.locale = Locale(identifier: "en_US_POSIX")
-        fmt.dateFormat = "yyyy-MM-dd"
-        return fmt.string(from: Date())
+        return BearyDateFormatters.blindBoxDayKeyFormatter.string(from: Date())
     }
 
     /// 今日 00:00（Asia/Shanghai）的毫秒时间戳；published_at 早于它才算“旧”。
@@ -79,11 +75,9 @@ enum BlindBoxDate {
         if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
             return relative
         }
-        let fmt = DateFormatter()
-        fmt.timeZone = shanghai
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "M月d日 H:mm"
-        return fmt.string(from: Date(timeIntervalSince1970: TimeInterval(ms) / 1000))
+        // M月d日 H:mm 走 BearyText 共享 formatter（日记类：App 语言，北京时区；
+        // 原地 shanghai＝Asia/Shanghai，与 GMT+8 同值）。
+        return BearyText.monthDayHourMinuteFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(ms) / 1000))
     }
 }
 

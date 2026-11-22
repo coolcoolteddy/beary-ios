@@ -1480,16 +1480,9 @@ private enum TrashText {
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        // 跨年显示年份（规范 §12）：同年 "M月d日 H:mm"，跨年 "yyyy年M月d日"；
-        // 年份判定走北京日历，与本文件 G8 时区口径一致。
-        let calendar = BearyBeijingDay.calendar
-        let year = calendar.component(.year, from: date)
-        let currentYear = calendar.component(.year, from: Date())
-        formatter.dateFormat = year == currentYear ? "M月d日 H:mm" : "yyyy年M月d日"
-        return formatter.string(from: date)
+        // 7 天外绝对时间走 BearyText 共享口径（同年 M月d日 H:mm／跨年
+        // yyyy年M月d日，北京日历判年，与本文件 G8 时区口径一致）。
+        return BearyText.absoluteDateString(from: date)
     }
 
     /// 网页 fmtDelLabel：今天 → 今天 H:mm；昨天 → 昨天；否则 M月d日。
@@ -1498,12 +1491,8 @@ private enum TrashText {
     static func deletedLabel(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let calendar = BearyBeijingDay.calendar
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
         if calendar.isDateInToday(date) {
-            formatter.dateFormat = "H:mm"
-            return "今天 " + formatter.string(from: date)
+            return "今天 " + BearyDateFormatters.diaryHourMinute.string(from: date)
         }
         if calendar.isDateInYesterday(date) {
             return "昨天"
@@ -1511,8 +1500,10 @@ private enum TrashText {
         // 跨年显示年份（规范 §12）：同年「M月d日」，跨年「yyyy年M月d日」。
         let year = calendar.component(.year, from: date)
         let currentYear = calendar.component(.year, from: Date())
-        formatter.dateFormat = year == currentYear ? "M月d日" : "yyyy年M月d日"
-        return formatter.string(from: date)
+        if year == currentYear {
+            return BearyDateFormatters.diaryMonthDay.string(from: date)
+        }
+        return BearyDateFormatters.diaryYearMonthDay.string(from: date)
     }
 
     /// 网页 trash-meta：写于 … · 删除于 … · 还剩 N 天。

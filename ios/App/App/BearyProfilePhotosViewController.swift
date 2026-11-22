@@ -75,13 +75,9 @@ final class BearyProfilePhotosViewController: UIViewController {
         var items: [BearyProfilePhotoItem]
     }
 
-    /// 月份标题格式（与星图 sheetDateYearFormatter 同款“yyyy年M月”口径，
-    /// 只取年月）；主线程使用，与 BearyAPI timeFormatter 同款做法。
-    private static let photoMonthFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy年M月"
-        return formatter
-    }()
+    /// 月份标题格式（与星图底卡跨年档同款“yyyy年M月”口径，只取年月）；
+    /// 主线程使用。现走 BearyDateFormatters 共享表（日记类：App 语言，
+    /// 北京时区；原地不设 locale／时区、走设备默认是 drift，本处统一）。
 
     private var photoSections: [PhotoMonthSection] {
         var byMonth: [String: [BearyProfilePhotoItem]] = [:]
@@ -99,7 +95,7 @@ final class BearyProfilePhotosViewController: UIViewController {
             let key = String(format: "%04d-%02d", components.year ?? 0, components.month ?? 0)
             if byMonth[key] == nil {
                 order.append(key)
-                titles[key] = Self.photoMonthFormatter.string(from: date)
+                titles[key] = BearyDateFormatters.diaryYearMonth.string(from: date)
             }
             byMonth[key, default: []].append(photo)
         }
