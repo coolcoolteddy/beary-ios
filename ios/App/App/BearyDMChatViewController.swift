@@ -2609,6 +2609,10 @@ private final class BearyDMMessageCell: UITableViewCell {
     private var mineBottomConstraint: NSLayoutConstraint!
     private var theirsTopConstraint: NSLayoutConstraint!
     private var theirsBottomConstraint: NSLayoutConstraint!
+    /// iPad 宽屏气泡封顶：气泡最宽不超过内容宽 70%，只在宽屏启用；
+    /// 窄屏仍只靠 104pt 地板，行为无变化。开关见 layoutSubviews。
+    private var mineWidthCap: NSLayoutConstraint!
+    private var theirsWidthCap: NSLayoutConstraint!
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -2659,6 +2663,10 @@ private final class BearyDMMessageCell: UITableViewCell {
             theirsStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             theirsStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -104),
         ])
+        // iPad 宽屏气泡封顶：长消息气泡最宽为内容宽 70%（1180 宽屏上约 826pt，
+        // 原先地板限放出约 1060pt）；初始不启用，由 layoutSubviews 按宽屏判定开关。
+        mineWidthCap = mineStack.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.7)
+        theirsWidthCap = theirsStack.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.7)
         // 失败叹号：44 热区包 22 红圆，圆心与本人气泡纵向居中、贴气泡左侧 8pt。
         failButton.translatesAutoresizingMaskIntoConstraints = false
         failButton.backgroundColor = .clear
@@ -2741,6 +2749,18 @@ private final class BearyDMMessageCell: UITableViewCell {
             let pan = UIPanGestureRecognizer(target: self, action: #selector(handleSwipePan(_:)))
             pan.delegate = self
             bubble.addGestureRecognizer(pan)
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // 宽屏开关：只认 iPad 且宽 ≥821（BearyDesktop.isWide，全站 600 居中同口径），
+        // iPhone 横屏再宽也不进；窄屏下封顶约束始终不启用，104pt 地板原样生效。
+        // 只在状态变化时改，避免布局往复；旋转／分屏时随 bounds 重算。
+        let wide = BearyDesktop.isWide(contentView.bounds.width)
+        if mineWidthCap.isActive != wide {
+            mineWidthCap.isActive = wide
+            theirsWidthCap.isActive = wide
         }
     }
 
