@@ -1025,19 +1025,8 @@ class BearyProfileViewController: UIViewController {
     private var followButtonWidthConstraint: NSLayoutConstraint?
     private var followButtonMeasuredCategory: UIContentSizeCategory?
 
-    /// 关注钮四态映射（v5 定版，单源：渲染与定宽测量共用，改一处即两处生效）：
-    /// 关注／回关 icon_user_plus、已关注 icon_user_check、互关 icon_users（双人）。
-    private struct FollowButtonConfig {
-        let imageName: String
-        let title: String
-        let accessibilityLabel: String
-    }
-    private static let followButtonConfigs: [BearyFollowState: FollowButtonConfig] = [
-        .none: FollowButtonConfig(imageName: "icon_user_plus", title: "关注", accessibilityLabel: "关注"),
-        .following: FollowButtonConfig(imageName: "icon_user_check", title: "已关注", accessibilityLabel: "已关注，点按取消关注"),
-        .followedBy: FollowButtonConfig(imageName: "icon_user_plus", title: "回关", accessibilityLabel: "回关"),
-        .mutual: FollowButtonConfig(imageName: "icon_users", title: "互关", accessibilityLabel: "互关，点按取消关注"),
-    ]
+    /// 关注钮四态配置见共享入口 BearyFollowButton（BearyNativeCommon.swift）：
+    /// 标题与无障碍名与搜索行共用单源表，图标按个人页 17pt 版式取。
 
     private let nameLabel: UILabel = {
         let labelValue = UILabel()
@@ -3596,25 +3585,17 @@ class BearyProfileViewController: UIViewController {
         // 标题仍是“关注”，点按走重试（见 followButtonTapped 占位分支）。
         let isPlaceholder = followState == nil && followStateFirstLoadFailed
         let effectiveState = followState ?? (isPlaceholder ? .none : nil)
-        // 开发者模式关注态速切（仅内存，只改渲染）：0 未关注 / 1 已关注 / 2 被关注 / 3 互关。
+        // 开发者模式关注态速切（仅内存，只改渲染；共享入口 BearyFollowButton）。
         // 真实态仍在 followState / confirmedFollowState 里，点按已禁（见 followButtonTapped）。
-        let overrideState: BearyFollowState? = {
-            switch BearyDevPreviewState.followStateOverride {
-            case 0: return .none
-            case 1: return .following
-            case 2: return .followedBy
-            case 3: return .mutual
-            default: return nil
-            }
-        }()
+        let overrideState = BearyFollowButton.devOverrideState()
         let displayState = overrideState ?? effectiveState
         guard !isOwnProfile, viewerUserIdValue != nil, !followBlockedByMe,
-              let state = displayState,
-              let config = Self.followButtonConfigs[state] else {
+              let state = displayState else {
             followButton.isHidden = true
             renderedFollowState = nil
             return
         }
+        let config = BearyFollowButton.config(for: state, iconStyle: .profile)
         // 只在已可见且态真变时播切换动效：首显、复现、同态重刷一律直设终值。
         let wasVisible = !followButton.isHidden && followButton.window != nil
         let stateChanged = renderedFollowState != state
@@ -3624,7 +3605,7 @@ class BearyProfileViewController: UIViewController {
         }
         followButton.isHidden = false
         let shouldAnimate = animated && wasVisible && stateChanged && !UIAccessibility.isReduceMotionEnabled
-        let image = BearyIconImages.image(named: config.imageName, pointSize: 17)
+        let image = config.imageName.flatMap { BearyIconImages.image(named: $0, pointSize: 17) }
         if shouldAnimate {
             UIView.transition(with: followButton, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .beginFromCurrentState], animations: {
                 self.followButton.setImage(image, for: .normal)
@@ -3652,16 +3633,7 @@ class BearyProfileViewController: UIViewController {
     private func updateFollowButtonFixedWidth() {
         let category = traitCollection.preferredContentSizeCategory
         let font = followButton.titleLabel?.font ?? UIFont.systemFont(ofSize: 17)
-        var maxWidth: CGFloat = 0
-        for config in Self.followButtonConfigs.values {
-            let imageWidth = BearyIconImages.image(named: config.imageName, pointSize: 17)?.size.width ?? 0
-            let titleWidth = (config.title as NSString).size(withAttributes: [.font: font]).width
-            let width = followButton.contentEdgeInsets.left + imageWidth
-                + followButton.titleEdgeInsets.left + titleWidth
-                + followButton.contentEdgeInsets.right
-            maxWidth = max(maxWidth, width)
-        }
-        let fixedWidth = ceil(maxWidth)
+        let fixedWidth = BearyFollowButton.fixedWidth(for: followButton, font: font, pointSize: 17, iconStyle: .profile)
         if let constraint = followButtonWidthConstraint {
             constraint.constant = fixedWidth
         } else {

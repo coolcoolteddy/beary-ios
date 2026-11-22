@@ -2994,6 +2994,101 @@ enum BearyIconImages {
         return templated
     }
 }
+/// 关注钮四态共享配置（个人页＋搜索行共用；可复用资源第十七批第 4 项）。
+/// 标题与无障碍名两处逐字一致，单源；图标因版式不同各留一 mapping——
+/// 个人页 17pt 大钮：已关注 icon_user_check、互关 icon_users（双人）；
+/// 搜索 13pt 行钮：已关注无图、互关 icon_user_check。只收重复，不改任一处视觉。
+/// 骨架／失败「重试」／占位／切换动效／拒绝震动各留调用方自己的，本入口不管。
+enum BearyFollowButton {
+
+    /// 四态渲染配置：图标名（nil = 无图）、标题、无障碍名。
+    struct Config {
+        let imageName: String?
+        let title: String
+        let accessibilityLabel: String
+    }
+
+    /// 图标版式：点号作参数（个人页 17、搜索 13），图标 mapping 随版式走。
+    enum IconStyle {
+        case profile
+        case search
+    }
+
+    /// 四态标题与无障碍名（两处逐字一致的单源表）。
+    private static let sharedTexts: [BearyFollowState: (title: String, accessibilityLabel: String)] = [
+        .none: ("关注", "关注"),
+        .following: ("已关注", "已关注，点按取消关注"),
+        .followedBy: ("回关", "回关"),
+        .mutual: ("互关", "互关，点按取消关注"),
+    ]
+
+    /// 四态配置（标题／无障碍名走共享表，图标按版式取）。
+    static func config(for state: BearyFollowState, iconStyle: IconStyle) -> Config {
+        let texts = sharedTexts[state] ?? ("关注", "关注")
+        return Config(imageName: imageName(for: state, iconStyle: iconStyle),
+                      title: texts.title, accessibilityLabel: texts.accessibilityLabel)
+    }
+
+    /// 各版式图标 mapping（只此两处有别：已关注与互关的图标不同）。
+    static func imageName(for state: BearyFollowState, iconStyle: IconStyle) -> String? {
+        switch iconStyle {
+        case .profile:
+            switch state {
+            case .none, .followedBy: return "icon_user_plus"
+            case .following: return "icon_user_check"
+            case .mutual: return "icon_users"
+            }
+        case .search:
+            switch state {
+            case .none, .followedBy: return "icon_user_plus"
+            case .following: return nil
+            case .mutual: return "icon_user_check"
+            }
+        }
+    }
+
+    /// 开发者模式关注态速切（仅内存，只改渲染）：0 未关注／1 已关注／2 被关注／3 互关；
+    /// 无覆盖返回 nil，调用方走自己的主线态。
+    static func devOverrideState() -> BearyFollowState? {
+        switch BearyDevPreviewState.followStateOverride {
+        case 0: return .none
+        case 1: return .following
+        case 2: return .followedBy
+        case 3: return .mutual
+        default: return nil
+        }
+    }
+
+    /// 四态定宽：遍历四态（图标宽＋标题宽＋内外边距）取最大再 ceil。
+    /// 与两处旧口径逐项同值：图标由 BearyIconImages 按点号重绘为整数宽，标题宽逐项 ceil、
+    /// 内外边距与标题间隙均为整数，故 ceil(总和) 与旧口径（个人页 ceil 总和／搜索逐项 ceil）
+    /// 算出的约束值一致；extraTitles 供搜索把失败态「重试」同钉宽度。
+    static func fixedWidth(for button: UIButton, font: UIFont, pointSize: CGFloat,
+                           iconStyle: IconStyle, extraTitles: [String] = []) -> CGFloat {
+        var maxWidth: CGFloat = 0
+        for state in [BearyFollowState.none, .following, .followedBy, .mutual] {
+            let config = config(for: state, iconStyle: iconStyle)
+            maxWidth = max(maxWidth, width(for: button, font: font, pointSize: pointSize,
+                                           imageName: config.imageName, title: config.title))
+        }
+        for title in extraTitles {
+            maxWidth = max(maxWidth, width(for: button, font: font, pointSize: pointSize,
+                                           imageName: nil, title: title))
+        }
+        return ceil(maxWidth)
+    }
+
+    private static func width(for button: UIButton, font: UIFont, pointSize: CGFloat,
+                              imageName: String?, title: String) -> CGFloat {
+        var width = button.contentEdgeInsets.left + button.contentEdgeInsets.right
+        if let name = imageName, let image = BearyIconImages.image(named: name, pointSize: pointSize) {
+            width += image.size.width + button.titleEdgeInsets.left
+        }
+        width += ceil((title as NSString).size(withAttributes: [.font: font]).width)
+        return width
+    }
+}
+
 
 /// 下拉刷新官方图标视图：icon_refresh 32pt（BearyIconImages 模板渲染＋灰 tint，
 /// 深浅随 BearyColors.gray 自动切换，无需深色变体）。

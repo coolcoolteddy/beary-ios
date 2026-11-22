@@ -3709,15 +3709,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 开发者模式关注态速切（仅内存，只改渲染；点按已禁，见 followButtonTapped）。
         // 有覆盖时直接取覆盖态（恒已知，不走未知态骨架）；无覆盖时走主线 r29-10 逻辑。
         let stateKey = followStateKey(userId: userId)
-        let resolvedState: BearyFollowState? = {
-            switch BearyDevPreviewState.followStateOverride {
-            case 0: return .none
-            case 1: return .following
-            case 2: return .followedBy
-            case 3: return .mutual
-            default: return followStates[stateKey]
-            }
-        }()
+        let resolvedState = BearyFollowButton.devOverrideState() ?? followStates[stateKey]
         guard let state = resolvedState else {
             // r29-10：未知态不再画成可点「关注」——读失败画「重试」（可点重拉），
             // 其余画与按钮同宽同形的灰色圆角骨架块（静态，无转圈、无文字），
@@ -3747,32 +3739,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         setFollowButtonSkeletonHeight(button, userId: userId, show: false)
         button.backgroundColor = .clear
         button.isAccessibilityElement = true
-        switch state {
-        case .none:
-            button.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 13), for: .normal)
-            button.setTitle("关注", for: .normal)
-            button.accessibilityLabel = "关注"
-            button.isEnabled = true
-            button.alpha = 1
-        case .following:
-            button.setImage(nil, for: .normal)
-            button.setTitle("已关注", for: .normal)
-            button.accessibilityLabel = "已关注，点按取消关注"
-            button.isEnabled = true
-            button.alpha = 1
-        case .followedBy:
-            button.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 13), for: .normal)
-            button.setTitle("回关", for: .normal)
-            button.accessibilityLabel = "回关"
-            button.isEnabled = true
-            button.alpha = 1
-        case .mutual:
-            button.setImage(BearyIconImages.image(named: "icon_user_check", pointSize: 13), for: .normal)
-            button.setTitle("互关", for: .normal)
-            button.accessibilityLabel = "互关，点按取消关注"
-            button.isEnabled = true
-            button.alpha = 1
-        }
+        let config = BearyFollowButton.config(for: state, iconStyle: .search)
+        button.setImage(config.imageName.flatMap { BearyIconImages.image(named: $0, pointSize: 13) }, for: .normal)
+        button.setTitle(config.title, for: .normal)
+        button.accessibilityLabel = config.accessibilityLabel
+        button.isEnabled = true
+        button.alpha = 1
         // r13-4：关注操作名与钮状态同口径同步（关注／取消关注／回关）。
         let followActionName: String
         switch state {
@@ -3909,24 +3881,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private func applyFollowButtonFixedWidth(_ button: UIButton) {
         guard let userId = followButtonUserIds[button] else { return }
         let font = button.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
-        var maxWidth: CGFloat = 0
-        let states: [(imageName: String?, title: String)] = [
-            ("icon_user_plus", "关注"),
-            (nil, "已关注"),
-            ("icon_user_plus", "回关"),
-            ("icon_user_check", "互关"),
-            // r29-10：失败态「重试」同钉宽度，态变不顶名字行、不闪没；
-            // 骨架态无文案，与按钮同宽（定宽约束不变）。
-            (nil, "重试"),
-        ]
-        for config in states {
-            var width = button.contentEdgeInsets.left + button.contentEdgeInsets.right
-            if let name = config.imageName, let image = BearyIconImages.image(named: name, pointSize: 13) {
-                width += image.size.width + button.titleEdgeInsets.left
-            }
-            width += ceil((config.title as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
-            maxWidth = max(maxWidth, width)
-        }
+        // r29-10：失败态「重试」同钉宽度，态变不顶名字行、不闪没；
+        // 骨架态无文案，与按钮同宽（定宽约束不变）。
+        let maxWidth = BearyFollowButton.fixedWidth(for: button, font: font, pointSize: 13, iconStyle: .search, extraTitles: ["重试"])
         if let constraint = followButtonWidthConstraints[userId] {
             constraint.constant = maxWidth
         } else {
