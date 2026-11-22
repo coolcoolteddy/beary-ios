@@ -20,28 +20,10 @@ final class BearyNineGridViewController: UIViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
-    private let topBarView = UIView()
-
-    private lazy var backButton: UIButton = {
-        let buttonValue = UIButton(type: .custom)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
-        buttonValue.tintColor = BearyColors.ink
-        buttonValue.accessibilityLabel = "返回"
-        buttonValue.addTarget(self, action: #selector(backButtonTapped), for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        return buttonValue
-    }()
-
-    private let titleLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
-        labelValue.adjustsFontForContentSizeCategory = true
-        labelValue.textColor = BearyColors.ink
-        labelValue.textAlignment = .center
-        labelValue.text = "九宫格"
-        return labelValue
+    // 全屏页共用顶栏（第九遍第 2 条）：返回钮＋居中标题＋钉位；
+    // 高度统一 ≥44（Li 2026-11-22 定），常态仍 44。
+    private lazy var topBar: BearyTopBar = BearyTopBar(title: "九宫格", height: .minimum(44), titleLeading: .fromBarLeading(52)) { [weak self] in
+        self?.backButtonTapped()
     }()
 
     private lazy var collectionView: UICollectionView = {
@@ -68,37 +50,15 @@ final class BearyNineGridViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
-        topBarView.translatesAutoresizingMaskIntoConstraints = false
-        topBarView.backgroundColor = BearyColors.bg
-        view.addSubview(topBarView)
-        topBarView.addSubview(backButton)
-        topBarView.addSubview(titleLabel)
+        topBar.pinToTop(of: view)
         view.addSubview(collectionView)
         collectionViewWidthConstraint = collectionView.widthAnchor.constraint(equalToConstant: view.bounds.width)
         NSLayoutConstraint.activate([
-            topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBarView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            backButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 16),
-            backButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
-            backButton.widthAnchor.constraint(equalToConstant: 44),
-            backButton.heightAnchor.constraint(equalToConstant: 44),
-            titleLabel.centerXAnchor.constraint(equalTo: topBarView.centerXAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
-            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: topBarView.leadingAnchor, constant: 52),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -52),
-            collectionView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
+            collectionView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             collectionViewWidthConstraint!,
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        // 顶栏高钉死 44（defaultHigh）：常规字号下定值，大字号时标题的 required
-        // 上下不等式把下限抬高、栏随字长高；照片页 #115 同款实证，无定值时顶栏
-        // 会被 solver 撑满整页。
-        let topBarHeight = topBarView.heightAnchor.constraint(equalToConstant: 44)
-        topBarHeight.priority = .defaultHigh
-        topBarHeight.isActive = true
     }
 
     override func viewDidLayoutSubviews() {

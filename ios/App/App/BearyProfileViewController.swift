@@ -1139,18 +1139,10 @@ class BearyProfileViewController: UIViewController {
         return viewValue
     }()
 
-    private lazy var topBackButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        // I7：返回改图标钮（网页 pfBack 用 beary-back；icon_back 由该 symbol 渲染）。
-        // F20：个人主页自有顶栏（本文件内，非 SceneDelegate）——返回 19 → 24。
-        buttonValue.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
-        buttonValue.tintColor = BearyColors.ink
-        buttonValue.accessibilityLabel = "返回"
-        buttonValue.addTarget(self, action: #selector(backButtonTapped), for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        return buttonValue
-    }()
+    // 返回钮本体走 BearyTopBar.makeBackButton（第九遍第 2 条；I7：返回改图标钮，
+    // icon_back 由该 symbol 渲染；F20：返回 19 → 24）。本页顶栏整条不动
+    //（另有分享／更多钮、动高 0↔44、iPad 600 居中）。
+    private lazy var topBackButton: UIButton = BearyTopBar.makeBackButton(type: .system, target: self, action: #selector(backButtonTapped))
 
     private let topNameLabel: UILabel = {
         let labelValue = UILabel()

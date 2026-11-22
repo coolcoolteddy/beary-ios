@@ -173,30 +173,12 @@ final class BearyProfilePhotosViewController: UIViewController {
         NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
     }
 
-    private let topBarView = UIView()
-
-    private lazy var backButton: UIButton = {
-        let buttonValue = UIButton(type: .custom)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
-        buttonValue.tintColor = BearyColors.ink
-        buttonValue.accessibilityLabel = "返回"
-        buttonValue.addTarget(self, action: #selector(backButtonTapped), for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        return buttonValue
-    }()
-
-    private let titleLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
-        labelValue.adjustsFontForContentSizeCategory = true
-        labelValue.textColor = BearyColors.ink
-        labelValue.textAlignment = .center
-        // 无障碍：标题允许换到 2 行——长标题＋计数在左右限位内先换行，
-        // 而不是单行直接截断；纵向仍由 cappedFont 封顶，见顶栏约束。
-        labelValue.numberOfLines = 2
-        return labelValue
+    // 全屏页共用顶栏（第九遍第 2 条）：返回钮＋居中标题＋钉位；
+    // 高度统一 ≥44（Li 2026-11-22 定），常态仍 44；标题 2 行、上下 inset 7
+    //（照片页 #115 实证：无定值时顶栏会被 solver 撑满整页，定值由组件内
+    // defaultHigh ==44 承担）。标题交叉淡变仍走 topBar.titleLabel。
+    private lazy var topBar: BearyTopBar = BearyTopBar(title: nil, height: .minimum(44), titleVerticalInset: 7, titleNumberOfLines: 2) { [weak self] in
+        self?.backButtonTapped()
     }()
 
     private lazy var collectionView: UICollectionView = {
@@ -333,11 +315,7 @@ final class BearyProfilePhotosViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
-        topBarView.translatesAutoresizingMaskIntoConstraints = false
-        topBarView.backgroundColor = BearyColors.bg
-        view.addSubview(topBarView)
-        topBarView.addSubview(backButton)
-        topBarView.addSubview(titleLabel)
+        topBar.pinToTop(of: view)
         view.addSubview(collectionView)
         view.addSubview(emptyLabel)
         view.addSubview(emptyRetryButton)
@@ -355,7 +333,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         // 跳转条底部、仍是浮在网格上方的覆盖层——状态行高度 0↔20 只
         // 盖住网格顶部 20pt，网格顶部（跳转条底部）始终不动。
         NSLayoutConstraint.activate([
-            monthJumpScrollView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
+            monthJumpScrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             monthJumpScrollView.leadingAnchor.constraint(equalTo: collectionView.leadingAnchor),
             monthJumpScrollView.trailingAnchor.constraint(equalTo: collectionView.trailingAnchor),
             monthJumpStackView.topAnchor.constraint(equalTo: monthJumpScrollView.contentLayoutGuide.topAnchor, constant: 6),
@@ -368,23 +346,6 @@ final class BearyProfilePhotosViewController: UIViewController {
         // 定（≥821 取 600 居中，≤820 取全宽），见 viewDidLayoutSubviews。
         collectionViewWidthConstraint = collectionView.widthAnchor.constraint(equalToConstant: view.bounds.width)
         NSLayoutConstraint.activate([
-            topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            // 无障碍：第 7 轮好友顶栏同款口径——顶栏不再钉死 44，只定最小
-            // 高；标题上下约束撑高顶栏，默认字号下仍为 44。新增照片逐项
-            // 动画的减动效短路已存在，本支不动它。
-            topBarView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            backButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 16),
-            backButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
-            backButton.widthAnchor.constraint(equalToConstant: 44),
-            backButton.heightAnchor.constraint(equalToConstant: 44),
-            titleLabel.centerXAnchor.constraint(equalTo: topBarView.centerXAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
-            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBarView.topAnchor, constant: 7),
-            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBarView.bottomAnchor, constant: -7),
-            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -52),
             // r26-#4：状态行钉跳转条底部（见上），仍是覆盖层、不顶动网格。
             photosStatusLabel.topAnchor.constraint(equalTo: monthJumpScrollView.bottomAnchor),
             photosStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
@@ -412,15 +373,6 @@ final class BearyProfilePhotosViewController: UIViewController {
             photosLoadingPlaceholderView.leadingAnchor.constraint(equalTo: collectionView.leadingAnchor, constant: 16),
             photosLoadingPlaceholderView.trailingAnchor.constraint(equalTo: collectionView.trailingAnchor, constant: -16),
         ])
-        // 顶栏错位同根修（2026-11-06，裁剪页黑屏同根）：顶栏高此前只有
-        // required 下限 ≥44、无上界、无定值——高度在约束层面未定，solver
-        // 在异常组合下会把顶栏撑满整页（设置页 #115 同款实证），本页顶栏
-        // 下移约 478pt 即此所致。给定值等式（defaultHigh）：常规字号下顶栏
-        // 钉死 44；大字号时标题的 required 上下不等式把下限抬高，定值等式
-        // 让位、栏随字长高，“栏随字长高”意图不动，只把常态高度定下来。
-        let topBarHeight = topBarView.heightAnchor.constraint(equalToConstant: 44)
-        topBarHeight.priority = .defaultHigh
-        topBarHeight.isActive = true
         updateTitleAndEmpty()
         // 第七轮审计 08：权限重验订阅——回前台（对方可能在页开着时取关）、
         // 账号变化、好友关系变化时都重算 own／mutual；值在打开时是新的，
@@ -887,15 +839,15 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// 未进窗口时直设终值。audit20-A13：旧版先换字再 alpha 0→1 单向淡入，
     /// 旧数字没有淡出，改走 transitionCrossDissolve。
     private func setTitleTextFaded(_ text: String) {
-        guard titleLabel.text != text else { return }
-        guard !UIAccessibility.isReduceMotionEnabled, titleLabel.window != nil else {
-            titleLabel.text = text
-            titleLabel.alpha = 1
+        guard topBar.titleLabel.text != text else { return }
+        guard !UIAccessibility.isReduceMotionEnabled, topBar.titleLabel.window != nil else {
+            topBar.titleLabel.text = text
+            topBar.titleLabel.alpha = 1
             return
         }
-        titleLabel.alpha = 1
-        UIView.transition(with: titleLabel, duration: BearyMotion.localStateDuration, options: .transitionCrossDissolve, animations: {
-            self.titleLabel.text = text
+        topBar.titleLabel.alpha = 1
+        UIView.transition(with: topBar.titleLabel, duration: BearyMotion.localStateDuration, options: .transitionCrossDissolve, animations: {
+            self.topBar.titleLabel.text = text
         })
     }
 
