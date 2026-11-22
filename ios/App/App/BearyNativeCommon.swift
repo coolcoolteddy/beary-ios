@@ -96,6 +96,63 @@ enum BearyMotion {
     static let localStateDuration: TimeInterval = micro
 }
 
+// MARK: - 登录成功／取消收尾共享
+
+/// 登录成功／取消收尾共享（可复用资源第十六批第 5 项）：
+/// 登录页 onLoggedIn 原在四处各写一套同一组收尾——解 arm → 关登录页 →
+/// refreshMe 立新态 → 主线程跑各页后续动作；onCancelled 原在五处各写同一两行
+/// （恢复原会话 → 关登录页）。各页差异只在三处，本 helper 不动它们：
+/// - refreshMe 是否等 dismiss 完成再发：设置页／主登录路等，盲盒／许愿墙与 dismiss 并行；
+/// - 邀请绑定 toast 的落点与时机：各页自己的 view／showToast／拼串／暂存；
+/// - 后续动作（loadInitial／补投／意图消费／引导）作闭包传入。
+/// 引导页上的登录变体（presentLoginOverOnboarding）时序不同——dismiss 不播动画、
+/// 先写引导 seen、toast 暂存——不走本 helper 的成功收尾，只取消回调走 cancel(loginVC:)。
+enum BearyLoginFinish {
+    /// 登录成功收尾。followUp 在 refreshMe 回包后主线程跑，两入参为登录页带来的
+    /// 邀请绑定原文与拼好的 toast 文案（无邀请绑定时两入参均为 nil；toast 文案
+    /// 的 Plus 到期日补全在 refreshMe 回包后、currentUser 已立新态时算）。
+    /// loginVC 已释放时只跳过 dismiss，其余三步照走（与原各页 `self?.dismiss` 为
+    /// 空操作时 refreshMe 仍跑一致）。
+    static func finish(
+        loginVC: UIViewController?,
+        referralText: String?,
+        refreshAfterDismiss: Bool = false,
+        followUp: @escaping (_ referralText: String?, _ toastText: String?) -> Void
+    ) {
+        SessionManager.shared.completeAccountAddSession()
+        let refresh = {
+            SessionManager.shared.refreshMe { _ in
+                DispatchQueue.main.async {
+                    let toastText: String?
+                    if let text = referralText, !text.isEmpty {
+                        toastText = BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil)
+                    } else {
+                        toastText = nil
+                    }
+                    followUp(referralText, toastText)
+                }
+            }
+        }
+        guard let loginVC = loginVC else {
+            refresh()
+            return
+        }
+        if refreshAfterDismiss {
+            loginVC.dismiss(animated: BearyMotion.animated(true), completion: refresh)
+        } else {
+            loginVC.dismiss(animated: BearyMotion.animated(true), completion: nil)
+            refresh()
+        }
+    }
+
+    /// 登录取消收尾：恢复原会话（未 arm 时空操作）→ 关登录页。
+    /// loginVC 已释放时只跳过 dismiss，恢复照走。
+    static func cancel(loginVC: UIViewController?) {
+        SessionManager.shared.cancelAccountAddSession()
+        loginVC?.dismiss(animated: BearyMotion.animated(true), completion: nil)
+    }
+}
+
 /// 新卡片入场统一配置（审计 r16 第 10 项，Li 定版 2026-11-06，规范 §6）：
 /// 首屏／筛子切换 60ms 步进、8pt 上移；分页追加 30ms 步进、8pt 上移；
 /// motion.normal 0.26s、封顶 0.24s、可交互。广场（BearyFeedViewController.

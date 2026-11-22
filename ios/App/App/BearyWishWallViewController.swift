@@ -1096,44 +1096,37 @@ final class BearyWishWallViewController: UIViewController {
     /// 游客投票走登录弹窗（成功后刷新 /me 与列表，失败态不留残页）。
     private func presentLoginPage() {
         let login = BearyLoginSheet.make()
-        login.onLoggedIn = { [weak self] referralText in
-            // 添加账号会话守卫：正常是空操作；防迂回路径下守卫仍 armed 时
-            // 后续一次取消把新号恢复成旧号，成功先解 arm。
-            SessionManager.shared.completeAccountAddSession()
-            self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
-            SessionManager.shared.refreshMe { _ in
-                DispatchQueue.main.async {
-                    self?.refreshPlusGate()
-                    // 审计登录杂项：登录成功后补投待重放的那一票；登录页
-                    // 带来的邀请绑定文案（若有）单独一次 toast。补投提示不在
-                    // 这里写死——审计 26 #35：只在服务端成功回包后才提示“已补投”
-                    //（见下方补投回调），失败或愿望不在列表时不提示。补投后重拉列表以服务端为准。
-                    var messages: [String] = []
-                    if let referralText = referralText, !referralText.isEmpty {
-                        messages.append(BearyReferralFeedback.toastText(base: referralText, plusUntil: SessionManager.shared.currentUser?.plusUntil))
-                    }
-                    // refreshMe 失败仍是游客时不补投（voteTapped 会重弹登录页）：
-                    // 意图保留，待下次成功登录再重放。
-                    if let pending = self?.pendingVote, !(self?.isGuest ?? true) {
-                        self?.pendingVote = nil
-                        // 审计 26 #35：补投提交绝对目标票态，不走 voteTapped 的 toggle
-                        //（同向票已显示时 toggle 会算出撤票）；“已补投”只在服务端成功
-                        // 回包、且确认票等于目标票时才提示，失败或愿望不在列表时不提示。
-                        self?.voteTapped(wishId: pending.wishId, target: pending.target, absolute: true) { [weak self] success in
-                            guard let self = self, success, self.confirmedVote[pending.wishId] == pending.target else { return }
-                            BearyToast.show(in: self.view, message: "已补投刚才那一票")
-                        }
-                    }
-                    if !messages.isEmpty, let view = self?.view {
-                        BearyToast.show(in: view, message: messages.joined(separator: "，"))
-                    }
-                    self?.loadWishes()
+        login.onLoggedIn = { [weak self, weak login] referralText in
+            BearyLoginFinish.finish(loginVC: login, referralText: referralText) { [weak self] _, toastText in
+                self?.refreshPlusGate()
+                // 审计登录杂项：登录成功后补投待重放的那一票；登录页
+                // 带来的邀请绑定文案（若有）单独一次 toast。补投提示不在
+                // 这里写死——审计 26 #35：只在服务端成功回包后才提示“已补投”
+                //（见下方补投回调），失败或愿望不在列表时不提示。补投后重拉列表以服务端为准。
+                var messages: [String] = []
+                if let toastText = toastText {
+                    messages.append(toastText)
                 }
+                // refreshMe 失败仍是游客时不补投（voteTapped 会重弹登录页）：
+                // 意图保留，待下次成功登录再重放。
+                if let pending = self?.pendingVote, !(self?.isGuest ?? true) {
+                    self?.pendingVote = nil
+                    // 审计 26 #35：补投提交绝对目标票态，不走 voteTapped 的 toggle
+                    //（同向票已显示时 toggle 会算出撤票）；“已补投”只在服务端成功
+                    // 回包、且确认票等于目标票时才提示，失败或愿望不在列表时不提示。
+                    self?.voteTapped(wishId: pending.wishId, target: pending.target, absolute: true) { [weak self] success in
+                        guard let self = self, success, self.confirmedVote[pending.wishId] == pending.target else { return }
+                        BearyToast.show(in: self.view, message: "已补投刚才那一票")
+                    }
+                }
+                if !messages.isEmpty, let view = self?.view {
+                    BearyToast.show(in: view, message: messages.joined(separator: "，"))
+                }
+                self?.loadWishes()
             }
         }
-        login.onCancelled = { [weak self] in
-            SessionManager.shared.cancelAccountAddSession()
-            self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
+        login.onCancelled = { [weak login] in
+            BearyLoginFinish.cancel(loginVC: login)
         }
         present(login, animated: BearyMotion.animated(true), completion: nil)
     }

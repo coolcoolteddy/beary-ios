@@ -827,24 +827,17 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     @objc private func loginTapped() {
         let login = BearyLoginSheet.make()
-        login.onLoggedIn = { [weak self] referralText in
-            // 添加账号会话守卫：正常是空操作；防迂回路径下守卫仍 armed 时
-            // 后续一次取消把新号恢复成旧号，成功先解 arm。
-            SessionManager.shared.completeAccountAddSession()
-            self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
-            SessionManager.shared.refreshMe { _ in
-                DispatchQueue.main.async {
-                    self?.loadInitial()
-                    // 审计登录杂项：邀请绑定反馈落点——进 App 后 BearyToast 一次。
-                    if let text = referralText, !text.isEmpty, let view = self?.view {
-                        BearyToast.show(in: view, message: BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil))
-                    }
+        login.onLoggedIn = { [weak self, weak login] referralText in
+            BearyLoginFinish.finish(loginVC: login, referralText: referralText) { [weak self] _, toastText in
+                self?.loadInitial()
+                // 审计登录杂项：邀请绑定反馈落点——进 App 后 BearyToast 一次。
+                if let text = toastText, let view = self?.view {
+                    BearyToast.show(in: view, message: text)
                 }
             }
         }
-        login.onCancelled = { [weak self] in
-            SessionManager.shared.cancelAccountAddSession()
-            self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
+        login.onCancelled = { [weak login] in
+            BearyLoginFinish.cancel(loginVC: login)
         }
         present(login, animated: BearyMotion.animated(true), completion: nil)
     }
