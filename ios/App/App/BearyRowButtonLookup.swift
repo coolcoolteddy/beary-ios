@@ -12,10 +12,10 @@ import UIKit
 /// id 由调用方以 KeyPath 指定（草稿 `\.draftId`、回收站 `\.entryIdentifier`）。
 struct BearyRowButtonLookup<Value> {
     private var entries: [(button: UIButton, value: Value)] = []
-    private let id: KeyPath<Value, String>
+    private let idKeyPath: KeyPath<Value, String>
 
     init(id: KeyPath<Value, String>) {
-        self.id = id
+        self.idKeyPath = id
     }
 
     mutating func append(button: UIButton, value: Value) {
@@ -29,8 +29,7 @@ struct BearyRowButtonLookup<Value> {
 
     /// 按 id 移除该条目的全部登记。
     mutating func removeAll(id: String) {
-        let idKeyPath = id
-        entries.removeAll { $0.value[keyPath: idKeyPath] == id }
+        entries.removeAll { $0.value[keyPath: self.idKeyPath] == id }
     }
 
     /// 按值谓词移除（与 Array.removeAll(where:) 同义，如清无 id 的旧行登记）。
@@ -46,8 +45,7 @@ struct BearyRowButtonLookup<Value> {
 
     /// 按 id 找按钮（如左滑拖动进删、左滑菜单走按钮路径）。
     func button(forID id: String) -> UIButton? {
-        let idKeyPath = id
-        return entries.first(where: { $0.value[keyPath: idKeyPath] == id })?.button
+        return entries.first(where: { $0.value[keyPath: self.idKeyPath] == id })?.button
     }
 }
 
