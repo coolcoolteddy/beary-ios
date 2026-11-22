@@ -24,7 +24,7 @@ final class BearyNineGridViewController: UIViewController {
     // 高度统一 ≥44（Li 2026-11-22 定），常态仍 44。
     private lazy var topBar: BearyTopBar = BearyTopBar(title: "九宫格", height: .minimum(44), titleLeading: .fromBarLeading(52)) { [weak self] in
         self?.backButtonTapped()
-    }()
+    }
 
     private lazy var collectionView: UICollectionView = {
         let layoutValue = UICollectionViewFlowLayout()

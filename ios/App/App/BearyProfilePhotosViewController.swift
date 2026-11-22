@@ -179,7 +179,7 @@ final class BearyProfilePhotosViewController: UIViewController {
     // defaultHigh ==44 承担）。标题交叉淡变仍走 topBar.titleLabel。
     private lazy var topBar: BearyTopBar = BearyTopBar(title: nil, height: .minimum(44), titleVerticalInset: 7, titleNumberOfLines: 2) { [weak self] in
         self?.backButtonTapped()
-    }()
+    }
 
     private lazy var collectionView: UICollectionView = {
         let layoutValue = UICollectionViewFlowLayout()

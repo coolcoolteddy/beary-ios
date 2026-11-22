@@ -35,7 +35,7 @@ final class BearyTagEntriesViewController: UIViewController {
     /// 底色 surface1、返回钮 .system、标题 trailing −16（第九遍第 2 条）。
     private lazy var topBar: BearyTopBar = BearyTopBar(title: "#" + tag, height: .minimum(44), backgroundColor: BearyColors.surface1, backButtonType: .system, titleTrailing: -BearySpace.lg) { [weak self] in
         self?.backButtonTapped()
-    }()
+    }
 
     private static let pageSize = 20
 

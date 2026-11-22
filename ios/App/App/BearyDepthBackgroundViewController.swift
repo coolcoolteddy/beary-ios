@@ -48,7 +48,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
     // 高度统一 ≥44（Li 2026-11-22 定），常态仍 44。
     private lazy var topBar: BearyTopBar = BearyTopBar(title: "景深背景", height: .minimum(44)) { [weak self] in
         self?.backButtonTapped()
-    }()
+    }
 
     private lazy var tableView: UITableView = {
         let tableValue = UITableView(frame: .zero, style: .plain)

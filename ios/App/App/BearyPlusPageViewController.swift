@@ -32,7 +32,7 @@ final class BearyPlusPageViewController: UIViewController {
     // 高度统一 ≥44（Li 2026-11-22 定），常态仍 44。
     private lazy var topBar: BearyTopBar = BearyTopBar(title: "Plus 会员", height: .minimum(44)) { [weak self] in
         self?.backButtonTapped()
-    }()
+    }
 
     private let scrollView: UIScrollView = {
         let scrollValue = UIScrollView()
