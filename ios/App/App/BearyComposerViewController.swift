@@ -5409,10 +5409,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 正文仅表情放大（2026-11-18 Li 定）
 
-    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情字符、个数 1...3。
-    /// 空白（空格/换行）不计；[mood:]/[gif:] 记号是文字，不算表情。
+    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情、个数 1...3。
+    /// 空白（空格/换行）不计；[mood:]/[gif:] 记号各算一个表情（2026-11-22
+    /// Li 定）：先把记号换成单个表情占位再数，正则与 inlineAttributedText
+    /// 的记号正则相同。口径与 BearyText 的同名实现一字相同（两处在表情
+    /// 放大支里同步改）；#1964 合入后两处统一到 BearyText，删本私有副本。
     private static func isEmojiOnlyBodyText(_ plain: String) -> Bool {
-        let meaningful = plain.filter { !$0.isWhitespace }
+        let replaced: String
+        if let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]|\\[gif:([a-z0-9]+)\\]", options: []) {
+            let ns = plain as NSString
+            replaced = regex.stringByReplacingMatches(in: plain, options: [], range: NSRange(location: 0, length: ns.length), withTemplate: "🙂")
+        } else {
+            replaced = plain
+        }
+        let meaningful = replaced.filter { !$0.isWhitespace }
         guard (1...3).contains(meaningful.count) else { return false }
         return meaningful.allSatisfy { isEmojiCluster($0) }
     }
@@ -5493,7 +5503,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func setBodyAttributedText(_ plain: String?) {
-        // 回填也按仅表情口径取字号：纯表情草稿恢复后仍放大；含记号的正文是文字，走正常字号。
+        // 回填也按仅表情口径取字号：纯表情草稿恢复后仍放大；仅含 ≤3 个表情（含 [mood:]/[gif:] 记号）的正文同样放大。
         let text = plain ?? ""
         bodyEmojiOnlyEnlarged = Self.isEmojiOnlyBodyText(text)
         let font = effectiveBodyFont

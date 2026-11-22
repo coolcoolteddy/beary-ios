@@ -2227,7 +2227,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize))
         let attachment = NSTextAttachment()
         attachment.image = image
-        let emoteSize = font.pointSize * 1.2
+        let emoteSize = font.pointSize * 1.875
         attachment.bounds = CGRect(x: 0, y: font.descender, width: emoteSize, height: emoteSize)
         let result = NSMutableAttributedString(attributedString: base)
         result.append(NSAttributedString(attachment: attachment))
