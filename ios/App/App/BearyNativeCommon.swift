@@ -3102,6 +3102,175 @@ final class BearyRefreshIconView: UIImageView {
     }
 }
 
+// MARK: - 自定义下拉刷新接线共享件
+//
+// 四页 begin／endCustomPullRefresh（Feed／Notifications／Profile／Timeline）的
+// 同形骨架抽到一处：旗、开始时间、进场／收回动画、8pt 下拉位判定、指示器转圈。
+// 各页自己的东西不进来，由调用方按调用传入：
+//   - 基线算法（Feed feedPullBaselineTop／Profile profilePullBaselineTop／
+//     Timeline 安全区顶＋60／Notifications 0）与底 inset（只 Timeline 有 90）
+//   - 刷新调用（refreshAllInternal／loadFirstPage／loadProfile＋loadTab／reloadTimeline）
+//   - 5 秒节流的有无（Feed／Timeline 有，Notifications／Profile 无）
+//   - 收尾动作（Profile 的 resetCoverStretch／resumeCoverGyroAfterRefreshIfSettled）
+// 手感数值一律不动：指示高 116、阻尼 0.48、拉入 84、下拉位容差 8pt、
+// 进场／收回走 BearyMotion.screen（Profile 走 BearyMotion.normal）。
+// 消息页不在内：下拉头在 Notifications／DMConversations 子页里。
+@MainActor
+final class CustomPullRefreshController {
+
+    /// 收回时刷新旗的释放口径——四页原来就不一致，各留自己的：
+    ///   - releaseImmediately（Feed／Profile）：end 一进就清旗，end 旗只做同步重入守卫；
+    ///   - holdThroughRetract（Timeline／Notifications）：收回动画全程仍持刷新旗，
+    ///     跟随侧不中途重写 pullView.frame，动画播完才清旗。
+    enum EndBehavior {
+        case releaseImmediately
+        case holdThroughRetract
+    }
+
+    /// 基线：下拉头的复位内边距。top 为顶基线；bottom 只 Timeline 有
+    /// （90＋安全区底），其余页不碰底 inset，传 nil。
+    struct Baseline {
+        var top: CGFloat
+        var bottom: CGFloat?
+
+        init(top: CGFloat, bottom: CGFloat? = nil) {
+            self.top = top
+            self.bottom = bottom
+        }
+    }
+
+    /// 进场／收回动画档：screen 0.38s easeOut＋beginFromCurrentState
+    /// （Feed／Timeline／Notifications），normal 0.26s 默认曲线（Profile）。
+    struct Animation {
+        var duration: TimeInterval
+        var options: UIView.AnimationOptions
+
+        static let screen = Animation(duration: BearyMotion.screen, options: [.curveEaseOut, .beginFromCurrentState])
+        static let normal = Animation(duration: BearyMotion.normal, options: [])
+    }
+
+    /// 下拉头拉入高度（指示固定 84 高）与平时藏起高度（固定 116 高）。
+    private static let pullInHeight: CGFloat = 84
+    private static let hiddenHeight: CGFloat = 116
+    /// 仍在下拉位的容差：offset 在 -(基线＋84) 上方 8pt 内算仍在下拉位。
+    private static let pullPositionTolerance: CGFloat = 8
+
+    private let endBehavior: EndBehavior
+    /// 进行中标志：各页原 isCustomPullRefreshing，调用方以计算属性转发。
+    private(set) var isRefreshing = false
+    /// 本次下拉开始时间：四页原 customPullStartTime，只写不读，留作诊断。
+    private(set) var startTime: Date?
+    /// 收回在途旗：各页原 customPullEndScheduled／customPullEndInFlight。
+    private var endInFlight = false
+
+    init(endBehavior: EndBehavior) {
+        self.endBehavior = endBehavior
+    }
+
+    /// 进入：旗＋开始时间＋转圈 → 掐断惯性（可选）→ 拉入动画 → onBegin（节流判断与刷新调用）。
+    /// 调用方先做自己的额外守卫（如 Timeline 的 timelineState、Notifications 的 isLoadingFirstPage）。
+    /// 已在刷新中时直接返回 false，不重复拉入、不重复发刷新。
+    @discardableResult
+    func begin(scrollView: UIScrollView, pullView: UIView, icon: BearyRefreshIconView,
+               baseline: Baseline, killInertia: Bool, animation: Animation,
+               onBegin: () -> Void) -> Bool {
+        guard !isRefreshing else { return false }
+        isRefreshing = true
+        startTime = Date()
+        icon.startSpinning()
+        if killInertia {
+            // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+            // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+            // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”；
+            // 旧 0.32s 默认 easeInOut 零初速起手、与手指甩速脱节，手感发轻。
+            scrollView.setContentOffset(scrollView.contentOffset, animated: false)
+        }
+        let pullIn = {
+            scrollView.contentInset.top = baseline.top + Self.pullInHeight
+            if let bottom = baseline.bottom {
+                scrollView.contentInset.bottom = bottom
+            }
+            scrollView.scrollIndicatorInsets.top = baseline.top + Self.pullInHeight
+            if let bottom = baseline.bottom {
+                scrollView.scrollIndicatorInsets.bottom = bottom
+            }
+            scrollView.contentOffset = CGPoint(x: 0, y: -(baseline.top + Self.pullInHeight))
+            pullView.frame = CGRect(x: 0, y: -Self.pullInHeight, width: scrollView.bounds.width, height: Self.pullInHeight)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullIn()
+        } else {
+            UIView.animate(withDuration: animation.duration, delay: 0, options: animation.options, animations: pullIn)
+        }
+        onBegin()
+        return true
+    }
+
+    /// 结束：只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
+    /// 不再把 contentOffset 拽回 -基线顶部，只复位内边距、藏指示头，留在原位置；
+    /// 仍停在下拉位的才按旧口径回到 -基线（指示区须收掉）。
+    /// 下拉位 = -(基线＋84)；8pt 容差内算仍在下拉位。
+    /// 未在刷新或收回已在途时直接返回。onEndCompleted 在停圈后跑（Profile 的封面复位）。
+    func end(scrollView: UIScrollView, pullView: UIView, icon: BearyRefreshIconView,
+             baseline: Baseline, animation: Animation,
+             onEndCompleted: (() -> Void)? = nil) {
+        guard isRefreshing, !endInFlight else { return }
+        switch endBehavior {
+        case .releaseImmediately:
+            endInFlight = true
+            isRefreshing = false
+            endInFlight = false
+        case .holdThroughRetract:
+            endInFlight = true
+        }
+        // 下拉位 = -(基线＋84)（见 begin）；8pt 容差内算仍在下拉位。
+        let stillAtPullPosition = !scrollView.isDragging
+            && scrollView.contentOffset.y <= -(baseline.top + Self.pullInHeight) + Self.pullPositionTolerance
+        let pullOut = {
+            scrollView.contentInset.top = baseline.top
+            if let bottom = baseline.bottom {
+                scrollView.contentInset.bottom = bottom
+            }
+            scrollView.scrollIndicatorInsets.top = baseline.top
+            if let bottom = baseline.bottom {
+                scrollView.scrollIndicatorInsets.bottom = bottom
+            }
+            if stillAtPullPosition {
+                scrollView.contentOffset = CGPoint(x: 0, y: -baseline.top)
+            }
+            pullView.frame = CGRect(x: 0, y: -Self.hiddenHeight, width: scrollView.bounds.width, height: Self.hiddenHeight)
+        }
+        switch endBehavior {
+        case .releaseImmediately:
+            if UIAccessibility.isReduceMotionEnabled {
+                pullOut()
+                icon.stopSpinning()
+                onEndCompleted?()
+            } else {
+                UIView.animate(withDuration: animation.duration, delay: 0, options: animation.options, animations: pullOut, completion: { _ in
+                    icon.stopSpinning()
+                    onEndCompleted?()
+                })
+            }
+        case .holdThroughRetract:
+            if UIAccessibility.isReduceMotionEnabled {
+                pullOut()
+                isRefreshing = false
+                endInFlight = false
+                icon.stopSpinning()
+                onEndCompleted?()
+            } else {
+                UIView.animate(withDuration: animation.duration, delay: 0, options: animation.options, animations: pullOut, completion: { _ in
+                    self.isRefreshing = false
+                    self.endInFlight = false
+                    icon.stopSpinning()
+                    onEndCompleted?()
+                })
+            }
+        }
+    }
+}
+
 // MARK: - NB 动态图标（网页 beary.html:1340 的 NB 定义 + :75-:99 关键帧口径）
 //
 // 48 盒、描边 2.2、圆头圆角；路径坐标均为 48 盒单位，buildLayers 时等比缩放到框宽。

@@ -439,10 +439,10 @@ class BearyProfileViewController: UIViewController {
     /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
     private var headerTopInsetVisible = false
     /// 自定义下拉刷新（消息页同款，统一手感批）。
-    private var isCustomPullRefreshing = false
-    private var customPullStartTime: Date?
+    private var isCustomPullRefreshing: Bool { pullRefreshController.isRefreshing }
+    /// 自定义下拉刷新接线共享件：四页 begin／endCustomPullRefresh 的同形骨架（见 CustomPullRefreshController）。
+    private lazy var pullRefreshController = CustomPullRefreshController(endBehavior: .releaseImmediately)
     private var pullEngageTranslation: CGFloat?
-    private var customPullEndScheduled = false
 
     /// 本人判定：viewer 已登录且 profile id 与 viewer 一致；handle 目标在 profile
     /// 解析前按 id 预判（id 目标且与 viewer 相同）先行显示本人元素，解析后复核。
@@ -8276,29 +8276,23 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         if isCustomPullRefreshing {
             return
         }
-        isCustomPullRefreshing = true
-        customPullStartTime = Date()
-        refreshIconView.startSpinning()
-        let baseline = profilePullBaselineTop()
-        let pullIn = {
-            self.tableView.contentInset.top = baseline + 84
-            self.tableView.scrollIndicatorInsets.top = baseline + 84
-            self.tableView.contentOffset = CGPoint(x: 0, y: -(baseline + 84))
-            self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
-        }
-        if UIAccessibility.isReduceMotionEnabled {
-            pullIn()
-        } else {
-            UIView.animate(withDuration: BearyMotion.normal, animations: pullIn)
-        }
-        // G2：下拉刷新保留旧内容，成功后替换、失败保留旧内容
-        // （见 handleProfileResult / handleTabResult）。
-        diaryHasMore = true
-        likedHasMore = true
-        savedHasMore = true
-        loadProfile()
-        if targetUserIdValue != nil {
-            loadTab(forceReload: true)
+        pullRefreshController.begin(
+            scrollView: tableView,
+            pullView: pullView,
+            icon: refreshIconView,
+            baseline: .init(top: profilePullBaselineTop()),
+            killInertia: false,
+            animation: .normal
+        ) {
+            // G2：下拉刷新保留旧内容，成功后替换、失败保留旧内容
+            // （见 handleProfileResult / handleTabResult）。
+            diaryHasMore = true
+            likedHasMore = true
+            savedHasMore = true
+            loadProfile()
+            if targetUserIdValue != nil {
+                loadTab(forceReload: true)
+            }
         }
     }
 
@@ -8315,43 +8309,18 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     /// （资料 / 标签）都走这里，先到先收（与旧标准头先到先停同口径），
     /// 旧回包丢弃时仍需走这里，不让刷新头永不结束。
     private func endCustomPullRefresh() {
-        if !isCustomPullRefreshing || customPullEndScheduled {
-            return
-        }
-        // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，回包到即收回，
-        // 不再用 asyncAfter 补满剩余时间；0.26s 收回动画与触发口径不动。
-        customPullEndScheduled = true
-        isCustomPullRefreshing = false
-        customPullEndScheduled = false
-        let baseline = profilePullBaselineTop()
-        // 广场端同款保护：结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
-        // 不再把 contentOffset 拽回 -baseline 顶部，只复位内边距、藏指示头，留在原位置；
-        // 仍停在下拉位的才按旧口径回到 -baseline（指示区须收掉）。
-        // 下拉位 = -(baseline + 84)（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
-        let stillAtPullPosition = !self.tableView.isDragging
-            && self.tableView.contentOffset.y <= -(baseline + 84) + 8
-        let pullOut = {
-            self.tableView.contentInset.top = baseline
-            self.tableView.scrollIndicatorInsets.top = baseline
-            if stillAtPullPosition {
-                self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
-            }
-            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
-        }
-        if UIAccessibility.isReduceMotionEnabled {
-            pullOut()
-            self.refreshIconView.stopSpinning()
+        pullRefreshController.end(
+            scrollView: tableView,
+            pullView: pullView,
+            icon: refreshIconView,
+            baseline: .init(top: profilePullBaselineTop()),
+            animation: .normal
+        ) {
             // 顶端残留修法：pullOut 动画期 inset/offset 不同步时瞬时
             // 拉量可能又把封面拉伸+模糊，动画结束时不再有滚动事件来
             // 复位，故此处强制归自然态（无模糊、无放大）。
             self.resetCoverStretch()
             self.resumeCoverGyroAfterRefreshIfSettled()
-        } else {
-            UIView.animate(withDuration: BearyMotion.normal, animations: pullOut, completion: { _ in
-                self.refreshIconView.stopSpinning()
-                self.resetCoverStretch()
-                self.resumeCoverGyroAfterRefreshIfSettled()
-            })
         }
     }
 
