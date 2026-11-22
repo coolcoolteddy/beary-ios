@@ -10552,13 +10552,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         } else {
             // 全站返回手势补齐：tab 个人页无导航栈时新起导航栈当根页，此前
             // 没有左边缘返回；改走 EdgeDismiss（与他人主页 modal 同款）。
-            let nav = UINavigationController(rootViewController: mapVC)
-            nav.modalPresentationStyle = .fullScreen
-            let mapEdgeDismiss = BearyEdgeDismissController()
-            mapEdgeDismiss.attach(to: nav)
-            nav.transitioningDelegate = mapEdgeDismiss
-            self.profileSubpageEdgeDismiss = mapEdgeDismiss
-            present(nav, animated: BearyMotion.animated(true))
+            self.profileSubpageEdgeDismiss = presentFullscreenNav(root: mapVC, from: self, hidesNavigationBar: false).edgeDismiss
         }
     }
 
@@ -10594,13 +10588,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         } else {
             // 全站返回手势补齐：tab 个人页无导航栈时新起导航栈当根页，此前
             // 没有左边缘返回；改走 EdgeDismiss（与他人主页 modal 同款）。
-            let nav = UINavigationController(rootViewController: starVC)
-            nav.modalPresentationStyle = .fullScreen
-            let starEdgeDismiss = BearyEdgeDismissController()
-            starEdgeDismiss.attach(to: nav)
-            nav.transitioningDelegate = starEdgeDismiss
-            self.profileSubpageEdgeDismiss = starEdgeDismiss
-            present(nav, animated: BearyMotion.animated(true))
+            self.profileSubpageEdgeDismiss = presentFullscreenNav(root: starVC, from: self, hidesNavigationBar: false).edgeDismiss
         }
     }
 

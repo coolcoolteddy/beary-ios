@@ -588,3 +588,31 @@ final class BearyDetailExpandAnimator: NSObject, UIViewControllerAnimatedTransit
         })
     }
 }
+
+// MARK: - 全屏 nav modal 共享入口（第二十四批第 6 项）
+
+// 七处「全屏 nav modal」同一副骨架收一处：nav 包裹＋藏栏＋全屏＋
+// EdgeDismiss（attach＋transitioningDelegate）＋present。调用方须把返回的
+// edgeDismiss 存进强持有属性（transitioningDelegate 弱引用，不持有则手势与
+// 动画代理失效）；nav 由调用方按需取用（如标签页的 onBack／shouldAllow 门）。
+// hidesNavigationBar 默认 true；Profile 地图／星图两处原就不藏栏，传 false，
+// 此时连赋值都不做（isNavigationBarHidden 默认即 false），行为与原来逐字一致。
+@discardableResult
+func presentFullscreenNav(
+    root: UIViewController,
+    from presenter: UIViewController,
+    hidesNavigationBar: Bool = true,
+    configureEdgeDismiss: ((BearyEdgeDismissController, UINavigationController) -> Void)? = nil
+) -> (nav: UINavigationController, edgeDismiss: BearyEdgeDismissController) {
+    let nav = UINavigationController(rootViewController: root)
+    if hidesNavigationBar {
+        nav.isNavigationBarHidden = true
+    }
+    nav.modalPresentationStyle = .fullScreen
+    let edgeDismiss = BearyEdgeDismissController()
+    configureEdgeDismiss?(edgeDismiss, nav)
+    edgeDismiss.attach(to: nav)
+    nav.transitioningDelegate = edgeDismiss
+    presenter.present(nav, animated: BearyMotion.animated(true))
+    return (nav, edgeDismiss)
+}
