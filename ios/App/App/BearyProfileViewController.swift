@@ -9345,7 +9345,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         emoteBusyIds.insert(entryId)
         let mine = (entry.emotes ?? []).contains(where: { ($0.emote ?? "") == key && ($0.mine ?? false) })
         var optimistic = entry
-        optimistic.emotes = emoteDelta(entry.emotes ?? [], key: key, added: mine == false)
+        optimistic.emotes = BearyEmoteOrder.delta(entry.emotes ?? [], key: key, added: mine == false)
         if mine {
             // 摘下：可见行先播退场动画再离行；无可见行时直接发请求。
             if let cell = visibleCell(for: entryId) {
@@ -9364,36 +9364,6 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             cell.animateEmoteChipIn(key: key)
         }
         postCellEmote(entry: entry, key: key)
-    }
-
-    /// 先行增量（与 cell 内 emoteDelta 同款口径）：贴上 +1/mine，摘下 −1（到 0 消失）。
-    private func emoteDelta(_ list: [EmoteCount], key: String, added: Bool) -> [EmoteCount] {
-        var out: [EmoteCount] = []
-        var found = false
-        for var item in list {
-            guard let itemKey = item.emote, !itemKey.isEmpty else { continue }
-            if itemKey == key {
-                found = true
-                if added {
-                    item.count = (item.count ?? 0) + 1
-                    item.mine = true
-                    out.append(item)
-                } else {
-                    let next = (item.count ?? 0) - 1
-                    if next > 0 {
-                        item.count = next
-                        item.mine = false
-                        out.append(item)
-                    }
-                }
-            } else {
-                out.append(item)
-            }
-        }
-        if added && found == false {
-            out.append(EmoteCount(emote: key, count: 1, mine: true))
-        }
-        return out
     }
 
     /// 可见行查找（不改模型、不重绘）：供摘下先行动画用。

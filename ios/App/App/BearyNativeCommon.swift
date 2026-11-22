@@ -2603,6 +2603,37 @@ enum BearyEmoteOrder {
     static func signature(_ list: [EmoteCount]?) -> String {
         (list ?? []).map { "\($0.emote ?? ""):\($0.count ?? 0):\($0.mine ?? false)" }.joined(separator: ",")
     }
+
+    /// 先行增量（详情／卡片／个人页三处共用，逐字等价）：贴上时该 key 计数 +1
+    /// （无此 key 则 mine 新建 1）；摘下时计数 −1（到 0 即整项消失，mine 恒 false 化）。
+    static func delta(_ list: [EmoteCount], key: String, added: Bool) -> [EmoteCount] {
+        var out: [EmoteCount] = []
+        var found = false
+        for var item in list {
+            guard let itemKey = item.emote, !itemKey.isEmpty else { continue }
+            if itemKey == key {
+                found = true
+                if added {
+                    item.count = (item.count ?? 0) + 1
+                    item.mine = true
+                    out.append(item)
+                } else {
+                    let next = (item.count ?? 0) - 1
+                    if next > 0 {
+                        item.count = next
+                        item.mine = false
+                        out.append(item)
+                    }
+                }
+            } else {
+                out.append(item)
+            }
+        }
+        if added && found == false {
+            out.append(EmoteCount(emote: key, count: 1, mine: true))
+        }
+        return out
+    }
 }
 
 struct UploadResponse: Decodable {
