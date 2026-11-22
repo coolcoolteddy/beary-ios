@@ -113,7 +113,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     // B 批示范接入：失败态改走统一 BearyStateView（错误重试态），失败文案与重试动作不变；
     // 空态已走 BearyStateView（本批）；登录态 loginWrap 不动；Feed/Profile 各页的接入留给卡片线。
     private let failureStateView = BearyStateView()
-    private let moreSpinner = BearyRefreshIconView()
+    /// 翻页加载脚部（广场同款 BearyLoadMoreFooterView）：翻页请求在途时亮
+    /// 三个跳动点；失败仍走现有的 loadMoreRetryWrap 重试钮，不用脚部 failed 态；
+    /// 成功／无更多页时藏起（B-G14：已到底无尾部文案）。
+    private let loadMoreFooterView = BearyLoadMoreFooterView()
     /// 翻页失败尾部重试节（照片墙 #729 同款：仅失败时出现的一节入口，
     /// 平时隐藏；已到底时仍无尾部，沿用 B-G14 网页对照——列表直接结束）。
     private let loadMoreRetryWrap = UIStackView()
@@ -216,8 +219,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashSilentRefreshStartSequence = nil
         trashRemovedDuringSilentRefresh.removeAll()
         trashSilentRefreshDeferred = false
-        moreSpinner.stopSpinning()
-        moreSpinner.isHidden = true
+        updateTrashFooter()
         loadMoreRetryWrap.isHidden = true
         updateListRowsIncrementally()
         if SessionManager.shared.currentUser?.id != nil {
@@ -326,9 +328,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         failureStateView.translatesAutoresizingMaskIntoConstraints = false
         failureStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
 
-        // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
-        moreSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
-        moreSpinner.isHidden = true
+        // 翻页脚部：广场同款三点加载态；失败仍走 loadMoreRetryWrap，
+        // 不接脚部 onRetry。56 高与广场脚部同高；藏起时 stack 自动收起。
+        loadMoreFooterView.translatesAutoresizingMaskIntoConstraints = false
+        loadMoreFooterView.heightAnchor.constraint(equalToConstant: BearyLoadMoreFooterView.height).isActive = true
+        loadMoreFooterView.isHidden = true
 
         // 翻页失败尾部重试节：居中一钮，44 高热区；平时隐藏，失败时才出现。
         loadMoreRetryWrap.axis = .vertical
@@ -388,7 +392,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         contentStack.addArrangedSubview(emptyStateView)
         contentStack.addArrangedSubview(failureWrap)
         contentStack.addArrangedSubview(loginWrap)
-        contentStack.addArrangedSubview(moreSpinner)
+        contentStack.addArrangedSubview(loadMoreFooterView)
         contentStack.addArrangedSubview(loadMoreRetryWrap)
         failureWrap.addArrangedSubview(failureStateView)
         contentStack.setCustomSpacing(6, after: headerRow)
@@ -732,6 +736,18 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         }
     }
 
+    /// 翻页脚部显隐（广场同款三点）：仅翻页请求在途时亮 loading；
+    /// 失败仍亮现有的 loadMoreRetryWrap 重试钮，脚部藏起；成功后藏起。
+    private func updateTrashFooter() {
+        if trashLoadingMore {
+            loadMoreFooterView.isHidden = false
+            loadMoreFooterView.setState(.loading)
+        } else {
+            loadMoreFooterView.setState(.hidden)
+            loadMoreFooterView.isHidden = true
+        }
+    }
+
     private func loadMoreIfNeeded() {
         if trashLoading || trashLoadingMore || trashHasMore == false {
             return
@@ -754,8 +770,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashLoadMoreFailed = false
         loadMoreRetryWrap.isHidden = true
         trashLoadingMore = true
-        moreSpinner.isHidden = false
-        moreSpinner.startSpinning()
+        updateTrashFooter()
         // 在途切号门：发起时捕获账号 ID 与鉴权代际（与恢复/彻底删除同款口径）；
         // 回包先比对，失配即旧登录态回包，直接丢弃：不 append、不渲染，
         // 401 也不弹登录。
@@ -765,8 +780,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashLoadingMore = false
-                self.moreSpinner.stopSpinning()
-                self.moreSpinner.isHidden = true
+                self.updateTrashFooter()
                 if self.isStaleTrashRequest(requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch) {
                     return
                 }
