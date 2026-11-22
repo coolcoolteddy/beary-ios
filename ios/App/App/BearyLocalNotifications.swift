@@ -202,6 +202,12 @@ final class BearyLocalNotifications: NSObject {
         UNUserNotificationCenter.current().getNotificationSettings { completion($0.authorizationStatus) }
     }
 
+    /// “已授权”口径：.authorized 与 .provisional 都算已授权。
+    /// refreshAll 与开发者模式通知测试共用此判定；未授权后的动作各留自己的。
+    static func isAuthorized(_ settings: UNNotificationSettings) -> Bool {
+        settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+    }
+
     func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
@@ -251,7 +257,7 @@ final class BearyLocalNotifications: NSObject {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { [weak self] settings in
             guard let self = self else { return }
-            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+            guard Self.isAuthorized(settings) else {
                 self.setLatestAccountId(nil)
                 self.removeAllLocalPending(center: center, generation: gen)
                 return
