@@ -483,7 +483,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    private static let maxLength = 2000
+    private static let maxLength = 5000
     private static let maxImages = 9
 
     // MARK: - 状态
@@ -5452,7 +5452,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// P1-15：正文取数统一走已落字口径——trimmedContent 即 trim 后的已落字正文，
-    /// 与 committedTextCount()（字数显示）同为排除 marked 的口径；发布 2000 上限
+    /// 与 committedTextCount()（字数显示）同为排除 marked 的口径；发布 5000 上限
     /// 判定、空判定、草稿落盘均以它为准（发布侧 trim 沿用 D-G5，不再把首尾空白算进上限）。
     private func trimmedContent() -> String {
         return committedContent().trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5460,11 +5460,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 落字数：拼音组合串（marked text，如未落字的 "nihao"）不计入字数——
     /// 组合串是输入法中间态，不是正文；textView.text 在组词期间已含组合串，
-    /// 直接 count 会把 5 个字母算成字（录屏里 "nihao" 显示 6/2000 即 1 落字 + 5 字母）。
+    /// 直接 count 会把 5 个字母算成字（录屏里 "nihao" 显示 6/5000 即 1 落字 + 5 字母）。
     /// 落字后 marked 为空，计数自然回到落字数（"你好" = 2）。占位显隐仍按全文
     /// （含组合串）算：组词中占位就该藏，不因落字数为 0 而复现。
     /// 扫查组：计量单位须与服务端一致——服务端与网页版均按 JS `.length`
-    ///（UTF-16 码元数）判 2000 上限，Swift `.count` 是字素簇数：单个
+    ///（UTF-16 码元数）判 5000 上限，Swift `.count` 是字素簇数：单个
     /// astral 表情占 1 簇、2 码元，表情多的正文会在客户端放行、服务端
     /// 400 content too long。故落字数直接取已落字串的 utf16.count；
     /// 纯中英文下与原值完全一致，圆环进度与超长红环口径随之对齐服务端。
@@ -9733,12 +9733,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             updatePublishState()
             return
         }
-        // D-G5：网页发布先 trim 再量长（editorText.value.trim() 后 c.length>2000）；
+        // D-G5：网页发布先 trim 再量长（editorText.value.trim() 后 c.length>5000）；
         // 此处原用未 trim 长度，首尾空白会误判超长。改用已 trim 的 trimmed 计长。
         // 扫查组：c.length 是 UTF-16 码元数，Swift .count 是字素簇数，
         // 此处改 utf16.count，与服务端 400 口径一致（见 committedTextCount 注释）。
         if trimmed.utf16.count > BearyComposerViewController.maxLength {
-            showToast(message: "最多 2000 字，现在 \(trimmed.utf16.count) 字")
+            showToast(message: "最多 5000 字，现在 \(trimmed.utf16.count) 字")
             return
         }
         // 决议第 5 项 A：有上传失败的图片时拦截不发（网页 beary.html 编辑器发布口径，
@@ -10144,7 +10144,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if case .server(let code, _) = error {
             switch code {
             case "content too long":
-                return "正文最多 2000 字"
+                return "正文最多 5000 字"
             case "title too long":
                 return "标题最多 30 字"
             case "image unavailable":
@@ -10538,7 +10538,7 @@ private final class ComposerImageItem {
 // 4. 草稿 v3 多槽：正文/心情/图片/天气/@/引用全部进草稿，杀 App 后原样恢复；
 //    发布成功与丢弃只清本篇（currentDraftId），不碰其他篇。
 // 5. 发布/保存无确认弹框（决议第 3 项 B）：点发布/保存直接发；有失败图时 toast 拦截不发（决议第 5 项 A）。
-// 6. 超 2000 字红字提示用 BearyColors.destructiveText，字数圆环仍走 BearyColors.red 同步变红；
+// 6. 超 5000 字红字提示用 BearyColors.destructiveText，字数圆环仍走 BearyColors.red 同步变红；
 //    图片 × 衬底用 BearyColors.scrim（固定深色半透明，深色下 ink 是近白、白字会看不清）；
 //    上传失败图为行内红底块（红 10% 底 + “上传失败，点按重试”），发布时有失败图 toast 拦截不发。
 //    其余白字只出现在恒定橙底上（心情 chip 回退名）与墨底上（发布 pill），浅深皆可读。

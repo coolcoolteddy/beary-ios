@@ -2686,7 +2686,7 @@ extension BearyAPI {
         requestVoid("/beary/api/gif-library/remove", method: "POST", jsonBody: ["key": key], completion: completion)
     }
 
-    /// 发帖：content 必填 ≤2000 字；images 是已上传的 R2 key 数组（须归属本人且存在）；
+    /// 发帖：content 必填 ≤5000 字；images 是已上传的 R2 key 数组（须归属本人且存在）；
     /// mood/weather/quote_id 省略即不传（服务端 validMood/validWeather 对缺失值置 null，与网页同口径）；
     /// iCity：published（0 私密 / 1 公开，默认 0）与 mentioned_user_id（@ 一人，可空）随新建 POST 发出；
     /// 限时：ephemeral=1 时服务端强制公开并写 24 小时到期（ephemeral_until），nil 即普通新建。
