@@ -2661,13 +2661,56 @@ extension BearyAPI {
     /// App 端已限 ≤10MB），后端把视频存 key+'_live' 并回 live_key；videoDataUrl
     /// 为 nil 时 body 与旧版一字相同，非实况上传路径不动。
     /// 审计-编辑器详情：返回在途任务，供编辑器取消上传用（调用方不
-    /// 用时可忽略返回值；上传本身仍不重试，见 request 注释）。
+    /// 用时可忽略返回值）。
+    /// 自动重试一次（2026-11-22）：首发失败且是瞬时失败（网络错误／5xx／
+    /// 408／429）时，用同一 body 静默重传一次——不 toast、不改加载态
+    /// （上传走行内进度，重试那次用户基本看不到）；重试也失败、或首发
+    /// 失败不是瞬时失败时，原失败原样回给调用方，调用方照常亮红底
+    /// 「上传失败，点按重试」块（点按重试仍走新的 uploadImage 调用）。
+    /// 同一调用最多重传一次；401／取消／4xx 不重试。重试前重比 epoch
+    /// 与账号，任一已变即停（与 request 的重试口径同款，不把旧账号的
+    /// 图重发进新账号）。返回值仍是首发任务，重试任务不经返回值返回
+    /// （与 request 的重试口径同款）。首发已落图、回包丢失时重试会留
+    /// 一个孤儿对象（只占存储，调用方只认重试回的 key）。
     @discardableResult
     func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) -> URLSessionDataTask? {
         var body: [String: Any] = ["dataUrl": dataUrl, "w": width, "h": height]
         if let t = thumbDataUrl { body["thumb"] = t }
         if let v = videoDataUrl { body["videoDataUrl"] = v }
-        return request("/beary/api/images/upload", method: "POST", jsonBody: body, uploadProgress: uploadProgress, completion: completion)
+        let epoch = authEpoch
+        let accountId = authAccountId
+        var retried = false
+        // 局部函数：发一次上传；首发瞬时失败时静默再发一次。completion
+        // 只在最终结果（成功／重试后失败／不可重试失败）时调一次。
+        func send(_ completion: @escaping (Result<UploadResponse, APIError>) -> Void) -> URLSessionDataTask? {
+            request("/beary/api/images/upload", method: "POST", jsonBody: body, uploadProgress: uploadProgress) { [weak self] result in
+                switch result {
+                case .success:
+                    completion(result)
+                case .failure(let error):
+                    let retryable: Bool
+                    switch error {
+                    case .network:
+                        retryable = true
+                    case .http(let status, _):
+                        retryable = status >= 500 || status == 408 || status == 429
+                    default:
+                        retryable = false
+                    }
+                    guard !retried, retryable else {
+                        completion(result)
+                        return
+                    }
+                    guard let self = self, epoch == self.authEpoch, accountId == self.authAccountId else {
+                        completion(result)
+                        return
+                    }
+                    retried = true
+                    _ = send(completion)
+                }
+            }
+        }
+        return send(completion)
     }
 
     /// 个人 GIF 库：GET /beary/api/gif-library，返回本人库 key 列表（最新在前，上限 100）。
