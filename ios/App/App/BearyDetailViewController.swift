@@ -88,7 +88,11 @@ final class BearyDetailViewController: UIViewController {
     private var lastNavigationAt: Date?
     private var lastImageViewerAt: Date?
     private var confirmedBookmarked = false
-    private var isEmoteBusy = false
+    /// 回应串行提交器（点赞 submitLike 同款：每次点按都落地、带代次、
+    /// 过期回包丢弃；在途点按只记最新意图，回包后按意图补发）。
+    private let emoteSubmitter = BearyEmoteSerialSubmitter()
+    /// 回应是否在途（补拉合并守卫用：有在途请求时护乐观字段）。
+    private var isEmoteBusy: Bool { emoteSubmitter.isBusy }
     private var isVisibilityBusy = false
     /// 审计三轮第二批 9：限时到期单次定时器（只按最近 ephemeralUntil 排一次，
     /// 绝不按秒/按分钟全量刷新；到点只重算有效态，见 applyEphemeralExpiryIfNeeded）。
@@ -714,6 +718,8 @@ final class BearyDetailViewController: UIViewController {
         // R22-A1：落盘桶按进页时账号钉住（let 属性须在 super.init 前初始化）。
         self.snapshotBucket = BearyDetailCache.bucket()
         super.init(nibName: nil, bundle: nil)
+        // 传入的 entry 来自服务端数据，即回应确认态初值。
+        emoteSubmitter.reset(baseline: entry.emotes ?? [])
     }
 
     required init?(coder: NSCoder) {
@@ -2125,6 +2131,8 @@ final class BearyDetailViewController: UIViewController {
             merged.ephemeralUntil = old.ephemeralUntil
         }
         entry = merged
+        // 补拉到的服务端回应即新确认态（在途时 sync 不生效，确认态不动）。
+        emoteSubmitter.sync(baseline: entry.emotes ?? [])
         // 单篇快照：后台补齐的新鲜数据即写盘（占位/拉黑态不写，见 saveDetailSnapshot）。
         saveDetailSnapshot()
         // 内容页本身被占位过时（本路径不会发生：卡片数据恒为内容态），先恢复内容区。
@@ -3120,6 +3128,8 @@ final class BearyDetailViewController: UIViewController {
 
     /// 选回应（chip 点按取下／picker 选定贴上共用）：先行增量 → POST → 成功对齐服务端值，
     /// 失败回滚＋拒绝动效；未登录走登录提示（先行态复原），非公开弹“公开后才能回应”。
+    /// 串行提交（点赞 submitLike 同款）：每次点按都立即按本次点按后的态渲染，
+    /// 在途点按只记最新意图，回包后按意图补发；过期回包丢弃。
     private func chooseEmote(key: String) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         if !BearyEphemeral.isEffectivelyPublic(entry) {
@@ -3130,34 +3140,51 @@ final class BearyDetailViewController: UIViewController {
             onRequireLogin?()
             return
         }
-        if isEmoteBusy { return }
-        let original = entry.emotes ?? []
-        let mine = original.first(where: { $0.emote == key })?.mine ?? false
-        let optimistic = emoteDelta(original, key: key, added: !mine)
+        let mine = (entry.emotes ?? []).first(where: { $0.emote == key })?.mine ?? false
+        let optimistic = emoteDelta(entry.emotes ?? [], key: key, added: !mine)
         entry.emotes = optimistic
         renderEmotes()
         refreshActionRow()
-        isEmoteBusy = true
+        switch emoteSubmitter.tap(key: key, displayedMine: mine) {
+        case .send(let seq, let sendKey, _):
+            submitEmote(entryId: entryId, key: sendKey, seq: seq)
+        case .settled:
+            // 意图与确认态已一致（两次点按互相抵消）：显示即确认态，无需发请求。
+            break
+        case .pending, .failed, .stale:
+            break
+        }
+    }
+
+    /// 发一次回应切换请求（串行：调用前须确认无在途请求）。回包后若期间有
+    /// 更新的点按意图，按最新意图再发一次；意图与已确认态相同（两次点按
+    /// 互相抵消）时不发，只把界面刷回已确认态。对齐只在收敛时做——
+    /// BearyEmoteOrder.merged 会丢掉不在服务端列表里的 key，未发送的先行
+    /// 意图绝不能在中途被一次对齐抹掉。
+    private func submitEmote(entryId: String, key: String, seq: Int) {
         BearyAPI.shared.postEmote(id: entryId, emote: key) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.isEmoteBusy = false
-                switch result {
-                case .success(let resp):
-                    if let server = resp.emotes {
-                        let merged = BearyEmoteOrder.merged(previous: self.entry.emotes, server: server)
-                        if BearyEmoteOrder.signature(merged) != BearyEmoteOrder.signature(self.entry.emotes) {
-                            self.entry.emotes = merged
-                            self.renderEmotes()
-                        }
+                switch self.emoteSubmitter.response(seq: seq, key: key, result: result.map { $0.emotes }) {
+                case .send(let nextSeq, let nextKey, _):
+                    self.submitEmote(entryId: entryId, key: nextKey, seq: nextSeq)
+                case .settled:
+                    let merged = BearyEmoteOrder.merged(previous: self.entry.emotes, server: self.emoteSubmitter.baseline)
+                    if BearyEmoteOrder.signature(merged) != BearyEmoteOrder.signature(self.entry.emotes) {
+                        self.entry.emotes = merged
+                        self.renderEmotes()
                     }
                     self.refreshActionRow()
                     self.onInteractionChanged?(entryId, nil, nil, nil, self.entry.emotes)
-                case .failure(let err):
-                    self.entry.emotes = original
+                case .failed(let unauthorized):
+                    // 失败只丢弃本次请求的意图：后来的点按意图仍保留，先行态
+                    // 按期望重放（一次渲染），再按最新意图补发（点赞 submitLike 同款）。
+                    let restored = self.emoteSubmitter.rollbackList(displayed: self.entry.emotes ?? [])
+                    let desired = BearyEmoteOrder.merged(previous: restored, server: self.emoteSubmitter.desiredList())
+                    self.entry.emotes = desired
                     self.renderEmotes()
                     self.refreshActionRow()
-                    if case .unauthorized = err {
+                    if unauthorized {
                         self.onRequireLogin?()
                     } else {
                         // 批 B：旧回应钮已删，拒绝动效落在行末 + 钮（无 + 钮时落赞钮）。
@@ -3168,6 +3195,17 @@ final class BearyDetailViewController: UIViewController {
                         }
                         BearyToast.show(in: self.view, message: "操作失败，请重试")
                     }
+                    // 未登录不补发（补发必再 401）；保留的意图随下一次点按发出。
+                    if !unauthorized {
+                        switch self.emoteSubmitter.startNextSend() {
+                        case .send(let nextSeq, let nextKey, _):
+                            self.submitEmote(entryId: entryId, key: nextKey, seq: nextSeq)
+                        case .settled, .pending, .failed, .stale:
+                            break
+                        }
+                    }
+                case .pending, .stale:
+                    break
                 }
             }
         }
