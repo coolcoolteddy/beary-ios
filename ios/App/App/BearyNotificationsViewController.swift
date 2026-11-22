@@ -4053,6 +4053,18 @@ class BearyNotificationCell: UITableViewCell {
         return stack
     }()
 
+    /// 副标题行：摘要 label ＋未读圆点。圆点挪到副标题行右侧、与副标题垂直居中
+    ///（2026-11-22 Li 定）；圆点是本栈的 arranged subview，隐藏时栈自动塌零、
+    /// 摘要贴到行尾，标题行时间不再受圆点影响。间距 12 与圆点左侧留位一致。
+    private let excerptRowStack: UIStackView = {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.spacing = 12
+        stack.alignment = .center
+        return stack
+    }()
+
     private let excerptLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -4110,8 +4122,11 @@ class BearyNotificationCell: UITableViewCell {
     ///（见 applyAvatarVerticalStyle），标题字形顶对齐圆圈顶。
     private var bodyStackTopToContentConstraint: NSLayoutConstraint?
     private var bodyStackTopToAvatarConstraint: NSLayoutConstraint?
-    private var dotTrailingToContentConstraint: NSLayoutConstraint?
-    private var dotTrailingToChevronConstraint: NSLayoutConstraint?
+    /// 标题栈右缘：三角隐藏时钉内容右缘 -16（消息页，时间右端与私信行一致）；
+    /// 三角显示时钉三角左缘 -12（独立页，不压三角）。两条同一时刻只激活一条，
+    /// 见 applyBodyStackTrailing。
+    private var bodyStackTrailingToContentConstraint: NSLayoutConstraint?
+    private var bodyStackTrailingToChevronConstraint: NSLayoutConstraint?
 
     /// 聚合头像组：单头像位替换为头像栈；bodyStack 左缘在单头像/栈之间切换。
     private let avatarStackView = BearyAvatarStackView()
@@ -4155,9 +4170,11 @@ class BearyNotificationCell: UITableViewCell {
         // 高度生长动画中行高缩到 0 时内容不得溢出到相邻行。
         clipsToBounds = true
         bodyStack.addArrangedSubview(titleRowStack)
-        bodyStack.addArrangedSubview(excerptLabel)
+        bodyStack.addArrangedSubview(excerptRowStack)
         titleRowStack.addArrangedSubview(titleLabel)
         titleRowStack.addArrangedSubview(timeLabel)
+        excerptRowStack.addArrangedSubview(excerptLabel)
+        excerptRowStack.addArrangedSubview(unreadDotView)
         kindBadgeView.addSubview(kindIconView)
         contentView.addSubview(unreadBgView)
         contentView.sendSubviewToBack(unreadBgView)
@@ -4171,7 +4188,6 @@ class BearyNotificationCell: UITableViewCell {
         avatarStackView.isHidden = true
         contentView.addSubview(avatarStackView)
         contentView.addSubview(bodyStack)
-        contentView.addSubview(unreadDotView)
         contentView.addSubview(chevronView)
         contentView.addSubview(separatorView)
         contentView.addSubview(nestedLineView)
@@ -4188,12 +4204,13 @@ class BearyNotificationCell: UITableViewCell {
         // 顶层行头像 x=16、未读点右 -16、箭头右 -16；嵌套行在此基础上再缩进（见 configure）。
         avatarLeadingConstraint = avatarImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16)
         separatorLeadingConstraint = separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0)
-        dotTrailingToContentConstraint = unreadDotView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
-        dotTrailingToChevronConstraint = unreadDotView.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -12)
+        // 标题栈右缘跟三角走：三角隐藏时钉内容右缘 -16（消息页，时间右端与私信行一致），
+        // 三角显示时钉三角左缘 -12（独立页）；未读点已在副标题行内，不再占标题行右缘。
+        bodyStackTrailingToContentConstraint = bodyStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
+        bodyStackTrailingToChevronConstraint = bodyStack.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -12)
         avatarLeadingConstraint?.isActive = true
         separatorLeadingConstraint?.isActive = true
-        dotTrailingToContentConstraint?.isActive = true
-        dotTrailingToChevronConstraint?.isActive = false
+        applyBodyStackTrailing()
         // bodyStack 左缘：单头像行钉头像右缘＋12，聚合行钉头像栈右缘＋12；
         // 栈与单头像同顶（14）、同左缘（跟 avatarLeadingConstraint 走嵌套缩进）。
         bodyStackLeadingToAvatarConstraint = bodyStack.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 12)
@@ -4252,11 +4269,9 @@ class BearyNotificationCell: UITableViewCell {
             followActionStack.leadingAnchor.constraint(equalTo: bodyStack.leadingAnchor),
             followActionStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
             followActionStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            // 标题行右缘钉到未读点左缘 -12：时间在标题行内，标题列撑满整宽，
-            // 标题在（整宽 - 时间宽 - 间距）内换行，未读点位置由自身约束定，不依赖此式。
-            bodyStack.trailingAnchor.constraint(equalTo: unreadDotView.leadingAnchor, constant: -12),
-            unreadDotView.leadingAnchor.constraint(equalTo: timeLabel.trailingAnchor, constant: 12),
-            unreadDotView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
+            // 标题行右缘钉法见 bodyStackTrailingToContentConstraint 一组（init 上方），
+            // 三角隐藏钉内容右缘 -16、三角显示钉三角左缘 -12；未读点在副标题行内，
+            // 8×8 定尺寸，栈内隐藏自动塌零。
             unreadDotView.widthAnchor.constraint(equalToConstant: 8),
             unreadDotView.heightAnchor.constraint(equalToConstant: 8),
             chevronView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
@@ -4332,8 +4347,8 @@ class BearyNotificationCell: UITableViewCell {
         nestedLineView.isHidden = true
         unreadBgView.backgroundColor = .clear
         unreadBgLeadingConstraint?.constant = 0
-        dotTrailingToContentConstraint?.isActive = true
-        dotTrailingToChevronConstraint?.isActive = false
+        // 复位态三角隐藏：标题栈右缘改钉内容右缘 -16。
+        applyBodyStackTrailing()
         // 关注提醒卡动作区不得带到复用行。
         hideFollowAction()
     }
@@ -4435,6 +4450,15 @@ class BearyNotificationCell: UITableViewCell {
         applyCardCategoryColors(isSystem: isSystem, anyUnread: anyUnread)
     }
 
+    /// 标题栈右缘跟三角走（未读圆点已挪到副标题行内，不再占标题行右缘）：
+    /// 三角隐藏（消息页）时标题栈钉内容右缘 -16，时间右端与私信行对齐；
+    /// 三角显示（独立页）时钉三角左缘 -12，不压三角。三角显隐由 configure 定，
+    /// 改完三角后须再调一次。
+    private func applyBodyStackTrailing() {
+        bodyStackTrailingToContentConstraint?.isActive = chevronView.isHidden
+        bodyStackTrailingToChevronConstraint?.isActive = !chevronView.isHidden
+    }
+
     /// 合并消息页口径：头像改垂直居中（与私信行同款；居中 42 圆在 72 高行内
     /// 上下各 15，底 guard 相应改为 15）；独立通知页仍走顶锚 14 + 底 guard 16。
     /// 合并页标题栈顶同时改锚头像顶，标题字形顶对齐圆圈顶。
@@ -4489,19 +4513,17 @@ class BearyNotificationCell: UITableViewCell {
         lastTimeMs = timeMs
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
         if mergedList {
-            // 合并消息页与通知详情页：右三角去掉（点按进详情不变）；未读点贴内容右缘。
+            // 合并消息页与通知详情页：右三角去掉（点按进详情不变）。
             chevronView.isHidden = true
             chevronView.image = nil
             chevronView.transform = .identity
-            dotTrailingToContentConstraint?.isActive = true
-            dotTrailingToChevronConstraint?.isActive = false
         } else {
             chevronView.isHidden = false
             chevronView.image = BearyIconImages.image(named: "icon_chevron_down", pointSize: 16)
             chevronView.transform = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : CGAffineTransform.identity
-            dotTrailingToContentConstraint?.isActive = false
-            dotTrailingToChevronConstraint?.isActive = true
         }
+        // 三角显隐刚定：按三角现态同步标题栈右缘约束。
+        applyBodyStackTrailing()
         avatarLeadingConstraint?.constant = 16
         separatorLeadingConstraint?.constant = mergedList ? 16 : 0
         nestedLineView.isHidden = true
@@ -4607,8 +4629,7 @@ class BearyNotificationCell: UITableViewCell {
         separatorLeadingConstraint?.constant = mergedList ? 16 : (nested ? 30 : 0)
         nestedLineView.isHidden = !nested
         chevronView.isHidden = true
-        dotTrailingToContentConstraint?.isActive = true
-        dotTrailingToChevronConstraint?.isActive = false
+        applyBodyStackTrailing()
 
         // 未读底：普通行蓝 7%、sys 行（含信件行）蓝 9%（网页 .nt-item.unread / .sys.unread）。
         // 高亮走 unreadBgView（嵌套行从竖线右侧起），点只看未读。
@@ -4753,8 +4774,7 @@ class BearyNotificationCell: UITableViewCell {
         separatorLeadingConstraint?.constant = nested ? 30 : 0
         nestedLineView.isHidden = !nested
         chevronView.isHidden = true
-        dotTrailingToContentConstraint?.isActive = true
-        dotTrailingToChevronConstraint?.isActive = false
+        applyBodyStackTrailing()
 
         let anyUnread = members.contains(where: { ($0.read ?? true) == false })
         applyUnreadHighlight(highlight: highlight, blueAlpha: 0.07, nested: nested)
