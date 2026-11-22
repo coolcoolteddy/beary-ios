@@ -331,12 +331,12 @@ enum BearyBottomRow {
     }
 
     /// 位置行异步回包应用：文案没变不碰布局；变了用 0.18s 局部过渡推天气组，
-    /// 不瞬间横移（减动效／未进窗口时直设终值）。
-    static func applyResolvedLine(_ resolved: String, locationLabel: UILabel, locationLineRow: UIView, updateVisibility: () -> Void) {
+    /// 不瞬间横移（减动效／未进窗口时直设终值）；animateTransition=false 时直设、不做过渡（时间线简化变体）。
+    static func applyResolvedLine(_ resolved: String, locationLabel: UILabel, locationLineRow: UIView, updateVisibility: () -> Void, animateTransition: Bool = true) {
         guard resolved != locationLabel.text else { return }
         locationLabel.text = resolved
         updateVisibility()
-        guard !UIAccessibility.isReduceMotionEnabled, locationLineRow.window != nil else { return }
+        guard animateTransition, !UIAccessibility.isReduceMotionEnabled, locationLineRow.window != nil else { return }
         UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
             locationLineRow.layoutIfNeeded()
         })
