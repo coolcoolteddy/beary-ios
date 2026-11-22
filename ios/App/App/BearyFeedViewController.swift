@@ -258,55 +258,40 @@ class BearyFeedViewController: UIViewController {
     /// 阴影 0 6px 18px rgba(0,0,0,.22)，
     /// 底部 92 + 安全区上方，点按应用待定内容并回顶）。
     private lazy var newContentPill: UIButton = {
-        // 按钮普查：悬浮 pill 视觉高约 34（13pt 字＋上下 9 内边距），热区用 Hit44 扩到 44；
-        // 居中悬浮、无相邻按钮，视觉不动。
-        let btn = BearyHit44Button(type: .system)
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setTitle("有新内容", for: .normal)
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
-        btn.titleLabel?.adjustsFontForContentSizeCategory = true
-        btn.setTitleColor(BearyColors.bg, for: .normal)
-        // 网页 #newPill 口径：左侧 15pt 上箭头（beary-arrow-up 官方路径渲染），与标题 gap 6。
-        btn.setImage(BearyIconImages.image(named: "icon_arrow_up", pointSize: 15), for: .normal)
-        btn.tintColor = BearyColors.bg
-        btn.titleEdgeInsets.left = 6
-        btn.backgroundColor = BearyColors.ink
-        // 8-11：圆角取半高，见 viewDidLayoutSubviews（跟 bounds 走，不手写 17；
-        // Dynamic Type 变高后仍为 pill 形）。
-        btn.clipsToBounds = false
-        btn.layer.shadowColor = UIColor.black.cgColor
-        BearyShadow.applyRaised(to: btn.layer)
-        btn.contentEdgeInsets = UIEdgeInsets(top: 9, left: 16, bottom: 9, right: 16)
-        btn.isHidden = true
-        btn.addTarget(self, action: #selector(newContentPillTapped), for: .touchUpInside)
-        btn.bearyAddPressFeedback()
-        return btn
+        makeFeedPill(title: "有新内容", imageName: "icon_arrow_up", action: #selector(newContentPillTapped))
     }()
 
     /// “回到刚才的位置”pill：点“有新内容”回顶后才出现，与新内容 pill
     /// 同视觉（ink 底、bg 字、13 semibold、999 圆角、padding 9/16、
     /// 底部 92 + 安全区上方），点按回到点 pill 前的阅读位置（一次有效）。
     private lazy var previousPositionPill: UIButton = {
+        makeFeedPill(title: "回到刚才的位置", imageName: "icon_arrow_down", action: #selector(previousPositionPillTapped))
+    }()
+
+    /// 悬浮 pill 小工厂（两颗 pill 同视觉：ink 底、bg 字、13 semibold、999 圆角、padding 9/16、
+    /// 阴影走 BearyShadow.applyRaised、按压反馈；圆角取半高见 viewDidLayoutSubviews，
+    /// 跟 bounds 走，不手写 17；Dynamic Type 变高后仍为 pill 形）。
+    /// 按钮普查：悬浮 pill 视觉高约 34（13pt 字＋上下 9 内边距），热区用 Hit44 扩到 44；
+    /// 居中悬浮、无相邻按钮，视觉不动。左右箭头均为 15pt 官方路径渲染，与标题 gap 6。
+    private func makeFeedPill(title: String, imageName: String, action: Selector) -> UIButton {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setTitle("回到刚才的位置", for: .normal)
+        btn.setTitle(title, for: .normal)
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.setTitleColor(BearyColors.bg, for: .normal)
-        // 下箭头（与“有新内容”的上箭头同款官方路径渲染），与标题 gap 6。
-        btn.setImage(BearyIconImages.image(named: "icon_arrow_down", pointSize: 15), for: .normal)
+        btn.setImage(BearyIconImages.image(named: imageName, pointSize: 15), for: .normal)
         btn.tintColor = BearyColors.bg
         btn.titleEdgeInsets.left = 6
         btn.backgroundColor = BearyColors.ink
         btn.clipsToBounds = false
-        btn.layer.shadowColor = UIColor.black.cgColor
         BearyShadow.applyRaised(to: btn.layer)
         btn.contentEdgeInsets = UIEdgeInsets(top: 9, left: 16, bottom: 9, right: 16)
         btn.isHidden = true
-        btn.addTarget(self, action: #selector(previousPositionPillTapped), for: .touchUpInside)
+        btn.addTarget(self, action: action, for: .touchUpInside)
         btn.bearyAddPressFeedback()
         return btn
-    }()
+    }
 
     // MARK: - 视图
 
