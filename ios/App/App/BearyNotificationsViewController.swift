@@ -2011,7 +2011,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 不产生新行，哨兵留位、滚出再滚回才重触（见 scrollViewDidScroll 重 arm）。
                     // P1-22：失败前先灭卡片动画（见 cancelCardAnimation），摘掉在途快照。
                     strongSelf.loadMoreFailed = true
-                    strongSelf.showToast(message: "加载失败", toastOverride: toastOverride)
+                    strongSelf.showToast(message: "加载失败", toastOverride: strongSelf.toastOverride)
                     strongSelf.cancelCardAnimation()
                     // 第七轮 12：失败只翻哨兵态，只刷新哨兵行。
                     strongSelf.refreshSentinelRow()
@@ -2219,7 +2219,7 @@ final class BearyNotificationsViewController: UIViewController {
                     if case APIError.unauthorized = apiError {
                         return
                     }
-                    strongSelf.showToast(message: "操作失败，请重试", toastOverride: toastOverride)
+                    strongSelf.showToast(message: "操作失败，请重试", toastOverride: strongSelf.toastOverride)
                     strongSelf.loadFirstPage()
                 }
             }
@@ -2298,7 +2298,7 @@ final class BearyNotificationsViewController: UIViewController {
                         // 旧缓存态原样保留（重验调用点只对已有缓存态发请求）。
                     } else {
                         self.followCardStates[actorId] = .loadFailed
-                        self.showToast(message: "回关状态加载失败，点按可重试", toastOverride: toastOverride)
+                        self.showToast(message: "回关状态加载失败，点按可重试", toastOverride: self.toastOverride)
                     }
                 }
                 self.refreshFollowCardRows(actorId: actorId)
@@ -2411,7 +2411,7 @@ final class BearyNotificationsViewController: UIViewController {
                         if let notificationId = notificationId {
                             self.playDenyShakeForRow(notificationId: notificationId)
                         }
-                        self.showToast(message: wasFollowBack ? "回关失败，请重试" : "关注失败，请重试", toastOverride: toastOverride)
+                        self.showToast(message: wasFollowBack ? "回关失败，请重试" : "关注失败，请重试", toastOverride: self.toastOverride)
                     }
                 }
             }
@@ -2664,7 +2664,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 失败有反馈：摇头＋warning 震动＋拒绝音效＋toast（此前静默
                     // 回滚，用户不知道标已读没成）。
                     strongSelf.playDenyShakeForRow(notificationId: notificationId)
-                    strongSelf.showToast(message: "标为已读失败，请重试", toastOverride: toastOverride)
+                    strongSelf.showToast(message: "标为已读失败，请重试", toastOverride: strongSelf.toastOverride)
                 }
             }
         }
@@ -2738,7 +2738,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 不复用 playDenyShakeForRow——它按旧下标找行，删后重插下标已变）。
                     BearyHaptics.rejectionWarning()
                     BearySoundPlayer.play(.refuseBonk)
-                    strongSelf.showToast(message: "删除失败，请重试", toastOverride: toastOverride)
+                    strongSelf.showToast(message: "删除失败，请重试", toastOverride: strongSelf.toastOverride)
                     completion?(false)
                 }
             }
