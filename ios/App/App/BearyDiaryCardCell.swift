@@ -673,15 +673,10 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 快连点代次（首页模式，2026-10-29 及时性口径）：点按不再锁按钮丢点按，
     /// 每次点按代次 +1 并立即按本次点按态渲染；在途回包代次落后于最新代次时
     /// 直接丢弃，不得覆盖更新的点按态；个人主页模式由控制器持代次，cell 不用。
-    private var likeSeq = 0
-    private var likeConfirmedSeq = 0
-    private var bookmarkSeq = 0
-    private var bookmarkConfirmedSeq = 0
-    /// 最后服务端确认态（首页模式）：configure 与服务端同步（syncInteraction）
-    /// 时刷新；最新请求失败时回滚到这里，不回滚到中间态。
-    private var confirmedLiked = false
-    private var confirmedLikeCount = 0
-    private var confirmedBookmarked = false
+    /// 最后服务端确认态（首页模式，共享协议，见 BearyNativeCommon.BearyConfirmedState）：
+    /// configure 与服务端同步（syncInteraction）时刷新；最新请求失败时回滚到这里，不回滚到中间态。
+    private var likeState = BearyConfirmedState(confirmed: BearyLikeState(liked: false, count: 0))
+    private var bookmarkState = BearyConfirmedState(confirmed: false)
     /// 跟手批：按下已给过视觉预态（预取消赞），抬起确认时不再重播。
     private var likePressPreviewActive = false
     /// 点赞钮显式宽约束：见 updateLikeButton / applyLikeButtonState 的宽度算法。
@@ -2092,13 +2087,8 @@ class BearyDiaryCardCell: UITableViewCell {
         bodyGIFOverlay.clear()
         titleGIFOverlay.clear()
         isExpanded = false
-        likeSeq = 0
-        likeConfirmedSeq = 0
-        bookmarkSeq = 0
-        bookmarkConfirmedSeq = 0
-        confirmedLiked = false
-        confirmedLikeCount = 0
-        confirmedBookmarked = false
+        likeState.reset(to: BearyLikeState(liked: false, count: 0))
+        bookmarkState.reset(to: false)
         likePressPreviewActive = false
         foldOverflow = nil
         foldApplies = false
@@ -2561,9 +2551,8 @@ class BearyDiaryCardCell: UITableViewCell {
         currentEntry = entry
         cellEntryId = entry.id
         // 快连点确认态初值：configure 的 entry 来自服务端数据，即确认态。
-        confirmedLiked = entry.likedByMe ?? false
-        confirmedLikeCount = entry.likeCount ?? 0
-        confirmedBookmarked = entry.bookmarkedByMe ?? false
+        likeState.adopt(BearyLikeState(liked: entry.likedByMe ?? false, count: entry.likeCount ?? 0))
+        bookmarkState.adopt(entry.bookmarkedByMe ?? false)
         confirmedEmotes = entry.emotes ?? []
         if let entryIdValue = entry.id {
             isExpanded = BearyDiaryCardCell.expandedEntryIds.contains(entryIdValue)
@@ -3817,11 +3806,10 @@ class BearyDiaryCardCell: UITableViewCell {
         // 控制器经服务端全副本同步的值即确认态：快连点下失败回滚滚到这里，
         // 不滚到控制器旧模型或本次点按前的中间态。
         if let v = likedByMe {
-            confirmedLiked = v
-            confirmedLikeCount = currentEntry?.likeCount ?? 0
+            likeState.adopt(BearyLikeState(liked: v, count: currentEntry?.likeCount ?? 0))
         }
         if let v = bookmarkedByMe {
-            confirmedBookmarked = v
+            bookmarkState.adopt(v)
         }
         var bookmarkChanged = false
         if let v = bookmarkedByMe, v != (currentEntry?.bookmarkedByMe ?? false) {
@@ -4064,14 +4052,13 @@ class BearyDiaryCardCell: UITableViewCell {
             updateLikeButton()
             clearLikeBurst()
         }
-        likeSeq += 1
-        let reqSeq = likeSeq
+        let reqSeq = likeState.beginRequest()
         BearyAPI.shared.toggleLike(id: entryIdValue, liked: targetLiked) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // 代次守卫：复用换条或已有更新点按时，过期回包直接丢弃。
-                guard strongSelf.cellEntryId == entryIdValue, reqSeq == strongSelf.likeSeq else { return }
-                strongSelf.likeConfirmedSeq = reqSeq
+                guard strongSelf.cellEntryId == entryIdValue, strongSelf.likeState.isCurrent(reqSeq) else { return }
+                strongSelf.likeState.markConfirmed(reqSeq)
                 BearyIconMotion.animateIconScale(on: strongSelf.likeButton, to: 1)
                 strongSelf.updateActionInteractivity()
                 switch result {
@@ -4081,8 +4068,7 @@ class BearyDiaryCardCell: UITableViewCell {
                     if let countValue = resp.count {
                         strongSelf.currentEntry?.likeCount = countValue
                     }
-                    strongSelf.confirmedLiked = newLiked
-                    strongSelf.confirmedLikeCount = strongSelf.currentEntry?.likeCount ?? 0
+                    strongSelf.likeState.confirm(reqSeq, value: BearyLikeState(liked: newLiked, count: strongSelf.currentEntry?.likeCount ?? 0))
                     strongSelf.updateLikeButton()
                     // 第 1 轮 24：音效只按最终结果播一次（成功按最终态播
                     // likePop／unlikeSoft，失败分支走拒绝音 refuse_bonk）。
@@ -4093,8 +4079,8 @@ class BearyDiaryCardCell: UITableViewCell {
                 case .failure(let err):
                     // 失败回滚到最后服务端确认态（不是本次点按前的中间态），
                     // 再走既有失败路径（拒绝动效 + 通用提示），不另起一套。
-                    strongSelf.currentEntry?.likedByMe = strongSelf.confirmedLiked
-                    strongSelf.currentEntry?.likeCount = strongSelf.confirmedLikeCount
+                    strongSelf.currentEntry?.likedByMe = strongSelf.likeState.confirmed.liked
+                    strongSelf.currentEntry?.likeCount = strongSelf.likeState.confirmed.count
                     strongSelf.updateLikeButton()
                     // 回滚到未填色：在飞的点赞微粒一并清掉，屏幕只反映最新点按态。
                     strongSelf.clearLikeBurst()
@@ -4138,19 +4124,18 @@ class BearyDiaryCardCell: UITableViewCell {
         // 成功回包按最终态播 bookmarkTick／deleteSwoosh，失败走拒绝音；
         // 否则失败时点按音与拒绝音先后两声。
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
-        bookmarkSeq += 1
-        let reqSeq = bookmarkSeq
+        let reqSeq = bookmarkState.beginRequest()
         BearyAPI.shared.toggleBookmark(id: entryIdValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // 代次守卫：复用换条或已有更新点按时，过期回包直接丢弃。
-                guard strongSelf.cellEntryId == entryIdValue, reqSeq == strongSelf.bookmarkSeq else { return }
-                strongSelf.bookmarkConfirmedSeq = reqSeq
+                guard strongSelf.cellEntryId == entryIdValue, strongSelf.bookmarkState.isCurrent(reqSeq) else { return }
+                strongSelf.bookmarkState.markConfirmed(reqSeq)
                 switch result {
                 case .success(let resp):
                     let newBookmarked = resp.bookmarked ?? flipped
                     strongSelf.currentEntry?.bookmarkedByMe = newBookmarked
-                    strongSelf.confirmedBookmarked = newBookmarked
+                    strongSelf.bookmarkState.confirm(reqSeq, value: newBookmarked)
                     strongSelf.updateBookmarkButton()
                     strongSelf.updateActionInteractivity()
                     // 收藏音按最终结果只播一次（成功按最终态播 bookmarkTick／
@@ -4159,7 +4144,7 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.onInteractionChanged?(entryIdValue, nil, nil, newBookmarked)
                 case .failure(let err):
                     // 失败回滚到最后服务端确认态，再走既有失败路径。
-                    strongSelf.currentEntry?.bookmarkedByMe = strongSelf.confirmedBookmarked
+                    strongSelf.currentEntry?.bookmarkedByMe = strongSelf.bookmarkState.confirmed
                     strongSelf.updateBookmarkButton()
                     // 回滚到未填色：在飞的收藏微粒一并清掉。
                     BearyBurstParticles.clear(from: strongSelf.bookmarkButton)
