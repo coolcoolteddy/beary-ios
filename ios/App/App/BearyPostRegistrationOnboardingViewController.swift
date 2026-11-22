@@ -28,7 +28,6 @@ enum BearyOnboardingPalette {
     static let chipSelectedBackground = UIColor(red: 255.0 / 255.0, green: 250.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
     static let orange = BearyColors.orange
     static let linkBlue = BearyColors.blue
-    static let switchGreen = UIColor(red: 52.0 / 255.0, green: 199.0 / 255.0, blue: 89.0 / 255.0, alpha: 1)
     static let tagBackground = UIColor(red: 242.0 / 255.0, green: 242.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
 }
 
@@ -1282,7 +1281,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         row1.addSubview(texts1)
         let reminderSwitch = UISwitch()
         reminderSwitch.translatesAutoresizingMaskIntoConstraints = false
-        reminderSwitch.onTintColor = BearyOnboardingPalette.switchGreen
+        reminderSwitch.onTintColor = BearyColors.switchGreen
         reminderSwitch.isOn = reminderOn
         reminderSwitch.addTarget(self, action: #selector(reminderSwitchChanged(_:)), for: .valueChanged)
         row1.addSubview(reminderSwitch)
