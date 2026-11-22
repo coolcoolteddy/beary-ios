@@ -3,6 +3,7 @@ import UIKit
 /// 日记分享共享入口：有效公开门控 → 拼链 → 正文空白折叠 → 组 items →
 /// 有弹窗时复制链接兜底 → 失败时复制链接 → iPad popover 锚点。
 /// 详情／广场／个人页三处共用；锚点与占用态 toast 文案作参数。
+/// 分享文案先剥 [mood:]/[gif:] 记号再截断，收到方不看记号原文。
 /// 拼链一律走 BearyRoute.webURL，不再手拼 https://teddyhn.com/beary/d/。
 enum BearyDiaryShare {
 
@@ -35,10 +36,13 @@ enum BearyDiaryShare {
         guard BearyEphemeral.isEffectivelyPublic(entry) else { return false }
         guard let entryId = entry.id, !entryId.isEmpty,
               let url = BearyRoute.entry(entryId).webURL else { return false }
-        let shareText = (entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        // 先剥完整记号（分享出去的纯文本不露 [mood:]/[gif:] 原文），再折叠空白、
+        // 截前 60 字；截断可能切在手打未闭合记号中间，末尾再去一次残段。
+        let foldedText = BearyText.plainTextWithoutInlineTokens(entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        let shareText = BearyText.stripTrailingPartialInlineToken(String(foldedText.prefix(60)))
         var items: [Any] = ["beary 日记"]
         if !shareText.isEmpty {
-            items.append(String(shareText.prefix(60)))
+            items.append(shareText)
         }
         items.append(url)
         if viewController.presentedViewController != nil {
