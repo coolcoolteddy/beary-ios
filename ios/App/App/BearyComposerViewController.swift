@@ -4019,9 +4019,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteToolButton.tintColor = BearyColors.ink
         quoteToolButton.addTarget(self, action: #selector(didTapQuoteTool), for: .touchUpInside)
         quoteToolButton.bearyAddPressFeedback()
-        tagToolButton.setTitle("#", for: .normal)
-        tagToolButton.titleLabel?.font = UIFont.systemFont(ofSize: 20, weight: .bold)
-        tagToolButton.setTitleColor(BearyColors.ink, for: .normal)
+        tagToolButton.setImage(BearyIconImages.image(named: "icon_tag", pointSize: 24), for: .normal)
+        tagToolButton.tintColor = BearyColors.ink
         tagToolButton.accessibilityLabel = "添加标签"
         tagToolButton.addTarget(self, action: #selector(didTapTagTool), for: .touchUpInside)
         tagToolButton.bearyAddPressFeedback()
