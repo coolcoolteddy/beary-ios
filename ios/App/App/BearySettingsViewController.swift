@@ -5130,9 +5130,9 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
 /// 改走组件后失败态同为首字母占位＋重试钮（见 BearyAvatarView 注释第 4 条）。
 private final class BearyBlockedUserCell: UITableViewCell {
 
-    private let avatarView = BearyAvatarView()
-    private let nameLabel = UILabel()
-    private let handleLabel = UILabel()
+    // 用户行走共享 BearyUserRowView（头像 44＋名字＋handle 竖栈＋尾部
+    // 「解除拉黑」钮槽位；布局与字号三处共用）。
+    private lazy var userRowView: BearyUserRowView = BearyUserRowView(trailingView: unblockButton, avatarPin: .topExact)
     private var unblockHandler: (() -> Void)?
 
     private lazy var unblockButton: BearyHit44Button = {
@@ -5151,35 +5151,13 @@ private final class BearyBlockedUserCell: UITableViewCell {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         backgroundColor = BearyColors.bg
         selectionStyle = .none
-        avatarView.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.font = BearyDynamicType.cardTitleFont()
-        nameLabel.textColor = BearyColors.ink
-        nameLabel.numberOfLines = 1
-        handleLabel.translatesAutoresizingMaskIntoConstraints = false
-        handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        handleLabel.adjustsFontForContentSizeCategory = true
-        handleLabel.textColor = BearyColors.gray
-        handleLabel.numberOfLines = 1
-        contentView.addSubview(avatarView)
-        contentView.addSubview(nameLabel)
-        contentView.addSubview(handleLabel)
-        contentView.addSubview(unblockButton)
+        userRowView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(userRowView)
         NSLayoutConstraint.activate([
-            avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
-            avatarView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -14),
-            avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            avatarView.widthAnchor.constraint(equalToConstant: 44),
-            avatarView.heightAnchor.constraint(equalToConstant: 44),
-            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
-            nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: unblockButton.leadingAnchor, constant: -8),
-            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
-            handleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: unblockButton.leadingAnchor, constant: -8),
-            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            unblockButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            unblockButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            userRowView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            userRowView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            userRowView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            userRowView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
         ])
     }
@@ -5190,7 +5168,7 @@ private final class BearyBlockedUserCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        avatarView.reset()
+        userRowView.avatarView.reset()
         unblockHandler = nil
     }
 
@@ -5201,16 +5179,16 @@ private final class BearyBlockedUserCell: UITableViewCell {
         if let name = profile?.displayName, !name.isEmpty {
             displayName = name
         }
-        nameLabel.text = displayName
+        userRowView.nameLabel.text = displayName
         if let handle = profile?.handle, !handle.isEmpty {
-            handleLabel.text = "@\(handle)"
-            handleLabel.isHidden = false
+            userRowView.handleLabel.text = "@\(handle)"
+            userRowView.handleLabel.isHidden = false
         } else {
-            handleLabel.isHidden = true
+            userRowView.handleLabel.isHidden = true
         }
         // C3：头像加载/占位/重试全走 BearyAvatarView（无图首字母占位；
         // 有图失败时占位＋重试，旧“失败留空白”不再出现）。
-        avatarView.configure(displayName: displayName, avatarURL: profile?.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) })
+        userRowView.avatarView.configure(displayName: displayName, avatarURL: profile?.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) })
     }
 
     @objc private func unblockTapped() {
