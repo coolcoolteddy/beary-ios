@@ -296,19 +296,14 @@ class BearyEditProfileViewController: UIViewController {
 
     private let nameField: UITextField = {
         let fieldValue = UITextField()
-        fieldValue.translatesAutoresizingMaskIntoConstraints = false
         // F15：网页 ed-rinput 口径——16 字、无边框矩形框；占位文案同网页。
         // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
-        fieldValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
-        fieldValue.adjustsFontForContentSizeCategory = true
-        fieldValue.textColor = BearyColors.ink
-        // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
-        fieldValue.attributedPlaceholder = NSAttributedString(string: "给自己起个名字", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
-        ])
-        fieldValue.borderStyle = .none
-        fieldValue.autocorrectionType = .no
+        BearyFormField.configure(
+            fieldValue,
+            placeholder: "给自己起个名字",
+            returnKeyType: .next,
+            delegate: self
+        )
         return fieldValue
     }()
 
@@ -324,19 +319,14 @@ class BearyEditProfileViewController: UIViewController {
 
     private let handleField: UITextField = {
         let fieldValue = UITextField()
-        fieldValue.translatesAutoresizingMaskIntoConstraints = false
         // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
-        fieldValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
-        fieldValue.adjustsFontForContentSizeCategory = true
-        fieldValue.textColor = BearyColors.ink
-        // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
-        fieldValue.attributedPlaceholder = NSAttributedString(string: "小写字母、数字或下划线", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
-        ])
-        fieldValue.borderStyle = .none
-        fieldValue.autocapitalizationType = .none
-        fieldValue.autocorrectionType = .no
+        BearyFormField.configure(
+            fieldValue,
+            placeholder: "小写字母、数字或下划线",
+            autocapitalizationType: .none,
+            returnKeyType: .done,
+            delegate: self
+        )
         return fieldValue
     }()
 
@@ -346,18 +336,16 @@ class BearyEditProfileViewController: UIViewController {
     /// 签名行不配图标（表单行统一只有文字标签，不自绘、不补新图标）。
     private let signatureField: UITextField = {
         let fieldValue = UITextField()
-        fieldValue.translatesAutoresizingMaskIntoConstraints = false
         // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
-        fieldValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
-        fieldValue.adjustsFontForContentSizeCategory = true
-        fieldValue.textColor = BearyColors.ink
-        fieldValue.attributedPlaceholder = NSAttributedString(string: "写一句属于你的话", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
-        ])
-        fieldValue.borderStyle = .none
-        fieldValue.autocorrectionType = .no
-        fieldValue.clearButtonMode = .whileEditing
+        BearyFormField.configure(
+            fieldValue,
+            placeholder: "写一句属于你的话",
+            returnKeyType: .next,
+            clearButtonMode: .whileEditing,
+            delegate: self,
+            changeTarget: self,
+            changeAction: #selector(signatureFieldChanged)
+        )
         return fieldValue
     }()
 
@@ -427,13 +415,6 @@ class BearyEditProfileViewController: UIViewController {
         buildLayout()
         // U3：输入框 Return 收起/切换 + 滑动收键盘 + 键盘顶起时调 inset
         //（私信页口径：三通知全齐，帧转视图坐标后算实际遮挡，浮动键盘不按全高垫）。
-        nameField.delegate = self
-        signatureField.delegate = self
-        handleField.delegate = self
-        nameField.returnKeyType = .next
-        signatureField.returnKeyType = .next
-        handleField.returnKeyType = .done
-        signatureField.addTarget(self, action: #selector(signatureFieldChanged), for: .editingChanged)
         scrollView.keyboardDismissMode = .onDrag
         NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
