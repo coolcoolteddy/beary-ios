@@ -1216,7 +1216,7 @@ final class BearyLoginViewController: UIViewController {
         let provider = ASAuthorizationAppleIDProvider()
         let request = provider.createRequest()
         request.requestedScopes = [.fullName, .email]
-        request.nonce = sha256Hex(rawNonce)
+        request.nonce = BearyCrypto.sha256Hex(rawNonce)
         let controller = ASAuthorizationController(authorizationRequests: [request])
         controller.delegate = self
         controller.presentationContextProvider = self
@@ -1234,12 +1234,6 @@ final class BearyLoginViewController: UIViewController {
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
-    }
-
-    /// SHA-256 十六进制（服务端核对 nonce 用；服务端已有同款 sha256hex）。
-    private func sha256Hex(_ string: String) -> String {
-        let digest = SHA256.hash(data: Data(string.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     /// Apple 登录服务端请求：与验码同一套会话／响应处理；成功走 onLoggedIn?(nil)＋loginChime，

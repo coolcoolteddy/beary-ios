@@ -191,8 +191,7 @@ final class BearyLivePhotoLoader {
 
     private func fileURL(key: String, ext: String, bucket: String) -> URL? {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
-        let digest = SHA256.hash(data: Data(key.utf8))
-        let name = digest.map { String(format: "%02x", $0) }.joined() + "." + ext
+        let name = BearyCrypto.sha256Hex(key) + "." + ext
         let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent(bucket, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
         return dir.appendingPathComponent(name)
