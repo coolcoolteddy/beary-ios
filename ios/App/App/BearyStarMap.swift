@@ -285,7 +285,7 @@ enum BearyStarMap {
 
     static func sliceYearMonth(_ entry: Entry) -> (year: Int, month: Int)? {
         guard let ms = entry.createdAt, ms > 0 else { return nil }
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let date = Date(millisecondsSince1970: ms)
         let comps = Calendar.current.dateComponents([.year, .month], from: date)
         guard let year = comps.year, let month = comps.month else { return nil }
         return (year, month)

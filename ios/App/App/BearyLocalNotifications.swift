@@ -341,7 +341,7 @@ final class BearyLocalNotifications: NSObject {
         if enabled[.limitedExpiry] == true {
             for entry in entries {
                 guard let id = entry.id, let until = entry.ephemeralUntil, BearyEphemeral.isLive(entry, nowMs: nowMs) else { continue }
-                desired.append(DesiredRequest(identifier: Self.limitedPrefix + id, fireDate: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0), body: "限时结束了，这篇日记已自动转回私密。", kind: .limitedExpiry, userInfo: ["kind": Kind.limitedExpiry.rawValue, "accountId": accountId, "entryId": id]))
+                desired.append(DesiredRequest(identifier: Self.limitedPrefix + id, fireDate: Date(millisecondsSince1970: until), body: "限时结束了，这篇日记已自动转回私密。", kind: .limitedExpiry, userInfo: ["kind": Kind.limitedExpiry.rawValue, "accountId": accountId, "entryId": id]))
             }
         }
 

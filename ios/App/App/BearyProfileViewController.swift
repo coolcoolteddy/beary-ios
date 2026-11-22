@@ -4077,7 +4077,7 @@ class BearyProfileViewController: UIViewController {
             joinedIconCenterYWithoutHandleConstraint.isActive = true
         }
         if let createdMs = profileValue.createdAt, createdMs > 0 {
-            let dateValue = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
+            let dateValue = Date(millisecondsSince1970: createdMs)
             // F18：网页 "2026 年 10 月加入" 口径——年 / 月前后带空格（静态 formatter 同口径）。
             joinedLabel.isHidden = false
             setLabelTextFaded(joinedLabel, Self.profileJoinedFormatter.string(from: dateValue))
@@ -4783,7 +4783,7 @@ class BearyProfileViewController: UIViewController {
 
     private func personalDateString(timestampMs: Int?) -> String {
         guard let timestampMs = timestampMs else { return "" }
-        let date = Date(timeIntervalSince1970: TimeInterval(timestampMs) / 1000)
+        let date = Date(millisecondsSince1970: timestampMs)
         let parts = Calendar.current.dateComponents([.year, .month, .day], from: date)
         guard let year = parts.year, let month = parts.month, let day = parts.day else { return "" }
         return "\(year) 年 \(month) 月 \(day) 日"
@@ -5794,7 +5794,7 @@ class BearyProfileViewController: UIViewController {
         // 年份链：原篇年 + 每条留话的送达年（已撤回行已在 liveChainMessages 里排除）。
         var chainParts: [String] = []
         if let createdAt = origin?.createdAt {
-            let year = Self.beijingCalendar.component(.year, from: Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000))
+            let year = Self.beijingCalendar.component(.year, from: Date(millisecondsSince1970: createdAt))
             chainParts.append("\(year) 原篇")
         }
         for message in messages {
@@ -6282,7 +6282,7 @@ class BearyProfileViewController: UIViewController {
         var writtenDays = Set<Date>()
         for entry in visible {
             if let createdAt = entry.createdAt {
-                let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+                let date = Date(millisecondsSince1970: createdAt)
                 writtenDays.insert(Self.beijingCalendar.startOfDay(for: date))
             }
         }
@@ -6452,7 +6452,7 @@ class BearyProfileViewController: UIViewController {
         var yearCounts: [String: Int] = [:]
         for entry in visible {
             guard let createdAt = entry.createdAt else { continue }
-            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+            let date = Date(millisecondsSince1970: createdAt)
             let year = Self.beijingCalendar.component(.year, from: date)
             yearCounts["\(year)", default: 0] += 1
         }

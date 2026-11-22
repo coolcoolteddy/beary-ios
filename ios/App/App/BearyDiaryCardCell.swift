@@ -2143,7 +2143,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 共用绝对时间回落（publishedRelativeString 无效 ms 时的兜底）：
     /// 同年「M月d日 H:mm」，跨年「yyyy年M月d日」，北京时间。
     static func feedTimeString(ms: Int) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let date = Date(millisecondsSince1970: ms)
         return BearyText.absoluteDateString(from: date)
     }
 

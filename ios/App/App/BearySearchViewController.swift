@@ -4052,7 +4052,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
             return relative
         }
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let date = Date(millisecondsSince1970: ms)
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "zh_CN")
         let year = Calendar.current.component(.year, from: date)

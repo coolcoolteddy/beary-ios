@@ -111,7 +111,7 @@ enum PastSelfLogic {
 
     /// 本地日字符串 YYYY-MM-DD（设备日历与时区，不走 UTC）。
     static func localDateString(fromMs ms: Int, calendar: Calendar) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
+        let date = Date(millisecondsSince1970: ms)
         return localDateString(from: date, calendar: calendar)
     }
 
@@ -126,7 +126,7 @@ enum PastSelfLogic {
     /// 注意：calendar.date(from:) 会把无效日归一化（如 2025-02-29 → 2025-03-01）
     /// 而不是返回 nil，故不能先构造再判空；必须先算目标月最后一天再截断。
     static func nextYearDateString(fromMs ms: Int, calendar: Calendar) -> String? {
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
+        let date = Date(millisecondsSince1970: ms)
         let parts = calendar.dateComponents([.year, .month, .day], from: date)
         guard let year = parts.year, let month = parts.month, let day = parts.day else { return nil }
         var firstParts = DateComponents()

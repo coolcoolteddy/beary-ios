@@ -27,7 +27,7 @@ enum BearyBeijingDay {
 
     /// 毫秒时间戳 → 北京年月日。
     static func components(ofMs ms: Int) -> (year: Int, month: Int, day: Int)? {
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let date = Date(millisecondsSince1970: ms)
         let comps = calendar.dateComponents([.year, .month, .day], from: date)
         guard let year = comps.year, let month = comps.month, let day = comps.day else { return nil }
         return (year, month, day)
@@ -97,5 +97,24 @@ enum BearyBeijingDay {
         guard let date = date(year: year, month: month, day: 1) else { return nil }
         guard let range = calendar.range(of: .day, in: .month, for: date) else { return nil }
         return range.count
+    }
+}
+
+// MARK: - 毫秒时间戳 → Date（全站统一入口）
+//
+// 各处手写的毫秒除以 1000 再转 Date（`/ 1000` 与 `/ 1000.0` 混用）
+// 全部收敛到这里，算式语义一字未动。
+// 放本文件：App target 与 BearyCoreTests target 都编它（BearyNativeCommon.swift
+// 只进 App target，测试 target 编 BearyBeijingDay／BearyStarMap／BearyPastSelf
+// 时看不到放那里的定义）。
+extension Date {
+    /// 毫秒时间戳（整型）→ Date。
+    init<T: BinaryInteger>(millisecondsSince1970 ms: T) {
+        self.init(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+    }
+
+    /// 毫秒时间戳（Double 型，如 SessionManager 的 tokenExpiresAtMs）→ Date。
+    init(millisecondsSince1970 ms: Double) {
+        self.init(timeIntervalSince1970: ms / 1000.0)
     }
 }

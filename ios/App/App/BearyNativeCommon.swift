@@ -2116,7 +2116,7 @@ enum BearyText {
     /// 今天/昨天判定与显示均走北京日历/时区，不用设备时区。
     /// created_at 是毫秒时间戳。
     static func timeString(ms: Int) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let date = Date(millisecondsSince1970: ms)
         let cal = BearyBeijingDay.calendar
         if cal.isDateInToday(date) {
             return hourMinuteFormatter.string(from: date)
@@ -3749,7 +3749,7 @@ enum BearyVisibility {
 enum BearyVisibilityText {
     static func publishedRelativeString(publishedAtMs: Int?) -> String? {
         guard let ms = publishedAtMs, ms > 0 else { return nil }
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let date = Date(millisecondsSince1970: ms)
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
         if diff < 60 { return "刚刚" }
         if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }

@@ -191,13 +191,13 @@ enum BearyAccountText {
 
     static func dateString(ms: Int?) -> String {
         guard let value = ms, value > 0 else { return "–" }
-        let date = Date(timeIntervalSince1970: TimeInterval(value) / 1000.0)
+        let date = Date(millisecondsSince1970: value)
         return dateFormatter.string(from: date)
     }
 
     static func dateTimeString(ms: Int?) -> String {
         guard let value = ms, value > 0 else { return "–" }
-        let date = Date(timeIntervalSince1970: TimeInterval(value) / 1000.0)
+        let date = Date(millisecondsSince1970: value)
         return dateTimeFormatter.string(from: date)
     }
 
@@ -205,7 +205,7 @@ enum BearyAccountText {
     static func isoString(ms: Int?) -> String? {
         guard let value = ms, value != 0 else { return nil }
         let msValue = value < 1000000000000 ? value * 1000 : value
-        let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
+        let date = Date(millisecondsSince1970: msValue)
         return isoFormatter.string(from: date)
     }
 

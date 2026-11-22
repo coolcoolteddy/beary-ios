@@ -75,7 +75,7 @@ enum BearyProfilePersonalLogic {
 
     /// 北京日（北京时间日历，Asia/Shanghai）起点的 Date，用作 streak 去重键。
     static func startOfDay(for timestampMs: Int, calendar: Calendar) -> Date? {
-        let date = Date(timeIntervalSince1970: TimeInterval(timestampMs) / 1000)
+        let date = Date(millisecondsSince1970: timestampMs)
         return calendar.startOfDay(for: date)
     }
 
@@ -104,7 +104,7 @@ enum BearyProfilePersonalLogic {
         var writtenDays = Set<Date>()
         for entry in entries {
             guard let createdAt = entry.createdAt else { continue }
-            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+            let date = Date(millisecondsSince1970: createdAt)
             let hour = calendar.component(.hour, from: date)
             slotCounts[(hour / 2) * 2, default: 0] += 1
             if let mood = entry.mood, !mood.isEmpty { moodCounts[mood, default: 0] += 1 }
@@ -221,7 +221,7 @@ enum BearyProfilePersonalLogic {
         var byYear: [Int: [Entry]] = [:]
         for entry in entries {
             guard let createdAt = entry.createdAt else { continue }
-            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+            let date = Date(millisecondsSince1970: createdAt)
             let parts = calendar.dateComponents([.year, .month, .day], from: date)
             guard let year = parts.year, year < todayYear,
                   parts.month == todayMonth, parts.day == todayDay else { continue }
@@ -254,7 +254,7 @@ enum BearyProfilePersonalLogic {
     static func yearEntries(entries: [Entry], year: Int, calendar: Calendar) -> [Entry] {
         entries.filter { entry in
             guard let createdAt = entry.createdAt else { return false }
-            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+            let date = Date(millisecondsSince1970: createdAt)
             return calendar.component(.year, from: date) == year
         }.sorted { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
     }
@@ -310,7 +310,7 @@ enum BearyProfilePersonalLogic {
         var years = Set<Int>()
         for entry in visibleEntries(entries, isOwn: isOwn) {
             guard let createdAt = entry.createdAt else { continue }
-            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+            let date = Date(millisecondsSince1970: createdAt)
             years.insert(calendar.component(.year, from: date))
         }
         return years.sorted(by: >)
@@ -342,7 +342,7 @@ enum BearyProfilePersonalLogic {
         for entry in yearEntriesValue {
             guard let content = entry.content, !content.isEmpty,
                   let createdAt = entry.createdAt else { continue }
-            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+            let date = Date(millisecondsSince1970: createdAt)
             let month = calendar.component(.month, from: date)
             var entryCounts: [String: Int] = [:]
             tokenizer.string = content
@@ -822,7 +822,7 @@ final class BearyYearReviewViewController: UIViewController {
         var writtenDays = Set<Date>()
         for entry in yearEntriesValue {
             if let createdAt = entry.createdAt {
-                let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+                let date = Date(millisecondsSince1970: createdAt)
                 writtenDays.insert(calendar.startOfDay(for: date))
             }
         }

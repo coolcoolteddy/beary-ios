@@ -1615,7 +1615,7 @@ final class BearyTimelineCell: UITableViewCell {
             arranged.removeFromSuperview()
         }
         if let createdMs = entry.createdAt {
-            let date = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
+            let date = Date(millisecondsSince1970: createdMs)
             // G8：行内时间走北京时区，与服务端日界一致（静态 formatter 同口径）。
             timeLabel.text = Self.timelineTimeFormatter.string(from: date)
         } else {

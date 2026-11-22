@@ -83,7 +83,7 @@ enum BlindBoxDate {
         fmt.timeZone = shanghai
         fmt.locale = Locale(identifier: "zh_CN")
         fmt.dateFormat = "M月d日 H:mm"
-        return fmt.string(from: Date(timeIntervalSince1970: TimeInterval(ms) / 1000))
+        return fmt.string(from: Date(millisecondsSince1970: ms))
     }
 }
 

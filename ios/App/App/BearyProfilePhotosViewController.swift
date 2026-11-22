@@ -94,7 +94,7 @@ final class BearyProfilePhotosViewController: UIViewController {
                 unknown.append(photo)
                 continue
             }
-            let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+            let date = Date(millisecondsSince1970: ms)
             let components = calendar.dateComponents([.year, .month], from: date)
             let key = String(format: "%04d-%02d", components.year ?? 0, components.month ?? 0)
             if byMonth[key] == nil {

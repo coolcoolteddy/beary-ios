@@ -117,7 +117,7 @@ enum BearyIDCardStore {
         let joinDays: Int
         let sinceDate: Date
         if let createdAtMs = createdAtMs, createdAtMs > 0 {
-            let created = Date(timeIntervalSince1970: TimeInterval(createdAtMs) / 1000)
+            let created = Date(millisecondsSince1970: createdAtMs)
             sinceDate = created
             let days = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: created), to: Calendar.current.startOfDay(for: now)).day ?? 0
             joinDays = max(1, days + 1)
