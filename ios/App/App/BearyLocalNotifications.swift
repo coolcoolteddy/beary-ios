@@ -127,18 +127,31 @@ final class BearyLocalNotifications: NSObject {
     /// 门槛 4：首启不再问；只在用户写完第一篇日记后、由 promptAfterFirstEntryIfNeeded
     /// 经自建说明卡调一次（系统弹窗）。问过就不再问；被拒时走 onDenied（App 内引导去设置）；
     /// 弹窗出错（如被系统打断）不记已问、不走 onDenied，下次满足条件可再问。
-    func requestAuthorizationIfNeeded(force: Bool = false, onDenied: (() -> Void)? = nil) {
-        guard force || !UserDefaults.standard.bool(forKey: Self.permissionRequestedKey) else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
+    /// options 默认 [.alert, .sound]（现行共享入口值）；引导页传 [.alert, .sound, .badge]。
+    /// completion 在系统框出结果后（授权／拒绝／出错）与已问过直接返回时都回调，
+    /// 主线程；已问过时按当前系统态回（已授权 true、其余 false）。
+    /// 注意参数顺序：onDenied 必须留在最后一位，现有尾随闭包调用
+    /// （设置页 force: true、首篇提示）才能继续绑定到 onDenied 而非 completion。
+    func requestAuthorizationIfNeeded(force: Bool = false, options: UNAuthorizationOptions = [.alert, .sound], completion: ((Bool) -> Void)? = nil, onDenied: (() -> Void)? = nil) {
+        guard force || !UserDefaults.standard.bool(forKey: Self.permissionRequestedKey) else {
+            fetchAuthorizationStatus { status in
+                DispatchQueue.main.async { completion?(status == .authorized) }
+            }
+            return
+        }
+        UNUserNotificationCenter.current().requestAuthorization(options: options) { [weak self] granted, error in
             if granted {
                 UserDefaults.standard.set(true, forKey: Self.permissionRequestedKey)
                 self?.refreshAll(force: true)
+                DispatchQueue.main.async { completion?(true) }
             } else if error != nil {
                 // 弹窗出错：不记已问、不按拒绝处理，下次满足条件可再问。
+                DispatchQueue.main.async { completion?(false) }
             } else {
                 UserDefaults.standard.set(true, forKey: Self.permissionRequestedKey)
-                if let onDenied = onDenied {
-                    DispatchQueue.main.async { onDenied() }
+                DispatchQueue.main.async {
+                    onDenied?()
+                    completion?(false)
                 }
             }
         }
