@@ -1053,12 +1053,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let pendingUploadBarChevron = UIImageView()
     // C1：工具栏贴键盘上方（见 buildLayout：底锚 keyboardLayoutGuide.topAnchor），
     // 不随正文滚动；选择条（toolStripStack）贴在它上方，引用面板打开时两者同藏，
-    // scrollView 底锚随之在工具栏/选择条/整页三档切换（见 updateScrollBottomAnchoring）。
+    // scrollView 底锚随之在准备发布行/选择条/整页三档切换（见 updateScrollBottomAnchoring）。
     private let toolbarContainer = UIView()
     private let toolStripStack = UIStackView()
     /// 2026-10-31：工具栏上方限时行已整组删除（行、开关、文案、约束全清），
-    /// 限时并进顶栏可见性钮菜单（12b 前为点按循环）；滚动区底锚直接走工具栏档（见 updateScrollBottomAnchoring）。
-    private var scrollBottomToToolbarConstraint: NSLayoutConstraint?
+    /// 限时并进顶栏可见性钮菜单（12b 前为点按循环）；滚动区底锚直接走准备发布行档
+    /// （见 updateScrollBottomAnchoring；行高 0 时即工具栏顶，2026-11-22 行由顶栏下方移到底部）。
+    private var scrollBottomToPublishRowConstraint: NSLayoutConstraint?
     private var scrollBottomToStripConstraint: NSLayoutConstraint?
     private var scrollBottomToViewConstraint: NSLayoutConstraint?
     /// 2026-10-29 第 27 项：回应面板（心情条）改锚小熊按钮本体——条底贴工具栏顶
@@ -1129,9 +1130,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 时钟＝限时，点开系统 UIMenu 直选四档；取代正文区分段，为唯一可见性入口；
     /// 编辑模式隐藏（编辑不改可见性）；限时态即公开语义，不再另设锁定开关。
     private let visibilityButton = UIButton(type: .system)
-    /// 任务2：准备发布行——顶栏（发布钮）正下方固定行，正文非空的
+    /// 任务2：准备发布行——工具栏正上方固定行，正文非空的
     /// “准备发布”态才显；四档直接平铺点选（不再只藏进顶栏可见性菜单），
     /// 限时后果同行常驻可见（发布前即看得见，不只靠选档后 toast）。
+    /// 2026-11-22 纵向位置修：此前在顶栏正下方，行一出现即把滚动区顶顶下 42pt、
+    /// 标题上方空出一大段（134 实测）；改到底部后只收滚动区底，标题不动。
     private let publishVisibilityRow = UIStackView()
     private let publishVisibilityChipRow = UIStackView()
     private let publishVisibilityNoteLabel = UILabel()
@@ -1543,8 +1546,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         scrollView.addSubview(contentView)
         contentView.addSubview(contentStack)
         // C1：正文从顶栏下方直接开始（scrollView 顶锚顶栏）；工具栏贴键盘上方，
-        // 选择条贴工具栏上方；scrollView 底锚三档切换（见 updateScrollBottomAnchoring），初始锚工具栏。
-        scrollBottomToToolbarConstraint = scrollView.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor)
+        // 选择条贴工具栏上方；scrollView 底锚三档切换（见 updateScrollBottomAnchoring），初始锚准备发布行顶（行高 0 时即工具栏顶）。
+        scrollBottomToPublishRowConstraint = scrollView.bottomAnchor.constraint(equalTo: publishVisibilityRow.topAnchor)
         scrollBottomToStripConstraint = scrollView.bottomAnchor.constraint(equalTo: toolStripStack.topAnchor)
         scrollBottomToViewConstraint = scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         // B 修法：工具栏底锚两档在此建好（键盘档激活、自身档待命），见声明注释。
@@ -1552,9 +1555,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarBottomToSafeAreaConstraint = toolbarContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         toolbarBottomToKeyboardConstraint?.isActive = true
         toolbarBottomToSafeAreaConstraint?.isActive = false
-        // 2026-10-31：限时行已删，滚动区底锚初始即工具栏档（新建/编辑同值，
+        // 2026-10-31：限时行已删，滚动区底锚初始即准备发布行档（新建/编辑同值，
         // 后续由 updateScrollBottomAnchoring 按选择条/引用面板切换；原 48pt 限时行空间收回）。
-        scrollBottomToToolbarConstraint?.isActive = true
+        scrollBottomToPublishRowConstraint?.isActive = true
         // 选择条：竖栈，现只剩写给区（心情条第 27 项、天气条补缺 P2-20 已先后脱离栈）；
         // 全藏时栈高为 0，不占位。左右与工具栏同宽（跟随居中 608）。
         toolStripStack.axis = .vertical
@@ -1591,15 +1594,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             topBarTrailingConstraint!,
             // v6：顶栏高 60，发布钮 36 居中后底部到分界线净留白 12（见 buildTopBar）。
             topBar.heightAnchor.constraint(equalToConstant: 60),
-            // 任务2：准备发布行——顶栏正下方固定行（无内容时高 0、不占位），
-            // @ 行顶锚它；左右跟滚动区走（居中 640 列下自动跟随），不另建列约束。
-            publishVisibilityRow.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            // 任务2：准备发布行——工具栏正上方固定行（无内容时高 0、不占位），
+            // 2026-11-22 纵向位置修：此前锚顶栏下方、滚动区顶锚它，正文非空行一出现
+            // 即把整块内容顶下 42pt（标题上方空出一大段，134 实测）；改到底部后
+            // 行出现只收滚动区底，标题与正文首行不动。左右跟滚动区走（居中 640 列下自动跟随），不另建列约束。
+            publishVisibilityRow.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor),
             publishVisibilityRow.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             publishVisibilityRow.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
             publishVisibilityRowHeightConstraint!,
-            // 顶部 @ 行：准备发布行下方固定行（无收件人时高 0、不占位），滚动区顶锚它；
+            // 顶部 @ 行：顶栏正下方固定行（无收件人时高 0、不占位），滚动区顶锚它；
             // 左右跟滚动区走（居中 640 列下自动跟随），不另建列约束。
-            mentionTopRow.topAnchor.constraint(equalTo: publishVisibilityRow.bottomAnchor),
+            mentionTopRow.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             mentionTopRow.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             mentionTopRow.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
             mentionTopRowHeightConstraint!,
@@ -1607,8 +1612,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toolbarBottomToKeyboardConstraint!,
             toolStripStack.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             toolStripStack.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            // 2026-10-31：选择条底直接贴工具栏顶（原贴限时行顶，行已删）。
-            toolStripStack.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor),
+            // 选择条底贴准备发布行顶（行高 0 时即工具栏顶；2026-11-22 随行移到底部改锚，原直接贴工具栏顶）。
+            toolStripStack.bottomAnchor.constraint(equalTo: publishVisibilityRow.topAnchor),
             toolbarLeadingConstraint!,
             toolbarTrailingConstraint!,
             scrollLeadingConstraint!,
@@ -2015,7 +2020,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             headlineClearHitButton.widthAnchor.constraint(equalToConstant: 44),
             headlineClearHitButton.heightAnchor.constraint(equalToConstant: 44),
         ])
-        contentStack.setCustomSpacing(10, after: headlineWrap)
+        // 2026-11-22 纵向位置修（问题 A）：标题字顶离顶栏分隔线约 19pt，
+        // 正文首行字顶离标题分隔线也应约 19pt 才平均；1.7 倍行高使正文首行字顶
+        // 本就比标题多低约 13pt（首行基线在片段顶 + ascender×1.7），故标题后
+        // 间距取 6（6 + 13 ≈ 19），原 10 会让正文再低 4pt。
+        contentStack.setCustomSpacing(6, after: headlineWrap)
     }
 
     @objc private func clearHeadline() {
@@ -2626,12 +2635,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(12, after: quoteSection)
     }
 
-    /// 引用区状态：stack 内的隐藏项自动塌掉（UIStackView 口径），无需改约束。
+    /// 引用区状态：stack 内的隐藏项高塌掉，但区后自定义间距不塌（见函数内 defer），
+    /// 空区时须把间距归 0，否则正文被多顶下 12pt（2026-11-22 纵向位置修）。
     /// 新建未选 → 挑按钮；新建已选 → 共享卡 + 右上 15px ×（网页 quoteChipX 口径，点即清除引用）；
     /// 编辑 → 锁定的共享卡（面板入口锁定，× 仍可删）或都不显示。
     /// 共享卡口径变化（相对原自绘卡）：正文 13.5 且最多 3 行（原不限行 16.5）、
     /// 图条 42（原 118）、日期走共享卡 feedTimeString（原 BearyText.timeString）。
     private func refreshQuoteSection() {
+        // 2026-11-22 纵向位置修（问题 A）：引用区插在标题与正文之间（见 buildQuoteSection），
+        // 无引用时四行全藏、区高塌为 0，但 setCustomSpacing(12, after: quoteSection) 的 12pt
+        // 仍与标题后的间距叠加——UIStackView 里塌掉的 arranged 子项两侧间距照算，
+        // 正文被多顶下 12pt（134 实测：标题分隔线→正文首行 36pt，设计值约 24pt）。
+        // 故区空时间距归 0、有内容时才留 12；defer 使四条返回路径都走同一口径。
+        defer {
+            let sectionVisible = !quoteCardWrap.isHidden || !quoteDeletedRow.isHidden || !quoteUnavailableRow.isHidden || !quoteFetchFailedRow.isHidden
+            contentStack.setCustomSpacing(sectionVisible ? 12 : 0, after: quoteSection)
+        }
         let quote = isEditMode ? lockedQuote : selectedQuote
         // C6：编辑模式引用可改可删（有引用露共享卡 + ×，无引用则本区塌掉）；
         // 引用改走工具栏引用钮；@ 改走工具栏 @ 钮。
@@ -3027,7 +3046,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 已删、入口只走弹出框，不再为其预留行高；新建态滚动区因此下探 48pt）。
     private func updateScrollBottomAnchoring() {
         let otherStripOpen = activeToolStrip != nil && activeToolStrip != .mood && activeToolStrip != .weather
-        scrollBottomToToolbarConstraint?.isActive = !otherStripOpen
+        scrollBottomToPublishRowConstraint?.isActive = !otherStripOpen
         scrollBottomToStripConstraint?.isActive = otherStripOpen
         scrollBottomToViewConstraint?.isActive = false
     }
@@ -4787,7 +4806,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         openToolStrip(.recipient)
     }
 
-    /// 任务2：准备发布行搭建——顶栏正下方固定行，四档 chip 直接平铺
+    /// 任务2：准备发布行搭建——工具栏正上方固定行，四档 chip 直接平铺
     /// （标签 chip 同款：13 regular、圆角 999、内边距 7/12、高 30，点按热区
     /// 44 靠 BearyHit44Button）；限时后果注行只在限时态出现，发布前即看得见。
     /// 顶栏可见性菜单钮保留（同旗标、同步刷新），本行是“准备发布”态的直显入口。
