@@ -31,7 +31,15 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     // BearyDMConversationSkeletonCell），不再复用 BearyStateView 转圈＋
     // “加载中…”；只在“首次请求且尚无旧数据”时出（有旧数据时保留内容
     // 后台刷新，下拉刷新自带转圈时不叠加）。骨架行数与广场／地图同款 3 行。
-    private let skeletonRowCount = 3
+    /// 接线走共用 BearySkeletonState（BearyLoadingUX.swift）：触发谓词
+    /// 留在本页，行数／出屏旗／回包交叉溶解由模板统一管（此前无出屏旗、
+    /// 无淡出交接，首拉落定直接 reloadData）。
+    private lazy var skeletonState = BearySkeletonState(shouldShow: { [weak self] in
+        guard let self else { return false }
+        return self.firstLoadPending && self.conversations.isEmpty
+            && SessionManager.shared.isLoggedIn
+            && self.tableView.refreshControl?.isRefreshing != true
+    })
     private var firstLoadPending = true
     /// 快照回填代次：切号即变，旧号在途快照回包凭此丢弃。
     private var snapshotGeneration: UInt64 = 0
@@ -402,11 +410,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     /// 第十轮 #20：骨架行是否在屏——首次请求未落定、尚无会话、已登录、
     /// 且不在下拉刷新中（下拉刷新自带转圈，不叠加骨架；未登录时走登录门，
     /// 不出骨架）。快照回填出内容后 conversations 非空，骨架即退。
-    private var showingSkeleton: Bool {
-        firstLoadPending && conversations.isEmpty
-            && SessionManager.shared.isLoggedIn
-            && tableView.refreshControl?.isRefreshing != true
-    }
+    /// 模板谓词的薄别名（见 skeletonState；出屏旗见 skeletonState.didShow）。
+    private var showingSkeleton: Bool { skeletonState.isShowing }
 
     /// 同 tab 重拍口径（消息页取两组并集用）：在途加载或下拉刷新在途都算刷新中。
     var isRefreshingForRetap: Bool {
@@ -687,7 +692,11 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     /// 有变化时重载后按替换前记的锚点恢复可见会话的相对位置。
     private func finishConversationsLoad(anchor: DMConversationAnchor? = nil, previousSignature: String? = nil) {
         updateEmptyState()
-        if let previousSignature = previousSignature,
+        // 骨架交接：首拉出过骨架行时只做一次 0.26s 交叉溶解换真实行
+        // （与 Feed／Profile 同款模板）；未出过骨架时走原口径。
+        if skeletonState.finishIfShown(tableView: tableView) {
+            restoreVisibleConversationAnchor(anchor)
+        } else if let previousSignature = previousSignature,
            Self.conversationsSignature(conversations) == previousSignature {
             // 无变化：不重载，位置不动。
         } else {
@@ -850,7 +859,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         // 第十轮 #20：首拉无数据时出 3 行会话骨架（不冒充具体会话）；
         // 落定后按真实会话数出行，骨架行不与真实行叠加。
-        showingSkeleton ? skeletonRowCount : conversations.count
+        skeletonState.rowCountIfShowing() ?? conversations.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {

@@ -309,12 +309,14 @@ class BearyProfileViewController: UIViewController {
     /// 骨架卡（与真实卡片同布局）；有缓存/有行/下拉刷新时不走这里。
     /// 本人页空 tab 占位行只在加载完成后才出现（showsOwnEmptyPlaceholder
     /// 本身要求 !tabLoading），与骨架不冲突。
-    private var showingProfileSkeleton: Bool {
-        tabLoading && displayedEntries.isEmpty && !profileDeleted
-    }
-    /// 骨架是否实际出过屏：首拉回包时走骨架淡出＋内容 60ms/8px 入场。
-    private var didShowProfileSkeleton = false
-    private let profileSkeletonRowCount = 3
+    /// 接线走共用 BearySkeletonState（BearyLoadingUX.swift）：触发谓词
+    /// 留在本页，行数／出屏旗／回包交叉溶解由模板统一管。
+    private lazy var skeletonState = BearySkeletonState(shouldShow: { [weak self] in
+        guard let self else { return false }
+        return self.tabLoading && self.displayedEntries.isEmpty && !self.profileDeleted
+    })
+    /// 骨架是否在屏（模板谓词的薄别名；出屏旗见 skeletonState.didShow）。
+    private var showingProfileSkeleton: Bool { skeletonState.isShowing }
     /// 加载三件套·底部脚部（加载中 3 个跳动圆点 / 没有更多了），
     /// 复用于 makeLoadingFooter / makeEndFooter。
     private let profileLoadMoreFooterView = BearyLoadMoreFooterView()
@@ -6854,27 +6856,23 @@ class BearyProfileViewController: UIViewController {
                 tableView.performBatchUpdates({
                     self.tableView.insertRows(at: inserted, with: .none)
                 }, completion: { [weak self] _ in self?.animateNewRows(delayStep: 0.05, yOffset: 24) })
-            } else if didShowProfileSkeleton, BearyMotion.animated(true) {
+            } else if skeletonState.finishIfShown(tableView: tableView, completion: { [weak self] in
+                // 首屏入场走 animateNewRows（与 staggerIn 同款 60ms 步进、8px 上移），
+                // 顺带把已播日记 ID 记进 animatedRowIds；切回旧标签/分页时
+                // animateNewRows 只播未播过的新行，已有行不重播。
+                self?.animateNewRows(delayStep: 0.06, yOffset: 8)
+            }) {
                 // 加载三件套·骨架淡出：只做一次 0.26s 交叉溶解，真实行直接落
                 // 最终位置，不再在淡变完成后又把刚淡出的行藏起来重播一次。
-                didShowProfileSkeleton = false
-                UIView.transition(with: tableView, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
-                    self.tableView.reloadData()
-                }, completion: { [weak self] _ in
-                    // 首屏入场走 animateNewRows（与 staggerIn 同款 60ms 步进、8px 上移），
-                    // 顺带把已播日记 ID 记进 animatedRowIds；切回旧标签/分页时
-                    // animateNewRows 只播未播过的新行，已有行不重播。
-                    self?.animateNewRows(delayStep: 0.06, yOffset: 8)
-                })
+                // 淡出与入场动画已由模板接管（见 BearySkeletonState）。
             } else {
-                didShowProfileSkeleton = false
                 tableView.reloadData()
             }
         case .failure:
             tabError = true
             // 加载三件套·骨架屏：失败时骨架随 reloadData 直接撤，不留
-            // didShowProfileSkeleton 给下次回包（下次成功不再走骨架过渡）。
-            didShowProfileSkeleton = false
+            // 出屏旗给下次回包（下次成功不再走骨架过渡）。
+            skeletonState.discard()
             tableView.reloadData()
         }
         refreshFooter()
@@ -9637,9 +9635,8 @@ final class BearyProfileEmptyPlaceholderCell: UITableViewCell {
 extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         // 加载三件套·骨架屏：tab 首载无行时先出 3 张骨架卡（与真实卡片同布局）。
-        if showingProfileSkeleton {
-            didShowProfileSkeleton = true
-            return profileSkeletonRowCount
+        if let skeletonRows = skeletonState.rowCountIfShowing() {
+            return skeletonRows
         }
         // 批 C：日记 tab = 最新 3 篇 + 1 行“更多日记”按钮（本人页才有）；
         // 赞过/收藏 tab 行数一字不动。
