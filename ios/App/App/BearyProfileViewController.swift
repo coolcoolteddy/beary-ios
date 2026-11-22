@@ -5126,7 +5126,7 @@ class BearyProfileViewController: UIViewController {
             // 可见性三档实标：仅好友不再误标私密；存活限时篇补限时剩余信息。
             let visValue = BearyVisibility.current(for: main)
             meta += " · \(BearyVisibility.title(for: visValue))"
-            if visValue == "public", BearyEphemeral.isLive(main), let until = main.ephemeralUntil {
+            if BearyVisibility.isPublicValue(visValue), BearyEphemeral.isLive(main), let until = main.ephemeralUntil {
                 meta += " · \(BearyEphemeral.remainingText(until: until))"
             }
         }
@@ -8947,7 +8947,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             guard let strongSelf = self else { return }
             if BearyVisibility.isNoChange(target: targetVisibility, for: entry) { return }
             strongSelf.pubBusyIds.insert(entryId)
-            if targetVisibility == "public" {
+            if BearyVisibility.isPublicValue(targetVisibility) {
                 BearyQuoteGate.gatePublicToggle(from: strongSelf, entry: entry) { [weak self] result in
                     guard let strongSelf = self else { return }
                     switch result {
