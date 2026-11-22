@@ -3283,68 +3283,60 @@ final class BearyChromeViewController: UIViewController {
             self?.pendingDraftBoxAfterLogin = false
             // 添加账号会话守卫：从添加/过期重登进来的取消，在此恢复原会话；
             // 未登录直登时守卫未 arm、cancel 是空操作，原有取消行为不动。
-            SessionManager.shared.cancelAccountAddSession()
-            vc?.dismiss(animated: BearyMotion.animated(true))
+            BearyLoginFinish.cancel(loginVC: vc)
         }
         vc.onLoggedIn = { [weak self, weak vc] referralText in
-            // 新号登录成功先解 arm（当前态即新号，不得再恢复原号），
-            // 再 dismiss + refreshMe 立新态、快照新号。
-            SessionManager.shared.completeAccountAddSession()
             // dismiss 前先取新注册标志（dismiss 后登录页可能释放）。
             let isNewRegistration = vc?.loggedInIsNew ?? false
-            vc?.dismiss(animated: BearyMotion.animated(true)) {
-                SessionManager.shared.refreshMe { [weak self] _ in
-                    DispatchQueue.main.async {
-                        guard let self = self else { return }
-                        // 登录→写日记恢复：写作入口触发登录门时记下的意图，
-                        // 在此消费一次。只在 refreshMe 已确认登录、且栈上无
-                        // 编辑器、无其他 modal 在前时开编辑器；条件不满足
-                        // 直接丢弃意图（见 pendingComposerAfterLogin 注释），
-                        // 不自动重试、不留到下次登录。写第一篇优先于注册后引导。
-                        let shouldResumeComposer = self.pendingComposerAfterLogin
-                        self.pendingComposerAfterLogin = false
-                        if shouldResumeComposer && SessionManager.shared.isLoggedIn
-                            && !self.isComposerPresented() && self.presentedViewController == nil {
-                            // 审计登录杂项：邀请绑定反馈落点——进 App 后 BearyToast 一次。
-                            if let text = referralText, !text.isEmpty {
-                                self.showToast(message: BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil))
-                            }
-                            self.presentComposer()
-                            return
-                        }
-                        // 新注册：走注册后引导（只给新注册用户、只弹一次）。
-                        // 邀请绑定文案暂存，等引导＋ID 卡链路走完再 toast
-                        //（引导全屏盖住主页时 toast 不可读，故不立即弹）。
-                        if isNewRegistration, let userId = SessionManager.shared.currentUser?.id, SessionManager.shared.isLoggedIn,
-                            !BearyIDCardStore.isOnboardingSeen(userId: userId) {
-                            // B2：先立 pending、暂存 toast，再看有没有 modal——modal 在前时
-                            // 本轮不弹，pending 已立，下次冷启动／modal 清掉后凭它恢复，
-                            // 不再丢引导；toast 也不走通用路，等链路走完再弹。
-                            if let text = referralText, !text.isEmpty {
-                                self.stashReferralToast(text, userId: userId)
-                            }
-                            BearyIDCardStore.markOnboardingPending(userId: userId)
-                            if self.presentedViewController == nil {
-                                self.presentPostRegistrationOnboarding()
-                            }
-                            return
-                        }
-                        // 其余登录：原有行为（邀请绑定 toast；无待续写意图）。
-                        // 注意：原代码以 referralText 非空为守卫直接 return，会把
-                        // 下面的待续写恢复一并跳过，故上面先消费意图再 toast，
-                        // 两路互不阻塞。
-                        if let text = referralText, !text.isEmpty {
-                            self.showToast(message: BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil))
-                        }
-                        // 第 25 轮 18 项：草稿箱意图同款消费——登录成功后自动打开草稿箱；
-                        // 条件不满足直接丢弃，不留到下次登录。
-                        if self.pendingDraftBoxAfterLogin {
-                            self.pendingDraftBoxAfterLogin = false
-                            if SessionManager.shared.isLoggedIn
-                                && !self.isComposerPresented() && self.presentedViewController == nil {
-                                self.presentDraftBoxFromChrome()
-                            }
-                        }
+            BearyLoginFinish.finish(loginVC: vc, referralText: referralText, refreshAfterDismiss: true) { [weak self] referralText, toastText in
+                guard let self = self else { return }
+                // 登录→写日记恢复：写作入口触发登录门时记下的意图，
+                // 在此消费一次。只在 refreshMe 已确认登录、且栈上无
+                // 编辑器、无其他 modal 在前时开编辑器；条件不满足
+                // 直接丢弃意图（见 pendingComposerAfterLogin 注释），
+                // 不自动重试、不留到下次登录。写第一篇优先于注册后引导。
+                let shouldResumeComposer = self.pendingComposerAfterLogin
+                self.pendingComposerAfterLogin = false
+                if shouldResumeComposer && SessionManager.shared.isLoggedIn
+                    && !self.isComposerPresented() && self.presentedViewController == nil {
+                    // 审计登录杂项：邀请绑定反馈落点——进 App 后 BearyToast 一次。
+                    if let text = toastText {
+                        self.showToast(message: text)
+                    }
+                    self.presentComposer()
+                    return
+                }
+                // 新注册：走注册后引导（只给新注册用户、只弹一次）。
+                // 邀请绑定文案暂存，等引导＋ID 卡链路走完再 toast
+                //（引导全屏盖住主页时 toast 不可读，故不立即弹）。
+                if isNewRegistration, let userId = SessionManager.shared.currentUser?.id, SessionManager.shared.isLoggedIn,
+                    !BearyIDCardStore.isOnboardingSeen(userId: userId) {
+                    // B2：先立 pending、暂存 toast，再看有没有 modal——modal 在前时
+                    // 本轮不弹，pending 已立，下次冷启动／modal 清掉后凭它恢复，
+                    // 不再丢引导；toast 也不走通用路，等链路走完再弹。
+                    if let text = referralText, !text.isEmpty {
+                        self.stashReferralToast(text, userId: userId)
+                    }
+                    BearyIDCardStore.markOnboardingPending(userId: userId)
+                    if self.presentedViewController == nil {
+                        self.presentPostRegistrationOnboarding()
+                    }
+                    return
+                }
+                // 其余登录：原有行为（邀请绑定 toast；无待续写意图）。
+                // 注意：原代码以 referralText 非空为守卫直接 return，会把
+                // 下面的待续写恢复一并跳过，故上面先消费意图再 toast，
+                // 两路互不阻塞。
+                if let text = toastText {
+                    self.showToast(message: text)
+                }
+                // 第 25 轮 18 项：草稿箱意图同款消费——登录成功后自动打开草稿箱；
+                // 条件不满足直接丢弃，不留到下次登录。
+                if self.pendingDraftBoxAfterLogin {
+                    self.pendingDraftBoxAfterLogin = false
+                    if SessionManager.shared.isLoggedIn
+                        && !self.isComposerPresented() && self.presentedViewController == nil {
+                        self.presentDraftBoxFromChrome()
                     }
                 }
             }
@@ -3732,8 +3724,7 @@ final class BearyChromeViewController: UIViewController {
             // 添加账号会话守卫：守卫只在添加/过期重登流程 arm，此处正常
             // 是空操作；补上是防游客态等迂回路径下守卫仍 armed 时，后续
             // 一次取消把新号恢复成旧号。
-            SessionManager.shared.cancelAccountAddSession()
-            vc?.dismiss(animated: BearyMotion.animated(true))
+            BearyLoginFinish.cancel(loginVC: vc)
         }
         vc.onLoggedIn = { [weak self, weak vc, weak onboarding] referralText in
             // 新号登录成功先解 arm（当前态即新号，不得再恢复原号）。
