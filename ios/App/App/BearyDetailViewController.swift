@@ -2811,15 +2811,16 @@ final class BearyDetailViewController: UIViewController {
         likeButton.tintColor = liked ? BearyColors.likeRed : BearyColors.gray
         likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .normal)
         likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .highlighted)
-        likeButton.accessibilityLabel = likeCount <= 0 ? "点赞" : "\(liked ? "已点赞" : "点赞")，\(likeCount)"
 
         let bookmarked = entry.bookmarkedByMe ?? false
         let bookmarkImage = BearyFeedIconCache.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 24)
             ?? BearyFeedIconCache.image(named: "icon_bookmark", pointSize: 24)
         bookmarkButton.setImage(bookmarkImage, for: .normal)
         bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
-        bookmarkButton.accessibilityLabel = bookmarked ? "已收藏" : "收藏"
-        shareButton.accessibilityLabel = "分享"
+        let labels = BearyActionAccessibility.labels(liked: liked, likeCount: likeCount, bookmarked: bookmarked)
+        likeButton.accessibilityLabel = labels.like
+        bookmarkButton.accessibilityLabel = labels.bookmark
+        shareButton.accessibilityLabel = labels.share
 
         // 卡片互动门控同口径：2026-10-31 私密自互动口径——点赞／收藏为“有效公开 或 作者本人”
         // 时正常显示，非作者看非公开篇仍压暗；分享不动，仍仅有效公开才有（私密不交出正文与链接），

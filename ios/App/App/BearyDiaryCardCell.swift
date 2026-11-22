@@ -59,6 +59,19 @@ enum BearyFeedIconCache {
     }
 }
 
+// MARK: - 操作行无障碍标签（详情页与卡片共用）
+
+/// 操作行三钮的读屏标签：点赞含状态与计数，零赞只读“点赞”不读数字；
+/// 收藏含状态；分享为功能标签。文案现为中文原文；随 #2015 多语言走语义 key 时只改这一处。
+/// 零赞不读数字的口径只定这一处，详情页与卡片共用。
+enum BearyActionAccessibility {
+    static func labels(liked: Bool, likeCount: Int, bookmarked: Bool) -> (like: String, bookmark: String, share: String) {
+        let like = likeCount <= 0 ? "点赞" : "\(liked ? "已点赞" : "点赞")，\(likeCount)"
+        let bookmark = bookmarked ? "已收藏" : "收藏"
+        return (like: like, bookmark: bookmark, share: "分享")
+    }
+}
+
 // MARK: - 图片失败重试（清单第 13 项首页部分：主卡图片 + 头像；合并后两页同款）
 
 /// 纯图标重试钮（用户定形态就是图标，不要文字按钮）：28pt bg 色圆盘 + icon_refresh（#224 误用 icon_restore 已回退；icon_restore 是回收站恢复图标，不得用于重试）。
@@ -2207,7 +2220,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 收藏含状态（“收藏”/“已收藏”）；分享为功能标签“分享”。来源按模式取：feed 走
     /// currentEntry，profile 走 cellLikedByMe/cellLikeCount/cellBookmarkedByMe；
     /// profile 就地同步时 applyLike 与 applyProfileBookmark 先后各调一次，
-    /// 末次调用时三项均为最新值。
+    /// 末次调用时三项均为最新值。三行标签现走共享 BearyActionAccessibility.labels，口径只定一处。
     private func refreshActionAccessibility() {
         let liked: Bool
         let likeCount: Int
@@ -2221,9 +2234,10 @@ class BearyDiaryCardCell: UITableViewCell {
             likeCount = currentEntry?.likeCount ?? 0
             bookmarked = currentEntry?.bookmarkedByMe ?? false
         }
-        likeButton.accessibilityLabel = likeCount <= 0 ? "点赞" : "\(liked ? "已点赞" : "点赞")，\(likeCount)"
-        bookmarkButton.accessibilityLabel = bookmarked ? "已收藏" : "收藏"
-        shareButton.accessibilityLabel = "分享"
+        let labels = BearyActionAccessibility.labels(liked: liked, likeCount: likeCount, bookmarked: bookmarked)
+        likeButton.accessibilityLabel = labels.like
+        bookmarkButton.accessibilityLabel = labels.bookmark
+        shareButton.accessibilityLabel = labels.share
     }
 
     /// 空名回退一律为“beary 用户”（不再以 Li 的 handle "teddy" 充当他人名，避免错归属）。
