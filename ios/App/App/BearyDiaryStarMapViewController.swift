@@ -77,6 +77,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     private let scrollView = UIScrollView()
     private let contentView = UIView()
+    /// 自定义顶栏（60，替代系统导航栏；盲盒页同款：居中标题＋左返回钮）。
+    private let topBar = UIView()
+    private let topBarTitleLabel = UILabel()
+    private let topBarBackButton = BearyHit44Button(type: .system)
     /// L3：顶部只留两个入口——日期范围（收纳年／月／全年／未标日期）与
     /// 图例（点按弹说明）；长图例文本不再常驻顶部，星空成为首屏重点。
     private let dateEntryButton = BearyHit44Button(type: .custom)
@@ -226,7 +230,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
         self.allEntries = initialEntries
         self.onOpenEntry = onOpenEntry
         super.init(nibName: nil, bundle: nil)
-        title = "日记星图"
     }
 
     required init?(coder: NSCoder) {
@@ -236,55 +239,27 @@ final class BearyDiaryStarMapViewController: UIViewController {
     // MARK: - 生命周期
 
     /// 星图页底色是固定夜色（功能底色，不跟随系统深浅），故状态栏恒为
-    /// 浅色内容；导航栏用本页 navigationItem 专属透明外观（标题色为夜空
-    /// 主文字色），不改全局导航栏、不改夜空本身。
+    /// 浅色内容；顶栏是本页自有自定义栏（透明底、标题色为夜空主文字色），
+    /// 系统导航栏全程隐藏，不改全局导航栏、不改夜空本身。
     override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
-    private var previousNavBarTintColor: UIColor?
+    /// 自定义顶栏接管后系统导航栏全程隐藏：进页前导航栏是否已隐藏的记录，
+    /// 离页时按它还原（见 viewDidLoad／viewWillDisappear）。
+    private var previousNavBarHidden: Bool?
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyStarMapNight.background
-        let navAppearance = UINavigationBarAppearance()
-        navAppearance.configureWithTransparentBackground()
-        navAppearance.titleTextAttributes = [.foregroundColor: BearyStarMapNight.primaryText]
-        navigationItem.standardAppearance = navAppearance
-        navigationItem.scrollEdgeAppearance = navAppearance
-        if navigationController?.viewControllers.count == 1, presentingViewController != nil {
-            // 全屏页左上角统一左箭头：此前是 icon_close 叉叉，现改 icon_back
-            // （tint 仍跟随夜空主文字色，见 viewWillAppear）。
-            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 24) {
-                navigationItem.leftBarButtonItem = UIBarButtonItem(image: backImage, style: .plain, target: self, action: #selector(didTapClose))
-            } else {
-                navigationItem.leftBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: self, action: #selector(didTapClose))
-            }
-        }
+        // 系统导航栏全程隐藏、改走自有自定义顶栏（见 buildTopBar）：进页前
+        // 先记下导航栏原先是否隐藏（push 路本就隐藏、根页路可见），离页时
+        // 按记录值还原（见 viewWillDisappear）；此处非动画隐藏，避免新起
+        // 导航栈 present 时栏先闪现再消失。viewWillAppear 再断言一次，
+        // 覆盖从详情 modal 回来那一路。
+        previousNavBarHidden = navigationController?.isNavigationBarHidden
+        navigationController?.setNavigationBarHidden(true, animated: false)
+        buildTopBar()
         buildLayout()
-        // push 路悬浮返回钮：push 进他人主页 modal 导航栈那路，该栈隐藏
-        // 了系统导航栏，既无系统返回钮、也无自定义顶栏，只有边缘手势；
-        // 补一个左上角悬浮左箭头钮（夜空深底，图标用夜空主文字浅色，不加
-        // 底圈），点按 pop 回上一页。根页路（新起导航栈）走上方
-        // navigationItem，不进本分支。
-        if navigationController?.viewControllers.count ?? 0 > 1 {
-            let pushedBackButton = BearyHit44Button(type: .system)
-            pushedBackButton.translatesAutoresizingMaskIntoConstraints = false
-            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 24) {
-                pushedBackButton.setImage(backImage, for: .normal)
-            } else {
-                pushedBackButton.setTitle("返回", for: .normal)
-                pushedBackButton.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
-            }
-            pushedBackButton.tintColor = BearyStarMapNight.primaryText
-            pushedBackButton.accessibilityLabel = "返回"
-            pushedBackButton.addTarget(self, action: #selector(didTapPushedBack), for: .touchUpInside)
-            pushedBackButton.bearyAddPressFeedback()
-            view.addSubview(pushedBackButton)
-            NSLayoutConstraint.activate([
-                pushedBackButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-                pushedBackButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-                pushedBackButton.widthAnchor.constraint(equalToConstant: 44),
-                pushedBackButton.heightAnchor.constraint(equalToConstant: 44),
-            ])
-        }
+
+
         skyView.onStarTap = { [weak self] entry in self?.didTapStar(entry) }
         skyView.onOverlapTap = { [weak self] entries in self?.showOverlapSheet(entries) }
         skyView.onEdgeTap = { [weak self] edge in self?.didTapEdge(edge) }
@@ -295,11 +270,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        // 返回钮用 icon_back；tint 跟随夜空主文字色，离页时还原
-        //（导航栏 tint 是共享状态，不还原会污染返回后的页）。
-        previousNavBarTintColor = navigationController?.navigationBar.tintColor
-        navigationController?.navigationBar.tintColor = BearyStarMapNight.primaryText
-        navigationItem.leftBarButtonItem?.tintColor = BearyStarMapNight.primaryText
+        // 自定义顶栏接管后系统导航栏全程隐藏：每次出现都再断言一次
+        //（从详情 modal 回来时 viewWillDisappear 已按记录值还原过栏，
+        // 回来须重新藏起；push 路栏本就隐藏，此处是无操作）。
+        navigationController?.setNavigationBarHidden(true, animated: animated)
         let currentViewerId = SessionManager.shared.currentUser?.id
         if currentViewerId != viewerIdAtOpen {
             // 切账号/登录翻转：身份变了，口径与数据按新身份重算重拉，旧选择清掉。
@@ -322,17 +296,21 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        navigationController?.navigationBar.tintColor = previousNavBarTintColor
+        // 按进页前记录值还原导航栏显隐（只还原记录值，不盲目恢复可见；
+        // push 路记录为隐藏，根页路记录为可见）。
+        if let nav = navigationController, let wasHidden = previousNavBarHidden {
+            nav.setNavigationBarHidden(wasHidden, animated: animated)
+        }
     }
 
-    @objc private func didTapClose() {
-        // 审计登录杂项：关闭走减动效口径，不再写死 animated:true。
-        dismiss(animated: BearyMotion.animated(true))
-    }
-
-    /// push 路悬浮返回钮：pop 回上一页（仅 push 栈内有效，根页路不走这里）。
-    @objc private func didTapPushedBack() {
-        navigationController?.popViewController(animated: BearyMotion.animated(true))
+    /// 顶栏返回钮（两路合一）：栈内第 2 层起 pop 回上一页（原悬浮返回钮），
+    /// 根页时 dismiss（原系统栏关闭钮）；两路都走减动效口径。
+    @objc private func didTapTopBarBack() {
+        if (navigationController?.viewControllers.count ?? 0) > 1 {
+            navigationController?.popViewController(animated: BearyMotion.animated(true))
+        } else {
+            dismiss(animated: BearyMotion.animated(true))
+        }
     }
 
     @objc private func didTapRetry() {
@@ -401,6 +379,56 @@ final class BearyDiaryStarMapViewController: UIViewController {
         emptyBottom?.isActive = false
         failureBottom?.isActive = false
         skyLoadingBottom?.isActive = true
+    }
+
+    // MARK: - 自定义顶栏（60，与全站同款；替代系统导航栏）
+
+    /// 自定义顶栏：高走共享常量 BearyTopBarHeight（60，E 组定义）；
+    /// 透明底（对等系统栏 configureWithTransparentBackground），无分隔线；
+    /// 标题居中（对等系统栏居中标题；盲盒页同款居中标题＋左返回钮）；
+    /// 返回钮与标题同锚顶栏中线，60 栏内上下留白对称（钮 44 → 上下各 8）。
+    private func buildTopBar() {
+        topBar.translatesAutoresizingMaskIntoConstraints = false
+        topBar.backgroundColor = .clear
+        view.addSubview(topBar)
+
+        topBarBackButton.translatesAutoresizingMaskIntoConstraints = false
+        if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 24) {
+            topBarBackButton.setImage(backImage, for: .normal)
+        } else {
+            topBarBackButton.setTitle("返回", for: .normal)
+            topBarBackButton.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
+        }
+        topBarBackButton.tintColor = BearyStarMapNight.primaryText
+        topBarBackButton.accessibilityLabel = "返回"
+        topBarBackButton.addTarget(self, action: #selector(didTapTopBarBack), for: .touchUpInside)
+        topBarBackButton.bearyAddPressFeedback()
+        topBar.addSubview(topBarBackButton)
+
+        topBarTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        topBarTitleLabel.text = "日记星图"
+        topBarTitleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        topBarTitleLabel.adjustsFontForContentSizeCategory = true
+        topBarTitleLabel.textColor = BearyStarMapNight.primaryText
+        topBarTitleLabel.textAlignment = .center
+        topBarTitleLabel.numberOfLines = 1
+        topBarTitleLabel.lineBreakMode = .byTruncatingTail
+        topBar.addSubview(topBarTitleLabel)
+
+        NSLayoutConstraint.activate([
+            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            topBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
+            topBarBackButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
+            topBarBackButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            topBarBackButton.widthAnchor.constraint(equalToConstant: 44),
+            topBarBackButton.heightAnchor.constraint(equalToConstant: 44),
+            topBarTitleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
+            topBarTitleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            topBarTitleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: topBarBackButton.trailingAnchor, constant: 8),
+            topBarTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBar.trailingAnchor, constant: -16),
+        ])
     }
 
     // MARK: - 布局
@@ -545,11 +573,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
         contentView.addSubview(failureView)
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            // 顶栏 60：滚动区顶改锚自定义顶栏底（此前锚安全区顶、即系统栏底；
+            // 内容整体下移 16pt，首行日期入口距内容顶 12 不变）。
+            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             // 横向安全区：scrollView 左右锚 safeArea 而非 view 边缘。内容各行
             // 仍保留距 content 边缘 16 的现有间距（即 safeArea 内再缩 16），
             // 横屏刘海 / 圆角侧边 inset 不再侵入内容与交互控件；竖屏横向
-            // safeArea 为 0，布局与之前一致。纵向锚点本次不动。
+            // safeArea 为 0，布局与之前一致。
             scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),

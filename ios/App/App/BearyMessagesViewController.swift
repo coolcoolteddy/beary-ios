@@ -191,11 +191,12 @@ final class BearyMessagesViewController: UIViewController {
         NSLayoutConstraint.activate([
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBar.heightAnchor.constraint(equalToConstant: 44),
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
             titleLabel.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
-            // 标题顶沿与时间线头对齐：时间线头在表头栈内居中于回收站 pill，
-            // 顶沿约在安全区顶 +60+14+4；此处顶栏 60 + 18 = 78，同字号则基线亦同。
-            titleLabel.topAnchor.constraint(equalTo: topBar.topAnchor, constant: 18),
+            // 标题在 60 高顶栏内垂直居中（顶沿约 17.5，与旧顶锚 18 基本同位）；
+            // 旧注释“顶栏 60＋18＝78 与时间线头对齐”按容器顶距 60 算，非首页页
+            // 容器顶距恒为 0，旧对齐在运行时并不成立，故改居中。
+            titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: userListButton.leadingAnchor, constant: -8),
             userListButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
             // 好友钮锚在顶栏中央，不再跟标题走——标题下移后跟标题会让 44 高的

@@ -389,8 +389,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private func buildConstraints() {
         closeButton.widthAnchor.constraint(equalToConstant: 32).isActive = true
         closeButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        // Hit44：头行高放开到 44（钮 32 在 stack 内居中，上下各留 6），热区不再被 32 高行截断；钮视觉尺寸不变。
-        headerRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true  // 32-17：标题跟随放大时行高随字长高，不裁字
+        // Hit44：头行高放开到 60（钮 32 在 stack 内居中，上下各留 14），热区不再被 32 高行截断；钮视觉尺寸不变。
+        headerRow.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyTopBarHeight).isActive = true  // 32-17：标题跟随放大时行高随字长高，不裁字
         // 列宽 = 全宽减 32（两侧各 16），宽 ≥821 时取 600 居中；值由 updateColumnWidth
         // 在 viewDidLayoutSubviews 里按 bounds 直派（必需约束，设置页 #92 同款）。
         // 旧 @750 协商宽 + 上限开关在 95 包加载态实证失效（列退化成约 92pt 内容拟合宽，

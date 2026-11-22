@@ -155,16 +155,16 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         refreshFailedRetryButton.bearyAddPressFeedback()
         refreshFailedBanner.addSubview(refreshFailedRetryButton)
 
-        let topBarHeight = topBar.heightAnchor.constraint(equalToConstant: 44)
+        let topBarHeight = topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight)
         topBarHeightConstraint = topBarHeight
         topBarTopConstraint?.isActive = true
         NSLayoutConstraint.activate([
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            // 无障碍：第 7 轮好友顶栏同款口径——顶栏不再钉死 44，只定最小
-            // 高；标题是 scaledFont，大字号下靠标题上下约束撑高顶栏，
-            // 默认字号下仍为 44。好友顶栏已被 #733 覆盖，本支只改私信会话顶栏。
-            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            // 无障碍：第 7 轮好友顶栏同款口径——顶栏只定最小高 60；
+            // 标题是 scaledFont，大字号下靠标题上下约束撑高顶栏，
+            // 默认字号下为 60。好友顶栏已被 #733 覆盖，本支只改私信会话顶栏。
+            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyTopBarHeight),
             backButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             backButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),
@@ -371,7 +371,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     }
 
     /// 嵌入消息页时调用：隐藏返回钮并把组头顶栏整条折叠（“私信”标题随顶栏去掉），
-    /// 表内滚动交外层滚动视图；顶栏高改 0 后高度上报不再含 44。
+    /// 表内滚动交外层滚动视图；顶栏高改 0 后高度上报不再含 60。
     func setEmbedded() {
         backButton?.isHidden = true
         topBarView?.isHidden = true
@@ -382,7 +382,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     /// 嵌入态高度上报：在布局末尾算一次，高度不变不重复报（防布局循环）。
     private func reportEmbeddedContentHeight() {
         guard onContentHeightChanged != nil else { return }
-        let topPad = (topBarTopConstraint?.constant ?? 0) + (topBarHeightConstraint?.constant ?? 44)
+        let topPad = (topBarTopConstraint?.constant ?? 0) + (topBarHeightConstraint?.constant ?? BearyTopBarHeight)
         var height = topPad + tableView.contentSize.height
         if !conversationStateView.isHidden {
             height = max(height, topPad + adaptiveEmptyMinHeight)

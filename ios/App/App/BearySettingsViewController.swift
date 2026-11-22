@@ -1020,7 +1020,7 @@ final class BearySettingsViewController: UIViewController {
         closeButton.addTarget(self, action: #selector(closeButtonTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
@@ -1031,13 +1031,12 @@ final class BearySettingsViewController: UIViewController {
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         NSLayoutConstraint.activate([
-            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            // 115 设置页空白守卫（根因未证实）：顶栏保留 #343 跟随字号，
-            // 但加覆盖最大无障碍字号的上界。17pt 粗体在最大档缩放后约
-            // 51pt + 上下各 6pt 内边距 ≈ 63pt，88pt 留足余量；上界只防
-            // solver 在异常组合下把顶栏撑到把 scrollView 顶出屏，常规
-            // 字号下为 44pt，也不动字号跟随逻辑本身。
-            topBar.heightAnchor.constraint(lessThanOrEqualToConstant: 88),
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
+            // Header 统一 60：顶栏高度钉死 60，不再跟随字号（此前 >= 44
+            // 且 <= 88，17pt 粗体在最大档缩放后约 51pt + 上下各 6pt 内边
+            // 距 ≈ 63pt 才要 88 上界）。标题改走 cappedFont（上限 20pt，
+            // 固定高度容器口径，见 BearyDynamicType），大字号下顶栏不长、
+            // 标题不撑破，常规字号下显示与原来一致。
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -3719,7 +3718,8 @@ final class BearyLegalTextViewController: UIViewController {
             textView.topAnchor.constraint(equalTo: versionLabel.bottomAnchor),
             textView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             textView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-        ] + BearySubpageTopBarHeight.constraints(for: topBar))
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
+        ])
         topBarColumnWidth = topBar.widthAnchor.constraint(equalToConstant: 0)
         topBarColumnWidth?.isActive = true
         contentColumnWidth = textView.widthAnchor.constraint(equalToConstant: 0)
@@ -3945,7 +3945,8 @@ private final class BearyDataStatusViewController: UIViewController {
             contentStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
             contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-        ] + BearySubpageTopBarHeight.constraints(for: topBar))
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
+        ])
         topBarColumnWidth = topBar.widthAnchor.constraint(equalToConstant: 0)
         topBarColumnWidth?.isActive = true
         contentColumnWidth = scrollView.widthAnchor.constraint(equalToConstant: 0)
@@ -4683,7 +4684,8 @@ private final class BearyDiagnosticsViewController: UIViewController {
             closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
-        ] + BearySubpageTopBarHeight.constraints(for: topBar))
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
+        ])
 
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         copyButton.setTitle("复制全部", for: .normal)
@@ -4917,7 +4919,8 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
             blockedStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             blockedStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             blockedStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
-        ] + BearySubpageTopBarHeight.constraints(for: topBar))
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
+        ])
         topBarColumnWidth = topBar.widthAnchor.constraint(equalToConstant: 0)
         topBarColumnWidth?.isActive = true
         contentColumnWidth = tableView.widthAnchor.constraint(equalToConstant: 0)

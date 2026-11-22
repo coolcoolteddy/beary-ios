@@ -79,7 +79,7 @@ final class BearyNineGridViewController: UIViewController {
             topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBarView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            topBarView.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyTopBarHeight),
             backButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 16),
             backButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),
@@ -93,10 +93,10 @@ final class BearyNineGridViewController: UIViewController {
             collectionViewWidthConstraint!,
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        // 顶栏高钉死 44（defaultHigh）：常规字号下定值，大字号时标题的 required
+        // 顶栏高钉死 60（defaultHigh）：常规字号下定值，大字号时标题的 required
         // 上下不等式把下限抬高、栏随字长高；照片页 #115 同款实证，无定值时顶栏
         // 会被 solver 撑满整页。
-        let topBarHeight = topBarView.heightAnchor.constraint(equalToConstant: 44)
+        let topBarHeight = topBarView.heightAnchor.constraint(equalToConstant: BearyTopBarHeight)
         topBarHeight.priority = .defaultHigh
         topBarHeight.isActive = true
     }

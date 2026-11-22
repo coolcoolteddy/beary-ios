@@ -8,8 +8,8 @@ import CoreText
 // 容器契约：本页只负责搜索与渲染，不含顶栏/底栏分段器（容器 SceneDelegate 侧提供，
 //   与其他内容页同口径）；点用户只回调 onOpenUser、点日记只回调 onOpenEntry，
 //   点返回只回调 onBack，跳转与个人主页打开一律由容器接线，本页不 present、不 push、不碰导航。
-// 页结构（网页 #searchPage 同口径）：页顶返回行（返回钮 + “搜索”标题，随内容滚出）
-//   + 搜索框（sticky：滚出后贴在安全区顶 6px 处）+ 状态区 / 结果区。
+// 页结构（网页 #searchPage 同口径）：页顶搜索行（返回钮 + 搜索框并成一行 60，
+//   框高 44 居中；整行 sticky：滚出后贴在安全区顶 6px 处，返回钮随行吸顶）+ 状态区 / 结果区。
 //   （2026-10-29 第 21 项：框下“正在搜索…”行已删；搜索进行时只转框内圈，尾行仅用于失败重试。）
 // 分区顺序（网页 renderSrchResults 同口径）：我的日记 → 公开日记 → 用户。
 // 约束：颜色只用 BearyColors；图标只走 icon_* 资产 + BearyIconImages；
@@ -290,21 +290,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let contentStack = UIStackView()
     private let columnWrap = UIView()
 
-    // 页顶返回行：网页 .tl-backrow——返回钮 44 + gap 10 + “搜索”标题 16/700，
-    // 上下 padding 0（行高仍 44，图标 24 居中，视觉不变；7-3 约束写法改 44×44）；
+    // 页顶搜索行：返回钮并进搜索框内左侧（44×44 热区，图标 24 墨，见 buildViews）；
+    // “搜索”标题不再单占一行，含义由输入框占位文案“搜索日记或用户”承担。
     // 返回钮用 beary-back 24 墨（icon_back 资产，网页
     // #srchBack .icon-btn 口径：.icon 24 + .icon-btn ink 色；.tl-acts 的
-    // 17px 规则只管 .tl-acts 内按钮，不适用于搜索返回行）。
-    private let backRowView = UIView()
+    // 17px 规则只管 .tl-acts 内按钮，不适用于搜索行）。
     private let backButton = BearyHit44Button(type: .custom)
-    private let backTitleLabel = UILabel()
 
-    // 搜索框占位：框体本身是 view 级 sticky 视图，流内留 50 高占位，版式不跳动。
+    // 搜索框占位：框体本身是 view 级 sticky 视图，流内留 BearyTopBarHeight（60）高占位，版式不跳动。
     private let boxPlaceholderView = UIView()
 
     // 框下预留行：网页 .srch-hint——恒高 24、12.5 灰、gap 6、左右 padding 4，
 
-    // 搜索框：网页 .srch-box——高 50、边框 1.5 line、圆角 999（半高 25）、左右 16、gap 9。
+    // 搜索框：网页 .srch-box——高 44（= BearyTopBarHeight − 16，行内上下各留 8）、边框 1.5 line、圆角 999（半高 22）、左右 16、gap 9。
     private let searchBoxView = UIView()
     private let searchIconView = UIImageView()
     private let boxRingView = UIImageView()
@@ -656,16 +654,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
     }
 
-    /// sticky 框体吸顶（6-2）：顶约束固定 48（栈顶 4 + 返回行 44，见 1-4），
-    /// 吸顶位移只走 transform，滚动回调不再改约束：占位在视野内时框体跟随占位，
-    /// 占位滚出后框体贴安全区顶 6px（网页 top:6px）。占位高度 50 不变。
-    /// 框体无 transform 时顶在安全区顶 +48 处，故 transform.y = 目标顶距 - 48：
-    /// 占位可见时 >= 0（跟随占位），滚出后 -42（贴顶 6）。
+    /// sticky 框体吸顶（6-2）：顶约束固定 8（框 44 在行 60 内居中：(60 − 44) / 2），
+    /// 吸顶位移只走 transform，滚动回调不再改约束：占位在视野内时框体跟随占位
+    /// （框顶 = 占位顶 + 8），占位滚出后框体贴安全区顶 6px（网页 top:6px）。
+    /// 占位高度 = BearyTopBarHeight（60）。框体无 transform 时顶在安全区顶 +8 处，
+    /// 故 transform.y = 目标顶距 - 8：占位可见时 0～-2（跟随占位），滚出后 -2（贴顶 6）。
     private func updateStickyBoxPosition() {
         let safeTop = view.safeAreaLayoutGuide.layoutFrame.minY
         let placeholderTop = boxPlaceholderView.convert(CGPoint.zero, to: view).y
-        let target = max(6, placeholderTop - safeTop)
-        searchBoxView.transform = CGAffineTransform(translationX: 0, y: target - 48)
+        let target = max(6, placeholderTop - safeTop + 8)
+        searchBoxView.transform = CGAffineTransform(translationX: 0, y: target - 8)
     }
 
     @objc private func backTapped() {
@@ -842,35 +840,27 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         contentStack.layoutMargins = UIEdgeInsets(top: 0, left: BearySpace.lg, bottom: 0, right: BearySpace.lg)
         columnWrap.addSubview(contentStack)
 
-        // 页顶返回行（流内，随内容滚出；框体 sticky 后它已滚出视野）。
-        backRowView.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(backRowView)
-
+        // 返回钮：并进搜索框内左侧（框体是 view 级 sticky 视图，见下；加进框体见搜索框一段）。
+        // 返回行与标题行已并入搜索行，不再单占一行；“搜索”标题由输入框占位文案承担。
         backButton.translatesAutoresizingMaskIntoConstraints = false
         backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
         backButton.tintColor = BearyColors.ink
         backButton.accessibilityLabel = "返回"
         backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
         backButton.bearyAddPressFeedback()
-        backRowView.addSubview(backButton)
 
-        backTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        backTitleLabel.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 16))
-        backTitleLabel.adjustsFontForContentSizeCategory = true
-        backTitleLabel.textColor = BearyColors.ink
-        backTitleLabel.text = "搜索"
-        backRowView.addSubview(backTitleLabel)
-
-        // 搜索框占位（流内 50 高）。
+        // 搜索框占位（流内 60 高 = BearyTopBarHeight，见 buildConstraints）。
         boxPlaceholderView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(boxPlaceholderView)
 
         // 搜索框：view 级视图（sticky 用，见 updateStickyBoxPosition），
         // 后于 scrollView 加入视图层级，滚动内容从它下方滑过时被盖住。
+        // 返回钮并进框内左侧：框随滚动吸顶后返回钮仍可见（旧版返回行随内容滚出）。
         searchBoxView.translatesAutoresizingMaskIntoConstraints = false
         searchBoxView.backgroundColor = BearyColors.surface2
         searchBoxView.layer.borderWidth = 0
-        searchBoxView.layer.cornerRadius = 25
+        searchBoxView.layer.cornerRadius = 22
+        searchBoxView.addSubview(backButton)
         // 阴影须画出框外，masksToBounds 必须关；框内元素均有内边距，不会溢出圆角。
         searchBoxView.layer.masksToBounds = false
         view.addSubview(searchBoxView)
@@ -1088,42 +1078,38 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             columnWrap.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             columnWrap.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
 
-            contentStack.topAnchor.constraint(equalTo: columnWrap.topAnchor, constant: 4),
+            contentStack.topAnchor.constraint(equalTo: columnWrap.topAnchor, constant: 0),
             contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: columnWrap.leadingAnchor, constant: 0),
             contentStack.trailingAnchor.constraint(lessThanOrEqualTo: columnWrap.trailingAnchor, constant: 0),
             contentStack.centerXAnchor.constraint(equalTo: columnWrap.centerXAnchor),
             contentStack.bottomAnchor.constraint(equalTo: columnWrap.bottomAnchor),
 
-            // 页顶返回行：按钮 44 + gap 10 + 标题，上下 padding 0（行高仍 44，图标 24 居中，视觉不变）。
-            backButton.leadingAnchor.constraint(equalTo: backRowView.leadingAnchor),
-            backButton.topAnchor.constraint(equalTo: backRowView.topAnchor, constant: 0),
-            backButton.bottomAnchor.constraint(equalTo: backRowView.bottomAnchor, constant: 0),
+            // 搜索行：返回钮并进框内左侧（44×44 热区，图标 24 居中）；框 44 在 60 行内上下各留 8。
+            backButton.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor),
+            backButton.centerYAnchor.constraint(equalTo: searchBoxView.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),
             backButton.heightAnchor.constraint(equalToConstant: 44),
-            backTitleLabel.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 10),
-            backTitleLabel.centerYAnchor.constraint(equalTo: backButton.centerYAnchor),
-            backTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: backRowView.trailingAnchor),
 
-            boxPlaceholderView.heightAnchor.constraint(equalToConstant: 50),
+            boxPlaceholderView.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
 
 
-            // sticky 框体：与列内容同宽（16 边距 + ≤568 居中），顶距固定 48、吸顶位移走 transform。
-            searchBoxView.heightAnchor.constraint(equalToConstant: 50),
+            // sticky 框体：与列内容同宽（16 边距 + ≤568 居中），框高 = 行高 60 − 上下各 8；吸顶位移走 transform。
+            searchBoxView.heightAnchor.constraint(equalToConstant: BearyTopBarHeight - 16),
             searchBoxView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
             searchBoxView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             searchBoxView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
 
-            searchIconView.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 16),
+            searchIconView.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 4),
             searchIconView.centerYAnchor.constraint(equalTo: searchBoxView.centerYAnchor),
             searchIconView.widthAnchor.constraint(equalToConstant: 21),
             searchIconView.heightAnchor.constraint(equalToConstant: 21),
 
-            boxRingView.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 16),
+            boxRingView.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 4),
             boxRingView.centerYAnchor.constraint(equalTo: searchBoxView.centerYAnchor),
             boxRingView.widthAnchor.constraint(equalToConstant: 21),
             boxRingView.heightAnchor.constraint(equalToConstant: 21),
 
-            searchField.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 44),
+            searchField.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 76),
             searchField.topAnchor.constraint(equalTo: searchBoxView.topAnchor),
             searchField.bottomAnchor.constraint(equalTo: searchBoxView.bottomAnchor),
 
@@ -1163,8 +1149,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchBoxWidthCap?.isActive = true
         searchBoxFullWidth = searchBoxView.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
         searchBoxFullWidth?.isActive = false
-        // sticky 框体顶距固定 48（1-4：栈顶 4 + 返回行 44）；吸顶位移走 transform，约束此后不再改动。
-        boxTopConstraint = searchBoxView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 48)
+        // sticky 框体顶距 8（框 44 在行 60 内居中：(60 − 44) / 2）；吸顶位移走 transform，约束此后不再改动。
+        boxTopConstraint = searchBoxView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8)
         boxTopConstraint?.isActive = true
         // 输入框右缘：清空钮显示时贴清空钮、无清空钮时贴框右 16（两条约束互斥切换）。
         searchFieldToBoxTrailing = searchField.trailingAnchor.constraint(equalTo: searchBoxView.trailingAnchor, constant: -16)
@@ -1204,7 +1190,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         searchBoxView.layer.shadowPath = UIBezierPath(
             roundedRect: bounds,
-            cornerRadius: 25
+            cornerRadius: 22
         ).cgPath
     }
 

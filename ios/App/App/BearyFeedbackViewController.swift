@@ -402,7 +402,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    // MARK: - 顶栏（诊断页同款：52 高、左上文字关闭 15、标题 17 居中）
+    // MARK: - 顶栏（60 高、左上返回图标 24、标题 17 居中）
 
     private func buildChrome() {
         let closeButton = BearyHit44Button(type: .system)
@@ -416,7 +416,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
@@ -449,7 +449,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
-        ] + BearySubpageTopBarHeight.constraints(for: topBar))
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
+        ])
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。

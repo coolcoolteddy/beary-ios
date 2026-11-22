@@ -445,7 +445,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBar.heightAnchor.constraint(equalToConstant: 44),
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
             closeButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 44),
@@ -459,7 +459,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             // 审计：居中标题加左右限位，小屏＋大字体时不与关闭钮重叠（超长截断）。
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: closeButton.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: searchButton.leadingAnchor, constant: -8),
-            // V6：标题加纵向限高——大字号下标题不超出 44 高顶栏（超高按压缩裁剪，不顶开顶栏）。
+            // V6：标题加纵向限高——大字号下标题不超出 60 高顶栏（超高按压缩裁剪，不顶开顶栏）。
             titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor),
             tableView.topAnchor.constraint(equalTo: permBannerView.bottomAnchor),

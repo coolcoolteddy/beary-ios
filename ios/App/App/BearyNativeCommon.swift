@@ -26,6 +26,11 @@ enum BearySpace {
     static let xxxl: CGFloat = 32
 }
 
+/// 单行顶栏统一高度（E 组，A–D 组同引）：各页自有顶栏 44／52 一律收进 60；
+/// 编辑器 60 专属档与个人页吸顶 60 同值，但各走各的既有常量，不并入本常量。
+/// 草稿箱 sheet 头为把手 14＋标题行 46＝60，标题行单列 46，不直接引本常量。
+let BearyTopBarHeight: CGFloat = 60
+
 /// 圆角唯一档 BearyCorners 见 BearyColors.swift（#790 修红：本文件不在
 /// BearyCoreTests target 内，BearyPastSelf.swift 单测编不过；token 须放双 target
 /// 共用文件，与 #555 把 BearyColors 抽出同款处理）。

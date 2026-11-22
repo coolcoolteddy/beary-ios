@@ -140,7 +140,7 @@ final class BearyPlusPageViewController: UIViewController {
             topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBarView.heightAnchor.constraint(equalToConstant: 44),
+            topBarView.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
             backButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 16),
             backButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),

@@ -457,9 +457,10 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         headerWrap.addSubview(titleLabel)
         NSLayoutConstraint.activate([
             titleLabel.centerXAnchor.constraint(equalTo: headerWrap.centerXAnchor),
-            // 第 13 项：删 × 后头高不再由关闭钮链驱动，改钉死 44（原钮 32 + 上 6 + 下 6），
-            // 热区不再被约 34 高头截断；标题仍顶锚 6、位置不动，标题底改 ≤。
-            headerWrap.heightAnchor.constraint(equalToConstant: 44),
+            // 第 13 项：删 × 后头高不再由关闭钮链驱动，改钉死 46；
+            // 把手行 14（grabberTop 10＋grabber 4）＋标题行 46 ＝ 60；标题仍顶锚 6、
+            // 位置不动，标题底改 ≤；标题视觉中心约在整头 30 处（14＋6＋约 9.5），仍在头中央。
+            headerWrap.heightAnchor.constraint(equalToConstant: 46),
             titleLabel.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 6),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: headerWrap.bottomAnchor, constant: -4),
         ])

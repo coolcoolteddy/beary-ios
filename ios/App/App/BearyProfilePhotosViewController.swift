@@ -371,10 +371,10 @@ final class BearyProfilePhotosViewController: UIViewController {
             topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            // 无障碍：第 7 轮好友顶栏同款口径——顶栏不再钉死 44，只定最小
-            // 高；标题上下约束撑高顶栏，默认字号下仍为 44。新增照片逐项
+            // 无障碍：第 7 轮好友顶栏同款口径——顶栏只定最小高 60；
+            // 标题上下约束撑高顶栏，默认字号下为 60。新增照片逐项
             // 动画的减动效短路已存在，本支不动它。
-            topBarView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            topBarView.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyTopBarHeight),
             backButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 16),
             backButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),
@@ -413,12 +413,12 @@ final class BearyProfilePhotosViewController: UIViewController {
             photosLoadingPlaceholderView.trailingAnchor.constraint(equalTo: collectionView.trailingAnchor, constant: -16),
         ])
         // 顶栏错位同根修（2026-11-06，裁剪页黑屏同根）：顶栏高此前只有
-        // required 下限 ≥44、无上界、无定值——高度在约束层面未定，solver
+        // required 下限 ≥60、无上界、无定值——高度在约束层面未定，solver
         // 在异常组合下会把顶栏撑满整页（设置页 #115 同款实证），本页顶栏
         // 下移约 478pt 即此所致。给定值等式（defaultHigh）：常规字号下顶栏
-        // 钉死 44；大字号时标题的 required 上下不等式把下限抬高，定值等式
+        // 钉死 60；大字号时标题的 required 上下不等式把下限抬高，定值等式
         // 让位、栏随字长高，“栏随字长高”意图不动，只把常态高度定下来。
-        let topBarHeight = topBarView.heightAnchor.constraint(equalToConstant: 44)
+        let topBarHeight = topBarView.heightAnchor.constraint(equalToConstant: BearyTopBarHeight)
         topBarHeight.priority = .defaultHigh
         topBarHeight.isActive = true
         updateTitleAndEmpty()
