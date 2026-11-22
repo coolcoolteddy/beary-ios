@@ -298,11 +298,11 @@ class BearyEditProfileViewController: UIViewController {
         let fieldValue = UITextField()
         // F15：网页 ed-rinput 口径——16 字、无边框矩形框；占位文案同网页。
         // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
+        // 注意：本处是 private let（非 lazy），闭包里不能用 self；
+        // delegate／returnKey 仍在 viewDidLoad 里设（原位置不动）。
         BearyFormField.configure(
             fieldValue,
-            placeholder: "给自己起个名字",
-            returnKeyType: .next,
-            delegate: self
+            placeholder: "给自己起个名字"
         )
         return fieldValue
     }()
@@ -320,12 +320,12 @@ class BearyEditProfileViewController: UIViewController {
     private let handleField: UITextField = {
         let fieldValue = UITextField()
         // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
+        // 注意：本处是 private let（非 lazy），闭包里不能用 self；
+        // delegate／returnKey 仍在 viewDidLoad 里设（原位置不动）。
         BearyFormField.configure(
             fieldValue,
             placeholder: "小写字母、数字或下划线",
-            autocapitalizationType: .none,
-            returnKeyType: .done,
-            delegate: self
+            autocapitalizationType: .none
         )
         return fieldValue
     }()
@@ -337,14 +337,12 @@ class BearyEditProfileViewController: UIViewController {
     private let signatureField: UITextField = {
         let fieldValue = UITextField()
         // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
+        // 注意：本处是 private let（非 lazy），闭包里不能用 self；
+        // delegate／returnKey／敲键回调仍在 viewDidLoad 里设（原位置不动）。
         BearyFormField.configure(
             fieldValue,
             placeholder: "写一句属于你的话",
-            returnKeyType: .next,
-            clearButtonMode: .whileEditing,
-            delegate: self,
-            changeTarget: self,
-            changeAction: #selector(signatureFieldChanged)
+            clearButtonMode: .whileEditing
         )
         return fieldValue
     }()
@@ -415,6 +413,13 @@ class BearyEditProfileViewController: UIViewController {
         buildLayout()
         // U3：输入框 Return 收起/切换 + 滑动收键盘 + 键盘顶起时调 inset
         //（私信页口径：三通知全齐，帧转视图坐标后算实际遮挡，浮动键盘不按全高垫）。
+        nameField.delegate = self
+        signatureField.delegate = self
+        handleField.delegate = self
+        nameField.returnKeyType = .next
+        signatureField.returnKeyType = .next
+        handleField.returnKeyType = .done
+        signatureField.addTarget(self, action: #selector(signatureFieldChanged), for: .editingChanged)
         scrollView.keyboardDismissMode = .onDrag
         NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
