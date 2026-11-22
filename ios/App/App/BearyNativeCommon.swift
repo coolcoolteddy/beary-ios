@@ -3534,7 +3534,7 @@ enum BearyImagePrep {
     /// 现一律按像素算目标边、取整到整像素、format.scale = 1 渲染，
     /// 返回图的 cgImage 像素即目标像素。resized 只作编码中间态，
     /// 调用方只取 data / w / h，不参与任何布局，故不改布局语义。
-    private static func resized(_ image: UIImage, maxSide: CGFloat) -> UIImage {
+    static func resized(_ image: UIImage, maxSide: CGFloat) -> UIImage {
         let src = pixelSize(of: image)
         let longest = max(src.width, src.height)
         guard longest > 0, CGFloat(longest) > maxSide else { return image }
