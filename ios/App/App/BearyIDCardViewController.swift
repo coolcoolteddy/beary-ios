@@ -797,13 +797,7 @@ final class BearyIDCardSheetViewController: UIViewController, BearySystemSheetSi
             faceView.layer.transform = CATransform3DIdentity
         }
         // 存图用 3x 渲染（屏上卡片只有约 272×171pt，默认倍率存出来才约 800×500px）。
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 3
-        format.opaque = true
-        let renderer = UIGraphicsImageRenderer(size: faceView.bounds.size, format: format)
-        let image = renderer.image { _ in
-            faceView.drawHierarchy(in: faceView.bounds, afterScreenUpdates: true)
-        }
+        let image = BearyViewSnapshot.image(of: faceView, scale: 3, opaque: true)
         if cardView.isShowingBack {
             faceView.layer.transform = savedTransform
         }
