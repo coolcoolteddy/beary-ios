@@ -608,6 +608,65 @@ final class BearyLivePhotoLoader {
 /// “是实况但没加载出来”还是“根本不是实况”；失败时长按重试一次。
 /// 读屏（第 25 轮 71、72）：角标是本视图唯一的无障碍元素，上面挂
 /// “播放实况／重试实况”自定义操作，失败时标签也说明加载失败。
+
+/// 详情页与卡片共用的实况长按接线（可复用资源 26 遍第 6 条）：两处 setLiveOverlay
+/// 与 liveLongPressed 原逐字相同，抽到这里；灯箱实现刻意不同，不并入。
+/// 0.4 秒长按播实况；began 立 3 秒点按压制，ended/cancelled 抬手补 0.35 秒窗
+/// （按住超 0.35 秒后的抬手仍在 began 的 3 秒窗内，不缩短）。
+enum BearyLiveLongPress {
+    static let minimumPressDuration: TimeInterval = 0.4
+    static let playbackSuppressDuration: TimeInterval = 3
+    static let releaseSuppressDuration: TimeInterval = 0.35
+
+    /// 有 liveKey 时配覆盖层并给槽位挂长按手势（只挂实况槽）；无 liveKey 时清覆盖层并摘手势。
+    /// presses 以 inout 传入：新建的手势存回对应槽位，摘下时置 nil。
+    /// 手势目标仍是调用方自己（须持有槽位数组的对象），故 setup 与处理分开：
+    /// 这里只负责挂手势，处理走下方的 handleLongPress。
+    static func setLiveOverlay(index: Int, staticKey: String?, liveKey: String?,
+                               liveViews: [BearyLivePhotoView], slots: [UIImageView],
+                               presses: inout [UILongPressGestureRecognizer?],
+                               target: Any?, action: Selector) {
+        guard index >= 0, index < liveViews.count, index < slots.count,
+              index < presses.count else { return }
+        let overlay = liveViews[index]
+        let slot = slots[index]
+        if let liveKey = liveKey, !liveKey.isEmpty, let staticKey = staticKey, !staticKey.isEmpty {
+            overlay.configure(staticKey: staticKey, liveKey: liveKey)
+            if presses[index] == nil {
+                let press = UILongPressGestureRecognizer(target: target, action: action)
+                press.minimumPressDuration = minimumPressDuration
+                slot.addGestureRecognizer(press)
+                presses[index] = press
+            }
+        } else {
+            overlay.clear()
+            if let press = presses[index] {
+                slot.removeGestureRecognizer(press)
+                presses[index] = nil
+            }
+        }
+    }
+
+    /// 长按处理：began 播实况并立 3 秒点按压制；ended/cancelled 抬手补 0.35 秒窗。
+    static func handleLongPress(_ sender: UILongPressGestureRecognizer, liveViews: [BearyLivePhotoView]) {
+        let index = sender.view?.tag ?? -1
+        guard index >= 0, index < liveViews.count else { return }
+        let overlay = liveViews[index]
+        if sender.state == .began {
+            overlay.startPlayback()
+            // 抬手点按压制：播完抬手那次点按不进灯箱（3 秒覆盖按住时长）。
+            overlay.suppressTapUntil = Date().addingTimeInterval(playbackSuppressDuration)
+        } else if sender.state == .ended || sender.state == .cancelled {
+            let until = Date().addingTimeInterval(releaseSuppressDuration)
+            if let existing = overlay.suppressTapUntil, existing > until {
+                // 按住超 0.35 秒后的抬手仍在 began 的 3 秒窗内，不缩短。
+            } else {
+                overlay.suppressTapUntil = until
+            }
+        }
+    }
+}
+
 final class BearyLivePhotoView: UIView {
     private let liveView = PHLivePhotoView()
     private let photoContentMode: PHImageContentMode

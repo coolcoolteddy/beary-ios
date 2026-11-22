@@ -2930,42 +2930,14 @@ final class BearyDetailViewController: UIViewController {
 
     /// 实况覆盖层开关（卡片同款；静态槽不挂长按手势，点按无延迟）。
     private func setLiveOverlay(index: Int, staticKey: String?, liveKey: String?) {
-        guard index >= 0, index < imageSlotLiveViews.count, index < imageSlots.count,
-              index < imageSlotLivePresses.count else { return }
-        let overlay = imageSlotLiveViews[index]
-        let slot = imageSlots[index]
-        if let liveKey = liveKey, !liveKey.isEmpty, let staticKey = staticKey, !staticKey.isEmpty {
-            overlay.configure(staticKey: staticKey, liveKey: liveKey)
-            if imageSlotLivePresses[index] == nil {
-                let press = UILongPressGestureRecognizer(target: self, action: #selector(liveLongPressed(_:)))
-                press.minimumPressDuration = 0.4
-                slot.addGestureRecognizer(press)
-                imageSlotLivePresses[index] = press
-            }
-        } else {
-            overlay.clear()
-            if let press = imageSlotLivePresses[index] {
-                slot.removeGestureRecognizer(press)
-                imageSlotLivePresses[index] = nil
-            }
-        }
+        BearyLiveLongPress.setLiveOverlay(index: index, staticKey: staticKey, liveKey: liveKey,
+                                          liveViews: imageSlotLiveViews, slots: imageSlots,
+                                          presses: &imageSlotLivePresses,
+                                          target: self, action: #selector(liveLongPressed(_:)))
     }
 
     @objc private func liveLongPressed(_ sender: UILongPressGestureRecognizer) {
-        let index = sender.view?.tag ?? -1
-        guard index >= 0, index < imageSlotLiveViews.count else { return }
-        let overlay = imageSlotLiveViews[index]
-        if sender.state == .began {
-            overlay.startPlayback()
-            overlay.suppressTapUntil = Date().addingTimeInterval(3)
-        } else if sender.state == .ended || sender.state == .cancelled {
-            let until = Date().addingTimeInterval(0.35)
-            if let existing = overlay.suppressTapUntil, existing > until {
-                // 按住超 0.35 秒后的抬手仍在 began 的 3 秒窗内，不缩短。
-            } else {
-                overlay.suppressTapUntil = until
-            }
-        }
+        BearyLiveLongPress.handleLongPress(sender, liveViews: imageSlotLiveViews)
     }
 
     /// 图到后按实测尺寸纠槽宽（卡片同款，见 bearyStripWidth 注释：
