@@ -345,12 +345,13 @@ class BearyProfileViewController: UIViewController {
     /// 快连点代次（2026-10-29 及时性口径）：按 entryId 计代次，每次点按 +1 并
     /// 立即按本次点按态渲染；在途回包代次落后时直接丢弃；失败回滚到确认态。
     /// 点赞从不先行改页签模型，故页签模型即确认态来源；收藏先行改页签模型，
-    /// 故另记 confirmedBookmarkedById（落定时取页签模型、成功时取服务端值）。
+    /// 故按 entryId 各持一个 BearySerialToggle 记确认态（落定时取页签模型、成功时取服务端值）。
     private var likeSeqById: [String: Int] = [:]
     private var likeConfirmedSeqById: [String: Int] = [:]
-    private var bookmarkSeqById: [String: Int] = [:]
-    private var bookmarkConfirmedSeqById: [String: Int] = [:]
-    private var confirmedBookmarkedById: [String: Bool] = [:]
+    /// 收藏串行提交器（2026-11-23 快连点竞态修）：按 entryId 各持一个
+    /// BearySerialToggle（见 BearyNativeCommon），一次只发一个取反请求，
+    /// 在途点按只记最新意图，回包后按意图补发；点赞仍走 likeSeqById 代次，不动。
+    private var bookmarkTogglesById: [String: BearySerialToggle] = [:]
     private var emoteBusyIds: Set<String> = []
     private var pubBusyIds: Set<String> = []
     /// 置顶全局互斥（第九轮 06）：同一时刻只允许一篇置顶／取消置顶在途。
@@ -9225,14 +9226,14 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         } else {
             currentBookmarked = entry.bookmarkedByMe ?? false
         }
-        // 确认态：落定时页签模型即确认态；有在途请求时沿用上次确认态
-        // （首次在途时回落到本次传入 entry——它就是首请求发出前的页签值）。
-        if bookmarkSeqById[entryId] == bookmarkConfirmedSeqById[entryId] {
-            if let tabEntry = currentEntries.first(where: { $0.id == entryId }) {
-                confirmedBookmarkedById[entryId] = tabEntry.bookmarkedByMe ?? false
-            }
+        // 串行提交器按 entryId 懒建，确认态初值取本次传入 entry；无在途时
+        // 落定时页签模型即确认态（见 syncConfirmed，在途时不覆盖）。
+        let bookmarkToggle = bookmarkTogglesById[entryId] ?? BearySerialToggle(confirmed: entry.bookmarkedByMe ?? false)
+        bookmarkTogglesById[entryId] = bookmarkToggle
+        if let tabEntry = currentEntries.first(where: { $0.id == entryId }) {
+            bookmarkToggle.syncConfirmed(tabEntry.bookmarkedByMe ?? false)
         }
-        let confirmedBookmarked = confirmedBookmarkedById[entryId] ?? (entry.bookmarkedByMe ?? false)
+        let confirmedBookmarked = bookmarkToggle.confirmed
         // 跟手批：先行翻转 + 就地同步（图标切换不等服务端，Feed 同款口径）；
         // pop 直接补在同 cell 上；已滑走则 cell 为空，跳过无害。
         let wantBookmarked = !currentBookmarked
@@ -9247,57 +9248,63 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         // 成功回包按最终态播 bookmarkTick／deleteSwoosh，失败走拒绝音；
         // 否则失败时点按音与拒绝音先后两声。
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
-        let seq = (bookmarkSeqById[entryId] ?? 0) + 1
-        bookmarkSeqById[entryId] = seq
-        BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let strongSelf = self else { return }
-                // 代次守卫：已有更新点按时，过期回包直接丢弃。
-                guard seq == strongSelf.bookmarkSeqById[entryId] else { return }
-                strongSelf.bookmarkConfirmedSeqById[entryId] = seq
-                switch result {
-                case .success(let resp):
-                    var updated = strongSelf.currentEntries.first(where: { $0.id == entryId }) ?? entry
-                    updated.bookmarkedByMe = resp.bookmarked ?? wantBookmarked
-                    strongSelf.confirmedBookmarkedById[entryId] = updated.bookmarkedByMe ?? false
-                    strongSelf.updateEntryInAllTabs(entry: updated)
-                    strongSelf.notifyInteraction(entry: updated)
-                    // 收藏页签取消收藏时摘卡（与网页 toggleBookmark 同口径）。
-                    if strongSelf.currentTab == .saved && updated.bookmarkedByMe != true {
-                        let savedRow = strongSelf.currentEntries.firstIndex(where: { $0.id == entryId })
-                        strongSelf.savedEntries.removeAll { $0.id == entryId }
-                        // 80 包 A6-2：收藏页签摘卡走 deleteRows，行不在当前页签时才回落重载。
-                        // 摘掉最后一行后本人页占位行出现（行数 1→1），deleteRows
-                        // 会与行数校验对不上而崩溃，改整表重载。
-                        if let row = savedRow, !strongSelf.savedEntries.isEmpty {
-                            strongSelf.tableView.deleteRows(at: [IndexPath(row: row, section: 0)], with: .fade)
-                        } else {
-                            strongSelf.tableView.reloadData()
-                        }
-                    } else if updated.bookmarkedByMe != wantBookmarked {
-                        // 服务端值与先行值不一致时以服务端为准就地同步；一致时不动，避免打断 pop。
-                        strongSelf.syncVisibleCell(entry: updated)
-                    }
-                    // 收藏音按最终结果只播一次（成功按最终态播 bookmarkTick／
-                    // deleteSwoosh，失败分支走拒绝音 refuse_bonk）。
-                    BearySoundPlayer.play((updated.bookmarkedByMe ?? wantBookmarked) ? .bookmarkTick : .deleteSwoosh)
-                case .failure(let err):
-                    // 失败回滚到最后确认态（页签模型先行时已改，需把确认态写回各页
-                    // 再就地同步）；提示口径（未登录走登录页、其他弹“操作失败”）一字不动，
-                    // 并补拒绝动效。
-                    var rollback = strongSelf.currentEntries.first(where: { $0.id == entryId }) ?? entry
-                    rollback.bookmarkedByMe = confirmedBookmarked
-                    strongSelf.updateEntryInAllTabs(entry: rollback)
-                    let cell = strongSelf.syncVisibleCell(entry: rollback)
-                    if case .unauthorized = err {
-                        strongSelf.onRequireLogin?()
+        // 串行提交：一次只发一个取反请求；在途点按只记最新意图，回包后按
+        // 意图补发一次；失败时有待补发意图则静默补发、不报失败（最终落定
+        // 才报一次）。先行渲染已在点按时给过，补发前不再重播动效与音效。
+        bookmarkToggle.tap(target: wantBookmarked, request: { target, completion in
+            BearyAPI.shared.toggleBookmark(id: entryId) { result in
+                completion(result.map { $0.bookmarked ?? target })
+            }
+        }, onSettled: { [weak self] result in
+            guard let strongSelf = self else { return }
+            switch result {
+            case .success(let newBookmarked):
+                var updated = strongSelf.currentEntries.first(where: { $0.id == entryId }) ?? entry
+                updated.bookmarkedByMe = newBookmarked
+                strongSelf.updateEntryInAllTabs(entry: updated)
+                strongSelf.notifyInteraction(entry: updated)
+                // 收藏页签取消收藏时摘卡（与网页 toggleBookmark 同口径）。
+                if strongSelf.currentTab == .saved && updated.bookmarkedByMe != true {
+                    let savedRow = strongSelf.currentEntries.firstIndex(where: { $0.id == entryId })
+                    strongSelf.savedEntries.removeAll { $0.id == entryId }
+                    // 80 包 A6-2：收藏页签摘卡走 deleteRows，行不在当前页签时才回落重载。
+                    // 摘掉最后一行后本人页占位行出现（行数 1→1），deleteRows
+                    // 会与行数校验对不上而崩溃，改整表重载。
+                    if let row = savedRow, !strongSelf.savedEntries.isEmpty {
+                        strongSelf.tableView.deleteRows(at: [IndexPath(row: row, section: 0)], with: .fade)
                     } else {
-                        cell?.playBookmarkDenyShake()
-                        strongSelf.presentSimpleAlert(message: "操作失败")
+                        strongSelf.tableView.reloadData()
                     }
+                } else if updated.bookmarkedByMe != wantBookmarked {
+                    // 服务端值与先行值不一致时以服务端为准就地同步；一致时不动，避免打断 pop。
+                    strongSelf.syncVisibleCell(entry: updated)
+                }
+                // 收藏音按最终结果只播一次（成功按最终态播 bookmarkTick／
+                // deleteSwoosh，失败分支走拒绝音 refuse_bonk）。
+                BearySoundPlayer.play((updated.bookmarkedByMe ?? wantBookmarked) ? .bookmarkTick : .deleteSwoosh)
+            case .failure(let err):
+                // 失败回滚到最后确认态（页签模型先行已改，需把确认态写回各页
+                // 再就地同步）；提示口径（未登录走登录页、其他弹“操作失败”）一字不动，
+                // 并补拒绝动效。
+                var rollback = strongSelf.currentEntries.first(where: { $0.id == entryId }) ?? entry
+                rollback.bookmarkedByMe = bookmarkToggle.confirmed
+                strongSelf.updateEntryInAllTabs(entry: rollback)
+                let cell = strongSelf.syncVisibleCell(entry: rollback)
+                if case .unauthorized = err {
+                    strongSelf.onRequireLogin?()
+                } else {
+                    cell?.playBookmarkDenyShake()
+                    strongSelf.presentSimpleAlert(message: "操作失败")
                 }
             }
-        }
+        }, onRefresh: { [weak self] confirmed in
+            // 两次点按互相抵消、不补发：只把界面刷回确认态，不播音效。
+            guard let strongSelf = self else { return }
+            var refreshed = strongSelf.currentEntries.first(where: { $0.id == entryId }) ?? entry
+            refreshed.bookmarkedByMe = confirmed
+            strongSelf.updateEntryInAllTabs(entry: refreshed)
+            strongSelf.syncVisibleCell(entry: refreshed)
+        })
     }
 
     private func handleCellShare(entry: Entry) {
