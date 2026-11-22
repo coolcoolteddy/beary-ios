@@ -242,8 +242,8 @@ class BearyFeedViewController: UIViewController {
     /// 行/图点按防连点：各自独立时间戳，0.8 秒内同一动作重复点按直接丢弃。
     /// 看图与进详情分开节流：点图进灯箱后关闭、立即点行进详情，不再被看图的时钟丢弃；
     /// 同一动作连续快点仍各自防叠页。
-    private var lastImageViewerAt: Date?
-    private var lastEntryNavigationAt: Date?
+    private var imageViewerThrottle = TapThrottle()
+    private var entryNavigationThrottle = TapThrottle()
     /// 滚动藏栏（清单第 2 项首页部分）：上次处理的滚动偏移（2pt 死区内不更新，
     /// 慢速滚动的位移可累积到位再判定方向）；feedChromeHidden 是本页已下发的栏态，
     /// 态不变时不重复调容器，避免滚动事件刷屏。
@@ -1030,7 +1030,7 @@ class BearyFeedViewController: UIViewController {
         // 112 刷新节流（仅手势下拉）：上次首拉成功 5 秒内且已有内容时，
         // 不再发网络请求，指示头随收回动画收回（第 2 项后不再等 500ms）；程序侧刷新
         //（重拍 tab/登录翻转/外部调用）不受此限，照常走 refreshAll。
-        if let last = lastFeedLoadAt, Date().timeIntervalSince(last) < 5, !plazaRaw.isEmpty {
+        if TapThrottle.isThrottled(since: lastFeedLoadAt, interval: 5), !plazaRaw.isEmpty {
             endCustomPullRefresh()
             return
         }
@@ -1262,9 +1262,7 @@ class BearyFeedViewController: UIViewController {
     private func presentImageViewer(imageKeys: [String], startIndex: Int, liveVideos: [String: String]? = nil, originFrame: CGRect? = nil, thumbnail: UIImage? = nil) {
         if imageKeys.isEmpty { return }
         if presentedViewController != nil { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
+        guard imageViewerThrottle.tryFire(interval: 0.8) else { return }
         let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: liveVideos, startIndex: startIndex)
         viewer.initialThumbnail = thumbnail
         viewer.originFrameInWindow = originFrame
@@ -1278,9 +1276,7 @@ class BearyFeedViewController: UIViewController {
         // 进详情即盖住本页：停轮播自动换页（回来时 viewWillAppear/handlePageEnter 恢复）；
         // 与 presentBlindBoxFlow / presentHistoryToday 的停表同口径。
         plazaCarouselView.setPageVisible(false)
-        let now = Date()
-        if let last = lastEntryNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastEntryNavigationAt = now
+        guard entryNavigationThrottle.tryFire(interval: 0.8) else { return }
         onEntrySelected?(entry)
     }
 

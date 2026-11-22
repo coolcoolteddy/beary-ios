@@ -98,7 +98,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let onOpenEntryHandler: (String) -> Void
 
     private var searchTimer: Timer?
-    private var lastNavigationAt: Date?
+    private var navigationThrottle = TapThrottle()
     /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
     private var headerTopInsetVisible = false
     private var searchFieldToBoxTrailing: NSLayoutConstraint?
@@ -3516,9 +3516,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     return
                 }
                 // 导航节流 0.8s（与日记行共用导航时钟），防连点叠页。
-                let now = Date()
-                if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
-                lastNavigationAt = now
+                guard navigationThrottle.tryFire(interval: 0.8) else { return }
                 // 震动只在点按确认（touchUpInside）后触发：行在主 scrollView 内且
                 // delaysContentTouches=false，手指按上即滑会在 touchDown 误震。
                 BearyHaptics.press()
@@ -3955,9 +3953,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         for index in 0..<entryButtons.count {
             if index < rowEntryIds.count && entryButtons[index] == sender {
                 // 导航节流 0.8s（广场同款），防连点叠页。
-                let now = Date()
-                if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
-                lastNavigationAt = now
+                guard navigationThrottle.tryFire(interval: 0.8) else { return }
                 // 震动只在点按确认（touchUpInside）后触发：行在主 scrollView 内且
                 // delaysContentTouches=false，手指按上即滑会在 touchDown 误震。
                 BearyHaptics.press()

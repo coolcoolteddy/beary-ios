@@ -85,8 +85,8 @@ final class BearyDetailViewController: UIViewController {
     private var confirmedLikeCount = 0
     private var likeInFlight = false
     private var pendingLikeTarget: Bool?
-    private var lastNavigationAt: Date?
-    private var lastImageViewerAt: Date?
+    private var navigationThrottle = TapThrottle()
+    private var imageViewerThrottle = TapThrottle()
     private var confirmedBookmarked = false
     private var isEmoteBusy = false
     private var isVisibilityBusy = false
@@ -3239,9 +3239,7 @@ final class BearyDetailViewController: UIViewController {
         // 本人名字不可点（自己主页走底栏“我的”）；他人作者行点按进作者主页。
         if isAuthor { return }
         guard let authorId = entry.authorId else { return }
-        let now = Date()
-        if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastNavigationAt = now
+        guard navigationThrottle.tryFire(interval: 0.8) else { return }
         onAuthorTapped?(authorId)
     }
 
@@ -3250,9 +3248,7 @@ final class BearyDetailViewController: UIViewController {
     /// 导航节流只在此一处，返回是否真的发起了跳转。
     private func openMentionedUser() -> Bool {
         guard let mentionedId = entry.mentionedUserId, mentionedId > 0 else { return false }
-        let now = Date()
-        if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return false }
-        lastNavigationAt = now
+        guard navigationThrottle.tryFire(interval: 0.8) else { return false }
         onAuthorTapped?(mentionedId)
         return true
     }
@@ -3719,9 +3715,7 @@ final class BearyDetailViewController: UIViewController {
         }
         guard !imageKeys.isEmpty, index >= 0, index < imageKeys.count else { return }
         if presentedViewController != nil { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
+        guard imageViewerThrottle.tryFire(interval: 0.8) else { return }
 let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: entry.liveVideos, startIndex: index)
         viewer.initialThumbnail = (sender.view as? UIImageView)?.image
         viewer.originFrameInWindow = sender.view.map { $0.convert($0.bounds, to: nil) }
@@ -3735,9 +3729,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideo
         guard let quote = entry.quote, let quoteId = quote.id, !quoteId.isEmpty else { return }
         // gone/locked 卡不导航；其余一律经容器先校验可见性再放行（私密显占位）。
         if quote.gone == true || quote.locked == true { return }
-        let now = Date()
-        if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastNavigationAt = now
+        guard navigationThrottle.tryFire(interval: 0.8) else { return }
         onQuoteTapped?(quoteId)
     }
 

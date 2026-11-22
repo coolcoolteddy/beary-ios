@@ -4492,3 +4492,27 @@ extension UITableView {
         })
     }
 }
+
+// MARK: - 防重复点按节流（TapThrottle）
+// 15 处 0.8s 点按节流与 2 处 5s 首拉节流共用：判过＋记时只此一处。
+// 点按入口各持一个实例（导航与看图分开计时）；首拉两处的时间戳归首拉成功
+// 逻辑所有，只读判过，不在此记时。
+final class TapThrottle {
+    private var lastFireAt: Date?
+
+    /// 距上次放行不足 interval 时返回 false（调用方直接 return / return false）；
+    /// 否则记下此刻并返回 true。
+    func tryFire(interval: TimeInterval) -> Bool {
+        let now = Date()
+        if let last = lastFireAt, now.timeIntervalSince(last) < interval { return false }
+        lastFireAt = now
+        return true
+    }
+
+    /// 只读判过：距 last 不足 interval 时为 true（不记时，供首拉节流用，
+    /// 其时间戳由加载成功处维护）。
+    static func isThrottled(since last: Date?, interval: TimeInterval) -> Bool {
+        guard let last = last else { return false }
+        return Date().timeIntervalSince(last) < interval
+    }
+}

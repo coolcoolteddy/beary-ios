@@ -2262,8 +2262,8 @@ class BearyTimelineViewController: UIViewController {
     private var timelineFirstPagePendingCompletions: [() -> Void] = []
     /// 112 手势下拉节流时钟：最近一次首屏网络成功的时间。
     private var lastTimelineFirstPageSuccessAt: Date?
-    private var lastNavigationAt: Date?
-    private var lastImageViewerAt: Date?
+    private var navigationThrottle = TapThrottle()
+    private var imageViewerThrottle = TapThrottle()
     /// 112 增量当日面板：keepDay 刷新时暂存选中日，不立即另发当日请求；
     /// 首屏回包若已覆盖该日（页内出现更早日的篇），直接从首屏派生面板，
     /// 否则回落正向 fetchDayEntries；首屏失败时同样回落正向拉取。
@@ -3813,7 +3813,7 @@ class BearyTimelineViewController: UIViewController {
         // 分支也不再等 500ms）；程序侧刷新（重拍 tab/详情回写/
         // 登录翻转）不受此限。begin 顶部的
         // timelineState == .loading 守卫仍在：静默对齐在途时下拉直接忽略。
-        if let last = lastTimelineFirstPageSuccessAt, Date().timeIntervalSince(last) < 5, !timelineEntries.isEmpty {
+        if TapThrottle.isThrottled(since: lastTimelineFirstPageSuccessAt, interval: 5), !timelineEntries.isEmpty {
             endCustomPullRefresh()
             return
         }
@@ -7062,9 +7062,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         let viewerEntry = sections[indexPath.section].entries[indexPath.row]
         cell.onTapImages = { [weak self] keys, index, originFrame, thumbnail in
             guard let self = self, self.presentedViewController == nil else { return }
-            let now = Date()
-            if let last = self.lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-            self.lastImageViewerAt = now
+            guard self.imageViewerThrottle.tryFire(interval: 0.8) else { return }
             let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: viewerEntry.liveVideos, startIndex: index)
             viewer.initialThumbnail = thumbnail
             viewer.originFrameInWindow = originFrame
@@ -7163,9 +7161,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         tableView.deselectRow(at: indexPath, animated: false)
         let sections = currentSections()
         guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else { return }
-        let now = Date()
-        if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastNavigationAt = now
+        guard navigationThrottle.tryFire(interval: 0.8) else { return }
         onOpenEntry?(sections[indexPath.section].entries[indexPath.row])
     }
 
