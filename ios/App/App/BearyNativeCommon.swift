@@ -168,6 +168,31 @@ enum BearySheetChrome {
     }
 }
 
+// MARK: - sheet 内滚动视图钉位（第九遍扫查第 3 条）
+
+/// sheet 内滚动视图的标准钉位（原 Input／Location／Tag／Announcement 四份逐字相同）：
+/// scrollView 上／左／右钉容器 view、底边取调用方传入的约束；内容列上／下／左／右钉
+/// scrollView 的 contentLayoutGuide、宽钉 frameLayoutGuide。
+/// 底边由调用方传入——贴按钮组顶边的三处（Input／Tag／Announcement）带 999 优先级
+/// （容器封顶压短时先断底边、保按钮可见），LocationPicker 直钉 view.bottom。
+/// 只收钉位，不动各页抓手／标题等其余约束。
+enum SheetScrollPin {
+    static func pin(scrollView: UIScrollView, contentView: UIView, in container: UIView, bottom: NSLayoutConstraint) {
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            bottom,
+
+            contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+        ])
+    }
+}
+
 // MARK: - 抓手拖动统一口径（2026-10-30 抓手批）
 
 /// 抓手热区透传视图：透明覆盖在抓手行上方时，只把 passthroughView

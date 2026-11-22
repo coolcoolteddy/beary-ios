@@ -216,18 +216,9 @@ final class BearyLocationPickerViewController: UIViewController {
         let trailingToClear = currentNameLabel.trailingAnchor.constraint(equalTo: currentClearButton.leadingAnchor, constant: -8)
         currentNameTrailingToCard = trailingToCard
         currentNameTrailingToClear = trailingToClear
+        let scrollBottom = scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        SheetScrollPin.pin(scrollView: scrollView, contentView: scrollContentView, in: view, bottom: scrollBottom)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            scrollContentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            scrollContentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            scrollContentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            scrollContentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            scrollContentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-
             grabberView.topAnchor.constraint(equalTo: scrollContentView.topAnchor, constant: BearySheetChrome.grabberTop),
             grabberView.centerXAnchor.constraint(equalTo: scrollContentView.centerXAnchor),
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
