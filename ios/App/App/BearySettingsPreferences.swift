@@ -146,7 +146,7 @@ enum BearyLocationPrecision: String, CaseIterable {
     /// 详细地址：完整地点名。
     case detail = "detail"
 
-    private static let key = "beary_location_precision"
+    static let key = "beary_location_precision"
 
     static var current: BearyLocationPrecision {
         guard let raw = UserDefaults.standard.string(forKey: key),
