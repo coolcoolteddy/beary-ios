@@ -186,7 +186,7 @@ final class BearyTagEntriesViewController: UIViewController {
                 // 整表更新前记下首个可见日记，reload 后按它恢复滚动位置。
                 let anchor = self.captureScrollAnchor()
                 self.entries = list.entries ?? []
-                self.hasMore = (list.entries ?? []).count >= Self.pageSize
+                self.hasMore = BearyPagination.hasMoreByPage(count: (list.entries ?? []).count, pageSize: Self.pageSize)
                 self.reloadDataPreservingScrollPosition(anchor: anchor)
                 self.refreshStateLabel()
             case .failure:
@@ -214,7 +214,7 @@ final class BearyTagEntriesViewController: UIViewController {
                     seenIds.insert(id)
                     return true
                 }
-                self.hasMore = page.count >= Self.pageSize
+                self.hasMore = BearyPagination.hasMoreByPage(count: page.count, pageSize: Self.pageSize)
                 guard !fresh.isEmpty else { return }
                 let startIndex = self.entries.count
                 self.entries.append(contentsOf: fresh)

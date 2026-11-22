@@ -7459,7 +7459,7 @@ enum BearyTimelinePrefetch {
         // 下次广场首拉成功时可再排队；接手方各按首拉口径自行处理成败。
         flight.handlers.append { result in
             guard case .success(let list) = result, let entries = list.entries, !entries.isEmpty else { return }
-            BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 12, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
+            BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: BearyPagination.hasMoreByPage(count: entries.count, pageSize: 12), trashCount: list.trashCount ?? 0, counts: list.tlCounts)
             markPrefetched()
         }
         inFlightLock.lock()

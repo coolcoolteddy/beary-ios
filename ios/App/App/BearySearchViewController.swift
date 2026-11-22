@@ -1347,7 +1347,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     case .success(let data):
                         self.loadMoreFailedPublic = false
                         if let entries = data.entries {
-                            self.searchHasMorePublic = entries.count == 20
+                            self.searchHasMorePublic = BearyPagination.hasMoreByPage(count: entries.count, pageSize: 20)
                             if let last = entries.last, let created = last.createdAt, let entryId = last.id {
                                 self.searchPublicCursorBefore = created
                                 self.searchPublicCursorId = entryId
@@ -1401,7 +1401,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     case .success(let data):
                         self.loadMoreFailedMine = false
                         if let mine = data.mine {
-                            self.searchHasMoreMine = mine.count == 20
+                            self.searchHasMoreMine = BearyPagination.hasMoreByPage(count: mine.count, pageSize: 20)
                             if let last = mine.last, let created = last.createdAt, let entryId = last.id {
                                 self.searchMineCursorBefore = created
                                 self.searchMineCursorId = entryId
@@ -1453,7 +1453,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     if seq != self.searchSeq { return }
-                    self.searchMineLocalHasMore = page.count == 20
+                    self.searchMineLocalHasMore = BearyPagination.hasMoreByPage(count: page.count, pageSize: 20)
                     self.searchMineLocalOffset += page.count
                     self.searchLocalMineEntries.append(contentsOf: page)
                     var fresh: [Entry] = []
@@ -1693,7 +1693,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 self.searchLocalMineEntries = mineResult.entries
                 ftsPartialArchive = mineResult.partialArchive
                 self.searchMineLocalOffset = mineResult.entries.count
-                self.searchMineLocalHasMore = mineResult.entries.count == 20
+                self.searchMineLocalHasMore = BearyPagination.hasMoreByPage(count: mineResult.entries.count, pageSize: 20)
                 self.ftsMineEntryIds = Set(mineResult.entries.compactMap { $0.id })
                 applySearchLegs()
             }
@@ -2354,7 +2354,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 满页即可能还有下一批，不满页即取尽）。游标取原始末条（见属性注释）。
     private func updateSearchPagination(from data: SearchResult) {
         if let entries = data.entries {
-            searchHasMorePublic = entries.count == 20
+            searchHasMorePublic = BearyPagination.hasMoreByPage(count: entries.count, pageSize: 20)
             if let last = entries.last, let created = last.createdAt, let entryId = last.id {
                 searchPublicCursorBefore = created
                 searchPublicCursorId = entryId
@@ -2365,7 +2365,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             searchHasMorePublic = false
         }
         if let mine = data.mine {
-            searchHasMoreMine = mine.count == 20
+            searchHasMoreMine = BearyPagination.hasMoreByPage(count: mine.count, pageSize: 20)
             if let last = mine.last, let created = last.createdAt, let entryId = last.id {
                 searchMineCursorBefore = created
                 searchMineCursorId = entryId
