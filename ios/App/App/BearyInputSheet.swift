@@ -175,18 +175,8 @@ final class BearyInputSheetViewController: UIViewController {
         // 封顶高时先断这条，按钮组仍贴底可见，滚动区塌到 0 高，不动按钮高）。
         let scrollBottom = scrollView.bottomAnchor.constraint(equalTo: buttonStack.topAnchor)
         scrollBottom.priority = UILayoutPriority(rawValue: 999)
+        SheetScrollPin.pin(scrollView: scrollView, contentView: scrollContentView, in: view, bottom: scrollBottom)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollBottom,
-
-            scrollContentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            scrollContentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            scrollContentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            scrollContentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            scrollContentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-
             grabberView.topAnchor.constraint(equalTo: scrollContentView.topAnchor, constant: BearySheetChrome.grabberTop),
             grabberView.centerXAnchor.constraint(equalTo: scrollContentView.centerXAnchor),
             grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
