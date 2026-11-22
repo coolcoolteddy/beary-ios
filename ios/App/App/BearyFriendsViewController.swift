@@ -320,7 +320,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         // 的陈旧快照当作有效回包渲染；authEpoch 每次权威登录态变迁
         // 单调 +1，旧回包凭代次丢弃（同款修法见 #1126 DM 会话页）。
         let requestEpoch = BearyAPI.shared.authEpoch
-        BearyAPI.shared.fetchFriends { [weak self] result in
+        BearyAPI.shared.fetchFriendList(kind: .friends) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.loading = false

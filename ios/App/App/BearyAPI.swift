@@ -1830,19 +1830,27 @@ final class BearyAPI {
         request("/beary/api/friends/unfollow", method: "POST", jsonBody: ["user_id": userId], completion: completion)
     }
 
-    /// 互关好友：GET /beary/api/friends/list（两个方向都有行）。
-    func fetchFriends(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
-        request("/beary/api/friends/list", completion: completion)
+    /// 好友列表取数口：kind 定 URL，三列表共用同一入口，回包都是
+    /// FriendListResponse，无分页（一次拉全量）。
+    enum FriendListKind {
+        /// 互关好友：GET /beary/api/friends/list（两个方向都有行）。
+        case friends
+        /// 我关注的人：GET /beary/api/friends/following。
+        case following
+        /// 关注我的人：GET /beary/api/friends/followers。
+        case followers
+
+        var path: String {
+            switch self {
+            case .friends: return "/beary/api/friends/list"
+            case .following: return "/beary/api/friends/following"
+            case .followers: return "/beary/api/friends/followers"
+            }
+        }
     }
 
-    /// 我关注的人：GET /beary/api/friends/following。
-    func fetchFollowing(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
-        request("/beary/api/friends/following", completion: completion)
-    }
-
-    /// 关注我的人：GET /beary/api/friends/followers。
-    func fetchFollowers(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
-        request("/beary/api/friends/followers", completion: completion)
+    func fetchFriendList(kind: FriendListKind, completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
+        request(kind.path, completion: completion)
     }
 
     /// B2：同会话在途去重——主页、通知卡等各处同时查同一人时只发一条
