@@ -315,6 +315,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         backButton.translatesAutoresizingMaskIntoConstraints = false
         backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 32), for: .normal)
         backButton.tintColor = BearyColors.ink
+        backButton.accessibilityLabel = "返回上一页"
         backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
         backButton.bearyAddPressFeedback()
 
@@ -322,6 +323,8 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         dotsStack.axis = .horizontal
         dotsStack.spacing = 7
         dotsStack.alignment = .center
+        dotsStack.isAccessibilityElement = true
+        dotsStack.accessibilityLabel = "第 1 页，共 4 页"
         for _ in 0..<4 {
             let dot = UIView()
             dot.translatesAutoresizingMaskIntoConstraints = false
@@ -1106,6 +1109,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
             }
         }
         lastDotPage = currentPage
+        dotsStack.accessibilityLabel = "第 \(currentPage + 1) 页，共 4 页"
         // 顶栏返回：第 2 页起才可用，第 1 页透明占位（只占位不占事件）。
         let showBack = currentPage >= 1
         backButton.alpha = showBack ? 1 : 0
@@ -1288,7 +1292,28 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
                 dragTargetPage = target
                 stageTargetPage(pageViews[target], direction: direction)
             }
-            if let dragTarget = dragTargetPage {
+            if var dragTarget = dragTargetPage {
+                if dragTarget == currentPage {
+                    // 首尾越界方向锁住后反向越过起点：改向相邻页，继续跟手。
+                    if translation.x != 0 {
+                        let newTarget = translation.x < 0 ? currentPage + 1 : currentPage - 1
+                        if newTarget >= 0, newTarget <= 3 {
+                            if currentPage == 3 { stopAllEmotes() }
+                            dragTargetPage = newTarget
+                            stageTargetPage(pageViews[newTarget], direction: newTarget > currentPage ? 1 : -1)
+                            dragTarget = newTarget
+                        }
+                    }
+                } else if (dragTarget > currentPage && translation.x > 0 && currentPage > 0)
+                    || (dragTarget < currentPage && translation.x < 0 && currentPage < 3) {
+                    // 拖回起点外改向相邻目标页：手指继续移动时页面不停住，1:1 跟手不断。
+                    let newTarget = dragTarget > currentPage ? currentPage - 1 : currentPage + 1
+                    pageViews[dragTarget].isHidden = true
+                    pageViews[dragTarget].transform = .identity
+                    dragTargetPage = newTarget
+                    stageTargetPage(pageViews[newTarget], direction: newTarget > currentPage ? 1 : -1)
+                    dragTarget = newTarget
+                }
                 if dragTarget == currentPage {
                     // 首尾页外拖：当前页随手势以 0.25 阻尼系数跟手，松手回弹。
                     pageViews[currentPage].transform = CGAffineTransform(translationX: translation.x * 0.25, y: 0)
@@ -1433,6 +1458,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
             button.layer.borderWidth = selected ? 2 : 0
             button.layer.bearyDynamicBorderColor = BearyColors.ink
             button.backgroundColor = selected ? BearyColors.surface2 : .clear
+            button.accessibilityTraits = selected ? [.button, .selected] : [.button]
         }
     }
 
