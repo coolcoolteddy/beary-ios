@@ -5299,30 +5299,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 正文仅表情放大（2026-11-18 Li 定）
 
-    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情字符、个数 1...3。
-    /// 空白（空格/换行）不计；[mood:]/[gif:] 记号是文字，不算表情。
-    private static func isEmojiOnlyBodyText(_ plain: String) -> Bool {
-        let meaningful = plain.filter { !$0.isWhitespace }
-        guard (1...3).contains(meaningful.count) else { return false }
-        return meaningful.allSatisfy { isEmojiCluster($0) }
-    }
-
-    /// 一个字素簇是否表情：至少一个“表情呈现”码点（或 VS16 序列），
-    /// 且全部码点都是表情相关。Swift 的 Unicode.Scalar.Properties 没有
-    /// Emoji_Component 一项，组件类码点改按值认：ZWJ、VS15/VS16、键帽
-    /// （20E3 与 0-9/#/*）、标签字符（E0020–E007F，地区旗）。
-    /// 这样纯数字、字母、“#”等不算表情；组合表情（ZWJ 全家、肤色、❤️、1️⃣）算一个。
-    private static func isEmojiCluster(_ ch: Character) -> Bool {
-        let scalars = ch.unicodeScalars
-        guard scalars.contains(where: { $0.properties.isEmojiPresentation || $0.value == 0xFE0F }) else { return false }
-        return scalars.allSatisfy { s in
-            s.properties.isEmoji || s.properties.isEmojiModifier
-                || s.value == 0x200D || s.value == 0xFE0F || s.value == 0xFE0E || s.value == 0x20E3
-                || (0x30...0x39).contains(s.value) || s.value == 0x23 || s.value == 0x2A
-                || (0xE0020...0xE007F).contains(s.value)
-        }
-    }
-
     /// 正文有无任何附件（内联图/熊脸/粘贴图）：有附件即不是纯表情。
     /// 注意 inlinePlainText 会把无记号的粘贴图直接丢掉，故不能只凭纯文本判断。
     private static func bodyHasAttachment(_ attributed: NSAttributedString?) -> Bool {
@@ -5341,7 +5317,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 组词中不切，落字后下一轮 textViewDidChange 补上。
     private func updateBodyEmojiOnlyFont() {
         guard textView.markedTextRange == nil else { return }
-        let only = Self.isEmojiOnlyBodyText(committedContent()) && !Self.bodyHasAttachment(textView.attributedText)
+        let only = BearyText.isEmojiOnlyBodyText(committedContent()) && !Self.bodyHasAttachment(textView.attributedText)
         guard only != bodyEmojiOnlyEnlarged else { return }
         bodyEmojiOnlyEnlarged = only
         applyEffectiveBodyFont()
@@ -5383,9 +5359,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func setBodyAttributedText(_ plain: String?) {
-        // 回填也按仅表情口径取字号：纯表情草稿恢复后仍放大；含记号的正文是文字，走正常字号。
+        // 回填也按仅表情口径取字号：纯表情草稿恢复后仍放大；完整记号算表情、半截记号按文字走。
         let text = plain ?? ""
-        bodyEmojiOnlyEnlarged = Self.isEmojiOnlyBodyText(text)
+        bodyEmojiOnlyEnlarged = BearyText.isEmojiOnlyBodyText(text)
         let font = effectiveBodyFont
         textView.attributedText = BearyText.inlineAttributedText(from: text, font: font, color: BearyColors.ink, paragraphStyle: bodyParagraphStyle(), dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: inlineGifKeys, gifFirstFrames: gifFirstFrames)
         textView.typingAttributes = [.font: font, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]

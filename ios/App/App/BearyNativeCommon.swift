@@ -2413,15 +2413,38 @@ enum BearyText {
     /// 仅表情放大倍数：与写日记页同款 ×2（参考图实测放大后约 2.2 倍，取 2 倍）。
     static let emojiOnlyFontScale: CGFloat = 2
 
-    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情字符、个数 1...3。
-    /// 空白（空格/换行）不计；[mood:]/[gif:] 记号是文字，不算表情。
-    /// 口径与写日记页 #1964（BearyComposerViewController 的同名私有实现）
-    /// 一字相同——该支未合入、写日记页文件不能动，故这里单写一份；
-    /// #1964 合入后两处统一到这里，删作曲侧的私有副本。
+    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情、个数 1...3。
+    /// 空白（空格/换行）不计；完整 [mood:]/[gif:] 记号每个算 1 个表情
+    /// （2026-11-22 Li 定：记号也算表情）；尾部半截记号（如 "[moo"）
+    /// 不算表情、按文字处理。写日记页已统一到这里（#1964 已合入），
+    /// 作曲侧私有副本已删。
     static func isEmojiOnlyBodyText(_ plain: String) -> Bool {
-        let meaningful = plain.filter { !$0.isWhitespace }
-        guard (1...3).contains(meaningful.count) else { return false }
-        return meaningful.allSatisfy { isEmojiCluster($0) }
+        // 完整记号与 inlineAttributedText 同款正则分派。
+        guard let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]|\\[gif:([a-z0-9]+)\\]", options: []) else {
+            // 正则建不出来时退回旧口径：只认字面表情簇。
+            let meaningful = plain.filter { !$0.isWhitespace }
+            guard (1...3).contains(meaningful.count) else { return false }
+            return meaningful.allSatisfy { isEmojiCluster($0) }
+        }
+        let ns = plain as NSString
+        var count = 0
+        var cursor = 0
+        for match in regex.matches(in: plain, options: [], range: NSRange(location: 0, length: ns.length)) {
+            // 记号前的片段：除空白外必须全是表情簇。
+            let gap = ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            let gapMeaningful = gap.filter { !$0.isWhitespace }
+            guard gapMeaningful.allSatisfy({ isEmojiCluster($0) }) else { return false }
+            count += gapMeaningful.count + 1 // 完整记号算 1 个表情
+            guard count <= 3 else { return false }
+            cursor = match.range.location + match.range.length
+        }
+        // 尾部片段：同款处理。尾部半截记号（如 "[moo"）不在完整记号里，
+        // 会落进这里按文字走——含字母即不是表情。
+        let tail = ns.substring(from: cursor)
+        let tailMeaningful = tail.filter { !$0.isWhitespace }
+        guard tailMeaningful.allSatisfy({ isEmojiCluster($0) }) else { return false }
+        count += tailMeaningful.count
+        return (1...3).contains(count)
     }
 
     /// 一个字素簇是否表情：至少一个“表情呈现”码点（或 VS16 序列），
