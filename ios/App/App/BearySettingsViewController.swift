@@ -5133,6 +5133,16 @@ private final class BearyBlockedUserCell: UITableViewCell {
     private let avatarView = BearyAvatarView()
     private let nameLabel = UILabel()
     private let handleLabel = UILabel()
+    /// 名字＋handle 纵向栈：相对头像垂直居中。原两行顶钉 contentView.top + 14
+    /// （＝头像顶），块高小于头像 44，上面贴顶、下面留空；栈居中后上下留白对头像相等。
+    /// 间距 1 与原 name→handle 间距一致；handle 隐藏时栈自动收起，单行名字同样居中。
+    private lazy var textStack: UIStackView = {
+        let stack = UIStackView(arrangedSubviews: [nameLabel, handleLabel])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 1
+        return stack
+    }()
     private var unblockHandler: (() -> Void)?
 
     private lazy var unblockButton: BearyHit44Button = {
@@ -5162,8 +5172,7 @@ private final class BearyBlockedUserCell: UITableViewCell {
         handleLabel.textColor = BearyColors.gray
         handleLabel.numberOfLines = 1
         contentView.addSubview(avatarView)
-        contentView.addSubview(nameLabel)
-        contentView.addSubview(handleLabel)
+        contentView.addSubview(textStack)
         contentView.addSubview(unblockButton)
         NSLayoutConstraint.activate([
             avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
@@ -5171,13 +5180,13 @@ private final class BearyBlockedUserCell: UITableViewCell {
             avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),
-            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
-            nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: unblockButton.leadingAnchor, constant: -8),
-            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
-            handleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: unblockButton.leadingAnchor, constant: -8),
-            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
+            // 文字块相对头像垂直居中（上下留白对头像相等）；顶／底各留 14 兜底，
+            // 大字号下文字块高于头像时行高由其撑起，不溢出。
+            textStack.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
+            textStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
+            textStack.trailingAnchor.constraint(lessThanOrEqualTo: unblockButton.leadingAnchor, constant: -8),
+            textStack.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 14),
+            textStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
             unblockButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             unblockButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
