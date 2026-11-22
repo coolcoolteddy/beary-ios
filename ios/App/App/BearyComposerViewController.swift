@@ -5613,7 +5613,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             publishButton.setImage(nil, for: .normal)
             publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: Self.publishSpinnerTitleInset, bottom: 0, right: 0)
             publishRingView.isHidden = false
-            BearyIconMotion.startSpin(on: publishRingView, duration: 0.9, key: "bearyPublishSpin")
+            BearyIconMotion.startSpin(on: publishRingView, duration: BearyIconMotion.officialSpinDuration, key: "bearyPublishSpin")
         } else {
             publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
             publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 24), for: .normal)
@@ -7876,7 +7876,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 审计二轮 10：该 key 的转圈已在转时不重加——每次输入都删了重起会把
         // 旋转相位反复归零；落盘后 updateDraftStatusLabel 的 stopSpin 不动。
         if draftStatusIcon.layer.animation(forKey: "bearyDraftSavingSpin") == nil {
-            BearyIconMotion.startSpin(on: draftStatusIcon, duration: 0.9, key: "bearyDraftSavingSpin")
+            BearyIconMotion.startSpin(on: draftStatusIcon, duration: BearyIconMotion.spinDuration, key: "bearyDraftSavingSpin")
         }
         draftStatusLabel.text = "保存中…"
         draftStatusLabel.textColor = BearyColors.blue
@@ -8008,7 +8008,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             draftStatusIcon.image = BearyIconImages.image(named: "icon_refresh", pointSize: 15)
             draftStatusIcon.tintColor = BearyColors.gray
             draftStatusIcon.isHidden = false
-            BearyIconMotion.startSpin(on: draftStatusIcon, duration: 0.9, key: "bearyDraftSavingSpin")
+            BearyIconMotion.startSpin(on: draftStatusIcon, duration: BearyIconMotion.spinDuration, key: "bearyDraftSavingSpin")
             draftStatusLabel.text = "保存中…"
             draftStatusLabel.textColor = BearyColors.blue
         } else {

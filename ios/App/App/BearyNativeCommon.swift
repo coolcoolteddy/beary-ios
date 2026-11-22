@@ -3085,13 +3085,10 @@ final class BearyRefreshIconView: UIImageView {
         }
     }
 
+    /// 与 BearyIconMotion.startSpin 同款本体：复用同一份旋转动画（通用档 1.0s），
+    /// 不再各写一份 CABasicAnimation。
     private func addSpinAnimation() {
-        let anim = CABasicAnimation(keyPath: "transform.rotation.z")
-        anim.fromValue = 0
-        anim.toValue = Double.pi * 2
-        anim.duration = 1.0
-        anim.repeatCount = .infinity
-        layer.add(anim, forKey: "refresh-spin")
+        BearyIconMotion.startSpin(on: self, duration: BearyIconMotion.spinDuration, key: "refresh-spin")
     }
 
     func stopSpinning() {

@@ -1707,7 +1707,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchIconView.isHidden = busy
         boxRingView.isHidden = !busy
         if busy {
-            BearyIconMotion.startSpin(on: boxRingView, duration: 0.9, key: "bearyBoxSpin")
+            BearyIconMotion.startSpin(on: boxRingView, duration: BearyIconMotion.officialSpinDuration, key: "bearyBoxSpin")
         } else {
             BearyIconMotion.stopSpin(on: boxRingView, key: "bearyBoxSpin")
         }
@@ -1735,7 +1735,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateIconView.isHidden = loading
         stateRingView.isHidden = !loading
         if loading {
-            BearyIconMotion.startSpin(on: stateRingView, duration: 1, key: "bearyStateSpin")
+            BearyIconMotion.startSpin(on: stateRingView, duration: BearyIconMotion.spinDuration, key: "bearyStateSpin")
         } else {
             BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
         }
@@ -2296,7 +2296,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if isLoadingMore {
             searchFooterRow.isHidden = false
             searchFooterSpinnerView.isHidden = false
-            BearyIconMotion.startSpin(on: searchFooterSpinnerView, duration: 0.9, key: "bearySearchFooterSpin")
+            BearyIconMotion.startSpin(on: searchFooterSpinnerView, duration: BearyIconMotion.spinDuration, key: "bearySearchFooterSpin")
         } else if loadMoreFailed {
             searchFooterRow.isHidden = false
             searchFooterRetryButton.isHidden = false
