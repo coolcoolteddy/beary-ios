@@ -30,35 +30,12 @@ final class BearyTagEntriesViewController: UIViewController {
     private let loadingIndicator = UIActivityIndicatorView(style: .large)
     private let stateLabel = UILabel()
 
-    /// 自有顶栏（本页只进 SceneDelegate 的标签 modal nav，系统导航栏隐藏；
-    /// 与个人页 modal 顶栏同款：44pt＋返回钮＋居中标题）。
-    private let topBarView: UIView = {
-        let viewValue = UIView()
-        viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.surface1
-        return viewValue
-    }()
-
-    private lazy var topBackButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
-        buttonValue.tintColor = BearyColors.ink
-        buttonValue.accessibilityLabel = "返回"
-        buttonValue.addTarget(self, action: #selector(backButtonTapped), for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        return buttonValue
-    }()
-
-    private let topTitleLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
-        labelValue.adjustsFontForContentSizeCategory = true
-        labelValue.textColor = BearyColors.ink
-        labelValue.textAlignment = .center
-        return labelValue
-    }()
+    /// 顶栏（本页只进 SceneDelegate 的标签 modal nav，系统导航栏隐藏；
+    /// 与个人页 modal 顶栏同款：44pt＋返回钮＋居中标题），走共用 BearyTopBar；
+    /// 底色 surface1、返回钮 .system、标题 trailing −16（第九遍第 2 条）。
+    private lazy var topBar: BearyTopBar = BearyTopBar(title: "#" + tag, height: .minimum(44), backgroundColor: BearyColors.surface1, backButtonType: .system, titleTrailing: -BearySpace.lg) { [weak self] in
+        self?.backButtonTapped()
+    }
 
     private static let pageSize = 20
 
@@ -74,10 +51,9 @@ final class BearyTagEntriesViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "#" + tag
-        topTitleLabel.text = "#" + tag
         view.backgroundColor = BearyColors.surface1
 
-        buildTopBar()
+        topBar.pinToTop(of: view)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.dataSource = self
@@ -105,7 +81,7 @@ final class BearyTagEntriesViewController: UIViewController {
         view.addSubview(stateLabel)
 
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
+            tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -120,26 +96,6 @@ final class BearyTagEntriesViewController: UIViewController {
         ])
 
         loadFirstPage()
-    }
-
-    private func buildTopBar() {
-        view.addSubview(topBarView)
-        topBarView.addSubview(topBackButton)
-        topBarView.addSubview(topTitleLabel)
-        NSLayoutConstraint.activate([
-            topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBarView.heightAnchor.constraint(equalToConstant: 44),
-            topBackButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: BearySpace.lg),
-            topBackButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
-            topBackButton.widthAnchor.constraint(equalToConstant: 44),
-            topBackButton.heightAnchor.constraint(equalToConstant: 44),
-            topTitleLabel.centerXAnchor.constraint(equalTo: topBarView.centerXAnchor),
-            topTitleLabel.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
-            topTitleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: topBackButton.trailingAnchor, constant: 8),
-            topTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -BearySpace.lg),
-        ])
     }
 
     @objc private func backButtonTapped() {

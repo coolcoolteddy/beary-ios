@@ -28,29 +28,11 @@ final class BearyPlusPageViewController: UIViewController {
         return nil
     }
 
-    private let topBarView = UIView()
-
-    private lazy var backButton: UIButton = {
-        let buttonValue = UIButton(type: .custom)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
-        buttonValue.tintColor = BearyColors.ink
-        buttonValue.accessibilityLabel = "返回"
-        buttonValue.addTarget(self, action: #selector(backButtonTapped), for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        return buttonValue
-    }()
-
-    private let titleLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
-        labelValue.adjustsFontForContentSizeCategory = true
-        labelValue.textColor = BearyColors.ink
-        labelValue.textAlignment = .center
-        labelValue.text = "Plus 会员"
-        return labelValue
-    }()
+    // 全屏页共用顶栏（第九遍第 2 条）：返回钮＋居中标题＋钉位；
+    // 高度统一 ≥44（Li 2026-11-22 定），常态仍 44。
+    private lazy var topBar: BearyTopBar = BearyTopBar(title: "Plus 会员", height: .minimum(44)) { [weak self] in
+        self?.backButtonTapped()
+    }
 
     private let scrollView: UIScrollView = {
         let scrollValue = UIScrollView()
@@ -122,11 +104,7 @@ final class BearyPlusPageViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
-        topBarView.translatesAutoresizingMaskIntoConstraints = false
-        topBarView.backgroundColor = BearyColors.bg
-        view.addSubview(topBarView)
-        topBarView.addSubview(backButton)
-        topBarView.addSubview(titleLabel)
+        topBar.pinToTop(of: view)
         view.addSubview(scrollView)
         scrollView.addSubview(contentStack)
 
@@ -137,19 +115,7 @@ final class BearyPlusPageViewController: UIViewController {
         buildFoot()
 
         NSLayoutConstraint.activate([
-            topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBarView.heightAnchor.constraint(equalToConstant: 44),
-            backButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 16),
-            backButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
-            backButton.widthAnchor.constraint(equalToConstant: 44),
-            backButton.heightAnchor.constraint(equalToConstant: 44),
-            titleLabel.centerXAnchor.constraint(equalTo: topBarView.centerXAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
-            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -52),
-            scrollView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
