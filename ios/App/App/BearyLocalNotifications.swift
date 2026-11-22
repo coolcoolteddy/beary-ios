@@ -273,7 +273,7 @@ final class BearyLocalNotifications {
             if isToday && hasEntryToday {
                 nextEvening = calendar.date(byAdding: .day, value: 1, to: nextEvening) ?? nextEvening
             }
-            desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没有写日记，写一点，留一点。", kind: .dailyReminder))
+            desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没写日记", kind: .dailyReminder))
         }
 
         // 2. 那年今日：下一个 9:00（北京）；那天往年有日记才排。
