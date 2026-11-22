@@ -205,12 +205,7 @@ final class BearyTagEntriesViewController: UIViewController {
                 // 页间可能重叠：按日记 ID 去重，只追加本页没出现过的新篇。
                 let anchor = self.captureScrollAnchor()
                 var seenIds = Set(self.entries.compactMap { $0.id })
-                let fresh = page.filter { entry in
-                    guard let id = entry.id else { return true }
-                    guard !seenIds.contains(id) else { return false }
-                    seenIds.insert(id)
-                    return true
-                }
+                let fresh = BearyCursorPageLoad.fresh(page, id: { $0.id }, seen: &seenIds)
                 self.hasMore = page.count >= Self.pageSize
                 guard !fresh.isEmpty else { return }
                 let startIndex = self.entries.count
