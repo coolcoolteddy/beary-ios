@@ -3893,7 +3893,7 @@ class BearyTimelineViewController: UIViewController {
     /// 当日面板行走分区重载（面板头后缀同步翻转），时间线行走单行重载；不整表重载、不改存储态 isPublic；
     /// 其他列表页（Feed/搜索/个人页/星图/地图列表）的到期复核由权限组统筹，本支不碰。
     private func sweepEphemeralExpiry() {
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let nowMs = Date.nowMs
         var expiredIds: [String] = []
         for entry in timelineEntries + dayEntries {
             guard let entryId = entry.id, !expiredEphemeralHandledIds.contains(entryId) else { continue }

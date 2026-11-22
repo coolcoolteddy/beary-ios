@@ -2315,7 +2315,7 @@ final class BearySettingsViewController: UIViewController {
 
     /// 2026-11-19 七组版：Plus 组只留入口行，fillPlusDetail 只刷入口行尾。
     private func fillPlusDetail(detail: BearyPlusDetailResponse) {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let now = Date.nowMs
         let permanent = detail.permanent == true
         let effective = detail.effectiveUntil ?? 0
         // 116：Plus 组文案随数据到达变化时只淡入该 label 本身（文案
@@ -3569,7 +3569,7 @@ final class BearySettingsViewController: UIViewController {
     /// （plusDetail 已到时用永久／有效期判定，未到时退回 /me 的 plus）。
     private var isPlusMember: Bool {
         if let detail = plusDetail {
-            let now = Int(Date().timeIntervalSince1970 * 1000)
+            let now = Date.nowMs
             return BearyDeveloperMode.effectivePlus(detail.permanent == true || (detail.effectiveUntil ?? 0) > now)
         }
         return BearyDeveloperMode.effectivePlus(SessionManager.shared.currentUser?.plus == true)

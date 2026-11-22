@@ -603,7 +603,7 @@ final class BearyWishWallViewController: UIViewController {
     /// /me（见 refreshPlusGate）。
     private func plusState() -> Bool? {
         guard let until = SessionManager.shared.currentUser?.plusUntil else { return nil }
-        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let now = Date.nowMs
         return until >= 4102444800000 || until > now
     }
 

@@ -3628,13 +3628,13 @@ enum BearyEphemeral {
         // 开发者模式：强制到期态只影响无显式 nowMs 的读路径；
         // 通知重算传显式真实 nowMs，不受假日与强制到期影响。
         if nowMs == nil && BearyDevPreviewState.forceLimitedExpired { return false }
-        let now = nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000)
+        let now = nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Date.nowMs
         return until > now
     }
     static func isExpired(_ entry: Entry, nowMs: Int? = nil) -> Bool {
         guard let until = entry.ephemeralUntil else { return false }
         if nowMs == nil && BearyDevPreviewState.forceLimitedExpired { return true }
-        let now = nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000)
+        let now = nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Date.nowMs
         return until <= now
     }
     static func isEffectivelyPublic(_ entry: Entry) -> Bool {
@@ -3642,7 +3642,7 @@ enum BearyEphemeral {
     }
     /// 存活期倒计时灰字（只留这一行，不另加“限时日记”小标签）。
     static func remainingText(until: Int, nowMs: Int? = nil) -> String {
-        let ms = until - (nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000))
+        let ms = until - (nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Date.nowMs)
         if ms < 3_600_000 { return "限时 · 还剩不到 1 小时" }
         let hours = (ms + 3_599_999) / 3_600_000
         return "限时 · 还剩 \(hours) 小时"
@@ -3654,7 +3654,7 @@ enum BearyEphemeral {
         case calm, near, urgent, expired
     }
     static func countdownState(until: Int, nowMs: Int? = nil) -> CountdownState {
-        let ms = until - (nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000))
+        let ms = until - (nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Date.nowMs)
         if ms <= 0 { return .expired }
         if ms < 3_600_000 { return .urgent }
         if ms < 6 * 3_600_000 { return .near }
@@ -3672,7 +3672,7 @@ enum BearyEphemeral {
     /// 限时卡倒计时文案（预览口径）：≥1 小时“还剩X小时”／“还剩X小时Y分”，
     /// <1 小时每秒跳“还剩X分Y秒”，已到期“已到期 · 转私密”。
     static func countdownText(until: Int, nowMs: Int? = nil) -> String {
-        let ms = until - (nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000))
+        let ms = until - (nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Date.nowMs)
         if ms <= 0 { return "已到期 · 转私密" }
         if ms < 3_600_000 {
             let minutes = ms / 60_000

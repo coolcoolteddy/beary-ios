@@ -2279,7 +2279,7 @@ final class BearyDetailViewController: UIViewController {
         // 否则定时器会在真实到期点把假态显示翻回私密；退出开发者模式后回前台复核重排。
         guard BearyDevPreviewState.fakeDay == nil else { return }
         guard BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil else { return }
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let nowMs = Date.nowMs
         let interval = TimeInterval(until - nowMs) / 1000.0
         guard interval > 0 else { return }
         ephemeralExpiryTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in

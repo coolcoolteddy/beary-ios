@@ -8540,7 +8540,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let quoteEntryId = draft.quoteId else { return nil }
         // 审计 2026-11-02 第十节：草稿还原同样走有效态——存量限时篇过期后
         // 还原即私密，不再沿用草稿保存时的原始 isPublic。
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let nowMs = Date.nowMs
         let restoredIsPublic: Bool? = {
             guard let pub = draft.quoteIsPublic else { return nil }
             if let until = draft.quoteEphemeralUntil, until <= nowMs { return false }
@@ -10077,7 +10077,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         updated.content = trimmed
                         // 冲突清单第 4 条：编辑成功即本地记一笔编辑时刻（服务端 PUT 同步写
                         // updated_at；列表行不靠重拉即显「编辑于 X」，重拉后以服务端值为准）。
-                        updated.updatedAt = Int(Date().timeIntervalSince1970 * 1000)
+                        updated.updatedAt = Date.nowMs
                         // 109：本地副本跟随输入框标题（空 = nil，与服务端归一化一致）。
                         updated.title = self.headlineText.isEmpty ? nil : self.headlineText
                         updated.images = self.uploadedImageKeys()

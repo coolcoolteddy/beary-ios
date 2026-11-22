@@ -388,7 +388,7 @@ enum BearyEntrySyncStore {
         let marker = EntrySyncCompletion(
             accountId: accountId,
             entryCount: entryCount,
-            syncedAtMs: Int(Date().timeIntervalSince1970 * 1000)
+            syncedAtMs: Date.nowMs
         )
         guard let data = try? JSONEncoder().encode(marker) else { return false }
         do {
@@ -412,7 +412,7 @@ enum BearyEntrySyncStore {
     private static func adjustCompletionCount(accountId: Int, delta: Int) {
         guard var marker = loadCompletion(accountId: accountId), delta != 0 else { return }
         marker.entryCount = max(0, marker.entryCount + delta)
-        marker.syncedAtMs = Int(Date().timeIntervalSince1970 * 1000)
+        marker.syncedAtMs = Date.nowMs
         guard let url = completionMarkerURL(accountId: accountId),
               let data = try? JSONEncoder().encode(marker) else { return }
         try? data.write(to: url, options: .atomic)
@@ -764,7 +764,7 @@ enum BearyEntrySyncStore {
     static func addPendingPublishRefetch(accountId: Int, entryId: String, dayKey: String) -> Bool {
         var items = loadPendingPublishRefetch(accountId: accountId)
         guard !items.contains(where: { $0.entryId == entryId }) else { return true }
-        items.append(PendingPublishRefetch(entryId: entryId, dayKey: dayKey, enqueuedAtMs: Int(Date().timeIntervalSince1970 * 1000), attempts: 0))
+        items.append(PendingPublishRefetch(entryId: entryId, dayKey: dayKey, enqueuedAtMs: Date.nowMs, attempts: 0))
         return savePendingPublishRefetch(accountId: accountId, items: items)
     }
 
@@ -1152,7 +1152,7 @@ enum BearyTrashSyncStore {
         guard let entryId = entry.id else { return true }
         guard var items = loadAll(accountId: accountId) else { return true }
         items.removeAll { $0.id == entryId }
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let nowMs = Date.nowMs
         // R16-3：原 Entry 的标题/图片 keys/可见性一并进桶——此前 memberwise init
         // 不接收这三个字段，本地删帖进桶的条目从构造时就没有标题与图片数，
         // 即便编码补齐也无从恢复；质保三轮 T3-C1：published 取 isPublic

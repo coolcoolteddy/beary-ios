@@ -34,7 +34,7 @@ enum BearyDevPreviewState {
     static func fakeNowMs() -> Int? {
         guard let fake = fakeDay,
               let midnight = BearyBeijingDay.date(year: fake.year, month: fake.month, day: fake.day) else { return nil }
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let nowMs = Date.nowMs
         // 真实北京钟点（毫秒，自北京午夜起；北京无夏令时，直接取模）。
         let beijingMsOfDay = (nowMs + 8 * 3600 * 1000) % 86400000
         return Int(midnight.timeIntervalSince1970 * 1000) + beijingMsOfDay
