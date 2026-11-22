@@ -254,7 +254,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private var poolBusy = false
     private var openBusy = false
     private var withdrawBusy = false
-    private var reactBusy = false
+    /// 回应串行提交器：每次点按都落地、带代次、过期回包丢弃；
+    /// 在途点按只记最新意图，回包后按意图补发。
+    private let emoteSubmitter = BearyEmoteSerialSubmitter()
     /// 审计新一轮 02：详情请求代次——每次发详情请求即 +1，撤回成功再 +1；
     /// 在途旧回包凭代次丢弃，不再把已撤回的界面倒退回 .received
     ///（只比交换 ID 不够——同一交换的旧回包仍可能带着撤回前的状态回来）。
@@ -1307,6 +1309,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         guard exchangeId == self.exchangeId, exchangeHidden == false else { return }
         self.received = received
         receivedEmotes = received.emotes ?? []
+        // 新交换即新确认态，提交器硬复位（旧交换在途回包凭代次丢弃）。
+        emoteSubmitter.reset(baseline: receivedEmotes)
         let title = (received.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         receivedTitleLabel.text = title.isEmpty ? nil : title
         receivedTitleLabel.isHidden = title.isEmpty
@@ -1619,35 +1623,18 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     @objc private func emoteChipTapped(_ sender: UIButton) {
-        guard let chip = sender as? BlindBoxEmoteChipButton, chip.emoteKey.isEmpty == false, reactBusy == false, withdrawBusy == false, let exchangeId = exchangeId else { return }
+        guard let chip = sender as? BlindBoxEmoteChipButton, chip.emoteKey.isEmpty == false, withdrawBusy == false, let exchangeId = exchangeId else { return }
         let key = chip.emoteKey
         // 2026-10-29 即时性口径：点按瞬间先改填色与计数，服务端回包只做确认，失败回滚。
-        let previous = receivedEmotes
-        receivedEmotes = toggledEmotes(previous, key: key)
+        // 串行提交：每次点按都落地，在途点按只记最新意图，回包后按意图补发。
+        let mine = receivedEmotes.first(where: { $0.emote == key })?.mine ?? false
+        receivedEmotes = toggledEmotes(receivedEmotes, key: key)
         renderEmoteChips()
-        reactBusy = true
-        let request = beginBlindBoxRequest()
-        BearyAPI.shared.reactBlindBoxExchange(id: exchangeId, emote: key) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.reactBusy = false
-                guard self.isCurrentBlindBoxResponse(accountId: request.accountId, generation: request.generation) else { return }
-                switch result {
-                case .success(let resp):
-                    // 第 19 轮审计 B4：回应音按结果播——服务端确认成功后播一次；
-                    // 点按时不播音，失败只播拒绝音（下方 playDenyShake）。
-                    BearySoundPlayer.play(.emoteChirp)
-                    if let emotes = resp.emotes {
-                        self.receivedEmotes = emotes
-                        self.renderEmoteChips()
-                    }
-                case .failure:
-                    self.receivedEmotes = previous
-                    self.renderEmoteChips()
-                    self.shakeEmoteChip(forKey: key)
-                    BearyToast.show(in: self.view, message: "回应失败，请重试")
-                }
-            }
+        switch emoteSubmitter.tap(key: key, displayedMine: mine) {
+        case .send(let seq, let sendKey, _):
+            sendBlindBoxEmote(exchangeId: exchangeId, key: sendKey, seq: seq, shakeChip: true)
+        case .settled, .pending, .failed, .stale:
+            break
         }
     }
 
@@ -1676,7 +1663,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     @objc private func emoteAddTapped() {
-        guard let exchangeId = exchangeId, reactBusy == false, withdrawBusy == false else { return }
+        guard let exchangeId = exchangeId, withdrawBusy == false else { return }
         if presentedViewController != nil { return }
         // 选择器本身只出熊脸（BearyEmoteKeys.bearFaces），与小熊回应墙同口径。
         let sheet = BearyEmotePickerSheetViewController()
@@ -1687,37 +1674,70 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             let reduceMotion = UIAccessibility.isReduceMotionEnabled
             self?.dismiss(animated: reduceMotion == false) {
                 guard let self = self else { return }
-                let previous = self.receivedEmotes
-                self.receivedEmotes = self.toggledEmotes(previous, key: pickedKey)
+                let mine = self.receivedEmotes.first(where: { $0.emote == pickedKey })?.mine ?? false
+                self.receivedEmotes = self.toggledEmotes(self.receivedEmotes, key: pickedKey)
                 self.renderEmoteChips()
-                self.reactBusy = true
-                let request = self.beginBlindBoxRequest()
-                // 审计登录杂项：API 回调改 [weak self]，离页后 VC 不再被留存到回包结束。
-                BearyAPI.shared.reactBlindBoxExchange(id: exchangeId, emote: pickedKey) { [weak self] result in
-                    DispatchQueue.main.async {
-                        guard let self = self else { return }
-                        self.reactBusy = false
-                        guard self.isCurrentBlindBoxResponse(accountId: request.accountId, generation: request.generation) else { return }
-                        switch result {
-                        case .success(let resp):
-                            // 第 19 轮审计 B4：回应音按结果播——服务端确认成功后播一次；
-                            // 点按时不播音，失败只播拒绝音（下方 playDenyShake）。
-                            BearySoundPlayer.play(.emoteChirp)
-                            if let emotes = resp.emotes {
-                                self.receivedEmotes = emotes
-                                self.renderEmoteChips()
-                            }
-                        case .failure:
-                            self.receivedEmotes = previous
-                            self.renderEmoteChips()
-                            self.playDenyShake(on: self.emoteScroll)
-                            BearyToast.show(in: self.view, message: "回应失败，请重试")
-                        }
-                    }
+                switch self.emoteSubmitter.tap(key: pickedKey, displayedMine: mine) {
+                case .send(let seq, let sendKey, _):
+                    self.sendBlindBoxEmote(exchangeId: exchangeId, key: sendKey, seq: seq, shakeChip: false)
+                case .settled, .pending, .failed, .stale:
+                    break
                 }
             }
         }
         present(sheet, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    /// 发一次盲盒回应切换（串行：调用前须确认无在途请求）。回包后若期间有
+    /// 更新的点按意图，按最新意图再发一次；收敛时才按服务端值覆盖并播回应音。
+    /// 切号／新请求发出后旧回包一律丢弃（代次守卫）；丢弃时提交器复位，
+    /// 防在途态残留到新交换。
+    private func sendBlindBoxEmote(exchangeId: String, key: String, seq: Int, shakeChip: Bool) {
+        let request = beginBlindBoxRequest()
+        // 审计登录杂项：API 回调改 [weak self]，离页后 VC 不再被留存到回包结束。
+        BearyAPI.shared.reactBlindBoxExchange(id: exchangeId, emote: key) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard self.isCurrentBlindBoxResponse(accountId: request.accountId, generation: request.generation) else {
+                    self.emoteSubmitter.reset(baseline: self.receivedEmotes)
+                    return
+                }
+                switch self.emoteSubmitter.response(seq: seq, key: key, result: result.map { $0.emotes }) {
+                case .send(let nextSeq, let nextKey, _):
+                    guard let exchangeId = self.exchangeId else { return }
+                    self.sendBlindBoxEmote(exchangeId: exchangeId, key: nextKey, seq: nextSeq, shakeChip: shakeChip)
+                case .settled:
+                    // 第 19 轮审计 B4：回应音按结果播——收敛后播一次；
+                    // 点按时不播音，失败只播拒绝音（下方 playDenyShake）。
+                    BearySoundPlayer.play(.emoteChirp)
+                    self.receivedEmotes = self.emoteSubmitter.baseline
+                    self.renderEmoteChips()
+                case .failed(let unauthorized):
+                    // 失败只丢弃本次请求的意图：后来的点按意图仍保留，先行态按期望重放。
+                    self.receivedEmotes = self.emoteSubmitter.rollbackList(displayed: self.receivedEmotes)
+                    self.receivedEmotes = BearyEmoteOrder.merged(previous: self.receivedEmotes, server: self.emoteSubmitter.desiredList())
+                    self.renderEmoteChips()
+                    if shakeChip {
+                        self.shakeEmoteChip(forKey: key)
+                    } else {
+                        self.playDenyShake(on: self.emoteScroll)
+                    }
+                    BearyToast.show(in: self.view, message: "回应失败，请重试")
+                    // 未登录不补发（补发必再 401）；保留的意图随下一次点按发出。
+                    if !unauthorized {
+                        switch self.emoteSubmitter.startNextSend() {
+                        case .send(let nextSeq, let nextKey, _):
+                            guard let exchangeId = self.exchangeId else { return }
+                            self.sendBlindBoxEmote(exchangeId: exchangeId, key: nextKey, seq: nextSeq, shakeChip: shakeChip)
+                        case .settled, .pending, .failed, .stale:
+                            break
+                        }
+                    }
+                case .pending, .stale:
+                    break
+                }
+            }
+        }
     }
 
     // MARK: - 举报 / 撤回

@@ -2605,6 +2605,181 @@ enum BearyEmoteOrder {
     }
 }
 
+/// 回应串行提交器（四处共用：卡片／详情／个人页／盲盒）。
+///
+/// postEmote 是“同只 POST 即切换”，不能并行发：2026-11-21 定口径要求
+/// “回应快连点与点赞同款：每次点按都落地、带代次、过期回包丢弃”。
+/// 提交器只负责“发哪只、什么时候发、回包后下一步”——调用方仍做自己的
+/// 先行渲染／动效／回滚：
+/// - 点按：按显示态取反记下意图（期望的 mine 集）；空闲且意图与确认态
+///   有差时立即发，否则只排队（不吞点按、不并行发请求）。
+/// - 回包：代次对不上在途请求即过期回包，直接丢弃；成功时按回包 emotes
+///   更新确认态，再按期望与确认态的差逐只补发；失败时只丢弃本次请求的
+///   意图（点赞 submitLike 同款：后来的点按意图仍保留，调用方按确认态
+///   回滚、先行态按期望重放、再按最新意图补发），调用方按确认态回滚并
+///   提示（失败的切换是否已在服务端生效无法判定，沿用现有单次点按的
+///   回滚口径，不静默重试本次请求）。
+/// - 对齐只在收敛（settled）时做：BearyEmoteOrder.merged 会丢掉不在服务
+///   端列表里的 key，未发送的先行意图绝不能在中途被一次对齐抹掉。
+final class BearyEmoteSerialSubmitter {
+    /// 回包／点按后的下一步。
+    enum Decision {
+        /// 应发这只切换（代次 seq，调用方发请求时原样带回）。
+        case send(seq: Int, key: String, added: Bool)
+        /// 已收敛：无在途、无与确认态有差的意图——调用方可按确认态对齐。
+        case settled
+        /// 已记下意图（或在途未完），现在无请求可发，等回包后再补发。
+        case pending
+        /// 在途请求失败——本次请求的意图已丢弃（调用方按确认态回滚并提示）；
+        /// 其他 key 上后来点按的意图仍保留，调用方重放先行态后补发。
+        case failed(unauthorized: Bool)
+        /// 过期回包（代次对不上在途请求）——直接丢弃。
+        case stale
+    }
+
+    /// 服务端确认的完整回应列表（每次成功回包更新；失败回滚的基准）。
+    private(set) var baseline: [EmoteCount]
+    /// 用户最新意图的 mine 集（只含点过的 key）。
+    private var desiredMine: [String: Bool] = [:]
+    /// 待处理意图的 key（点按顺序，去重）。
+    private var pendingKeys: [String] = []
+    /// 在途请求的 key。
+    private var inFlightKey: String?
+    /// 发请求代次（每次发 +1；reset 后旧代次失效）。
+    private var seq = 0
+
+    var isBusy: Bool { inFlightKey != nil }
+
+    init(baseline: [EmoteCount] = []) {
+        self.baseline = baseline
+    }
+
+    /// 外部数据刷新时对齐确认态（只在空闲时生效；在途时不碰确认态，
+    /// 防外部刷新冲掉在途意图；复用／换篇时走 reset）。
+    func sync(baseline: [EmoteCount]) {
+        guard inFlightKey == nil else { return }
+        self.baseline = baseline
+        desiredMine.removeAll()
+        pendingKeys.removeAll()
+    }
+
+    /// 复用／换篇／换交换时硬复位（在途请求的后续回包凭代次丢弃）。
+    func reset(baseline: [EmoteCount]) {
+        seq += 1
+        self.baseline = baseline
+        desiredMine.removeAll()
+        pendingKeys.removeAll()
+        inFlightKey = nil
+    }
+
+    /// 确认态里该 key 的 mine（不在列表里即未贴）。
+    func confirmedMine(for key: String) -> Bool {
+        baseline.first(where: { $0.emote == key })?.mine ?? false
+    }
+
+    /// 只记意图，不发请求（发送需暂缓时用，如摘下动画未播完；稍后调
+    /// startNextSend 补发）。
+    func recordTap(key: String, displayedMine: Bool) {
+        desiredMine[key] = !displayedMine
+        if !pendingKeys.contains(key) { pendingKeys.append(key) }
+    }
+
+    /// 点按：记下意图；空闲且有差时返回应发的那只，否则 pending／settled。
+    func tap(key: String, displayedMine: Bool) -> Decision {
+        recordTap(key: key, displayedMine: displayedMine)
+        return startNextSend()
+    }
+
+    /// 空闲且有与确认态有差的意图时开始下一发；否则 pending（在途）或
+    /// settled（已收敛）。
+    func startNextSend() -> Decision {
+        guard inFlightKey == nil else { return .pending }
+        prunePending()
+        guard let key = pendingKeys.first else { return .settled }
+        seq += 1
+        inFlightKey = key
+        return .send(seq: seq, key: key, added: desiredMine[key] ?? false)
+    }
+
+    /// 回包：seq／key 对不上在途请求即过期回包，直接丢弃。
+    func response(seq: Int, key: String, result: Result<[EmoteCount]?, APIError>) -> Decision {
+        guard seq == self.seq, key == inFlightKey else { return .stale }
+        inFlightKey = nil
+        switch result {
+        case .success(let emotes):
+            if let emotes {
+                baseline = emotes
+            } else {
+                // 成功但未带聚合（服务端正常必带，此处只防畸形回包）：
+                // 按 ok 推断本次切换已生效，把确认态里该 key 的 mine 置为
+                // 期望值——否则下一发会误判意图未达成、把同一只再切回去。
+                baseline = Self.withMine(baseline, key: key, mine: desiredMine[key] ?? !confirmedMine(for: key))
+            }
+            return startNextSend()
+        case .failure(let err):
+            // 只丢弃本次请求的意图：其他 key 上后来点按的意图一律保留
+            // （点赞 submitLike 同款）。同一 key 后来的点按若与本次请求同向，
+            // 与本次意图无法区分——不静默重试（失败的切换是否已在服务端生效
+            // 无法判定，重发可能把已生效的切换再切回去）；失败 toast 已提示用户重试。
+            desiredMine.removeValue(forKey: key)
+            pendingKeys.removeAll { $0 == key }
+            if case .unauthorized = err { return .failed(unauthorized: true) }
+            return .failed(unauthorized: false)
+        }
+    }
+
+    /// 期望的完整回应列表（确认态＋未落地的意图，供失败后重放先行态）。
+    /// 只含与确认态有差的意图；两次点按互相抵消的 key 不在其中。
+    func desiredList() -> [EmoteCount] {
+        var list = baseline
+        for key in pendingKeys {
+            guard let desired = desiredMine[key], desired != confirmedMine(for: key) else { continue }
+            list = Self.withMine(list, key: key, mine: desired)
+        }
+        return list
+    }
+
+    /// 按确认态回滚的显示列表（保持当前显示顺序，只取确认值）。
+    func rollbackList(displayed: [EmoteCount]) -> [EmoteCount] {
+        BearyEmoteOrder.merged(previous: displayed, server: baseline)
+    }
+
+    /// 删掉已与确认态一致的意图（两次点按互相抵消时不再补发）。
+    private func prunePending() {
+        pendingKeys.removeAll { desiredMine[$0] == confirmedMine(for: $0) }
+    }
+
+    /// 单只切换增量（与各处 emoteDelta 同款口径）：贴上 +1／mine，摘下 −1（到 0 消失）。
+    private static func withMine(_ list: [EmoteCount], key: String, mine: Bool) -> [EmoteCount] {
+        var out: [EmoteCount] = []
+        var found = false
+        for var item in list {
+            guard let itemKey = item.emote, !itemKey.isEmpty else { continue }
+            if itemKey == key {
+                found = true
+                if mine {
+                    item.count = (item.count ?? 0) + 1
+                    item.mine = true
+                    out.append(item)
+                } else {
+                    let next = (item.count ?? 0) - 1
+                    if next > 0 {
+                        item.count = next
+                        item.mine = false
+                        out.append(item)
+                    }
+                }
+            } else {
+                out.append(item)
+            }
+        }
+        if mine && !found {
+            out.append(EmoteCount(emote: key, count: 1, mine: true))
+        }
+        return out
+    }
+}
+
 struct UploadResponse: Decodable {
     var key: String?
     /// 实况视频 key（服务端 live_key；仅附带 videoDataUrl 的实况上传才有）。
