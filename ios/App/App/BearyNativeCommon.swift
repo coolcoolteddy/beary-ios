@@ -534,6 +534,26 @@ final class BearyImageRedirectGuard: NSObject, URLSessionTaskDelegate {
     }
 }
 
+/// 私密图片会话工厂（可复用第 10 项）：图片加载器（BearyImageLoader）与
+/// 实况照片加载器（BearyLivePhotoLoader）共用的会话口径，两处原来各写一份。
+/// 口径：URLSessionConfiguration.default + urlCache = nil + 重定向守门
+/// BearyImageRedirectGuard.shared；只关 URLCache，不改 ephemeral——ephemeral
+/// 会丢共享 cookie 存储，私密实况视频将 401。urlCache = nil 的原因：
+/// URLCache 按 URL 裸键、不分账号，私密字节一旦进共享缓存，换号／退出后
+/// 仍可能被直接命中而不走服务端可见性判定；两加载器自有按账号分桶的磁盘
+/// 缓存，URLCache 层纯属多余且有跨账号漏读风险。
+/// 每 host 并发数由调用方传（两处现行均为 6）。
+/// BearyAPI 的专用会话（上传、dedicated）另有 cookie／delegate 配置，不走这里。
+enum BearyPrivateImageSession {
+    static func makeSession(maxConnectionsPerHost: Int) -> URLSession {
+        let config = URLSessionConfiguration.default
+        config.httpMaximumConnectionsPerHost = maxConnectionsPerHost
+        config.urlCache = nil
+        // delegateQueue = nil 走系统串行队列，不改 dataTask 完成回调语义。
+        return URLSession(configuration: config, delegate: BearyImageRedirectGuard.shared, delegateQueue: nil)
+    }
+}
+
 /// 图片与实况两路磁盘缓存的单账号总盘点（第二批体验检查第 6 项）：
 /// 此前图片桶（BearyImageCache）与实况桶（BearyLiveCache）各有自己的
 /// 200MB 上限，单账号合计可占 400MB；现合并为单账号合计 200MB——
@@ -784,17 +804,9 @@ final class BearyImageLoader {
 
     init(session: URLSession = .shared) {
         if session === URLSession.shared {
-            let config = URLSessionConfiguration.default
-            config.httpMaximumConnectionsPerHost = Self.maxConcurrentDownloads
-            // 秒开-网络层：urlCache = nil。URLCache 按 URL 裸键、不分账号，
-            // 且退出/401 清理不覆盖它——私密图字节一旦进共享缓存，换号/
-            // 退出后仍可能被直接命中而不走服务端可见性判定；本加载器
-            // 自有按账号分桶的磁盘缓存（见 S10），URLCache 层纯属多余
-            // 且跨账号漏读风险，故显式关掉（与 BearyAPI 专用会话同口径）。
-            config.urlCache = nil
-            // D4-App：默认会话挂重定向守门（见 BearyImageRedirectGuard）；
-            // delegateQueue=nil 走系统串行队列，不改 dataTask 完成回调语义。
-            self.session = URLSession(configuration: config, delegate: BearyImageRedirectGuard.shared, delegateQueue: nil)
+            // 私密图片会话走共享工厂（见 BearyPrivateImageSession）：与实况
+            // 加载器同口径；并发上限仍是 B3-3 的 6（见 maxConcurrentDownloads）。
+            self.session = BearyPrivateImageSession.makeSession(maxConnectionsPerHost: Self.maxConcurrentDownloads)
         } else {
             self.session = session
         }
