@@ -1616,8 +1616,8 @@ final class BearyTimelineCell: UITableViewCell {
         }
         if let createdMs = entry.createdAt {
             let date = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
-            // G8：行内时间走北京时区，与服务端日界一致（静态 formatter 同口径）。
-            timeLabel.text = Self.timelineTimeFormatter.string(from: date)
+            // G8：行内时间走北京时区，与服务端日界一致（共享表同口径）。
+            timeLabel.text = BearyDateFormatters.diaryHourMinutePadded.string(from: date)
         } else {
             timeLabel.text = ""
         }
@@ -2026,13 +2026,7 @@ final class BearyTimelineCell: UITableViewCell {
     }
 
     /// 80 包 B4-1：行内时间与引用日期 formatter 静态复用（原每次 configure 新建）。
-    private static let timelineTimeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        f.dateFormat = "HH:mm"
-        return f
-    }()
+    /// 现走 BearyDateFormatters 共享表（日记类 HH:mm：App 语言，北京时区）。
 
     private func footItem(iconName: String, text: String?, accessibilityName: String, highlighted: Bool = false) -> UIView {
         let row = UIStackView()

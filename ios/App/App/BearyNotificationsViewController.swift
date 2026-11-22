@@ -4531,12 +4531,8 @@ class BearyNotificationCell: UITableViewCell {
 
     /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
     /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
-    private static let monthDayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日"
-        return formatter
-    }()
+    /// 现走 BearyDateFormatters 共享表（日记类 M月d日：App 语言，北京时区；
+    /// 原地只设 locale 不设时区、走设备时区是 drift，本处统一）。
 
     /// 通知时间口径（2026-11-11 定版带空格，取代 2026-11-05 口径）：24 小时内相对时间——不到 1 分钟“刚刚”，
     /// 不到 1 小时“X 分钟前”，不到 24 小时“X 小时前”；超过 24 小时写天数“X 天前”。
@@ -4555,7 +4551,7 @@ class BearyNotificationCell: UITableViewCell {
     static func dayText(ms: Int?) -> String {
         guard let msValue = ms else { return "" }
         let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
-        return monthDayFormatter.string(from: date)
+        return BearyDateFormatters.diaryMonthDay.string(from: date)
     }
 
     /// 互动动词（卡面最新一条与行标题共用，须对 VC 可见，故不 private）。

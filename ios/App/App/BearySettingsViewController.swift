@@ -166,20 +166,16 @@ enum BearyAccountText {
     /// isoString 三次、设置页反复调 dateString／dateTimeString。
     /// DateFormatter 非线程安全：date／dateTime 两档只在主线程用（设置页
     /// 文案）；iso 档只在导出后台链用（单次导出串行，isExporting 守卫），
-    /// 不可拿到别的队列共用。
-    private static let dateFormatter: DateFormatter = {
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "yyyy年M月d日"
-        return fmt
-    }()
+    /// 不可拿到别的队列共用。date／dateTime 两档现走 BearyDateFormatters
+    /// 共享表（账号类：App 语言，北京时区；原地只设 locale 不设时区是
+    /// drift，本处统一）；iso 档是后台链机器格式，留本地静态实例。
+    private static var dateFormatter: DateFormatter {
+        return BearyDateFormatters.accountYearMonthDay
+    }
 
-    private static let dateTimeFormatter: DateFormatter = {
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "yyyy年M月d日 HH:mm"
-        return fmt
-    }()
+    private static var dateTimeFormatter: DateFormatter {
+        return BearyDateFormatters.accountYearMonthDayHourMinute
+    }
 
     private static let isoFormatter: DateFormatter = {
         let fmt = DateFormatter()
@@ -2742,6 +2738,15 @@ final class BearySettingsViewController: UIViewController {
     /// 全移后台队列（userInitiated），主线程只做进度文案、复原与 present 分享面板；
     /// 后台失败回主线程走原失败分支（同文案 toast + 复原），成功回主线程复原后 present。
     /// 拼装函数只读传入的模型值（export*Dict 均为纯字典映射，不碰 UI），可安全离主线程。
+    /// 导出文件名时间戳：机器格式（en_US_POSIX），只在导出后台链用
+    /// （单次导出串行，isExporting 守卫），不进主线程共享表。
+    private static let exportFileNameFormatter: DateFormatter = {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy-MM-dd-HHmmss"
+        return fmt
+    }()
+
     private func buildAndShareExport(user: MeUser, pin: BearyExportPin, sessionsResp: BearyAccountSessionsResponse?, mineEntries: [Entry], mailboxEntries: [Entry], likedEntries: [Entry], sensitiveNoticeShown: Bool = false, truncated: Bool = false, truncatedScopes: [String] = [], truncatedReason: String? = nil) {
         // 主线程：进入生成阶段——直出路径沿用已置的 isExporting/禁用态，触顶确认
         // 路径在此重新置位；两种路径都在文件写完后统一复原。
@@ -2813,11 +2818,8 @@ final class BearySettingsViewController: UIViewController {
                 }
                 return
             }
-            let fmt = DateFormatter()
-            fmt.locale = Locale(identifier: "en_US_POSIX")
-            fmt.dateFormat = "yyyy-MM-dd-HHmmss"
             // 审计 P2：文件名加时间戳 + UUID 后缀，分享面板未收起时再导出不互相覆盖/删除。
-            let fileName = "teddyhn-data-" + fmt.string(from: Date()) + "-" + String(UUID().uuidString.prefix(8)) + ".json"
+            let fileName = "teddyhn-data-" + Self.exportFileNameFormatter.string(from: Date()) + "-" + String(UUID().uuidString.prefix(8)) + ".json"
             let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
             // 第 18 轮㉓：流式写 BOM＋JSON 字节，不再经 String 中转整份复制；
             // 任何一步失败都走导出失败，不产出只含 BOM 的空文件。

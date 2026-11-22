@@ -2066,37 +2066,166 @@ extension UIImageView {
     }
 }
 
+// MARK: - 日期格式化共享表（fix/date-formatter-shared）
+//
+// 全站 DateFormatter 临建收进这一张表：每种格式一个静态缓存实例，
+// 调用点只调表里的入口，不再现配现用。DateFormatter 非线程安全：
+// 表内实例只在主线程用（全部调用点都是主线程 UI 路径）；后台队列
+// 的机器格式（日志／诊断／导出 ISO／导出文件名）各留自己队列内
+// 的静态实例，不进这张表。
+//
+// 两类口径分开走：
+// - 日记类：locale 跟 App 语言（本地化 v7），时区默认 GMT+8（现行
+//   共享默认）。时区总纲要求跟日记时区，但 main 上 Entry 不带时区
+//   字段、调用点只有毫秒时间戳，逐篇时区目前接不上；cached(dateFormat:
+//   timeZone:locale:) 按（格式、locale、时区）键缓存，需要日记时区
+//   的调用点传 IANA 时区即可，不用再改表。
+// - 账号类（登录／ID 卡／设置页账户文案／Plus 到期）：locale 同样跟
+//   App 语言，时区保持 GMT+8（现行共享默认）。
+enum BearyDateFormatters {
+    /// App 语言对应的 locale：强制简体中文（BearyAppLanguage mainland，
+    /// UserDefaults 键 beary_app_language＝zh-Hans）时 zh_CN；跟随系统
+    /// 时按系统首选语言——中文 zh_CN，其余（英文及非中英）en_US
+    /// （本地化 v7：非中英地区走英文）。不依赖未合入的 #2015。
+    /// 直接读 UserDefaults，不引用 BearyAppLanguage，避免跨文件
+    /// target 边界（本文件进测试 target 清单）。
+    static var appLocale: Locale {
+        if UserDefaults.standard.string(forKey: "beary_app_language") == "zh-Hans" {
+            return Locale(identifier: "zh_CN")
+        }
+        let first = Locale.preferredLanguages.first ?? ""
+        if first.hasPrefix("zh") {
+            return Locale(identifier: "zh_CN")
+        }
+        return Locale(identifier: "en_US")
+    }
+
+    /// 北京时区（GMT+8）：日记与账号两类的现行共享默认。
+    static var beijingTimeZone: TimeZone {
+        return TimeZone(secondsFromGMT: 8 * 3600) ?? TimeZone.current
+    }
+
+    private static let lock = NSLock()
+    private static var cache: [String: DateFormatter] = [:]
+
+    /// 按（格式、locale、时区）取缓存实例；切语言后 locale 变化，
+    /// 换键重建，静态实例不至于钉死旧语言。只在主线程调
+    /// （DateFormatter 非线程安全，不跨线程共用）。
+    static func cached(dateFormat: String, timeZone: TimeZone?, locale: Locale? = nil) -> DateFormatter {
+        let resolvedLocale = locale ?? appLocale
+        let key = dateFormat + "|" + resolvedLocale.identifier + "|" + (timeZone?.identifier ?? "-")
+        lock.lock()
+        defer { lock.unlock() }
+        if let hit = cache[key] { return hit }
+        let formatter = DateFormatter()
+        formatter.locale = resolvedLocale
+        if let timeZone = timeZone { formatter.timeZone = timeZone }
+        formatter.dateFormat = dateFormat
+        cache[key] = formatter
+        return formatter
+    }
+
+    // MARK: 日记类（App 语言，北京时区）
+
+    /// 今天／昨天档：H:mm（小时不补零）。
+    static var diaryHourMinute: DateFormatter {
+        return cached(dateFormat: "H:mm", timeZone: beijingTimeZone)
+    }
+    /// 草稿箱／时间线档：HH:mm（补零，W9 定版）。
+    static var diaryHourMinutePadded: DateFormatter {
+        return cached(dateFormat: "HH:mm", timeZone: beijingTimeZone)
+    }
+    /// M月d日（星图／草稿箱／通知／回收站删除档）。
+    static var diaryMonthDay: DateFormatter {
+        return cached(dateFormat: "M月d日", timeZone: beijingTimeZone)
+    }
+    /// 搜索结果档：M 月 d 日（带空格）。
+    static var diaryMonthDaySpaced: DateFormatter {
+        return cached(dateFormat: "M 月 d 日", timeZone: beijingTimeZone)
+    }
+    /// M月d日 H:mm（盲盒卡片／引用行／回收站创建档／同步时间）。
+    static var diaryMonthDayHourMinute: DateFormatter {
+        return cached(dateFormat: "M月d日 H:mm", timeZone: beijingTimeZone)
+    }
+    /// yyyy年M月d日（跨年档）。
+    static var diaryYearMonthDay: DateFormatter {
+        return cached(dateFormat: "yyyy年M月d日", timeZone: beijingTimeZone)
+    }
+    /// 搜索结果跨年档：yyyy 年 M 月 d 日（带空格）。
+    static var diaryYearMonthDaySpaced: DateFormatter {
+        return cached(dateFormat: "yyyy 年 M 月 d 日", timeZone: beijingTimeZone)
+    }
+    /// yyyy年M月（照片墙月份节）。
+    static var diaryYearMonth: DateFormatter {
+        return cached(dateFormat: "yyyy年M月", timeZone: beijingTimeZone)
+    }
+
+    // MARK: 账号类（App 语言，北京时区）
+
+    /// yyyy年M月d日（设置页账户文案）。
+    static var accountYearMonthDay: DateFormatter {
+        return cached(dateFormat: "yyyy年M月d日", timeZone: beijingTimeZone)
+    }
+    /// yyyy年M月d日 HH:mm（设置页账户文案）。
+    static var accountYearMonthDayHourMinute: DateFormatter {
+        return cached(dateFormat: "yyyy年M月d日 HH:mm", timeZone: beijingTimeZone)
+    }
+    /// yyyy/M/d（Plus 到期：邀请页／登录页）。
+    static var accountYearSlashMonthSlashDay: DateFormatter {
+        return cached(dateFormat: "yyyy/M/d", timeZone: beijingTimeZone)
+    }
+    /// yyyy/M/d HH:mm（登录页注销冷静期到期日）。
+    static var accountYearSlashMonthSlashDayHourMinute: DateFormatter {
+        return cached(dateFormat: "yyyy/M/d HH:mm", timeZone: beijingTimeZone)
+    }
+    /// yyyy.M.d（ID 卡加入日期）：纯数字固定格式，走 en_US_POSIX。
+    static var accountYearDotMonthDotDay: DateFormatter {
+        return cached(dateFormat: "yyyy.M.d", timeZone: beijingTimeZone, locale: Locale(identifier: "en_US_POSIX"))
+    }
+
+    /// 个人页“加入”行：中文「yyyy 年 M 月加入」，英文「Joined MMMM yyyy」
+    ///（本地化 v7 已定英文文案 Joined November 2024）。
+    static func joinedDateString(from date: Date) -> String {
+        if appLocale.identifier.hasPrefix("zh") {
+            return cached(dateFormat: "yyyy 年 M 月加入", timeZone: beijingTimeZone).string(from: date)
+        }
+        return "Joined " + cached(dateFormat: "MMMM yyyy", timeZone: beijingTimeZone).string(from: date)
+    }
+
+    // MARK: 机器格式（固定 locale／时区，不跟 App 语言）
+
+    /// 盲盒当日 key：yyyy-MM-dd（Asia/Shanghai，自然日口径）。
+    static let blindBoxDayKeyFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+}
+
 // MARK: - 时间与名字
 
 enum BearyText {
     /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
     /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
-    private static let hourMinuteFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        formatter.dateFormat = "H:mm"
-        return formatter
-    }()
+    /// 现走 BearyDateFormatters 共享表（日记类：App 语言，北京时区）。
+    private static var hourMinuteFormatter: DateFormatter {
+        return BearyDateFormatters.diaryHourMinute
+    }
     /// 审计四轮 14：月日时分静态复用——聊天页行渲染与 timeString 共用，
     /// 只在主线程用（DateFormatter 非线程安全，不跨线程用）。
-    static let monthDayHourMinuteFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        formatter.dateFormat = "M月d日 H:mm"
-        return formatter
-    }()
+    /// 现走 BearyDateFormatters 共享表。
+    static var monthDayHourMinuteFormatter: DateFormatter {
+        return BearyDateFormatters.diaryMonthDayHourMinute
+    }
 
     /// 跨年绝对日期（规范 §12）：同年不带年份，跨年「yyyy年M月d日」
     /// （不带时刻，与回收站 createdLabel 同口径）；显示走北京时区。
-    static let yearMonthDayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        formatter.dateFormat = "yyyy年M月d日"
-        return formatter
-    }()
+    /// 现走 BearyDateFormatters 共享表。
+    static var yearMonthDayFormatter: DateFormatter {
+        return BearyDateFormatters.diaryYearMonthDay
+    }
 
     /// 7 天外绝对时间：同年「M月d日 H:mm」，跨年「yyyy年M月d日」；
     /// 年份判定与显示均走北京日历/时区，不跟设备时区。

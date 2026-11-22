@@ -3868,10 +3868,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "M月d日 H:mm"
-        return fmt.string(from: date)
+        // M月d日 H:mm 走 BearyText 共享 formatter（日记类：App 语言，北京时区；
+        // 原地只设 locale 不设时区、走设备时区是 drift，本处统一为北京时区）。
+        return BearyText.monthDayHourMinuteFormatter.string(from: date)
     }
 
     // MARK: - 图片预览（网页 img-preview：无标题、无 + 块，空时整条隐藏）

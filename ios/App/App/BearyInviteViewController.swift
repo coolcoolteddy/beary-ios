@@ -809,10 +809,8 @@ final class BearyInviteViewController: UIViewController {
             messageLabel.text = baseText + "，Plus 永久有效"
             return
         }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy/M/d"
-        let dateText = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
+        // Plus 到期走共享表账号类（App 语言，北京时区）。
+        let dateText = BearyDateFormatters.accountYearSlashMonthSlashDay.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
         messageLabel.text = baseText + "，Plus 至 \(dateText)"
     }
 
