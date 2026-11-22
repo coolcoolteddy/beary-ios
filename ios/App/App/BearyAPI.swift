@@ -948,6 +948,36 @@ final class BearyAPI {
         }
     }
 
+    /// /me 回包共享处理：fetchMe 与 fetchMeWithToken 共用。不经通用 mapStatus
+    /// （它会丢 401 体、不做 2xx 解码）；401 语义原样保留：带 reason 透传
+    /// .authFailure、无 reason 回 .success(nil)，且不触发 onUnauthorized。
+    private func handleMeResponse(data: Data?, status: Int, error: Error?, completion: @escaping (Result<MeUser?, APIError>) -> Void) {
+        if let e = error as NSError?, e.code == NSURLErrorCancelled { completion(.failure(.cancelled)); return }
+        if let e = error { completion(.failure(.network(e))); return }
+        if status == 401 {
+            if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data),
+               let reason = eb.reason, !reason.isEmpty {
+                completion(.failure(.authFailure(reason: reason, message: eb.message)))
+            } else {
+                completion(.success(nil))
+            }
+            return
+        }
+        guard (200...299).contains(status), let data = data else {
+            if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
+                completion(.failure(.server(code, status)))
+            } else {
+                completion(.failure(.http(status, self.errorSnippet(from: data))))
+            }
+            return
+        }
+        do {
+            completion(.success(try self.decoder.decode(MeResponse.self, from: data).user))
+        } catch {
+            completion(.failure(.decoding(error)))
+        }
+    }
+
     /// 切换预检专用 /me：与 fetchMe 同解码口径（带 reason 的 401 透传
     /// .authFailure、无 reason 的 401 回 nil），但走隔离请求、不读不写
     /// 共享 cookie、不触发 onUnauthorized。调用方（SessionManager）只
@@ -955,30 +985,7 @@ final class BearyAPI {
     func fetchMeWithToken(_ token: String, completion: @escaping (Result<MeUser?, APIError>) -> Void) {
         performIsolated("/api/account/me", method: "GET", token: token) { [weak self] data, status, error in
             guard let self = self else { return }
-            if let e = error as NSError?, e.code == NSURLErrorCancelled { completion(.failure(.cancelled)); return }
-            if let e = error { completion(.failure(.network(e))); return }
-            if status == 401 {
-                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data),
-                   let reason = eb.reason, !reason.isEmpty {
-                    completion(.failure(.authFailure(reason: reason, message: eb.message)))
-                } else {
-                    completion(.success(nil))
-                }
-                return
-            }
-            guard (200...299).contains(status), let data = data else {
-                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
-                    completion(.failure(.server(code, status)))
-                } else {
-                    completion(.failure(.http(status, self.errorSnippet(from: data))))
-                }
-                return
-            }
-            do {
-                completion(.success(try self.decoder.decode(MeResponse.self, from: data).user))
-            } catch {
-                completion(.failure(.decoding(error)))
-            }
+            self.handleMeResponse(data: data, status: status, error: error, completion: completion)
         }
     }
 
@@ -1513,30 +1520,7 @@ final class BearyAPI {
     func fetchMe(completion: @escaping (Result<MeUser?, APIError>) -> Void) {
         perform("/api/account/me", method: "GET") { [weak self] data, status, error in
             guard let self = self else { return }
-            if let e = error as NSError?, e.code == NSURLErrorCancelled { completion(.failure(.cancelled)); return }
-            if let e = error { completion(.failure(.network(e))); return }
-            if status == 401 {
-                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data),
-                   let reason = eb.reason, !reason.isEmpty {
-                    completion(.failure(.authFailure(reason: reason, message: eb.message)))
-                } else {
-                    completion(.success(nil))
-                }
-                return
-            }
-            guard (200...299).contains(status), let data = data else {
-                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
-                    completion(.failure(.server(code, status)))
-                } else {
-                    completion(.failure(.http(status, self.errorSnippet(from: data))))
-                }
-                return
-            }
-            do {
-                completion(.success(try self.decoder.decode(MeResponse.self, from: data).user))
-            } catch {
-                completion(.failure(.decoding(error)))
-            }
+            self.handleMeResponse(data: data, status: status, error: error, completion: completion)
         }
     }
 
