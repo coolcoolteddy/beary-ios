@@ -309,7 +309,8 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
     }
 
     @objc private func sheetButtonTouchDown(_ sender: UIButton) {
-        UIView.animate(withDuration: BearyMotion.micro) { sender.alpha = 0.7 }
+        // Li 2026-11-21 点选：按下 0.1s（松开仍走 micro 0.18s）；不改 micro 全局 token。
+        UIView.animate(withDuration: 0.1) { sender.alpha = 0.7 }
     }
 
     @objc private func sheetButtonTouchUp(_ sender: UIButton) {

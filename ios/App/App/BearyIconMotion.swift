@@ -101,10 +101,10 @@ enum BearyIconMotion {
     }
 
     /// 通用按压反馈（80 包 W6 全量推广）：按下缩 0.95，松手弹簧回 1。
-    /// 第十四轮审计二-2（Li 2026-11-12 定版：按审计建议来）：按下 0.1s＋回弹
-    /// 按下 0.95 缩放、单段 0.18s（micro 档，合规范 §6「按压反馈 0.18s」）；
-    /// 0.32s 两段式合成单段 0.18s——按下与回弹同为 0.18s 单段动画，视觉仍是轻缩后回弹。
-    /// 时长走 BearyMotion.micro（#1414 已合入）。
+    /// Li 2026-11-21 点选：按下 0.1s、松开 0.18s 两段（取代 2026-11-12
+    /// 第十四轮审计二-2「按下与回弹同为单段 0.18s」的定版）；按下时长
+    /// 不走 BearyMotion.micro（全局 0.18s token，动全站 micro 动效），
+    /// 此处单独传 0.1s；松开仍走 micro 0.18s。
     /// 口径（2026-11-21 改抬起确认，改 2026-11-19 震动精简）：按压视觉只留缩放，
     /// 轻震不在按下时发，改到 touchUpInside 点按确认时发一次（见 bearyAddPressFeedback）；
     /// 点赞/发布/拒绝三处专属反馈（成功/警告）另算。
@@ -116,15 +116,16 @@ enum BearyIconMotion {
     /// 成功/警告反馈按实际结果触发（publishSuccess/rejectionWarning），不受此分流影响。
     /// 审计 M1：两项动画选项补齐 .allowUserInteraction（回弹窗口内的下一按
     /// 不被吞）与 .beginFromCurrentState（新按压从当前态起播，中断旧回弹）。
-    /// 第十四轮审计二-2：按下时长由 0.1s 合并为单段 0.18s（与回弹同值同档），
-    /// 曲线仍为 easeOut、幅度仍为 0.95 缩放。
+    /// 按下曲线仍为 easeOut、幅度仍为 0.95 缩放；按下 0.1s、松开 0.18s
+    /// 两段（Li 2026-11-21 点选）。
     static func pressDownVisual(on button: UIButton) {
         let pressed = CGAffineTransform(scaleX: 0.95, y: 0.95)
         guard BearyMotion.animated(true) else {
             button.transform = pressed
             return
         }
-        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
+        // Li 2026-11-21 点选：按下 0.1s，不走 BearyMotion.micro（全局 0.18s token）。
+        UIView.animate(withDuration: 0.1, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
             button.transform = pressed
         })
     }
