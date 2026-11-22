@@ -97,7 +97,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let onOpenUserHandler: (SearchUser) -> Void
     private let onOpenEntryHandler: (String) -> Void
 
-    private var searchTimer: Timer?
+    /// 搜索防抖走共用 BearyDebouncer（0.25s；与选人搜索同款计时 plumbing）。
+    private let searchDebouncer = BearyDebouncer(interval: 0.25)
     private var lastNavigationAt: Date?
     /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
     private var headerTopInsetVisible = false
@@ -724,8 +725,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 容器 isHidden 切页不触发本回调，另由 SceneDelegate.showPage 离搜索分支收键盘。
         view.endEditing(true)
         // 网页 closeSearch 口径：清防抖计时、序号 +1 使在途请求回包失效。
-        searchTimer?.invalidate()
-        searchTimer = nil
+        searchDebouncer.cancel()
         searchSeq += 1
         // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
         // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
@@ -749,8 +749,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if showingResults {
             savedResultsOffsetY = scrollView.contentOffset.y
         }
-        searchTimer?.invalidate()
-        searchTimer = nil
+        searchDebouncer.cancel()
         searchSeq += 1
         // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
         // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
@@ -793,7 +792,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     deinit {
-        searchTimer?.invalidate()
+        searchDebouncer.cancel()
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
@@ -1220,8 +1219,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     @objc private func searchFieldChanged() {
         updateClearButtonVisibility()
-        searchTimer?.invalidate()
-        searchTimer = nil
+        searchDebouncer.cancel()
         // 敲键即失效旧请求：序号 +1 使在途搜索回包凭序号丢弃（防抖等待
         // 期内返回的旧词回包也一样，不写回列表、不写最近搜索），同时取消
         // 在途搜索任务；防抖只决定新请求何时发起，不再是旧请求失效的时机。
@@ -1232,8 +1230,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 组词，当前文本只是中间态；提交后 editingChanged 会再触发，届时
         // markedTextRange 已空、防抖计时重新开始，才真正发起搜索。
         if searchField.markedTextRange != nil { return }
-        // 网页 input 监听口径：250ms 防抖后执行。
-        searchTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
+        // 网页 input 监听口径：250ms 防抖后执行（计时走共用防抖器）。
+        searchDebouncer.schedule { [weak self] in
             guard let self = self else { return }
             // 二次守卫：计时到期时若仍在组词，跳过本次、不发中间态查询；
             // 组词提交后的 editingChanged 会重新排期。
@@ -1245,7 +1243,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     @objc private func clearTapped() {
         searchField.text = ""
         updateClearButtonVisibility()
-        searchTimer?.invalidate()
+        searchDebouncer.cancel()
         runSearch(query: "")
         searchField.becomeFirstResponder()
     }
@@ -1537,7 +1535,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        searchTimer?.invalidate()
+        searchDebouncer.cancel()
         runSearch(query: textField.text ?? "")
         textField.resignFirstResponder()
         return true
@@ -2038,7 +2036,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         guard let term = sender.title(for: .normal), !term.isEmpty else { return }
         searchField.text = term
         updateClearButtonVisibility()
-        searchTimer?.invalidate()
+        searchDebouncer.cancel()
         runSearch(query: term)
     }
 
