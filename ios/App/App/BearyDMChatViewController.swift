@@ -55,7 +55,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     var onClosed: (() -> Void)?
 
     private let tableView = UITableView(frame: .zero, style: .plain)
-    private let emptyLabel = UILabel()
+    private let emptyLabel = BearyEmptyLabel.make()
     // 空态走 BearyStateView（仅无消息时显，与 emptyLabel/loadFailedStateView 同槽位居中、互斥；
     // 会话已关闭分支仍用 emptyLabel）。
     private let emptyStateView = BearyStateView()
@@ -243,13 +243,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         messageAreaTap.cancelsTouchesInView = false
         tableView.addGestureRecognizer(messageAreaTap)
 
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        emptyLabel.adjustsFontForContentSizeCategory = true
-        emptyLabel.textColor = BearyColors.gray
-        emptyLabel.textAlignment = .center
-        emptyLabel.numberOfLines = 0
-        emptyLabel.isHidden = true
         view.addSubview(emptyLabel)
 
         firstLoadStateView.translatesAutoresizingMaskIntoConstraints = false

@@ -4492,3 +4492,27 @@ extension UITableView {
         })
     }
 }
+
+// MARK: - 空态 label（六处手写空态的共用接线）
+//
+// 五件套：14 档＋BearyColors.gray＋居中＋0 行＋默认隐藏；各页只留自己的文案与字号。
+// 14 档是默认字号（DMChat／PlusPage 现行值）；字号不同的页传 font
+// （TagPicker／LocationPicker 传 smallBodyFont 15 档、Snapshot 传 secondaryFont 13 档、
+// ProfilePhotos 传 15 档 scaled）。adjustsFontForContentSizeCategory 统一 true
+// （14 档两处与 ProfilePhotos 现行值；其余三处此前没设，字体值不变，只跟随系统
+// 字号档实时变）。PlusPage 的“暂无发放记录”是条件创建即显，传 isHidden: false
+// （并由工厂居中，原先是默认左对齐，见 PR 说明）。
+enum BearyEmptyLabel {
+    static func make(text: String? = nil, font: UIFont? = nil, isHidden: Bool = true) -> UILabel {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        label.text = text
+        label.isHidden = isHidden
+        return label
+    }
+}
