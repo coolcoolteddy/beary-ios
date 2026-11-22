@@ -1460,27 +1460,28 @@ final class BearyTimelineCell: UITableViewCell {
     /// 批 E 补漏：时间线位置行刷新，卡片 refreshLocationRow 同款口径
     /// （display 返回 nil 时整组隐藏，不留空行；公开篇作者本人也只看区级，不再附提示行；
     /// 非公开篇作者本人看精确名；他人只到区级、无区级不显示）。
+    /// 位置行刷新走 BearyBottomRow 共享 helper（第十六批第 2 条，卡片／详情同款）；
+    /// 时间线是简化变体：无 0.18s 局部过渡（applyResolvedLine 传 animateTransition: false）、
+    /// 无底行显隐联动（updateVisibility 只做本行显隐＋间距 0／14 直设）。
     private func refreshTimelineLocationRow(entry: Entry) {
-        guard let line = BearyLocationDisplay.display(entry: entry) else {
-            timelineLocationStack.isHidden = true
-            // 位置行隐藏时其后间距置 0（与标题行同款口径；不归零会多 14pt，
-            // 与 :1144 注释「栈自动塌掉不留空行」相左，以卡片 126 真机实测为准）。
-            cardStackReference?.setCustomSpacing(0, after: timelineLocationStack)
-            timelineLocationLabel.text = nil
-            return
-        }
-        timelineLocationStack.isHidden = false
-        // sweep131-a：可见时恢复 14（#1250 定版、与卡片/详情对齐；#1268
-        // 沿用合入前基线旧值 9，漏跟 #1250 的 9→14）。
-        cardStackReference?.setCustomSpacing(14, after: timelineLocationStack)
-        timelineLocationLabel.text = line
+        guard BearyBottomRow.refreshLocationRow(entry: entry, locationLabel: timelineLocationLabel, updateVisibility: { self.updateTimelineLocationVisibility() }) else { return }
         // 2026-11-14 存经纬度：有坐标时按当前语言重取地名；失败／无坐标时保留原存文本行。
         // 复用守卫以 currentEntry 为准（configure 已先赋值；复用后旧回调凭 id 不符丢弃）。
         let entryId = entry.id
         BearyLocationDisplayNames.displayLine(for: entry) { [weak self] resolved in
             guard let self = self, let resolved = resolved, self.currentEntry?.id == entryId else { return }
-            self.timelineLocationLabel.text = resolved
+            BearyBottomRow.applyResolvedLine(resolved, locationLabel: self.timelineLocationLabel, locationLineRow: self.timelineLocationStack, updateVisibility: { self.updateTimelineLocationVisibility() }, animateTransition: false)
         }
+    }
+
+    /// 时间线位置行显隐（共享 helper 的 updateVisibility 闭包）：
+    /// 有行文即显、无行文整组隐藏；隐藏时其后间距置 0、可见时恢复 14，直设无过渡。
+    /// （与标题行同款口径；不归零会多 14pt，与 :1144 注释「栈自动塌掉不留空行」相左，
+    /// 以卡片 126 真机实测为准；14 是 #1250 定版，与卡片/详情对齐。）
+    private func updateTimelineLocationVisibility() {
+        let hidden = (timelineLocationLabel.text ?? "").isEmpty
+        timelineLocationStack.isHidden = hidden
+        cardStackReference?.setCustomSpacing(hidden ? 0 : 14, after: timelineLocationStack)
     }
 
     /// 主图条定宽：广场卡 stripWidth 同口径（网页 stripW）——0.55–2.22 倍高夹取，
