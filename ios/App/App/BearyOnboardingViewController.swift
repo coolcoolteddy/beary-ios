@@ -524,8 +524,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         card.translatesAutoresizingMaskIntoConstraints = false
         card.backgroundColor = BearyColors.surface1
         card.layer.cornerRadius = 18
-        card.layer.borderWidth = 1
-        card.layer.bearyDynamicBorderColor = BearyColors.line
+        card.layer.applyLineBorder()
         let content = UIStackView()
         content.translatesAutoresizingMaskIntoConstraints = false
         content.axis = .vertical

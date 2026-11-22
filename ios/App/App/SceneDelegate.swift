@@ -756,8 +756,7 @@ final class BearyChromeViewController: UIViewController {
         let betaBadge = UIView()
         betaBadge.backgroundColor = BearyColors.surface2
         betaBadge.layer.cornerRadius = 7
-        betaBadge.layer.borderWidth = 1
-        betaBadge.layer.bearyDynamicBorderColor = BearyColors.line
+        betaBadge.layer.applyLineBorder()
         betaBadge.clipsToBounds = true
         betaBadge.isUserInteractionEnabled = false
         betaBadge.translatesAutoresizingMaskIntoConstraints = false

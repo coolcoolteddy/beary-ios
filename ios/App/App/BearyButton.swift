@@ -205,8 +205,7 @@ class BearyButton: BearyHit44Button {
             backgroundColor = BearyColors.surface2
             setTitleColor(BearyColors.ink, for: .normal)
             tintColor = BearyColors.ink
-            layer.borderWidth = 1
-            layer.bearyDynamicBorderColor = BearyColors.line
+            layer.applyLineBorder()
         case .destructiveOutline:
             backgroundColor = BearyColors.surface1
             setTitleColor(BearyColors.destructiveText, for: .normal)

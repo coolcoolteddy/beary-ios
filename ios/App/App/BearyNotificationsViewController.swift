@@ -4003,8 +4003,7 @@ class BearyNotificationCell: UITableViewCell {
         let badge = UIView()
         badge.translatesAutoresizingMaskIntoConstraints = false
         badge.backgroundColor = BearyColors.bg
-        badge.layer.borderWidth = 1
-        badge.layer.bearyDynamicBorderColor = BearyColors.line
+        badge.layer.applyLineBorder()
         badge.layer.cornerRadius = 9.5
         badge.clipsToBounds = true
         return badge

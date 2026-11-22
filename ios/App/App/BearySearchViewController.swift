@@ -3198,8 +3198,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             followButton.setTitleColor(BearyColors.ink, for: .normal)
             followButton.tintColor = BearyColors.ink
             followButton.layer.cornerRadius = BearyCorners.single
-            followButton.layer.borderWidth = 1
-            followButton.layer.bearyDynamicBorderColor = BearyColors.line
+            followButton.layer.applyLineBorder()
             followButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
             followButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
             followButton.addTarget(self, action: #selector(followButtonTapped(_:)), for: .touchUpInside)

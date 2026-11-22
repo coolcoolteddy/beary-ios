@@ -992,8 +992,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 扫查组：此前裸 13pt；钮钉高 44，走 cappedFont（上限 20，不撑破）。
         restoreButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
         restoreButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        restoreButton.layer.borderWidth = 1
-        restoreButton.layer.bearyDynamicBorderColor = BearyColors.line
+        restoreButton.layer.applyLineBorder()
         restoreButton.layer.cornerRadius = BearyCorners.single
         restoreButton.backgroundColor = BearyColors.bg
         restoreButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
@@ -1028,8 +1027,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         purgeButton.imageView?.contentMode = .scaleAspectFit
         purgeButton.tintColor = BearyColors.destructiveText
         purgeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
-        purgeButton.layer.borderWidth = 1
-        purgeButton.layer.bearyDynamicBorderColor = BearyColors.line
+        purgeButton.layer.applyLineBorder()
         purgeButton.layer.cornerRadius = BearyCorners.single
         purgeButton.backgroundColor = BearyColors.bg
         purgeButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)

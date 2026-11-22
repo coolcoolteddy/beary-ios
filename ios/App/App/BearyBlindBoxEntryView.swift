@@ -56,8 +56,7 @@ final class BearyBlindBoxEntryView: UIView {
         pendingChip.textColor = BearyColors.ink
         pendingChip.textAlignment = .center
         pendingChip.layer.cornerRadius = 8
-        pendingChip.layer.borderWidth = 1
-        pendingChip.layer.bearyDynamicBorderColor = BearyColors.line
+        pendingChip.layer.applyLineBorder()
         pendingChip.clipsToBounds = true
         pendingChip.isHidden = true
 

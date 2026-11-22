@@ -397,8 +397,7 @@ final class BearyCalendarCardView: UIView {
         super.init(frame: frame)
         // 周/月视图日历卡底色均与页面背景同色（见 render 处注释）。
         backgroundColor = BearyColors.bg
-        layer.borderWidth = 1
-        layer.bearyDynamicBorderColor = BearyColors.line
+        layer.applyLineBorder()
         layer.cornerRadius = BearyCorners.single
         layer.masksToBounds = true
 
