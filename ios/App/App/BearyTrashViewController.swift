@@ -1223,8 +1223,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// 也不弹登录，避免旧号 401 把新号界面踢向登录页（BearyAPI 侧已压住全局
     /// onUnauthorized，本地 notifyTrashLoginOnce 是另一条需同门控的路径）。
     private func isStaleTrashRequest(requestAccountId: Int?, requestAuthEpoch: Int) -> Bool {
-        return SessionManager.shared.currentUser?.id != requestAccountId
-            || BearyAPI.shared.authEpoch != requestAuthEpoch
+        return BearyAPI.isStaleAccountLoad(
+            requestAccountId: requestAccountId, requestEpoch: requestAuthEpoch,
+            currentAccountId: SessionManager.shared.currentUser?.id, currentEpoch: BearyAPI.shared.authEpoch)
     }
 
     /// 审计-时间线：回收站 401 登录门本页去重；回页时复位（见 viewWillAppear），取消登录后再次 401 仍可提醒。
