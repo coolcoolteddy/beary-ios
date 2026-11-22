@@ -142,6 +142,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var loadMoreFailedPublic = false
     private var loadMoreFailedMine = false
     private var loadMoreFailedUsers = false
+    /// 失败静默自动重试一次（2026-11-22 Li 定，盲盒 poolSilentRetried 同款）：
+    /// 每批翻页首次失败先静默重拉同一页（只重发失败组，各按本组游标），
+    /// 再失败才落失败态；每批各一次。复位见 loadMore 入口（正常批）与
+    /// retryTapped（点按重试批）；静默重拉批本身不复位。
+    private var loadMoreSilentRetried = false
     /// 尾行重试当前是翻页重试（true）还是整搜重试（false，见 showFailedStateKeepingResults）。
     private var searchFooterRetryIsLoadMore = false
     private var currentLoadMoreTasks: [URLSessionDataTask] = []
@@ -1254,6 +1259,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // sweep32-2：尾行翻页失败的重试只重跑翻页（loadMore 再试），不重跑整搜；
         // 其余失败态仍按网页口径立即重跑上一次关键词，不走防抖。
         if loadMoreFailed && searchFooterRetryIsLoadMore {
+            loadMoreSilentRetried = false
             loadMore(retryFailedOnly: true)
             return
         }
@@ -1262,6 +1268,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     @objc private func loadMoreTapped() {
         loadMore()
+    }
+
+    /// 确定性失败不静默重试（2026-11-22 Li 定）：离线（.network 底 URLError
+    /// .notConnectedToInternet）重拉也必败，不耗一次静默重试；取消已在各路
+    /// 失败分支排除在 anyFailed 之外，不会走到这里。其余失败（超时／连接
+    /// 丢失／5xx／解码等）视为可重试——静默重拉一次或有回。
+    private func isDeterministicLoadMoreError(_ error: APIError) -> Bool {
+        if case .network(let underlying) = error,
+           let urlError = underlying as? URLError,
+           urlError.code == .notConnectedToInternet {
+            return true
+        }
+        return false
     }
 
     /// sweep32-2 搜索翻页：尾行“加载更多”只在还有下一批时出现。
@@ -1293,11 +1312,18 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             loadMoreFailedPublic = false
             loadMoreFailedMine = false
             loadMoreFailedUsers = false
+            // 静默重试标记同批复位（每批各一次）；静默重拉批走
+            // retryFailedOnly，不进这里——复位会让重拉批又得一次静默
+            // 重试、无限续拉。点按重试批的复位在 retryTapped。
+            loadMoreSilentRetried = false
         }
         updateSearchFooter()
         let seq = searchSeq
         var pending = 0
         var anyFailed = false
+        /// 本批有可重试的失败（超时／5xx 等）：离线等确定性失败只记
+        /// anyFailed、不记这里，整批不触发静默重试。
+        var anyRetryableFailed = false
         var mergedChanged = false
         // 本批各组新行（原始未过滤；过滤口径统一由 appendResultRows
         // 按 renderResults 逐字执行，避免两处过滤口径漂移）。
@@ -1322,9 +1348,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             pending -= 1
             if pending > 0 { return }
             self.currentLoadMoreTasks = []
-            self.isLoadingMore = false
-            self.loadMoreFailed = anyFailed
-            self.searchFooterRetryIsLoadMore = anyFailed
             if mergedChanged {
                 // 扫 bug 第 9 项：翻页不再全量重渲（renderResults 开头
                 // clearResultRows 会拆掉全部行重建，页越多每翻越重）；
@@ -1333,6 +1356,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 // 决定尾行（取尽则隐藏、失败则亮翻页重试）。
                 self.appendResultRows(data: merged, mine: freshMineEntries + freshLocalMineEntries, publicEntries: freshPublicEntries, users: freshUsersList, query: query)
             }
+            // 失败静默自动重试一次（2026-11-22 Li 定，盲盒 poolSilentRetried 同款）：
+            // 每批首次失败先静默重拉同一页（只重发失败组，各按本组游标，游标未动），
+            // 脚部保持加载态；再失败才落失败态，点按重试仍保留。取消不计失败、
+            // 离线等确定性失败（anyRetryableFailed 为假）不触发。
+            if anyFailed, anyRetryableFailed, !self.loadMoreSilentRetried {
+                self.loadMoreSilentRetried = true
+                self.isLoadingMore = false
+                self.loadMore(retryFailedOnly: true)
+                return
+            }
+            self.isLoadingMore = false
+            self.loadMoreFailed = anyFailed
+            self.searchFooterRetryIsLoadMore = anyFailed
             self.updateSearchFooter()
         }
         // 公开组下一批：before + before_id（created_at DESC + id DESC）。
@@ -1379,6 +1415,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                             // 不计失败，尾行不亮重试。
                         } else {
                             anyFailed = true
+                            if !self.isDeterministicLoadMoreError(error) {
+                                anyRetryableFailed = true
+                            }
                             self.loadMoreFailedPublic = true
                         }
                     }
@@ -1431,6 +1470,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                         if case .cancelled = error {
                         } else {
                             anyFailed = true
+                            if !self.isDeterministicLoadMoreError(error) {
+                                anyRetryableFailed = true
+                            }
                             self.loadMoreFailedMine = true
                         }
                     }
@@ -1519,6 +1561,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                         if case .cancelled = error {
                         } else {
                             anyFailed = true
+                            if !self.isDeterministicLoadMoreError(error) {
+                                anyRetryableFailed = true
+                            }
                             self.loadMoreFailedUsers = true
                         }
                     }
