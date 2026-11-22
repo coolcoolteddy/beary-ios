@@ -8,7 +8,7 @@ final class BearyNineGridViewController: UIViewController {
 
     private let imageKeys: [String]
     private let liveVideos: [String: String]?
-    private var lastImageViewerAt: Date?
+    private var imageViewerThrottle = TapThrottle()
 
     init(imageKeys: [String], liveVideos: [String: String]?) {
         self.imageKeys = imageKeys
@@ -148,9 +148,7 @@ extension BearyNineGridViewController: UICollectionViewDataSource, UICollectionV
             return
         }
         guard presentedViewController == nil else { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
+        guard imageViewerThrottle.tryFire(interval: 0.8) else { return }
         let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: liveVideos, startIndex: indexPath.item)
         viewer.initialThumbnail = (collectionView.cellForItem(at: indexPath) as? BearyProfilePhotoCell)?.displayedThumbnail
         viewer.originFrameInWindow = collectionView.cellForItem(at: indexPath).map { $0.convert($0.bounds, to: nil) }

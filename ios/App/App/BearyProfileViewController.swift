@@ -430,7 +430,7 @@ class BearyProfileViewController: UIViewController {
     // 不改缓存、不改失败态、不弹确认框。
     private var backgroundReconcileFailToasted = false
     private var rowTapGuardUntil: Date?
-    private var lastImageViewerAt: Date?
+    private var imageViewerThrottle = TapThrottle()
     /// 清单 2 滚动藏栏（个人主页部分）：与首页／时间线同款 120pt 阈值；
     /// 本页主滚动视图即 tableView（头部为 tableHeaderView、contentInset.top = 0，
     /// offset 语义与首页一致，无需自定阈值）。
@@ -7991,9 +7991,7 @@ class BearyProfileViewController: UIViewController {
         let allPhotos = photoWallPhotosValue
         guard !allPhotos.isEmpty, startIndex >= 0, startIndex < allPhotos.count else { return }
         guard presentedViewController == nil else { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
+        guard imageViewerThrottle.tryFire(interval: 0.8) else { return }
 
         var wallLiveVideos: [String: String] = [:]
         for photo in allPhotos {
@@ -9775,9 +9773,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         // N7 主页图片灯箱：复用独立文件内的查看器，全屏模态弹出，弹出方式与时间线同款（已弹出时不叠加、减动效直显）。
         cellValue.onTapImages = { [weak self] keys, index, originFrame, thumbnail in
             guard let self = self, self.presentedViewController == nil else { return }
-            let now = Date()
-            if let last = self.lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-            self.lastImageViewerAt = now
+            guard self.imageViewerThrottle.tryFire(interval: 0.8) else { return }
 let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: entryValue.liveVideos, startIndex: index)
             viewer.initialThumbnail = thumbnail
             viewer.originFrameInWindow = originFrame
@@ -9998,9 +9994,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     @objc private func avatarViewTapped() {
         guard let image = avatarImageView.image else { return }
         guard presentedViewController == nil else { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
+        guard imageViewerThrottle.tryFire(interval: 0.8) else { return }
         let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
         viewer.originFrameInWindow = avatarImageView.convert(avatarImageView.bounds, to: nil)
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
@@ -10040,9 +10034,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     /// 的实况快照，不再看被主题盖住的旧上传图——带上所见即灯箱所见）。
     private func presentCoverLightbox() {
         guard presentedViewController == nil else { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
+        guard imageViewerThrottle.tryFire(interval: 0.8) else { return }
         if profileCoverView != nil || festivalWallpaperView != nil {
             guard let snapshot = coverSnapshot() else { return }
             let viewer = BearyEntryImageViewerViewController(images: [snapshot], startIndex: 0)
