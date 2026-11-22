@@ -25,9 +25,12 @@ final class BearyTagEntriesViewController: UIViewController {
     private var loading = false
     private var hasMore = true
     private var loadFailed = false
+    /// 首屏骨架：只覆盖首拉未回包且表里尚无内容时（广场／时间线／个人页同款
+    /// BearySkeletonCell，3 行高矮搭配）；翻页与失败态不动。
+    private var showingSkeleton = false
+    private let skeletonRowCount = 3
 
     private let tableView = UITableView(frame: .zero, style: .plain)
-    private let loadingIndicator = UIActivityIndicatorView(style: .large)
     private let stateLabel = UILabel()
 
     /// 自有顶栏（本页只进 SceneDelegate 的标签 modal nav，系统导航栏隐藏；
@@ -87,11 +90,8 @@ final class BearyTagEntriesViewController: UIViewController {
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 240
         tableView.register(BearyDiaryCardCell.self, forCellReuseIdentifier: "BearyDiaryCardCell")
+        tableView.register(BearySkeletonCell.self, forCellReuseIdentifier: BearySkeletonCell.reuseIdentifier)
         view.addSubview(tableView)
-
-        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
-        loadingIndicator.hidesWhenStopped = true
-        view.addSubview(loadingIndicator)
 
         stateLabel.translatesAutoresizingMaskIntoConstraints = false
         stateLabel.font = UIFont.systemFont(ofSize: 15)
@@ -109,9 +109,6 @@ final class BearyTagEntriesViewController: UIViewController {
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-
-            loadingIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            loadingIndicator.centerYAnchor.constraint(equalTo: view.centerYAnchor),
 
             stateLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             stateLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
@@ -176,11 +173,13 @@ final class BearyTagEntriesViewController: UIViewController {
         loading = true
         loadFailed = false
         stateLabel.isHidden = true
-        loadingIndicator.startAnimating()
+        // 首屏改骨架屏：大转圈撤掉，首拉未回包时先出 3 行骨架卡。
+        showingSkeleton = true
+        tableView.reloadData()
         BearyAPI.shared.fetchEntries(scope: .tag(tag), limit: Self.pageSize) { [weak self] result in
             guard let self = self else { return }
             self.loading = false
-            self.loadingIndicator.stopAnimating()
+            self.showingSkeleton = false
             switch result {
             case .success(let list):
                 // 整表更新前记下首个可见日记，reload 后按它恢复滚动位置。
@@ -374,10 +373,17 @@ final class BearyTagEntriesViewController: UIViewController {
 extension BearyTagEntriesViewController: UITableViewDataSource, UITableViewDelegate {
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        entries.count
+        // 首拉未回包时先出 3 行骨架卡（与真实卡片同布局）。
+        if showingSkeleton {
+            return skeletonRowCount
+        }
+        return entries.count
     }
 
     func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
+        if showingSkeleton {
+            return indexPath.row % 2 == 0 ? BearySkeletonCell.estimatedHeightWithImage : BearySkeletonCell.estimatedHeightWithoutImage
+        }
         // 固定 estimatedRowHeight 240 与真实卡高（纯文字约 150、有图 400+）差近
         // 200pt，滚动中 contentSize 不断修正会漂移；与首页同款，按模型逐行估算。
         guard indexPath.row >= 0, indexPath.row < entries.count else { return 240 }
@@ -396,6 +402,17 @@ extension BearyTagEntriesViewController: UITableViewDataSource, UITableViewDeleg
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        // 首屏骨架行（扫光在 cell 内自启动，减动效静态）。
+        // 高矮搭配：0/2 行带图 370pt、1 行无图 154pt，夹住真实卡片高度区间。
+        if showingSkeleton {
+            if let cell = tableView.dequeueReusableCell(withIdentifier: BearySkeletonCell.reuseIdentifier) as? BearySkeletonCell {
+                cell.configure(showsImage: indexPath.row % 2 == 0)
+                return cell
+            }
+            let cell = BearySkeletonCell(style: .default, reuseIdentifier: BearySkeletonCell.reuseIdentifier)
+            cell.configure(showsImage: indexPath.row % 2 == 0)
+            return cell
+        }
         guard let cell = tableView.dequeueReusableCell(withIdentifier: "BearyDiaryCardCell", for: indexPath) as? BearyDiaryCardCell else {
             return UITableViewCell()
         }
@@ -407,6 +424,8 @@ extension BearyTagEntriesViewController: UITableViewDataSource, UITableViewDeleg
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
+        // 骨架行点按不进详情（此时 entries 为空，越界会崩）。
+        guard !showingSkeleton, indexPath.row >= 0, indexPath.row < entries.count else { return }
         onOpenEntry?(entries[indexPath.row])
     }
 
