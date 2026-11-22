@@ -2465,17 +2465,29 @@ final class BearyNotificationsViewController: UIViewController {
     /// 另一条的 id 发 POST（本地＋服务端同时标错）；现按点按时快照的通知
     /// id 在回包时刻重查下标，查不到（行已不在列表）则不标不发，行已在
     /// 别处标过已读则不重复扣未读数。
+    /// 乐观标已读共享块：行置已读＋未读数 -1＋发布＋快照＋外观。
+    /// system 路另减 sysUnreadTotal（decrementSystemUnread）；合并快照通知
+    /// 与真正的 POST（markSingleRead）仍由调用方按原顺序调，行为不动。
+    private func applyOptimisticMarkRead(at index: Int, decrementSystemUnread: Bool = false) {
+        items[index].read = true
+        unreadTotal = max(0, unreadTotal - 1)
+        if decrementSystemUnread {
+            sysUnreadTotal = max(0, sysUnreadTotal - 1)
+        }
+        publishUnread(unreadTotal)
+        updateReadAllButton()
+        // 乐观标已读：行已读态与本地未读数已一致，快照同步跟进，
+        // 否则 POST 成功后轻量比对会误判为变化而多拉一次整页；失败回滚处同步改回。
+        recordFullLoadUnread()
+        applyReadAppearanceToVisibleRows()
+    }
+
     private func markFollowCardRead(notificationId: Int?) {
         guard let notificationId = notificationId,
               let index = items.firstIndex(where: { $0.id == notificationId }),
               (items[index].read ?? true) == false else { return }
         let item = items[index]
-        items[index].read = true
-        unreadTotal = max(0, unreadTotal - 1)
-        publishUnread(unreadTotal)
-        updateReadAllButton()
-        recordFullLoadUnread()
-        applyReadAppearanceToVisibleRows()
+        applyOptimisticMarkRead(at: index)
         markSingleRead(item, at: index)
         notifyMergeSnapshotChanged()
     }
@@ -2485,17 +2497,7 @@ final class BearyNotificationsViewController: UIViewController {
         // 5-11：无 id 的行不做乐观已读——标已读函数遇 nil 直接 return
         // 不发 POST、不回滚，乐观改动会与服务端未读数脱节；有 id 才乐观。
         if isUnread && item.id != nil {
-            items[index].read = true
-            unreadTotal = max(0, unreadTotal - 1)
-            if item.type == "system" {
-                sysUnreadTotal = max(0, sysUnreadTotal - 1)
-            }
-            publishUnread(unreadTotal)
-            updateReadAllButton()
-            // 本页乐观标已读：行已读态与本地未读数已一致，快照同步跟进，
-            // 否则 POST 成功后轻量比对会误判为变化而多拉一次整页；失败回滚处同步改回。
-            recordFullLoadUnread()
-            applyReadAppearanceToVisibleRows()
+            applyOptimisticMarkRead(at: index, decrementSystemUnread: item.type == "system")
             notifyMergeSnapshotChanged()
         }
         if isUnread {
