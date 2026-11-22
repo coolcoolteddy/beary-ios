@@ -140,7 +140,7 @@ enum BearyIconMotion {
             button.transform = .identity
             return
         }
-        UIView.animate(withDuration: BearyMotion.micro, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
             button.transform = .identity
         })
     }

@@ -1547,7 +1547,7 @@ final class BearyTimelineCell: UITableViewCell {
                 self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
                 self.thumbsScrollView.layoutIfNeeded()
             } else {
-                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [], animations: {
                     self.thumbsStack.spacing = self.stripPinchJoined ? 0 : 8
                     self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
                     self.thumbsScrollView.layoutIfNeeded()

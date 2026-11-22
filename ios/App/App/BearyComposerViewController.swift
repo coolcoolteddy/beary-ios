@@ -9638,7 +9638,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 //（与 BearyEdgeDismiss 的复位同口径：拖拽收尾统一弹簧 0.26s／
                 // damping 0.7；保存回调里无松手速度可传，初速度取 0；减动效瞬时归位）。
                 if self.view.transform != .identity {
-                    UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+                    UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [], animations: {
                         self.view.transform = .identity
                     })
                 }
@@ -9660,7 +9660,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.isClosing = false
                 self.updatePublishState()
                 if self.view.transform != .identity {
-                    UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+                    UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [], animations: {
                         self.view.transform = .identity
                     })
                 }

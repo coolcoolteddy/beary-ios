@@ -460,7 +460,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private func applyTransform(animated: Bool, initialSpringVelocity: CGFloat = 0, additionalAnimations: (() -> Void)? = nil) {
         let transform = CGAffineTransform(translationX: tx, y: ty).scaledBy(x: scale, y: scale)
         if BearyMotion.animated(animated) {
-            UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
                 self.imageView.transform = transform
                 self.liveOverlay?.transform = transform
                 additionalAnimations?()
@@ -1531,7 +1531,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                     let w = pageWidthValue()
                     let dir = neighborDirection
                     let hasNeighbor = neighborIndex != nil
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: springVelocity, options: .curveEaseOut, animations: {
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: springVelocity, options: .curveEaseOut, animations: {
                         self.applyTransform(animated: false)
                         if hasNeighbor {
                             self.neighborImageView.transform = CGAffineTransform(translationX: CGFloat(dir) * w, y: 0)

@@ -427,7 +427,7 @@ final class BearyDetailViewController: UIViewController {
                 self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
                 self.imagesScrollView.layoutIfNeeded()
             } else {
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+                BearyMotion.springAnimate(animations: {
                     self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
                     self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
                     self.imagesScrollView.layoutIfNeeded()

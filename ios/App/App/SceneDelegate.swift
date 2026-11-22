@@ -2053,7 +2053,7 @@ final class BearyChromeViewController: UIViewController {
                 // 扫 bug 第 3 项：松手回弹弹簧 0.5s → 0.30s（#476 已定），三档收敛 #1414 后走 BearyMotion.normal 0.26s（阻尼 0.7、初速度 0 不变），
                 // 只求回得更快、不拖沓；仍保留弹簧感，不改成生硬的线性复位。
                 // #479 合入解冲突：取主线 0.30s（#476 已定），本支其余（门限 0.25s + 形变 transform）全部保留。
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
                     resetDeform()
                 })
             }
@@ -5238,7 +5238,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
                     restore()
                 } else {
                     let drag = BearySheetDrag.offset(for: translation)
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: drag), options: [], animations: restore)
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: drag), options: [], animations: restore)
                 }
             }
         case .cancelled, .failed:
@@ -5254,7 +5254,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
+                BearyMotion.springAnimate(animations: restore)
             }
         default:
             break
@@ -5331,7 +5331,7 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
             }
             let height = container.bounds.height
             // duration 在减动效时为 0（本 animator 无单独早退分支，靠时长 0 瞬时完成），故仍用 duration 变量。
-            UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+            UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [], animations: {
                 // 临时诊断（86 包，定根因后删除）：关闭闭包入口。
                 DiagFile.mark("animator-dismiss-closure-enter")
                 fromView.transform = CGAffineTransform(translationX: 0, y: height)
