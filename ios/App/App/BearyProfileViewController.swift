@@ -6839,7 +6839,7 @@ class BearyProfileViewController: UIViewController {
                     photoOverflowFailed = false
                 }
             }
-            if freshEntries.count < tabPageLimit {
+            if !BearyPagination.hasMoreByPage(count: freshEntries.count, pageSize: tabPageLimit) {
                 setHasMore(hasMore: false)
             }
             // 本人页快照：首屏成功回包即写盘（分页追加不写——快照只存首屏窗口）。
@@ -7236,7 +7236,7 @@ class BearyProfileViewController: UIViewController {
                     // 回填分流：没变不重载，变了只更受影响行——卡片不重配、
                     // 图片不重下，已显示内容不闪（见 reconcileEntries）。
                     let outcome = strongSelf.reconcileEntries(fresh: fresh)
-                    if fresh.count < strongSelf.tabPageLimit {
+                    if !BearyPagination.hasMoreByPage(count: fresh.count, pageSize: strongSelf.tabPageLimit) {
                         strongSelf.setHasMore(hasMore: false)
                     }
                     switch outcome {

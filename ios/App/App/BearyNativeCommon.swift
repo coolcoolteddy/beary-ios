@@ -40,6 +40,14 @@ enum BearyChrome {
     }
 }
 
+/// 分页 hasMore 满页判定（可复用资源 26 遍第 11 条）：回包满一页即可能还有，
+/// 反之到底。页大小作参数（搜索 20／标签 pageSize／时间线 12／个人页 tabPageLimit）。
+enum BearyPagination {
+    static func hasMoreByPage(count: Int, pageSize: Int) -> Bool {
+        return count >= pageSize
+    }
+}
+
 /// 桌面式断点（第十二轮第五轮第 3 项，#1424 同款判定）：仅 iPad 且宽 ≥821 才为真；
 /// iPhone 横屏 932/852/844/926pt 也 ≥821，但仍走 iPhone 式全宽，不进 600 居中桌面态。
 /// 宽度阈值保留作 iPad 窄屏/分屏的补充条件。内容列各页共用此入口，不再各写宽判定。
