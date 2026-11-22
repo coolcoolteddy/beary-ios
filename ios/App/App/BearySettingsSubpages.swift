@@ -239,88 +239,20 @@ class BearySettingsSubpageViewController: UIViewController {
     /// 行间分隔线 backgroundColor 走动态 UIColor、自动跟随，不用重刷；
     /// 当前设备 curPill 绿边是固定绿，不动。
 
-    /// 分组卡（设置页 makeGroupCard 同款视觉：卡内标题、圆角 20、
-    /// 行间 1px 分隔线、行内容左右 16、上下 14）。
+    /// 分组卡走共享入口（见 BearySettingsUI）；子页此前无覆盖按钮重钉，
+    /// 传 repinCoverButtons: false 保持原样，只取卡片。
     func makeGroupCard(title: String?, rows: [UIView]) -> UIView {
-        let card = UIView()
-        card.translatesAutoresizingMaskIntoConstraints = false
-        // 卡片底色走 surface1（页上卡片层；2026-11-07 微明度定版：1px 外框已去掉）。
-        card.backgroundColor = BearyColors.surface1
-        card.layer.borderWidth = 0
-        card.layer.cornerRadius = BearyCorners.single
-        card.clipsToBounds = true
-        let stack = UIStackView()
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.spacing = 0
-        stack.alignment = .fill
-        card.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: card.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-        ])
-        if let titleText = title {
-            // 审计第二波 4a：卡内标题改走 makeSectionTitle（P1-7 同口径，
-            // 见本文件 makeSectionTitle；此前内联 12 号固定字、单行）。
-            let titleLabelValue = makeSectionTitle(titleText)
-            titleLabelValue.translatesAutoresizingMaskIntoConstraints = false
-            let titleWrap = UIView()
-            titleWrap.translatesAutoresizingMaskIntoConstraints = false
-            titleWrap.addSubview(titleLabelValue)
-            NSLayoutConstraint.activate([
-                titleLabelValue.topAnchor.constraint(equalTo: titleWrap.topAnchor, constant: 16),
-                titleLabelValue.leadingAnchor.constraint(equalTo: titleWrap.leadingAnchor, constant: 16),
-                titleLabelValue.trailingAnchor.constraint(equalTo: titleWrap.trailingAnchor, constant: -16),
-                titleLabelValue.bottomAnchor.constraint(equalTo: titleWrap.bottomAnchor, constant: -8),
-            ])
-            stack.addArrangedSubview(titleWrap)
-        }
-        for (index, row) in rows.enumerated() {
-            if index > 0 {
-                let separator = UIView()
-                separator.translatesAutoresizingMaskIntoConstraints = false
-                separator.backgroundColor = BearyColors.line
-                NSLayoutConstraint.activate([separator.heightAnchor.constraint(equalToConstant: 1)])
-                stack.addArrangedSubview(separator)
-            }
-            let wrap = UIView()
-            wrap.translatesAutoresizingMaskIntoConstraints = false
-            row.translatesAutoresizingMaskIntoConstraints = false
-            wrap.addSubview(row)
-            NSLayoutConstraint.activate([
-                row.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 14),
-                row.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 16),
-                row.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -16),
-                row.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -14),
-            ])
-            stack.addArrangedSubview(wrap)
-        }
-        return card
+        BearySettingsUI.makeGroupCard(title: title, rows: rows, repinCoverButtons: false).card
     }
 
-    /// 审计第二波 4a：按第一波 P1-7（设置页 makeLabel）同口径接动态字体——
-    /// 默认字号下与原值一致，大字号档跟随系统缩放；行尾按字符换行。
+    /// 标签走共享入口（见 BearySettingsUI）；子页无 alignment 参数，默认左对齐。
     func makeLabel(font: UIFont, color: UIColor, lines: Int = 1) -> UILabel {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: font)
-        label.adjustsFontForContentSizeCategory = true
-        label.textColor = color
-        label.numberOfLines = lines
-        label.lineBreakMode = .byCharWrapping
-        return label
+        BearySettingsUI.makeLabel(font: font, color: color, lines: lines)
     }
 
-    /// 审计第二波 4a：卡内分组标题（设置页 makeSectionTitle 同口径）——
-    /// 12px 灰、字距 1px、多行自适应（大字号下可换行，标题包容器上下
-    /// 约束已定、行高随文字自动撑开，不钉固定高度）。
+    /// 分组标题走共享入口（见 BearySettingsUI）。
     func makeSectionTitle(_ text: String) -> UILabel {
-        let label = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray)
-        label.numberOfLines = 0
-        label.attributedText = NSAttributedString(string: text, attributes: [.kern: 1, .font: label.font])
-        return label
+        BearySettingsUI.makeSectionTitle(text)
     }
 }
 
