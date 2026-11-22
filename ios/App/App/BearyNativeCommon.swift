@@ -577,6 +577,66 @@ enum BearyDiskCacheBudget {
     static let imageDirName = "BearyImageCache"
     static let liveDirName = "BearyLiveCache"
 
+    /// 磁盘缓存 TTL 24 小时：图片桶与实况桶同款口径（与服务端公开图
+    /// Cache-Control public, max-age=86400 同口径——转私密后旧缓存至多
+    /// 再活 24 小时，之后强制走网络、服务端按最新可见性判定）。
+    static let maxAge: TimeInterval = 24 * 3600
+
+    /// 两桶共用的写盘累计记账器（可复用资源第十四批第 1 项）：
+    /// 图片桶与实况桶此前各有一份按桶累计字典＋首写校准＋越限判定＋
+    /// 扫盘后写回，四处行文逐字同义、只差写回字段（图片桶／实况桶
+    /// 各自的真实总量）与执行上下文（图片同步扫盘／实况 diskQueue
+    /// 异步扫盘＋代次门）；记账这一步收进这里，两加载器各持一个实例
+    /// ——两桶同名桶的累计值各自记，不可共用一个实例。本类只护累计值
+    /// 字典本身；扫盘执行、锁范围与代次门仍归各加载器，行为一律不动
+    ///（见各加载器 enforceDiskCacheCap 注释）。
+    final class Tracker {
+
+        private let lock = NSLock()
+
+        private var totals: [String: Int64] = [:]
+
+        /// 记一笔写入，返回是否需要扫盘与此前累计值是否已知。
+        /// 本进程首写（累计值未知）时置为越限值并返回 needsScan=true，
+        /// 迫使本次即枚举校准一次；已知时累计后越限才扫盘。
+        func noteWritten(bucket: String, writtenDelta: Int64) -> (needsScan: Bool, hadKnownTotal: Bool) {
+            lock.lock()
+
+            defer { lock.unlock() }
+
+            if let known = totals[bucket] {
+                let tracked = known + writtenDelta
+
+                totals[bucket] = tracked
+
+                return (tracked > BearyDiskCacheBudget.totalCapBytes, true)
+            }
+
+            totals[bucket] = BearyDiskCacheBudget.totalCapBytes + 1
+
+            return (true, false)
+        }
+
+        /// 扫盘成功后写回本桶淘汰后的真实总量；枚举失败时不调用，
+        /// 累计值保持越限、下次写重试（两桶原口径一致）。
+        func recordSwept(bucket: String, total: Int64) {
+            lock.lock()
+
+            defer { lock.unlock() }
+
+            totals[bucket] = total
+        }
+
+        /// purgeAccount 删目录时累计值随之作废，下次写该桶时重新校准。
+        func reset(bucket: String) {
+            lock.lock()
+
+            defer { lock.unlock() }
+
+            totals[bucket] = nil
+        }
+    }
+
     private static func dirURL(name: String, bucket: String) -> URL? {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent(name).appendingPathComponent(bucket)
@@ -800,7 +860,7 @@ final class BearyImageLoader {
         diskWriteLock.unlock()
         // 审计三轮 23 项：目录已删，累计字节随之作废（下次写该桶时重新校准一次）。
         diskCacheLock.lock()
-        diskCacheTotals["\(id)"] = nil
+        diskCacheTracker.reset(bucket: "\(id)")
         diskCacheLock.unlock()
     }
 
@@ -858,8 +918,8 @@ final class BearyImageLoader {
     /// 私密图服务端给的是 private 1 年，但本加载器无法从 URL 区分
     /// 公开/私密（key 不含可见性），故统一 24 小时、向 fail-closed
     /// 取严；代价只是私密图 24 小时后多一次下载。预热记录的 TTL 复用
-    /// 此值（BearyImagePrefetcher.warmedTTL），同一文件内单源。
-    fileprivate static let diskCacheMaxAge: TimeInterval = 24 * 3600
+    /// 此值（BearyImagePrefetcher.warmedTTL），单源见 BearyDiskCacheBudget.maxAge。
+    fileprivate static let diskCacheMaxAge: TimeInterval = BearyDiskCacheBudget.maxAge
 
     /// 磁盘命中同时带回该文件的到期时间（写入时间 + 24 小时，A5）：
     /// 内存转存沿用它，不再从“现在”重起 24 小时——已缓存 23 小时的图
@@ -948,8 +1008,10 @@ final class BearyImageLoader {
     /// 出的真实值，故不会误删；低估时至多延迟到下一次越限校准即纠正。
     /// 读写线程：writeDisk 仍在 URLSession 回调（非主线程）执行，枚举与
     /// 删除也在同一把锁内、同一非主线程完成，绝不上主线程。
+    /// 记账本体已收进 BearyDiskCacheBudget.Tracker（与实况桶同款）；
+    /// 本锁仍护 deletedDiskFiles 与同步扫盘范围，不动。
     private let diskCacheLock = NSLock()
-    private var diskCacheTotals: [String: Int64] = [:]
+    private let diskCacheTracker = BearyDiskCacheBudget.Tracker()
 
     /// 审计 r1-images 第 4 项：待删磁盘文件路径集（由 diskCacheLock 守卫）。
     /// 逐出删除已改后台队列，删除完成前本集仍记该文件，diskData 视之为
@@ -1013,34 +1075,32 @@ final class BearyImageLoader {
     /// 刚写入的最新文件天然在最后、不会被误删；简单 sweep，不新增清理状态机。
     /// 审计三轮 23 项改动只在触发时机：稳态写盘不枚举，仅累计值越限（或本进程
     /// 首写校准）时枚举一次，枚举出的真实总量写回累计值。
-    private static let diskCacheCapBytes: Int64 = BearyDiskCacheBudget.totalCapBytes
     private func enforceDiskCacheCap(bucket: Int?, writtenDelta: Int64) {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+
         let bucketName = bucket.map(String.init) ?? "guest"
+
         let dir = caches.appendingPathComponent("BearyImageCache").appendingPathComponent(bucketName)
+
         diskCacheLock.lock()
+
         defer { diskCacheLock.unlock() }
-        var hadKnownTotal = false
-        if let known = diskCacheTotals[bucketName] {
-            hadKnownTotal = true
-            let tracked = known + writtenDelta
-            diskCacheTotals[bucketName] = tracked
-            guard tracked > Self.diskCacheCapBytes else { return }
-        }
-        // 越限（或本进程首写、累计值未知）才枚举：首写时枚举值已含本次写入，
-        // 不再另加 writtenDelta；越限时枚举值同样是写后真实总量。
-        // 合并口径：淘汰走两桶合计（图片桶 + 实况桶），删最旧文件直至合计回落，
-        // 写回本桶淘汰后的真实总量；枚举失败时保持越限累计值，下次写重试。
-        guard FileManager.default.fileExists(atPath: dir.path) || hadKnownTotal else {
-            diskCacheTotals[bucketName] = Self.diskCacheCapBytes + 1
-            return
-        }
+
+        // 记账与越限判定已收进 BearyDiskCacheBudget.Tracker（与实况桶同款）；
+        // 同步扫盘仍在 diskCacheLock 内、同一非主线程完成（原口径，不改异步）。
+        // 首写时枚举值已含本次写入，不再另加 writtenDelta；越限时枚举值同样
+        // 是写后真实总量。枚举失败时累计值保持越限，下次写重试。
+        let noted = diskCacheTracker.noteWritten(bucket: bucketName, writtenDelta: writtenDelta)
+
+        guard noted.needsScan else { return }
+
+        guard FileManager.default.fileExists(atPath: dir.path) || noted.hadKnownTotal else { return }
+
         let swept = BearyDiskCacheBudget.enforceCombined(bucket: bucketName)
-        guard swept.ok else {
-            if !hadKnownTotal { diskCacheTotals[bucketName] = Self.diskCacheCapBytes + 1 }
-            return
-        }
-        diskCacheTotals[bucketName] = swept.imageTotal
+
+        guard swept.ok else { return }
+
+        diskCacheTracker.recordSwept(bucket: bucketName, total: swept.imageTotal)
     }
 
     /// 内存键：账号隔离 4 号——键首含账号维度（未登录为 guest），同 URL
