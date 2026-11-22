@@ -10215,7 +10215,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     @objc private func avatarViewTapped() {
         guard let image = avatarImageView.image else { return }
         guard presentedViewController == nil else { return }
-        presentImageViewer(localImages: [image], startIndex: 0, originFrame: avatarImageView.convert(avatarImageView.bounds, to: nil))
+        presentImageViewer(startIndex: 0, localImages: [image], originFrame: avatarImageView.convert(avatarImageView.bounds, to: nil))
     }
 
     @objc private func coverViewTapped() {
@@ -10253,11 +10253,11 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         guard presentedViewController == nil else { return }
         if profileCoverView != nil || festivalWallpaperView != nil {
             guard let snapshot = coverSnapshot() else { return }
-            presentImageViewer(localImages: [snapshot], startIndex: 0, originFrame: coverClipView.convert(coverClipView.bounds, to: nil))
+            presentImageViewer(startIndex: 0, localImages: [snapshot], originFrame: coverClipView.convert(coverClipView.bounds, to: nil))
             return
         }
         guard let image = coverImageView.image else { return }
-        presentImageViewer(localImages: [image], startIndex: 0, originFrame: coverImageView.convert(coverImageView.bounds, to: nil))
+        presentImageViewer(startIndex: 0, localImages: [image], originFrame: coverImageView.convert(coverImageView.bounds, to: nil))
     }
 
     /// 动态封面实况快照：把带上当前这一帧渲成图给灯箱看；六地与节日款同走

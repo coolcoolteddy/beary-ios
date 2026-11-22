@@ -2903,7 +2903,7 @@ class BearyFeedViewController: UIViewController {
         // F1：点图进本文件内图片查看器（带起始下标），不再进详情。
         cell.onImageTapped = { [weak self] index, originFrame, thumbnail in
             let keys = entry.images ?? []
-            self?.presentImageViewer(imageKeys: keys, startIndex: index, liveVideos: entry.liveVideos, originFrame: originFrame, thumbnail: thumbnail)
+            self?.presentImageViewer(imageKeys: keys, liveVideos: entry.liveVideos, startIndex: index, thumbnail: thumbnail, originFrame: originFrame)
         }
         cell.onNineGridTapped = { [weak self] button in
             guard let strongSelf = self else { return }
