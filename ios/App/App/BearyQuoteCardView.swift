@@ -125,14 +125,8 @@ final class BearyQuoteCardView: UIView {
     }()
 
     /// D8b：引用卡左侧 15px 引号图标（网页 .quote-card .icon 口径：宽 15、灰色、上边距 2）。
-    private let quoteIconView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyFeedIconCache.image(named: "icon_quote", pointSize: 15)
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        return v
-    }()
+    private let quoteIconView: UIImageView =
+        BearyIconImageView.make(image: BearyFeedIconCache.image(named: "icon_quote", pointSize: 15))
 
     private let quoteIconWrap: UIView = {
         let v = UIView()
@@ -141,13 +135,7 @@ final class BearyQuoteCardView: UIView {
     }()
 
     /// D8d：失效态图标（gone 用 beary-quote、locked 用 beary-lock，15px 灰色；加载失败态无图标）。
-    private let goneIconView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        return v
-    }()
+    private let goneIconView: UIImageView = BearyIconImageView.make()
 
     private lazy var goneRowStack: UIStackView = {
         let st = UIStackView(arrangedSubviews: [goneIconView, goneLabel])

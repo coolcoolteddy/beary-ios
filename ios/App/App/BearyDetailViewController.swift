@@ -348,14 +348,7 @@ final class BearyDetailViewController: UIViewController {
         lb.numberOfLines = 1
         return lb
     }()
-    private let weatherImageView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        v.isHidden = true
-        return v
-    }()
+    private let weatherImageView: UIImageView = BearyIconImageView.make(isHidden: true)
     /// 天气图标的 15×15 盒：图标在盒内居中；盒与气温标签同在左下角天气行。
     /// （原在作者行 timeLabel 旁做基线对齐，2026-11-10 移入正文区下面的天气行，
     /// 盒改为固定 15 高，不再与 timeLabel 等高。）
@@ -633,14 +626,8 @@ final class BearyDetailViewController: UIViewController {
     /// 批 E 详情位置行：官方 icon_location 13 灰 + 位置文案；公开篇作者本人
     /// 也只看区级（与他人视角一致），不再另附提示行。无位置/他人视角无区级/
     /// 公开篇无区级时整组隐藏，不留空行（与卡片同口径）。
-    private let detailLocationIconView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyLocationIcon.image(pointSize: 13)
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        return v
-    }()
+    private let detailLocationIconView: UIImageView =
+        BearyIconImageView.make(image: BearyLocationIcon.image(pointSize: 13))
     private let detailLocationLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false

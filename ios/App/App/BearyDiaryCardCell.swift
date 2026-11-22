@@ -856,14 +856,8 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 批 E 卡片位置行：官方 icon_location 13 灰 + 位置文案；公开篇作者本人
     /// 也只看区级（与他人视角一致），不再另附提示行。无位置、或他人视角
     /// 下无区级、或公开篇无区级时整组隐藏，不留空行。
-    private let locationIconView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyLocationIcon.image(pointSize: 13)
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        return v
-    }()
+    private let locationIconView: UIImageView =
+        BearyIconImageView.make(image: BearyLocationIcon.image(pointSize: 13))
 
     private let locationLabel: UILabel = {
         let lb = UILabel()
@@ -994,14 +988,7 @@ class BearyDiaryCardCell: UITableViewCell {
         return lb
     }()
 
-    private let weatherImageView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        v.isHidden = true
-        return v
-    }()
+    private let weatherImageView: UIImageView = BearyIconImageView.make(isHidden: true)
 
     /// 天气图标的 15×15 盒：图标在盒内居中；盒与气温标签同在左下角天气行。
     /// （原在作者行 timeLabel 旁做基线对齐，2026-11-10 移入正文区下面的天气行，
