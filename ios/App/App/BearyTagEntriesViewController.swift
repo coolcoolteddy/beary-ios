@@ -348,7 +348,14 @@ final class BearyTagEntriesViewController: UIViewController {
         cell.onShareRequested = { [weak self] _ in
             guard let self = self else { return }
             let sheet = UIActivityViewController(activityItems: [entry.content ?? ""], applicationActivities: nil)
-            self.present(sheet, animated: true)
+            // 标签页此前未设 iPad popover 锚点，iPad 上弹分享面板会崩溃；
+            // 锚点取触发分享的 cell，不可见时退回本页中心零尺寸 rect。
+            if let index = self.entries.firstIndex(where: { $0.id == entry.id }),
+               let cellView = self.tableView.cellForRow(at: IndexPath(row: index, section: 0)) {
+                BearyShareSheet.present(sheet, from: self, sourceView: cellView, sourceRect: cellView.bounds)
+            } else {
+                BearyShareSheet.present(sheet, from: self, sourceView: self.view, sourceRect: CGRect(x: self.view.bounds.midX, y: self.view.bounds.midY, width: 0, height: 0), permittedArrowDirections: [])
+            }
         }
         cell.onActionFailed = { [weak self] in
             self?.presentActionFailedAlert()

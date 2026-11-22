@@ -8512,11 +8512,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         items.append("\(displayNameValue) · beary")
         items.append(shareURL)
         let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = sender
-            popover.sourceRect = sender.bounds
-        }
-        present(sheet, animated: BearyMotion.animated(true), completion: nil)
+        BearyShareSheet.present(sheet, from: self, sourceView: sender, sourceRect: sender.bounds)
     }
 
     /// C2：齿轮不再弹 ActionSheet，直接打开设置页（BearySettingsViewController，
@@ -9417,12 +9413,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         }
         items.append(shareURL)
         let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
-            popover.permittedArrowDirections = []
-        }
-        present(sheet, animated: BearyMotion.animated(true), completion: nil)
+        BearyShareSheet.present(sheet, from: self, sourceView: view, sourceRect: CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0), permittedArrowDirections: [])
     }
 
     private func handleCellEmoteAdd(entry: Entry) {
