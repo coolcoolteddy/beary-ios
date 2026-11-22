@@ -337,6 +337,12 @@ final class BearyStarMapTests: XCTestCase {
         XCTAssertEqual(model.stars[0].brightness, 0.70)
     }
 
+    func testWordCountStripsInlineTokens() throws {
+        let e = try entry("{\"id\":\"b_wct\",\"title\":\"标题[mood:happy]\",\"content\":\"正文[gif:abc123]四字。\",\"mood\":\"happy\",\"is_public\":true}")
+        // 标题 2 + 正文去空白 5 = 7；两处记号都不计数。
+        XCTAssertEqual(BearyStarMap.wordCount(e), 7)
+    }
+
     func testSlicingAndDefaultSlice() throws {
         let oct = try entry("{\"id\":\"b_oct\",\"content\":\"十月篇。\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 10, day: 3))}")
         let nov = try entry("{\"id\":\"b_nov\",\"content\":\"十一月篇。\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 11, day: 5))}")
@@ -1621,6 +1627,20 @@ final class BearyDiaryPinAccountTests: XCTestCase {
 // MARK: - T3：搜索摘要优先命中词附近的句子
 final class BearySearchSnippetTests: XCTestCase {
 
+    func testStripTrailingPartialCoversEveryCutPosition() {
+        // 记号 12 字里任一截断口都不留半截；完整记号与非记号前缀不动。
+        XCTAssertEqual(BearyInlineToken.stripTrailingPartial("啊[moo"), "啊")
+        XCTAssertEqual(BearyInlineToken.stripTrailingPartial("啊[m"), "啊")
+        XCTAssertEqual(BearyInlineToken.stripTrailingPartial("啊[mood:"), "啊")
+        XCTAssertEqual(BearyInlineToken.stripTrailingPartial("啊[mood:happy"), "啊")
+        XCTAssertEqual(BearyInlineToken.stripTrailingPartial("啊[gif:"), "啊")
+        XCTAssertEqual(BearyInlineToken.stripTrailingPartial("啊[gif:ab"), "啊")
+        XCTAssertEqual(BearyInlineToken.stripTrailingPartial("啊["), "啊")
+        XCTAssertEqual(BearyInlineToken.stripTrailingPartial("啊[mood:happy]"), "啊[mood:happy]")
+        XCTAssertEqual(BearyInlineToken.stripTrailingPartial("啊[go"), "啊[go")
+        XCTAssertEqual(BearyInlineToken.stripTrailingPartial("今天很开心"), "今天很开心")
+    }
+
     func testHitInLaterSentenceStartsAtThatSentence() {
         let text = "今天天气很好。我去公园散步，看到一只小猫在晒太阳。晚上回家写日记。"
         let snippet = BearySearchSnippet.snippet(for: text, query: "小猫")
@@ -1657,6 +1677,30 @@ final class BearySearchSnippetTests: XCTestCase {
     func testEmptyQueryFallsBackToPrefix() {
         let text = String(repeating: "啊", count: 150)
         XCTAssertEqual(BearySearchSnippet.snippet(for: text, query: "  ").count, 121)
+    }
+
+    func testTokenCountsAsOneVisibleChar() {
+        // [mood:happy] 占 12 字 raw、只算 1 可见字：窗口 120 可见字预算内应整段保留。
+        let text = String(repeating: "啊", count: 119) + "[mood:happy]" + "关键词" + String(repeating: "啊", count: 50)
+        let snippet = BearySearchSnippet.snippet(for: text, query: "关键词")
+        XCTAssertTrue(snippet.contains("[mood:happy]"))
+        XCTAssertTrue(snippet.contains("关键词"))
+    }
+
+    func testTokenIsNeverSplitByPrefixCut() {
+        // 旧口径按 raw 120 字切会在 "[mood:happy]" 中间断开、露出半截原文；
+        // 记号只算 1 可见字，整段保留。
+        let text = String(repeating: "啊", count: 115) + "[mood:happy]" + String(repeating: "啊", count: 30)
+        let snippet = BearySearchSnippet.snippet(for: text, query: "不存在")
+        XCTAssertEqual(snippet, String(repeating: "啊", count: 115) + "[mood:happy]" + String(repeating: "啊", count: 4) + "…")
+    }
+
+    func testCutAtTokenBoundaryDropsWholeToken() {
+        // 120 字处正好是记号起点：整段记号不取，不留半截。
+        let text = String(repeating: "啊", count: 120) + "[mood:happy]" + String(repeating: "啊", count: 20)
+        let snippet = BearySearchSnippet.snippet(for: text, query: "不存在")
+        XCTAssertEqual(snippet, String(repeating: "啊", count: 120) + "…")
+        XCTAssertFalse(snippet.contains("mood"))
     }
 
     func testMultiWordQueryFallsBackToFirstHitToken() {
