@@ -946,7 +946,7 @@ final class BearyPublishCenter {
             case "create_dup":
                 return "这篇和你写过的一篇一模一样"
             case "content too long":
-                return "正文最多 2000 字"
+                return "正文最多 5000 字"
             case "title too long":
                 return "标题最多 30 字"
             case "image unavailable":

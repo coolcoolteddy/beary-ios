@@ -69,7 +69,7 @@ struct BearyDraftImageItem: Codable {
 extension BearyDraft {
     /// 清单 19：草稿卡字数 = 编辑器圆环口径（committedTextCount），两处口径
     /// 以编辑器为准：拼音组词串（marked text）不计、首尾空白照计（不 trim；
-    /// trim 只用于发布 2000 上限判定 trimmedContent，不用于圆环）。
+    /// trim 只用于发布 5000 上限判定 trimmedContent，不用于圆环）。
     /// 落盘时 content 已是 committedContent（组词串在存时已去掉），故对现行
     /// 草稿本值即 content.count；但口径以此函数为准，不再由卡片各自对原串
     /// count——任一处改口径只改这里。注意：已存串本身不带 marked 区间信息，
