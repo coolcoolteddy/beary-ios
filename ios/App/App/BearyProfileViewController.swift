@@ -1677,7 +1677,7 @@ class BearyProfileViewController: UIViewController {
         let rowValue = UIView()
         rowValue.translatesAutoresizingMaskIntoConstraints = false
         rowValue.backgroundColor = BearyColors.surface2
-        rowValue.layer.cornerRadius = 12
+        rowValue.layer.cornerRadius = BearyCorners.single
         rowValue.clipsToBounds = true
         rowValue.isHidden = true
         let stackValue = UIStackView(arrangedSubviews: [modulesRetryLabel, modulesRetryButton])
@@ -1737,7 +1737,7 @@ class BearyProfileViewController: UIViewController {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.backgroundColor = BearyColors.surface1
-        viewValue.layer.cornerRadius = 12
+        viewValue.layer.cornerRadius = BearyCorners.single
         viewValue.layer.borderWidth = 0
         viewValue.clipsToBounds = true
         return viewValue
@@ -1788,7 +1788,7 @@ class BearyProfileViewController: UIViewController {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.backgroundColor = BearyColors.surface1
-        viewValue.layer.cornerRadius = 12
+        viewValue.layer.cornerRadius = BearyCorners.single
         viewValue.layer.borderWidth = 0
         viewValue.clipsToBounds = true
         return viewValue
@@ -4326,7 +4326,7 @@ class BearyProfileViewController: UIViewController {
             let tile = UIView()
             tile.translatesAutoresizingMaskIntoConstraints = false
             tile.backgroundColor = BearyColors.surface2
-            tile.layer.cornerRadius = 12
+            tile.layer.cornerRadius = BearyCorners.single
             tile.clipsToBounds = true
             let stack = UIStackView(arrangedSubviews: [valueLabel, BearyProfilePersonalModulesCard.statKeyLabel(text: keyText)])
             stack.translatesAutoresizingMaskIntoConstraints = false
@@ -5673,7 +5673,7 @@ class BearyProfileViewController: UIViewController {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.backgroundColor = BearyColors.surface2
-        container.layer.cornerRadius = 12
+        container.layer.cornerRadius = BearyCorners.single
         container.clipsToBounds = true
         let bar = UIView()
         bar.translatesAutoresizingMaskIntoConstraints = false
@@ -7836,7 +7836,7 @@ class BearyProfileViewController: UIViewController {
                 let photoButton = UIButton(type: .custom)
                 photoButton.translatesAutoresizingMaskIntoConstraints = false
                 photoButton.backgroundColor = BearyColors.surface2
-                photoButton.layer.cornerRadius = 12
+                photoButton.layer.cornerRadius = BearyCorners.single
                 photoButton.clipsToBounds = true
                 photoButton.imageView?.contentMode = .scaleAspectFill
                 photoButton.imageView?.clipsToBounds = true

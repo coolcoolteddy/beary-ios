@@ -3309,7 +3309,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             thumb.translatesAutoresizingMaskIntoConstraints = false
             thumb.contentMode = .scaleAspectFill
             thumb.clipsToBounds = true
-            thumb.layer.cornerRadius = 12
+            thumb.layer.cornerRadius = BearyCorners.single
             thumb.layer.masksToBounds = true
             let thumbRetryButton = UIButton(type: .custom)
             thumbRetryButton.translatesAutoresizingMaskIntoConstraints = false

@@ -154,7 +154,7 @@ final class BearyLocationPickerViewController: UIViewController {
 
         currentCard.translatesAutoresizingMaskIntoConstraints = false
         currentCard.backgroundColor = BearyColors.surface2
-        currentCard.layer.cornerRadius = 12
+        currentCard.layer.cornerRadius = BearyCorners.single
         currentCard.layer.masksToBounds = true
         let cardTap = UITapGestureRecognizer(target: self, action: #selector(cardTapped))
         cardTap.delegate = self

@@ -272,7 +272,7 @@ final class BearyProfilePhotosViewController: UIViewController {
                 let tileValue = UIView()
                 tileValue.translatesAutoresizingMaskIntoConstraints = false
                 tileValue.backgroundColor = BearyColors.surface2
-                tileValue.layer.cornerRadius = 12
+                tileValue.layer.cornerRadius = BearyCorners.single
                 tileValue.clipsToBounds = true
                 tileValue.heightAnchor.constraint(equalTo: tileValue.widthAnchor).isActive = true
                 rowStack.addArrangedSubview(tileValue)
@@ -1576,7 +1576,7 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
         imageViewValue.contentMode = .scaleAspectFill
         imageViewValue.clipsToBounds = true
-        imageViewValue.layer.cornerRadius = 12
+        imageViewValue.layer.cornerRadius = BearyCorners.single
         imageViewValue.backgroundColor = BearyColors.surface2
         return imageViewValue
     }()

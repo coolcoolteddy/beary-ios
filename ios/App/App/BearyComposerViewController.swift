@@ -3922,7 +3922,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 原图确认待确认条：插在图片条下方，默认隐藏；有未确认项时显示
         //「N 张照片待确认上传方式」，点按重开确认弹窗（见 refreshPendingUploadBar）。
         pendingUploadBar.backgroundColor = BearyColors.surface2
-        pendingUploadBar.layer.cornerRadius = 12
+        pendingUploadBar.layer.cornerRadius = BearyCorners.single
         pendingUploadBar.clipsToBounds = true
         pendingUploadBar.isHidden = true
         pendingUploadBar.addTarget(self, action: #selector(didTapPendingUploadBar), for: .touchUpInside)
@@ -4736,7 +4736,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// C11：删图撤销条（图片条下方）：文案 + 撤销钮；显隐与间距由 refreshImageUndoBar 管。
     private func buildImageUndoBar() {
         imageUndoBar.backgroundColor = BearyColors.surface2
-        imageUndoBar.layer.cornerRadius = 12
+        imageUndoBar.layer.cornerRadius = BearyCorners.single
         imageUndoBar.layer.masksToBounds = true
         imageUndoLabel.text = "图片已删除"
         imageUndoLabel.font = UIFont.systemFont(ofSize: 13)

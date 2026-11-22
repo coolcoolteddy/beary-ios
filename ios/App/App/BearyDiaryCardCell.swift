@@ -1102,7 +1102,7 @@ class BearyDiaryCardCell: UITableViewCell {
         btn.setTitle("九宫格", for: .normal)
         btn.setTitleColor(BearyColors.ink, for: .normal)
         btn.backgroundColor = BearyColors.surface2
-        btn.layer.cornerRadius = 12
+        btn.layer.cornerRadius = BearyCorners.single
         btn.clipsToBounds = true
         btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
@@ -1548,7 +1548,7 @@ class BearyDiaryCardCell: UITableViewCell {
             slot.backgroundColor = cardMode == .feed ? BearyColors.line : BearyColors.surface2
             slot.contentMode = .scaleAspectFill
             slot.clipsToBounds = true
-            slot.layer.cornerRadius = 12
+            slot.layer.cornerRadius = BearyCorners.single
             slot.isUserInteractionEnabled = true
             slot.tag = index
             slot.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:))))

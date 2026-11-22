@@ -382,7 +382,7 @@ final class BearyStorageSettingsViewController: BearySettingsSubpageViewControll
         clearButton.titleLabel?.adjustsFontForContentSizeCategory = true
         clearButton.layer.borderWidth = 1
         clearButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.destructiveText, 0.45)
-        clearButton.layer.cornerRadius = 12
+        clearButton.layer.cornerRadius = BearyCorners.single
         clearButton.addTarget(self, action: #selector(clearButtonTapped), for: .touchUpInside)
         clearButton.bearyAddPressFeedback()
         clearButton.isEnabled = !isClearing && (m?.appTotal ?? 0) > 0

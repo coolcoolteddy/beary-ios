@@ -1340,13 +1340,13 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             let frame = UIView()
             frame.translatesAutoresizingMaskIntoConstraints = false
             frame.backgroundColor = BearyColors.surface2
-            frame.layer.cornerRadius = 12
+            frame.layer.cornerRadius = BearyCorners.single
             frame.clipsToBounds = true
             let imageView = UIImageView()
             imageView.translatesAutoresizingMaskIntoConstraints = false
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = true
-            imageView.layer.cornerRadius = 12
+            imageView.layer.cornerRadius = BearyCorners.single
             frame.addSubview(imageView)
             let retry = bearyFeedRetryButton(target: self, action: #selector(receivedImageRetryTapped(_:)))
             frame.addSubview(retry)

@@ -63,7 +63,7 @@ final class BearySkeletonCardView: UIView {
         let bodyBar2 = bar(height: 12)
         // 图片块 216 高（无图款把高置 0，骨架随之矮 228pt）
         imageBlock.backgroundColor = Self.skeletonBaseColor()
-        imageBlock.layer.cornerRadius = 12
+        imageBlock.layer.cornerRadius = BearyCorners.single
         blocks = [avatar, nameBar, timeBar, titleBar, bodyBar1, bodyBar2, imageBlock]
         for b in blocks {
             b.translatesAutoresizingMaskIntoConstraints = false

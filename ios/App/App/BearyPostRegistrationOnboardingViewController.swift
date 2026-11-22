@@ -259,7 +259,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         primaryButton.backgroundColor = BearyOnboardingPalette.ink
         primaryButton.setTitleColor(.white, for: .normal)
         primaryButton.titleLabel?.font = BearyDynamicType.buttonFont()
-        primaryButton.layer.cornerRadius = 12
+        primaryButton.layer.cornerRadius = BearyCorners.single
         primaryButton.addTarget(self, action: #selector(primaryTapped), for: .touchUpInside)
         addPressFeedback(to: primaryButton)
         footerView.addSubview(primaryButton)
@@ -683,7 +683,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         button.setTitleColor(.white, for: .normal)
         button.titleLabel?.font = BearyDynamicType.buttonFont()
         button.setTitle(title, for: .normal)
-        button.layer.cornerRadius = 12
+        button.layer.cornerRadius = BearyCorners.single
         button.heightAnchor.constraint(equalToConstant: 52).isActive = true
         addPressFeedback(to: button)
         return button

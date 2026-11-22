@@ -526,7 +526,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         undoWrap.isHidden = true
         undoWrap.translatesAutoresizingMaskIntoConstraints = false
         undoBar.backgroundColor = BearyColors.surface2
-        undoBar.layer.cornerRadius = 12
+        undoBar.layer.cornerRadius = BearyCorners.single
         undoBar.layer.masksToBounds = true
         undoBar.translatesAutoresizingMaskIntoConstraints = false
         undoLabel.text = "草稿已删除"
@@ -2398,7 +2398,7 @@ private final class BearyDraftBoxDashedButton: BearyHit44Button {
     override func layoutSubviews() {
         super.layoutSubviews()
         dashedLayer.frame = bounds
-        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 12).cgPath
+        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: BearyCorners.single).cgPath
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {

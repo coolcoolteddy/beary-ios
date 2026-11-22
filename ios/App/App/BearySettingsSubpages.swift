@@ -599,7 +599,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
         logoutOthersButton.titleLabel?.adjustsFontForContentSizeCategory = true
         logoutOthersButton.layer.borderWidth = 1
         logoutOthersButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.destructiveText, 0.45)
-        logoutOthersButton.layer.cornerRadius = 12
+        logoutOthersButton.layer.cornerRadius = BearyCorners.single
         logoutOthersButton.addTarget(self, action: #selector(logoutOthersButtonTapped), for: .touchUpInside)
         logoutOthersButton.bearyAddPressFeedback()
         logoutOthersButton.addSubview(logoutOthersSpinner)

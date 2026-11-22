@@ -695,7 +695,7 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
         textView.adjustsFontForContentSizeCategory = true
         textView.textColor = BearyColors.ink
         textView.backgroundColor = BearyColors.surface2
-        textView.layer.cornerRadius = 12
+        textView.layer.cornerRadius = BearyCorners.single
         textView.layer.borderWidth = 0
         textView.textContainerInset = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
         textView.delegate = self

@@ -1854,7 +1854,7 @@ private final class BearyImageViewerZoomAnimator: NSObject, UIViewControllerAnim
         let tempView = UIImageView(image: image)
         tempView.contentMode = .scaleAspectFit
         tempView.clipsToBounds = true
-        tempView.layer.cornerRadius = 12
+        tempView.layer.cornerRadius = BearyCorners.single
         tempView.frame = container.convert(zoom.origin, from: nil)
         container.addSubview(tempView)
         // 与关场同款临界阻尼弹簧（阻尼 1.0，不超调）：临时图单调趋近
@@ -1936,7 +1936,7 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
         let clipView = UIView()
         clipView.frame = startRect
         clipView.clipsToBounds = true
-        clipView.layer.cornerRadius = 12
+        clipView.layer.cornerRadius = BearyCorners.single
         let tempImageView = UIImageView(image: start.image)
         tempImageView.frame = clipView.bounds
         tempImageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]

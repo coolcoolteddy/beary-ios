@@ -1215,7 +1215,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         // .none 后系统内边距消失，左右各补 12pt 垫片，文字不贴圆角边。
         titleField.borderStyle = .none
         titleField.backgroundColor = BearyColors.surface2
-        titleField.layer.cornerRadius = 12
+        titleField.layer.cornerRadius = BearyCorners.single
         titleField.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 12, height: 0))
         titleField.leftViewMode = .always
         titleField.rightView = UIView(frame: CGRect(x: 0, y: 0, width: 12, height: 0))
@@ -1228,7 +1228,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         // 审计视觉 04：详情框去 1pt 墨色边框，走 surface2 底＋12 圆角；聚焦走聚焦阴影（见 refreshDetailBorder）。
         detailView.backgroundColor = BearyColors.surface2
         detailView.layer.borderWidth = 0
-        detailView.layer.cornerRadius = 12
+        detailView.layer.cornerRadius = BearyCorners.single
         detailView.delegate = self
         detailPlaceholder.translatesAutoresizingMaskIntoConstraints = false
         detailPlaceholder.text = "补充说明（可选）"
