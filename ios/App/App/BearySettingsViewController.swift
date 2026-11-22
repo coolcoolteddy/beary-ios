@@ -606,32 +606,6 @@ final class BearySettingsViewController: UIViewController {
 
     // MARK: - 布局
 
-    private func makeLabel(font: UIFont, color: UIColor, lines: Int = 1, alignment: NSTextAlignment = .left) -> UILabel {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        // P1-7：设置页正文 / 辅助 / 分组标题一律走动态字体入口（默认字号下
-        // 与原值一致，大字号档跟随系统缩放）；本工厂只产出上述三类文字，
-        // 故集中在此接 scaledFont + adjusts，不逐处重复。
-        label.font = BearyDynamicType.scaledFont(for: font)
-        label.adjustsFontForContentSizeCategory = true
-        label.textColor = color
-        label.numberOfLines = lines
-        label.textAlignment = alignment
-        label.lineBreakMode = .byCharWrapping
-        return label
-    }
-
-    /// F4：组标题改走网页 group-title 口径——12px 灰、放卡内（不再是卡外 14 粗体）。
-    /// 字距 1px（网页 letter-spacing:1px）用 kern 复现。
-    private func makeSectionTitle(_ text: String) -> UILabel {
-        let label = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray)
-        // P1-7：分组标题多行自适应——大字号下可换行，卡内标题包容器
-        // 上下约束已定，行高随文字自动撑开，不钉固定高度。
-        label.numberOfLines = 0
-        label.attributedText = NSAttributedString(string: text, attributes: [.kern: 1, .font: label.font])
-        return label
-    }
-
     /// F3：行图标容器（网页 row-icon 口径：36 圆角 12、底色取页面 bg、内 18 灰 svg）。
     /// 图标一律走 BearyIconImages（官方 sprite 渲染的黑色描边 PNG + alwaysTemplate），
     /// 不用 SF Symbol；iconName 为 nil 的行（网页本身无图标的 Plus/ID 卡行）不补图标。
@@ -662,7 +636,7 @@ final class BearySettingsViewController: UIViewController {
     // detailLabel 传 nil 时不占位；showChevron 时行尾补官方右箭头（与 Plus
     // 入口行同款：spacer 吸剩余宽度、箭头顶到行尾）。
     private func makeRow(title: String, detailLabel: UILabel? = nil, iconName: String? = nil, showChevron: Bool = false) -> UIView {
-        let titleLabelValue = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        let titleLabelValue = BearySettingsUI.makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         // 视觉批：行标题归位 smallBodyFont（15 regular scaled；入口本身已
         // scaled，覆写而非经工厂再缩放，避免二次缩放）。
         titleLabelValue.font = BearyDynamicType.smallBodyFont()
@@ -697,7 +671,7 @@ final class BearySettingsViewController: UIViewController {
     /// F8/F11：网页 row-text 两行式（标题 15 + 副文 12 灰，左对齐），用于
     /// 「邮箱验证码登录」「登录设备」两行（网页 account.html 安全组同款）。
     private func makeInfoRow(title: String, detailLabel: UILabel, iconName: String) -> UIView {
-        let titleLabelValue = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        let titleLabelValue = BearySettingsUI.makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
         titleLabelValue.font = BearyDynamicType.smallBodyFont()
         titleLabelValue.text = title
@@ -743,95 +717,6 @@ final class BearySettingsViewController: UIViewController {
             inner.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
         ])
         return card
-    }
-
-    /// F4：分组卡（网页 .group 口径）：标题在卡内、卡为 card 底 + 1px 边框 +
-    /// 圆角 20、行间 1px 分隔线（分隔线通宽，行内容左右 16、上下 14）。
-    /// 返回卡片与每行的包容器（包容器用于显隐整行：隐藏行本身仍会留 28pt 内边距，
-    /// 故 Plus「内测限免」行须改藏包容器，见 fillPlusDetail）。
-    /// 一并返回行间分隔线：separators[i] 位于 wrappers[i] 与 wrappers[i + 1] 之间；
-    /// 隐藏第 i（i > 0）行时须连同其前分隔线 separators[i - 1] 一并藏，否则留 stray 线
-    /// （第十一轮审计 1：通知提示行与开发者模式行只藏 row，残留 wrap 内边距与分隔线）。
-    private func makeGroupCard(title: String?, rows: [UIView]) -> (card: UIView, wrappers: [UIView], separators: [UIView]) {
-        let card = makeCardView()
-        let stack = UIStackView()
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.spacing = 0
-        stack.alignment = .fill
-        card.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: card.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-        ])
-        if let titleText = title {
-            let titleLabelValue = makeSectionTitle(titleText)
-            titleLabelValue.translatesAutoresizingMaskIntoConstraints = false
-            let titleWrap = UIView()
-            titleWrap.translatesAutoresizingMaskIntoConstraints = false
-            titleWrap.addSubview(titleLabelValue)
-            NSLayoutConstraint.activate([
-                titleLabelValue.topAnchor.constraint(equalTo: titleWrap.topAnchor, constant: 16),
-                titleLabelValue.leadingAnchor.constraint(equalTo: titleWrap.leadingAnchor, constant: 16),
-                titleLabelValue.trailingAnchor.constraint(equalTo: titleWrap.trailingAnchor, constant: -16),
-                titleLabelValue.bottomAnchor.constraint(equalTo: titleWrap.bottomAnchor, constant: -8),
-            ])
-            stack.addArrangedSubview(titleWrap)
-        }
-        var wrappers: [UIView] = []
-        var separators: [UIView] = []
-        for (index, row) in rows.enumerated() {
-            if index > 0 {
-                let separator = UIView()
-                separator.translatesAutoresizingMaskIntoConstraints = false
-                separator.backgroundColor = BearyColors.line
-                NSLayoutConstraint.activate([
-                    separator.heightAnchor.constraint(equalToConstant: 1),
-                ])
-                stack.addArrangedSubview(separator)
-                separators.append(separator)
-            }
-            let wrap = UIView()
-            wrap.translatesAutoresizingMaskIntoConstraints = false
-            row.translatesAutoresizingMaskIntoConstraints = false
-            wrap.addSubview(row)
-            NSLayoutConstraint.activate([
-                row.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 14),
-                row.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 16),
-                row.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -16),
-                row.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -14),
-            ])
-            // 审计三轮第 4 项：可点行的覆盖按钮改钉外层 wrap 四边（含 14pt 留白），
-            // 视觉内边距仍由内容容器控制。判定标准：按钮已零边距钉满内层四边
-            // （即整行覆盖钮）；居中独立钮（退出/注销）、带 -52 避让的切号钮、
-            // 开关行（无 UIButton）一律不动——开关行仍只响应控件本身。
-            // 外层 wrap 每行只包一行，按钮原已盖满整行，扩到外框只多出留白区，
-            // 不会盖住任何同行控件；按钮目标与按压反馈跟随按钮本身。
-            let coverButtons = row.subviews.compactMap { $0 as? UIButton }.filter { button in
-                let edgeAttrs: [NSLayoutConstraint.Attribute] = [.top, .leading, .trailing, .bottom]
-                return edgeAttrs.allSatisfy { attr in
-                    row.constraints.contains { c in
-                        (c.firstItem as? UIButton) === button && c.firstAttribute == attr
-                            && (c.secondItem as? UIView) === row && c.constant == 0
-                    }
-                }
-            }
-            if coverButtons.count == 1, let button = coverButtons.first {
-                NSLayoutConstraint.deactivate(row.constraints.filter { ($0.firstItem as? UIButton) === button || ($0.secondItem as? UIButton) === button })
-                wrap.addSubview(button)
-                NSLayoutConstraint.activate([
-                    button.topAnchor.constraint(equalTo: wrap.topAnchor),
-                    button.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
-                    button.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
-                    button.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
-                ])
-            }
-            stack.addArrangedSubview(wrap)
-            wrappers.append(wrap)
-        }
-        return (card, wrappers, separators)
     }
 
     private func makeCardStack(spacing: CGFloat = 12) -> UIStackView {
@@ -883,7 +768,7 @@ final class BearySettingsViewController: UIViewController {
             stack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
         ])
         // 标题行：组标题 + 吸宽 spacer + 下箭头，可点区域盖满整行留白。
-        let titleLabelValue = makeSectionTitle(title)
+        let titleLabelValue = BearySettingsUI.makeSectionTitle(title)
         titleLabelValue.translatesAutoresizingMaskIntoConstraints = false
         let chevron = UIImageView(image: BearyIconImages.image(named: "icon_chevron_down", pointSize: 16))
         chevron.translatesAutoresizingMaskIntoConstraints = false
@@ -1198,7 +1083,7 @@ final class BearySettingsViewController: UIViewController {
         plusEntryLabel.textAlignment = .right
         // Plus 页入口行：标题“Plus 会员”＋行尾状态（未开通／到期日／
         // 永久有效），点按进 Plus 展示页；到期日只留 Plus 组，不进 ID 卡（全修 3-2）。
-        let plusEntryTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        let plusEntryTitle = BearySettingsUI.makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
         plusEntryTitle.font = BearyDynamicType.smallBodyFont()
         plusEntryTitle.text = "Plus 会员"
@@ -1214,7 +1099,7 @@ final class BearySettingsViewController: UIViewController {
         plusEntryButton.addTarget(self, action: #selector(openPlusPage), for: .touchUpInside)
         let plusEntryRow = makeSettingsTappableRow(content: plusEntryContent, button: plusEntryButton)
         // F4：标题入卡内（网页 Plus 会员 group-title 口径）；Plus 组网页行本身无图标，不补。
-        let plusGroup = makeGroupCard(title: "Plus 会员", rows: [plusEntryRow])
+        let plusGroup = BearySettingsUI.makeGroupCard(title: "Plus 会员", rows: [plusEntryRow])
         plusWrap.addArrangedSubview(plusGroup.card)
     }
 
@@ -1237,7 +1122,7 @@ final class BearySettingsViewController: UIViewController {
         let dataStatusButton = UIButton(type: .custom)
         dataStatusButton.accessibilityLabel = "数据状态"
         dataStatusButton.addTarget(self, action: #selector(openDataStatusPage), for: .touchUpInside)
-        let group = makeGroupCard(title: "存储与数据", rows: [
+        let group = BearySettingsUI.makeGroupCard(title: "存储与数据", rows: [
             makeSettingsTappableRow(content: storageContent, button: storageButton),
             makeSettingsTappableRow(content: dataUsageContent, button: dataUsageButton),
             makeSettingsTappableRow(content: dataStatusContent, button: dataStatusButton),
@@ -1273,7 +1158,7 @@ final class BearySettingsViewController: UIViewController {
         let securityButton = UIButton(type: .custom)
         securityButton.accessibilityLabel = "安全"
         securityButton.addTarget(self, action: #selector(openSecuritySettingsPage), for: .touchUpInside)
-        let group = makeGroupCard(title: "隐私与安全", rows: [
+        let group = BearySettingsUI.makeGroupCard(title: "隐私与安全", rows: [
             makeSettingsTappableRow(content: privacyContent, button: privacyButton),
             makeSettingsTappableRow(content: securityContent, button: securityButton),
         ])
@@ -1514,7 +1399,7 @@ final class BearySettingsViewController: UIViewController {
                 avatarInitialLabel?.isHidden = false
             })
         }
-        let nameLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        let nameLabel = BearySettingsUI.makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
         nameLabel.font = BearyDynamicType.smallBodyFont()
         nameLabel.text = model.title
@@ -1527,7 +1412,7 @@ final class BearySettingsViewController: UIViewController {
         if model.isExpired {
             detailText += " · 登录已过期"
         }
-        let detailLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+        let detailLabel = BearySettingsUI.makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
         detailLabel.text = detailText
         let textStack = UIStackView(arrangedSubviews: [nameLabel, detailLabel])
         textStack.axis = .vertical
@@ -1587,11 +1472,11 @@ final class BearySettingsViewController: UIViewController {
     }
 
     private func makeAddAccountRow() -> UIView {
-        let titleLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        let titleLabel = BearySettingsUI.makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
         titleLabel.font = BearyDynamicType.smallBodyFont()
         titleLabel.text = "添加账号"
-        let detailLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+        let detailLabel = BearySettingsUI.makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
         detailLabel.text = "登录另一个账号，当前账号保持登录"
         let textStack = UIStackView(arrangedSubviews: [titleLabel, detailLabel])
         textStack.axis = .vertical
@@ -1843,17 +1728,17 @@ final class BearySettingsViewController: UIViewController {
             deleteSpinner.leadingAnchor.constraint(equalTo: deleteRowButton.trailingAnchor, constant: 8),
             deleteSpinner.centerYAnchor.constraint(equalTo: deleteRowButton.centerYAnchor),
         ])
-        let group = makeGroupCard(title: "账号", rows: [accountRowsContainer, logoutRow])
+        let group = BearySettingsUI.makeGroupCard(title: "账号", rows: [accountRowsContainer, logoutRow])
         group.card.translatesAutoresizingMaskIntoConstraints = false
         accountActionWrap.addSubview(group.card)
         // C2：导出我的数据行（视觉与行为不动；exportRowButton 的
         // isEnabled 仍由导出流程控制），承载在账号披露组内，与注销同组。
-        let exportTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        let exportTitle = BearySettingsUI.makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
         exportTitle.font = BearyDynamicType.smallBodyFont()
         exportTitle.text = "导出我的数据"
         exportTitle.numberOfLines = 0 // P1-7：行正文标题多行
-        let exportDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
+        let exportDetail = BearySettingsUI.makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
         exportDetail.text = "导出 JSON，包含账户资料、日记和点赞记录"
         exportDetailLabel = exportDetail
         let exportStack = UIStackView(arrangedSubviews: [exportTitle, exportDetail])
@@ -3154,7 +3039,7 @@ final class BearySettingsViewController: UIViewController {
     private func buildGeneralSection() {
         // 主题行：点进主题子页（跟随系统开关默认开，关掉后下方出现浅色／深色选项）。
         // 图标用官方包的 theme_auto（半明半暗圆＝跟随系统）。
-        let themeDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+        let themeDetail = BearySettingsUI.makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         themeDetail.text = themeRowDetailText()
         themeDetailLabel = themeDetail
         let themeContent = makeRow(title: "主题", detailLabel: themeDetail, iconName: "icon_theme_auto", showChevron: true)
@@ -3163,7 +3048,7 @@ final class BearySettingsViewController: UIViewController {
         themeButton.addTarget(self, action: #selector(openThemeSettingsPage), for: .touchUpInside)
         // 语言行：点进语言子页（目前只有跟随系统、中国大陆两档）。
         // 图标用官方包的 language（双文种字形）；地球 icon_globe 是公开可见性图标，一图两义，2026-11-19 Li 定改掉。
-        let languageDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+        let languageDetail = BearySettingsUI.makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         languageDetail.text = languageRowDetailText()
         languageDetailLabel = languageDetail
         let languageContent = makeRow(title: "语言", detailLabel: languageDetail, iconName: "icon_language", showChevron: true)
@@ -3176,27 +3061,7 @@ final class BearySettingsViewController: UIViewController {
         tutorialButton.accessibilityLabel = "使用指南"
         tutorialButton.addTarget(self, action: #selector(tutorialButtonTapped), for: .touchUpInside)
         // 2026-10-29 音效包接入：音效开关行（默认开，关后全部音效静默；只门控音效，不动震动）。
-        let soundSwitchTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
-        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
-        soundSwitchTitle.font = BearyDynamicType.smallBodyFont()
-        soundSwitchTitle.text = "音效"
-        soundSwitchTitle.numberOfLines = 0 // P1-7：开关行正文标题多行
-        let soundSwitchDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        soundSwitchDetail.text = "点按、发布等操作的提示音"
-        let soundSwitchTextStack = UIStackView(arrangedSubviews: [soundSwitchTitle, soundSwitchDetail])
-        soundSwitchTextStack.axis = .vertical
-        soundSwitchTextStack.spacing = 2
-        soundSwitchTextStack.alignment = .fill
-        let soundSwitch = UISwitch()
-        soundSwitch.isOn = BearySoundPlayer.isEnabled
-        soundSwitch.setContentHuggingPriority(.required, for: .horizontal)
-        soundSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
-        soundSwitch.addTarget(self, action: #selector(soundSwitchValueChanged(_:)), for: .valueChanged)
-        let soundSwitchRow = UIStackView(arrangedSubviews: [soundSwitchTextStack, soundSwitch])
-        soundSwitchRow.translatesAutoresizingMaskIntoConstraints = false
-        soundSwitchRow.axis = .horizontal
-        soundSwitchRow.spacing = 12
-        soundSwitchRow.alignment = .center
+        let soundSwitchRow = BearySettingsUI.makeSwitchRow(title: "音效", detail: "点按、发布等操作的提示音", isOn: BearySoundPlayer.isEnabled, target: self, action: #selector(soundSwitchValueChanged(_:))).row
         // 通知行：点进通知子页（写日记提醒、限时日记到期、那年今日、
         // 留给明年的自己四个开关＋通知权限未开启提示）。
         // 图标用官方包的 bell（铃铛）。
@@ -3213,7 +3078,7 @@ final class BearySettingsViewController: UIViewController {
             soundSwitchRow,
             makeSettingsTappableRow(content: notificationContent, button: notificationButton),
         ]
-        let group = makeGroupCard(title: "通用", rows: rows)
+        let group = BearySettingsUI.makeGroupCard(title: "通用", rows: rows)
         generalNotifyWrap.addArrangedSubview(group.card)
     }
 
@@ -3469,7 +3334,7 @@ final class BearySettingsViewController: UIViewController {
         let wishButton = UIButton(type: .custom)
         wishButton.accessibilityLabel = "功能许愿墙"
         wishButton.addTarget(self, action: #selector(openWishWallPage), for: .touchUpInside)
-        let devDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+        let devDetail = BearySettingsUI.makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         devDetail.text = "已开启"
         let devContent = makeRow(title: "开发者模式", detailLabel: devDetail, iconName: "icon_sliders")
         let devButton = UIButton(type: .custom)
@@ -3483,7 +3348,7 @@ final class BearySettingsViewController: UIViewController {
             makeSettingsTappableRow(content: wishContent, button: wishButton),
             devRow,
         ]
-        let group = makeGroupCard(title: "反馈与建议", rows: rows)
+        let group = BearySettingsUI.makeGroupCard(title: "反馈与建议", rows: rows)
         dataFeedbackWrap.addArrangedSubview(group.card)
         // 第二批体验检查第 6 项：离线保存独立组（与反馈组并列，不混进反馈组标题下）。
         // 行尾只显本账号占用（篇数 · 字节），逐篇状态与清除在子页里。
@@ -3497,7 +3362,7 @@ final class BearySettingsViewController: UIViewController {
         offlineSaveButton.accessibilityLabel = "离线保存"
         offlineSaveButton.addTarget(self, action: #selector(openOfflineSavePage), for: .touchUpInside)
         offlineSaveButton.bearyAddPressFeedback()
-        let offlineSaveGroup = makeGroupCard(title: "离线保存", rows: [
+        let offlineSaveGroup = BearySettingsUI.makeGroupCard(title: "离线保存", rows: [
             makeSettingsTappableRow(content: offlineSaveContent, button: offlineSaveButton),
         ])
         dataFeedbackWrap.addArrangedSubview(offlineSaveGroup.card)
@@ -3513,27 +3378,7 @@ final class BearySettingsViewController: UIViewController {
         }
         // D2：诊断日志开关行（复用消息角标开关行样式：标题 + 说明 + UISwitch；
         // 放在诊断日志查看行正上方，开关关闭时 DiagFile 不再写入，默认开）。
-        let diagSwitchTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
-        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
-        diagSwitchTitle.font = BearyDynamicType.smallBodyFont()
-        diagSwitchTitle.text = "记录诊断日志"
-        diagSwitchTitle.numberOfLines = 0 // P1-7：开关行正文标题多行
-        let diagSwitchDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        diagSwitchDetail.text = "关闭后不再写入日志文件"
-        let diagSwitchTextStack = UIStackView(arrangedSubviews: [diagSwitchTitle, diagSwitchDetail])
-        diagSwitchTextStack.axis = .vertical
-        diagSwitchTextStack.spacing = 2
-        diagSwitchTextStack.alignment = .fill
-        let diagSwitch = UISwitch()
-        diagSwitch.isOn = DiagFile.isEnabled
-        diagSwitch.setContentHuggingPriority(.required, for: .horizontal)
-        diagSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
-        diagSwitch.addTarget(self, action: #selector(diagSwitchValueChanged(_:)), for: .valueChanged)
-        let diagSwitchRow = UIStackView(arrangedSubviews: [diagSwitchTextStack, diagSwitch])
-        diagSwitchRow.translatesAutoresizingMaskIntoConstraints = false
-        diagSwitchRow.axis = .horizontal
-        diagSwitchRow.spacing = 12
-        diagSwitchRow.alignment = .center
+        let diagSwitchRow = BearySettingsUI.makeSwitchRow(title: "记录诊断日志", detail: "关闭后不再写入日志文件", isOn: DiagFile.isEnabled, target: self, action: #selector(diagSwitchValueChanged(_:))).row
         // 94 包：诊断日志行（点进专门页面看全部日志，不再只给 20 行尾巴）。
         let diagContent = makeRow(title: "诊断日志", iconName: "icon_list", showChevron: true)
         let diagButton = UIButton(type: .custom)
