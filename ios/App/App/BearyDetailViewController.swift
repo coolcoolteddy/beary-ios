@@ -136,7 +136,6 @@ final class BearyDetailViewController: UIViewController {
     /// 两条 required ≥ 约束定下限，一条 999 的 = 约束把栈顶拉回头行底 + 6。
     private var bodyStackTopFromAvatarConstraint: NSLayoutConstraint?
     private var bodyStackTopFromHeaderConstraint: NSLayoutConstraint?
-    private var bodyStackTopPinConstraint: NSLayoutConstraint?
     private let separatorView = UIView()
     // 返回钮：icon_back 图标钮、顶栏高 44（全站 modal 顶栏同款，见个人页顶栏）；
     // Hit44 扩热区，视觉不动。
@@ -935,14 +934,17 @@ final class BearyDetailViewController: UIViewController {
         headerStackTopConstraint = headerTop
         // 正文栈顶（2026-11-05 日记布局统一）：取头像底与头行底较大者 + 间距。
         // 初始间距按无标题 14 取，render 时经 updateDiaryStackSpacing 按标题显隐重定；
-        // 两条 required ≥ 定下限，999 的 = 把栈顶拉回头行底 + 间距（头像更高时该条自动断开）。
+        // 两条 required ≥ 定下限，正文顶即 max(头像底，头行底) + 间距。
+        // 2026-11-22 删 999 顶钉（body.top == 头行底 + 间距）：它与贴头像底的
+        // required ≥ 联立时把头行栈拉长到头像底 40pt（999 > 头行纵向 hugging 250），
+        // 栈内作者行被拉伸、名字在拉伸后的行内居中，134 实测昵称墨顶比头像顶低约 16pt。
+        // #1868 只修了 @ 行占高、未停用此钉，故 134 仍不对；停用后头行回 intrinsic 高，
+        // 作者行顶 == 头像顶（authorRowTopConstraint），正文顶仍由两条 required ≥ 定，
+        // 头行高时取头行底 + 间距、行为不变。
         // 注意：贴头像底那条约束涉 avatarButton，须等 buildCardHeader() 里
         // avatarButton 入层级后再激活（#106 同款无共同祖先崩溃），此处只建头行侧两条。
         let bodyTopFromHeader = bodyStack.topAnchor.constraint(greaterThanOrEqualTo: headerStack.bottomAnchor, constant: 14)
         bodyStackTopFromHeaderConstraint = bodyTopFromHeader
-        let bodyTopPin = bodyStack.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 14)
-        bodyTopPin.priority = UILayoutPriority(999)
-        bodyStackTopPinConstraint = bodyTopPin
         guard let narrowLeading = narrowLeading, let narrowTrailing = narrowTrailing else { return }
         NSLayoutConstraint.activate([
             closeButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
@@ -967,7 +969,6 @@ final class BearyDetailViewController: UIViewController {
             bodyStack.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor),
             bodyStack.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
             bodyTopFromHeader,
-            bodyTopPin,
             // 2026-11-08 底线 2→1 与卡片统一（Li 定，T3-D1）：线高减 1pt，顶距 16→17 守恒，
             // 内容列总高不变；底距 -24 不动。
             separatorView.topAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: 17),
@@ -1331,7 +1332,7 @@ final class BearyDetailViewController: UIViewController {
     /// 首页 updateDiaryStackSpacing 同款对照表（详情无折叠钮，故正文后恒取 14）：
     /// @→作者 4、作者→限时 4；头行→正文栈 6（紧贴用户名下方，取规范标题→正文档 6；
     /// 原 16 有标题／14 无标题，该槽位改动须走规范同步），由正文栈顶
-    /// 三条约束定（见 buildLayout／buildCardHeader）；标题→正文 6（标题隐藏时 0）、
+    /// 两条 required ≥ 约束定（见 buildLayout／buildCardHeader）；标题→正文 6（标题隐藏时 0）、
     /// 正文→图片 14、图片→引用 12、引用→定位 12、定位→操作行 14、操作行→回应行 12；
     /// 批 E 位置行插在引用卡与操作行之间（无位置时整组隐藏、不留空行）；
     /// 头行顶：@ 行藏时作者行钉头像顶（头行顶约束保持激活、16）、@ 行显时 17。
@@ -1342,14 +1343,15 @@ final class BearyDetailViewController: UIViewController {
         // 20pt 的行钉在 40pt 头像中心上，用户名顶仍比头像顶低 (40−20)/2 ≈ 10pt，
         // 居中从来不是顶对齐。#1443 改钉顶部（作者行顶 == 头像顶），#1702 又加
         // @ 行 required 零高压零，但 133 真机实测名字顶仍比头像顶低约 13.5pt
-        // （像素实测：头像顶 130.0pt、名字墨顶 146.7pt；行顶比头像顶低约 12pt，
-        // 与 132 实测的“@ 行隐藏后仍占约 12pt 高”一致）——钉顶约束在真机上不成立，
-        // 栈内链（隐藏的 @ 行占高）把作者行往下顶，外部钉顶约束被顶掉。
-        // 999 顶钉（body.top == 头行底 + 6）也动不了名字：作者行是 .firstBaseline
-        // 栈，行内名字位置由基线定、与行高无关，停用顶钉只改正文顶、不改名字。
-        // 故结构修：@ 行藏时直接把它移出头行栈（不留隐藏占位），显时插回首位；
-        // 栈里只剩作者行时，作者行顶 == 头行顶 == 头像顶，不靠约束优先级硬顶。
-        // 行内名字墨顶比行顶低约 4pt 是字体 leading（正常），不在本次范围。
+        // （像素实测：头像顶 130.0pt、名字墨顶 146.7pt）。
+        // #1868 的结构修（@ 行藏时移出头行栈）修了 @ 行占高；但 134 实测昵称仍低约 16pt，
+        // 余量是 999 顶钉（body.top == 头行底 + 6）：它与贴头像底的 required ≥ 联立，
+        // 把头行栈拉长到头像底 40pt（999 > 头行纵向 hugging 250），栈内作者行被拉伸、
+        // 名字在拉伸后的行内居中——“基线定位置、与行高无关”只在行高 intrinsic 时成立，
+        // 行被拉长后基线本身随拉伸下移，停用顶钉才动得了名字。顶钉已于 2026-11-22 删除
+        // （见 buildLayout），此处不再留它；正文顶仍由两条 required ≥ 定在
+        // max(头像底，头行底) + 6，行为不变。
+        // 行内名字墨顶比行顶低数 pt 是字体 leading＋皇冠容器基线（与卡片同款几何），不在本次范围。
         if recipientRow.isHidden {
             if recipientRow.superview != nil {
                 headerStack.removeArrangedSubview(recipientRow)
@@ -1376,7 +1378,6 @@ final class BearyDetailViewController: UIViewController {
         let headerBodyGap: CGFloat = limitedBubbleActive ? 12 : 6
         bodyStackTopFromAvatarConstraint?.constant = headerBodyGap
         bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
-        bodyStackTopPinConstraint?.constant = headerBodyGap
         // 失败横幅→标题 12：横幅隐藏时栈自动忽略，不留空隙。
         bodyStack.setCustomSpacing(12, after: staleBannerView)
         // 标题贴着正文走：标题→正文 6（ChatGPT 间距跟进，#904 为 4）；标题隐藏时其后间距置 0，正文直接贴头行间距。
