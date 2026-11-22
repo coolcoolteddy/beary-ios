@@ -2,7 +2,7 @@ import UIKit
 
 /// 第一次点按时拍下的不可变完整发布快照（quote-freeze）：正文、心情、
 /// 天气、气温、引用、可见性、@、标题、限时、位置、clientReq 全在点按瞬间
-/// 定格；门禁与 setVisibility 在途期间用户改什么都不再进提交载荷，
+/// 定格；发布在途期间用户改什么都不再进提交载荷，
 /// 发布中心只读本快照。
 /// （从 BearyComposerViewController 移出：发布中心持有它跑后台发布，
 /// 编辑器退出后快照仍在。imageKeys/liveVideos 不在此：新模型下图片
@@ -33,8 +33,8 @@ struct PublishSnapshot {
     let locationCity: String?
     let locationStreet: String?
     let clientReq: String
-    /// 快照拍定时的发起账号：发布中心起飞前再校验一次，防门禁/
-    /// setVisibility 在途期间账号已变仍把旧篇以新账号发出。
+    /// 快照拍定时的发起账号：发布中心起飞前再校验一次，防发布在途期间
+    /// 账号已变仍把旧篇以新账号发出。
     let originAccountId: Int?
     /// P0-2：提交时记录的草稿 id 与账号：成功回包只清理这一篇。
     /// 回包时 currentDraftId 可能已切到另一篇，绝不能按现值删。
@@ -90,7 +90,9 @@ struct BearyPublishImage {
 struct BearyPublishJob {
     let snapshot: PublishSnapshot
     let images: [BearyPublishImage]
-    /// 门禁选了「一并公开」：先 setVisibility 公开原日记，再发新篇。
+    /// 门禁选了「一并公开」：POST 时带 publish_quote，服务端一次办完
+    /// （原日记翻公开＋新篇落库），要么一起成要么一起不成，不再先调
+    /// setVisibility（2026-11-22 Li 定，一并公开原子化）。
     let publishTogether: Bool
     /// 本次发布的代次（容器每次开编辑器发一个）：成功时原样回传给
     /// onPublished，供容器侧比对——旧代次的成功回调不得 dismiss／切页。
@@ -167,9 +169,9 @@ private final class BearyPublishProgress {
 /// 快照、图片清单与回包闭包，编辑器析构不影响它。单例，活得比任何
 /// 一页编辑器都久；同一 draftId 同时只跑一支任务（重入即拒收，
 /// 调用方留页并 toast「发布中…」）。
-/// 流程：起飞前账号校验 →（一并公开时）setVisibility → 本地图片并行
-/// 上传（拿到 keys，按原序组装）→ publishEntry。任一步失败即停，草稿
-/// 保留（交接前已落盘），失败文案走 pill（本任务的 pill 仍在时）或 toast
+/// 流程：起飞前账号校验 → 本地图片并行上传（拿到 keys，按原序组装）
+/// → publishEntry（一并公开时带 publish_quote，服务端一次办完）。
+/// 任一步失败即停，草稿保留（交接前已落盘），失败文案走 pill（本任务的 pill 仍在时）或 toast
 /// （pill 已被新任务接管时，带重试入口），并留失败记录＋草稿持久标记
 /// （pill 点开的状态表与草稿箱重试入口共用；原日记已公开时只重试新篇）；
 /// 成功清草稿与本地图片、pill 对勾「已发布」、走 onPublished。
@@ -209,7 +211,7 @@ final class BearyPublishCenter {
 
     /// 一键重试的结果：started = 已开始重跑；alreadyRunning = 该篇已在发布中；
     /// needsEditor = 中心无原任务／草稿已变／草稿不在，请从草稿箱打开再发布
-    /// （编辑器读草稿持久标记后仍跳过门禁与 setVisibility，只发新篇）。
+    /// （编辑器读草稿持久标记后仍只发新篇）。
     enum PublishRetryResult {
         case started
         case alreadyRunning
@@ -287,37 +289,15 @@ final class BearyPublishCenter {
             fail(runningJob, message: accountMismatchMessage(sourceAlreadyPublished: runningJob.sourcePublished))
             return true
         }
-        // 原日记已公开（编辑器持久标记／一键重试沿用）时跳过 setVisibility，
-        // 只发新篇；publishTogether 与本标记同真时以后者为准。
-        if job.publishTogether && !job.sourceAlreadyPublished {
-            runSetVisibility(runningJob)
-        } else {
-            uploadNext(runningJob)
-        }
+        // 一并公开原子化（2026-11-22 Li 定）：不再先调 setVisibility 公开
+        // 原日记，POST 时带 publish_quote 由服务端一次办完；原日记已公开
+        // 的重试（sourceAlreadyPublished）同样只发新篇，服务端翻公开是
+        // 幂等的（已公开不动），无需区分。
+        uploadNext(runningJob)
         return true
     }
 
     // MARK: - 步骤
-
-    private func runSetVisibility(_ runningJob: RunningJob) {
-        guard let sourceId = runningJob.job.snapshot.quoteId, !sourceId.isEmpty else {
-            uploadNext(runningJob)
-            return
-        }
-        BearyAPI.shared.setVisibility(id: sourceId, published: 1) { [weak self, weak runningJob] result in
-            DispatchQueue.main.async {
-                guard let self = self, let runningJob = runningJob, !runningJob.finished else { return }
-                switch result {
-                case .success:
-                    runningJob.sourcePublished = true
-                    self.uploadNext(runningJob)
-                case .failure:
-                    // 原日记公开失败：原日记未动、新篇未发，草稿保留。
-                    self.fail(runningJob, message: "原日记公开失败，请重试")
-                }
-            }
-        }
-    }
 
     /// 图片上传入口（主线程）：已有 key 的图直接记结果、不再上传；
     /// 其余图最多 3 路并行上传（见 pumpUploads），keys 按原序组装后转 POST。
@@ -558,6 +538,7 @@ final class BearyPublishCenter {
             liveVideos: runningJob.liveVideos.isEmpty ? nil : runningJob.liveVideos,
             visibility: snapshot.visibility,
             tags: snapshot.tags,
+            publishQuote: job.publishTogether,
             uploadProgress: progressHandler
         ) { [weak self, weak runningJob] result in
             DispatchQueue.main.async {
@@ -685,7 +666,7 @@ final class BearyPublishCenter {
     // MARK: - 失败可见与一键重试
 
     /// 一键重试：用失败时保留的原任务重跑；原日记已公开时只重试新篇
-    /// （跳过 setVisibility，见 start() 内守卫），其余原样重跑
+    /// （服务端翻公开是幂等的，已公开不动），其余原样重跑
     /// （图片重传、同一 clientReq 幂等）。调用方在主线程调（后台线程调时自动 hop，
     /// 与 start() 同款）。
     @discardableResult
@@ -699,8 +680,7 @@ final class BearyPublishCenter {
         let key = failed.job.snapshot.draftId ?? failed.job.snapshot.clientReq
         guard running[key] == nil else { return .alreadyRunning }
         // 草稿指纹：失败后被改过（正文／标题／图片等任一动过）即不原样重跑，
-        // 改走编辑器——编辑器读草稿持久标记后仍跳过门禁与 setVisibility，
-        // 只发新篇。草稿已不在同样走编辑器。
+        // 改走编辑器——编辑器读草稿持久标记后仍只发新篇。草稿已不在同样走编辑器。
         if let draftIdValue = failed.job.snapshot.draftId {
             guard let draft = BearyDraftStore.loadAll(forAccount: failed.job.snapshot.accountId)
                     .first(where: { $0.draftId == draftIdValue }),
@@ -966,8 +946,8 @@ final class BearyPublishCenter {
         init(job: BearyPublishJob) {
             self.job = job
             self.key = job.snapshot.draftId ?? job.snapshot.clientReq
-            // 原日记已公开可能是本次 setVisibility 的结果，也可能是重试带入的
-            // 已有态（编辑器持久标记／一键重试沿用），后者起跑即为 true。
+            // 原日记已公开只来自旧版两步流程留下的记录（编辑器持久标记／
+            // 一键重试沿用），新版发布不再单独设公开；后者起跑即为 true。
             self.sourcePublished = job.sourceAlreadyPublished
         }
     }
