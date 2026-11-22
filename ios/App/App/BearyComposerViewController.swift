@@ -413,11 +413,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// 天气顺序：与 BearyText.weatherNames 字面顺序一致（勿用字典 keys 排序，会打乱顺序）。
-    private let weatherOrder: [String] = [
-        "sun", "cloud", "cloudy", "rain", "snow", "fog", "thunder", "wind", "night",
-    ]
-
     /// 引用 lite 卡状态：展示用字段（作者/头像/图片/是否公开供 lite 卡用），不存整条 Entry。
     /// imgDims 只供 lite 卡图片条按原图比例定宽（面板选篇时取 Entry.imgDims；编辑锁定
     /// 的 Quote 结构本身无尺寸字段，故为 nil，走 118 兜底宽，不另发明尺寸来源）。
@@ -6092,15 +6087,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.spinner.stopSpinning()
         item.removeButton.accessibilityLabel = "删除图片"
         refreshAttachmentAccessibilityLabels()
-    }
-
-    /// 新模型：本地图就绪（已显示本地图、已落盘）——停转圈、清上传态，
-    /// 发布钮恢复由调用方调 updatePublishState。编辑模式不用本函数
-    ///（上传态由 markUploaded/markFailed 接管）。
-    private func markLocalReady(_ item: ComposerImageItem) {
-        item.uploading = false
-        item.spinner.stopSpinning()
-        item.removeButton.accessibilityLabel = "删除图片"
     }
 
     private func markFailed(_ item: ComposerImageItem) {

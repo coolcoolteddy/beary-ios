@@ -4551,13 +4551,6 @@ class BearyNotificationCell: UITableViewCell {
         return BearyVisibilityText.publishedRelativeString(publishedAtMs: msValue) ?? ""
     }
 
-    /// 网页 fmtDay 口径：M月d日（无空格，信件引用 meta 用它）。
-    static func dayText(ms: Int?) -> String {
-        guard let msValue = ms else { return "" }
-        let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
-        return monthDayFormatter.string(from: date)
-    }
-
     /// 互动动词（卡面最新一条与行标题共用，须对 VC 可见，故不 private）。
     /// 网页 ntVerb 口径：非 like / bookmark / mention 一律回退为“给你的日记贴了小熊回应”
     ///（未知 type 同 emote 文案，不再返回空串）。

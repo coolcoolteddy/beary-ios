@@ -60,10 +60,6 @@ enum BearyIDCardStore {
         UserDefaults.standard.set(true, forKey: key("onboarding_pending", userId: userId))
     }
 
-    static func clearOnboardingPending(userId: Int?) {
-        UserDefaults.standard.removeObject(forKey: key("onboarding_pending", userId: userId))
-    }
-
     /// ID 卡表单已弹过（生成/跳过/拖走关闭均记一次，只弹一次）。
     static func isFormSeen(userId: Int?) -> Bool {
         UserDefaults.standard.bool(forKey: key("idcard_form_seen", userId: userId))

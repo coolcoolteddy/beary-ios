@@ -391,7 +391,6 @@ final class BearySettingsViewController: UIViewController {
     /// 与 isSwitchingAccount / isRemovingAccount 同步置位与清零。
     private var switchingAccountId: Int?
     private var removingAccountId: Int?
-    private var isLoggingOutOthers = false
     private var isDeleting = false
     private var isExporting = false
     private var exportDetailLabel: UILabel? // 2026-10-29：导出进度提示落点（导出行副文案）
@@ -599,11 +598,6 @@ final class BearySettingsViewController: UIViewController {
         }
     }
 
-    /// 容器重进本页时手动刷新（首屏重置由 loadAll 保证）。
-    func reloadAccount() {
-        loadAll()
-    }
-
     // MARK: - 布局
 
     private func makeLabel(font: UIFont, color: UIColor, lines: Int = 1, alignment: NSTextAlignment = .left) -> UILabel {
@@ -687,33 +681,6 @@ final class BearySettingsViewController: UIViewController {
             parts.append(makeRowChevron())
         }
         let row = UIStackView(arrangedSubviews: parts)
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.axis = .horizontal
-        row.spacing = 12
-        row.alignment = .center
-        return row
-    }
-
-    /// F8/F11：网页 row-text 两行式（标题 15 + 副文 12 灰，左对齐），用于
-    /// 「邮箱验证码登录」「登录设备」两行（网页 account.html 安全组同款）。
-    private func makeInfoRow(title: String, detailLabel: UILabel, iconName: String) -> UIView {
-        let titleLabelValue = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
-        // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
-        titleLabelValue.font = BearyDynamicType.smallBodyFont()
-        titleLabelValue.text = title
-        // P1-7：两行式行的标题多行、辅助文案走动态字体（工厂标题已接入口，
-        // 直建的 detail 在此接入口，不在工厂外重复缩放已缩放过的字）。
-        titleLabelValue.numberOfLines = 0
-        detailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
-        detailLabel.adjustsFontForContentSizeCategory = true
-        detailLabel.textColor = BearyColors.gray
-        detailLabel.numberOfLines = 0
-        detailLabel.textAlignment = .left
-        let textStack = UIStackView(arrangedSubviews: [titleLabelValue, detailLabel])
-        textStack.axis = .vertical
-        textStack.spacing = 2
-        textStack.alignment = .fill
-        let row = UIStackView(arrangedSubviews: [makeRowIcon(iconName), textStack])
         row.translatesAutoresizingMaskIntoConstraints = false
         row.axis = .horizontal
         row.spacing = 12
@@ -832,14 +799,6 @@ final class BearySettingsViewController: UIViewController {
             wrappers.append(wrap)
         }
         return (card, wrappers, separators)
-    }
-
-    private func makeCardStack(spacing: CGFloat = 12) -> UIStackView {
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = spacing
-        stack.alignment = .fill
-        return stack
     }
 
     /// 视觉批：设置页渐进披露的一组折叠（规范 §3：点按展开，展开动效走
@@ -3342,36 +3301,6 @@ final class BearySettingsViewController: UIViewController {
         if sender.isOn {
             BearySoundPlayer.prewarmAll()
         }
-    }
-
-    /// 2026-10-31 冷启动锁开关：先验身份再写档。开启/关闭都要验一次
-    /// （防已解锁手机被他人随手关掉）；验证失败或取消时开关视觉回滚、
-    /// 不写存档。审计-个人页设置：未录入生物识别但锁已开启时开关仍可点，
-    /// 关闭走设备密码验证（evaluate 用 .deviceOwnerAuthentication，生物识别
-    /// 不可用时系统直接走设备密码）；关闭成功后开关回到置灰（已关且不可用，
-    /// 再开须先录入生物识别）。
-    @objc private func lockSwitchValueChanged(_ sender: UISwitch) {
-        let desired = sender.isOn
-        let name = BearyAppLockSettings.biometryName
-        let verb = desired ? "开启" : "关闭"
-        BearyAppLockSettings.evaluate(reason: "\(verb)\(name)解锁前请先验证") { [weak sender] success in
-            guard let sender = sender else { return }
-            if success {
-                BearyAppLockSettings.setEnabled(desired)
-                if !desired && !BearyAppLockSettings.availability.available {
-                    sender.isEnabled = false
-                }
-            } else {
-                sender.isOn = !desired
-                self.showToast("验证未通过，设置未更改")
-            }
-        }
-    }
-
-    /// 2026-11-04 隐私遮罩开关：独立于锁开关；只写档、即时生效，下一次
-    /// 切后台起按新值执行（已显示的遮罩不受影响，回前台时照常撤掉）。
-    @objc private func maskSwitchValueChanged(_ sender: UISwitch) {
-        BearyAppLockSettings.setMaskEnabled(sender.isOn)
     }
 
     /// D2：诊断日志开关——只存档；DiagFile 每次写入时实时读档，关后新写入即停

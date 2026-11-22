@@ -1731,19 +1731,6 @@ final class BearyAPI {
 
     // MARK: - B 方案公开 / 取消（网页 doPublish / doPublishCancel 同款端点，见 teddy_beary/worker.js）
 
-    /// 旧公开端点（iCity 已废弃：调用方改走 setVisibility；仅保留，调用点已全部迁移）。
-    /// 服务端兼容语义改为立即公开，但 App 不再使用。
-    func requestPublish(id: String, completion: @escaping (Result<PublishResponse, APIError>) -> Void) {
-        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        request("/beary/api/entries/\(safe)/publish", method: "POST", completion: completion)
-    }
-
-    /// 旧取消公开端点（iCity 已废弃：调用方改走 setVisibility 显式目标态；仅保留，调用点已全部迁移）。
-    func cancelPublish(id: String, completion: @escaping (Result<PublishResponse, APIError>) -> Void) {
-        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        request("/beary/api/entries/\(safe)/publish/cancel", method: "POST", completion: completion)
-    }
-
     // MARK: - iCity 可见性切换 / 举报 / 拉黑 / 行为事件
 
     /// 可见性切换：POST /beary/api/entries/:id/visibility {published: 0|1}（显式目标态，禁 toggle）。

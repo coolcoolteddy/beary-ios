@@ -76,12 +76,6 @@ final class BearyBubbleMenuView: UIView {
         BearyColors.surface3
     }
 
-    /// 调用方按此算框高（尖角 + 上下内边距 + 各行 + 行间细线），不另算。
-    static func menuHeight(rowCount: Int) -> CGFloat {
-        Self.arrowHeight + Self.verticalPadding * 2 + CGFloat(rowCount) * Self.rowHeight
-            + CGFloat(max(0, rowCount - 1)) * Self.separatorHeight
-    }
-
     private let backgroundLayer = CAShapeLayer()
     private let stackView = UIStackView()
     private var rowViews: [(key: String, row: RowView)] = []
@@ -234,13 +228,6 @@ final class BearyBubbleMenuView: UIView {
         }
         refreshSelectedStates()
         setNeedsLayout()
-    }
-
-    /// 打开时刷新选中态（不重建行）：选中行半粗体 + 左侧官方 icon_check
-    /// + .selected 无障碍 trait；未选中行垫同尺寸透明图，标题左对齐不漂移。
-    func setSelectedKey(_ key: String?) {
-        selectedKey = key
-        refreshSelectedStates()
     }
 
     private func refreshSelectedStates() {
