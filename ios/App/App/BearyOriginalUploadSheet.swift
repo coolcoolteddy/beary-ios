@@ -178,7 +178,7 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearySyste
             subtitleLabel.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 16),
             subtitleLabel.bottomAnchor.constraint(lessThanOrEqualTo: button.bottomAnchor, constant: -BearySheetChrome.listRowVerticalPadding),
         ]
-        if showsCrown, let crownImage = UIImage(named: "crown") {
+        if showsCrown, let crownImage = UIImage(named: BearyAssets.crown) {
             let crownView = UIImageView(image: crownImage)
             crownView.tintColor = BearyColors.orange
             crownView.contentMode = .scaleAspectFit

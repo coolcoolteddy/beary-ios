@@ -144,7 +144,7 @@ final class BearyAppLockManager {
         overlay.accessibilityViewIsModal = true
         overlay.accessibilityLabel = NSLocalizedString("app_lock.locked", comment: "")
 
-        let logo = UIImageView(image: UIImage(named: "LogoHorizontal"))
+        let logo = UIImageView(image: UIImage(named: BearyAssets.logoHorizontal))
         logo.contentMode = .scaleAspectFit
         logo.translatesAutoresizingMaskIntoConstraints = false
         logo.accessibilityLabel = "beary"
@@ -313,7 +313,7 @@ final class BearyAppLockManager {
         let shield = UIView()
         shield.backgroundColor = BearyColors.bg
         shield.isUserInteractionEnabled = true
-        let logo = UIImageView(image: UIImage(named: "LogoHorizontal"))
+        let logo = UIImageView(image: UIImage(named: BearyAssets.logoHorizontal))
         logo.contentMode = .scaleAspectFit
         logo.translatesAutoresizingMaskIntoConstraints = false
         logo.accessibilityLabel = "beary"

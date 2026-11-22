@@ -1208,7 +1208,7 @@ class BearyFeedViewController: UIViewController {
         if showLogo {
             let logo = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 90))
             logo.backgroundColor = BearyColors.bg
-            let logoImageValue = UIImage(named: "LogoHorizontal")
+            let logoImageValue = UIImage(named: BearyAssets.logoHorizontal)
             var logoWidth: CGFloat = 0
             if let logoImageValue = logoImageValue, logoImageValue.size.height > 0 {
                 logoWidth = 26 * logoImageValue.size.width / logoImageValue.size.height

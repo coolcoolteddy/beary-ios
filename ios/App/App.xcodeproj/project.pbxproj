@@ -40,6 +40,7 @@
 		6C0B3118064804F9010301DD /* BearyAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AECBDBF45A4EEB200061613F /* BearyAPI.swift */; };
 		521E56F5F2DAA7D36ED1DDD7 /* BearyNativeCommon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22580FBE9BDF051BF0B217E /* BearyNativeCommon.swift */; };
 		DDF0E7A02351BD332CD2AEDD /* BearyColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 480F2905FC850A20929C2317 /* BearyColors.swift */; };
+		6455FE95D45D5959DF6C5CBF /* BearyAssets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F46CA2673011F945DC99560 /* BearyAssets.swift */; };
 		9C2B95CD3B41422AB2023653 /* BearyDynamicType.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9DC0708952A4FAAA2FC5BA4 /* BearyDynamicType.swift */; };
 		A6C9DAF78D06334E705A0010 /* BearyToast.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7C745921A0C2FD48D13487A /* BearyToast.swift */; };
 		3643BAD54D1141878219FDA4 /* BearyTagEntriesViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0520B79F1194856A774B3BD /* BearyTagEntriesViewController.swift */; };
@@ -775,6 +776,7 @@
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		F22580FBE9BDF051BF0B217E /* BearyNativeCommon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyNativeCommon.swift; sourceTree = "<group>"; };
 		480F2905FC850A20929C2317 /* BearyColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyColors.swift; sourceTree = "<group>"; };
+		1F46CA2673011F945DC99560 /* BearyAssets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAssets.swift; sourceTree = "<group>"; };
 		C9DC0708952A4FAAA2FC5BA4 /* BearyDynamicType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDynamicType.swift; sourceTree = "<group>"; };
 		F7C745921A0C2FD48D13487A /* BearyToast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyToast.swift; sourceTree = "<group>"; };
 		F0520B79F1194856A774B3BD /* BearyTagEntriesViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTagEntriesViewController.swift; sourceTree = "<group>"; };
@@ -1534,6 +1536,7 @@
 				AECBDBF45A4EEB200061613F /* BearyAPI.swift */,
 				F22580FBE9BDF051BF0B217E /* BearyNativeCommon.swift */,
 				480F2905FC850A20929C2317 /* BearyColors.swift */,
+				1F46CA2673011F945DC99560 /* BearyAssets.swift */,
 				C9DC0708952A4FAAA2FC5BA4 /* BearyDynamicType.swift */,
 				F7C745921A0C2FD48D13487A /* BearyToast.swift */,
 				F0520B79F1194856A774B3BD /* BearyTagEntriesViewController.swift */,
@@ -2963,6 +2966,7 @@
 				6C0B3118064804F9010301DD /* BearyAPI.swift in Sources */,
 				521E56F5F2DAA7D36ED1DDD7 /* BearyNativeCommon.swift in Sources */,
 				DDF0E7A02351BD332CD2AEDD /* BearyColors.swift in Sources */,
+				6455FE95D45D5959DF6C5CBF /* BearyAssets.swift in Sources */,
 				9C2B95CD3B41422AB2023653 /* BearyDynamicType.swift in Sources */,
 				A6C9DAF78D06334E705A0010 /* BearyToast.swift in Sources */,
 				3643BAD54D1141878219FDA4 /* BearyTagEntriesViewController.swift in Sources */,
