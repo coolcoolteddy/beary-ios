@@ -40,6 +40,20 @@ enum BearyChrome {
     }
 }
 
+/// SHA-256 十六进制拼法共享入口（可复用资源 26 遍第 4 条）：图片磁盘键、
+/// 实况磁盘键、离线保存键与登录 nonce 四处原逐字相同，只收这一行拼法；
+/// 各缓存的输入（URL／liveKey／离线键／nonce）与目录名、桶隔离口径全部保留。
+enum BearyCrypto {
+    static func sha256Hex(_ data: Data) -> String {
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+    /// 字符串版：登录 nonce 等以 String 入参的调用点走这里，不在调用点拼 Data。
+    static func sha256Hex(_ string: String) -> String {
+        return sha256Hex(Data(string.utf8))
+    }
+}
+
 /// 桌面式断点（第十二轮第五轮第 3 项，#1424 同款判定）：仅 iPad 且宽 ≥821 才为真；
 /// iPhone 横屏 932/852/844/926pt 也 ≥821，但仍走 iPhone 式全宽，不进 600 居中桌面态。
 /// 宽度阈值保留作 iPad 窄屏/分屏的补充条件。内容列各页共用此入口，不再各写宽判定。
@@ -820,8 +834,7 @@ final class BearyImageLoader {
     private func diskFileURL(for url: URL, bucket: Int?) -> URL? {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
         let bucket = bucket.map(String.init) ?? "guest"
-        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
-        let key = digest.map { String(format: "%02x", $0) }.joined()
+        let key = BearyCrypto.sha256Hex(url.absoluteString)
         return caches.appendingPathComponent("BearyImageCache").appendingPathComponent(bucket).appendingPathComponent(key)
     }
 
