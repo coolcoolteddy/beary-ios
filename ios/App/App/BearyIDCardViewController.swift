@@ -845,6 +845,11 @@ final class BearyIDCardView: UIView {
     private var plusPreviewOn = false
     private var avatarPhotoView: UIImageView?
     private var avatarGlyphView: UIImageView?
+
+    /// 在途头像加载句柄与代次（通知页同款）：buildBack 重建背面时旧加载
+    /// 须取消并作废回调，旧图不得画进新 photoView。
+    private var avatarTask: URLSessionDataTask?
+    private var avatarLoadGeneration = 0
     private var compact = false
     /// configure 的入参存一份：layoutSubviews 里 compact 翻面时重建卡片用（M10）。
     private var configuredData: BearyIDCardData?
@@ -1137,7 +1142,7 @@ final class BearyIDCardView: UIView {
         ])
         avatarPhotoView = photoView
         if let avatarURLValue = avatarURL {
-            loadAvatar(url: avatarURLValue)
+            loadAvatar(url: avatarURLValue, diameter: avatarDiameter)
         }
         // 名字＋皇冠＋「今天加入 beary」。
         let nameStack = UIStackView()
@@ -1332,15 +1337,35 @@ final class BearyIDCardView: UIView {
         return badge
     }
 
-    private func loadAvatar(url: URL) {
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+    /// 取消在途头像加载并作废其回调：重建背面时旧失败回调不得碰新视图。
+    private func cancelAvatarLoad() {
+        avatarTask?.cancel()
+        avatarTask = nil
+        avatarLoadGeneration += 1
+    }
+
+    /// ID 卡背面头像走共享 BearyImageLoader（缓存＋下采样＋代次守卫）；
+    /// 失败态按 ID 卡现行行为保留：人形占位留着、不亮重试入口、不 toast。
+    private func loadAvatar(url: URL, diameter: CGFloat) {
+        cancelAvatarLoad()
+        let generation = avatarLoadGeneration
+        // 头像框 36/46pt：下采样到直径×scale 解码，不整图全解码进内存。
+        avatarTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: diameter * UIScreen.main.scale) { [weak self] result in
             guard let strongSelf = self else { return }
-            guard let dataValue = data, let image = UIImage(data: dataValue) else { return }
-            DispatchQueue.main.async {
-                strongSelf.avatarPhotoView?.image = image
+            guard generation == strongSelf.avatarLoadGeneration else { return }
+            strongSelf.avatarTask = nil
+            switch result {
+            case .success(let loadedImage):
+                strongSelf.avatarPhotoView?.image = loadedImage
                 strongSelf.avatarPhotoView?.isHidden = false
                 strongSelf.avatarGlyphView?.isHidden = true
+            case .failure(let loadError):
+                if case .cancelled = loadError {
+                    return
+                }
+                // 失败静默：人形占位保持可见（现行行为）。
+                return
             }
-        }.resume()
+        }
     }
 }
