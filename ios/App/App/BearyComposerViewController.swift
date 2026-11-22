@@ -483,7 +483,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    private static let bodyLimit = BearyCharLimit(2000)
+    private static let bodyLimit = BearyCharLimit(5000)
     private static let maxImages = 9
 
     // MARK: - 状态

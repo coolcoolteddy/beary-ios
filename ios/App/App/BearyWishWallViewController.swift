@@ -1156,7 +1156,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     private static let titleLimit = 100
     private static let detailLimit = BearyCharLimit(2000)
     /// 11 轮审计第 10 项：表单级错误文案（服务端笼统 bad wish 时用，两框均不变红）。
-    private static let formErrorText = "标题需为 1–100 字，详情最多 \(Self.detailLimit.value) 字，请检查后重试"
+    private static let formErrorText = "标题需为 1–100 字，详情最多 \(BearyWishCreateViewController.detailLimit.value) 字，请检查后重试"
     /// 11 轮审计第 10 项：错误定位拆三类——标题错只标标题框、详情错只标详情框、
     /// 表单级错误只显示错误行。旧的全局 fieldErrorShown 让任一错误都双框变红，
     /// 归因是错的，故拆掉。
