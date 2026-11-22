@@ -2728,8 +2728,8 @@ extension BearyAPI {
         /// （后端 published 列同步口径：仅 public 为 1，旧版读到仅好友篇按私密处理）。
         if let v = visibility {
             body["visibility"] = v
-            if v == "friends" { body["published"] = 0 }
-            if v == "public" { body["published"] = 1 }
+            if BearyVisibility.isFriendsOnlyValue(v) { body["published"] = 0 }
+            if BearyVisibility.isPublicValue(v) { body["published"] = 1 }
             if v == "private" { body["published"] = 0 }
         }
         if let e = ephemeral { body["ephemeral"] = e }
@@ -3713,7 +3713,11 @@ enum BearyVisibility {
         return BearyEphemeral.isEffectivelyPublic(entry) ? "public" : "private"
     }
 
-    static func isPublicValue(_ visibility: String) -> Bool { visibility == "public" }
+    static func isPublicValue(_ visibility: String?) -> Bool { visibility == "public" }
+
+    /// 仅好友值判定（与 isPublicValue 同形）：只认显式 friends 值；nil／其他值一律不算。
+    /// 供 Quote／SelectedQuote／RestoreResponse／裸字符串等非 Entry 接收方使用；Entry 直接走 isFriendsOnly。
+    static func isFriendsOnlyValue(_ visibility: String?) -> Bool { visibility == "friends" }
 
     /// 同档判定（四处“修改权限”入口共用）：目标档等于当前档即无变化，
     /// 唯独存活限时篇点“公开”不是同档——它是转普通永久公开的入口
@@ -3722,7 +3726,7 @@ enum BearyVisibility {
     /// 其余读路径（星图/地图/个人页文案）不受本例外影响。
     static func isNoChange(target: String, for entry: Entry) -> Bool {
         guard target == current(for: entry) else { return false }
-        if target == "public" && BearyEphemeral.isLive(entry) { return false }
+        if isPublicValue(target) && BearyEphemeral.isLive(entry) { return false }
         return true
     }
 
@@ -4211,7 +4215,7 @@ enum BearyQuoteGate {
             completion(true)
             return
         }
-        if q.visibility == "friends", let authorId = q.authorId,
+        if BearyVisibility.isFriendsOnlyValue(q.visibility), let authorId = q.authorId,
            SessionManager.shared.isLoggedIn {
             // r29-5：发起时拍查看者身份快照（authEpoch＋authAccountId），回包时复核；
             // 期间切号/登出/登录态变迁都会推代次或改账号，失配即 fail-closed 保持占位，
@@ -4254,7 +4258,7 @@ enum BearyQuoteGate {
         if let quote = entry.quote, sourceIsPrivate(quote: quote), let sourceId = quote.id, !sourceId.isEmpty {
             // 审计 2026-11-02 弹窗组：守卫未过（已有弹窗/页已离线）按放弃处理，
             // 调用方清 busy 位、原态未动，用户可重试；绝不无提示直接公开。
-            let presented = presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: quote), sourceIsFriendsOnly: quote.visibility == "friends") { publishTogether in
+            let presented = presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: quote), sourceIsFriendsOnly: BearyVisibility.isFriendsOnlyValue(quote.visibility)) { publishTogether in
                 completion(publishTogether ? .publishTogether(sourceId: sourceId) : .aborted)
             }
             if !presented { completion(.aborted) }
@@ -4267,7 +4271,7 @@ enum BearyQuoteGate {
                     case .success(let fetched):
                         if let fetchedQuote = fetched.quote, sourceIsPrivate(quote: fetchedQuote), let sourceId = fetchedQuote.id, !sourceId.isEmpty {
                             // 异步回包时再查一次守卫：期间已有弹窗/页已离线则放弃，调用方清 busy。
-                            let presented = presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: fetchedQuote), sourceIsFriendsOnly: fetchedQuote.visibility == "friends") { publishTogether in
+                            let presented = presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: fetchedQuote), sourceIsFriendsOnly: BearyVisibility.isFriendsOnlyValue(fetchedQuote.visibility)) { publishTogether in
                                 completion(publishTogether ? .publishTogether(sourceId: sourceId) : .aborted)
                             }
                             if !presented { completion(.aborted) }
@@ -4425,7 +4429,7 @@ extension BearyQuoteGate {
     /// 全文而不走 locked，App 不凭本地好友关系反推（无 per-entry 好友判定接口）。
     /// visibility 缺失/其他值时回落旧两档文案（fail-closed，不漏出）。
     static func placeholderTextForQuote(publishedAt: Int?, locked: Bool, visibility: String?) -> (main: String, detail: String?) {
-        if visibility == "friends" {
+        if BearyVisibility.isFriendsOnlyValue(visibility) {
             return ("该日记仅好友可见", nil)
         }
         return placeholderText(publishedAt: publishedAt, locked: locked)

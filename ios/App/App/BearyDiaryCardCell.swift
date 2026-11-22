@@ -3051,7 +3051,7 @@ class BearyDiaryCardCell: UITableViewCell {
             quoteView.isHidden = false
             // 审计 2026-11-02 第十节：仅好友档互关通道——先占位（fail-closed），
             // 服务端 state 确认互关后再补全文；cell 已复用（quoteTapId 已变）时丢弃。
-            if quoteVisibility == "friends", let quoteId = quoteId, !quoteId.isEmpty, let authorId = quoteAuthorId, SessionManager.shared.isLoggedIn {
+            if BearyVisibility.isFriendsOnlyValue(quoteVisibility), let quoteId = quoteId, !quoteId.isEmpty, let authorId = quoteAuthorId, SessionManager.shared.isLoggedIn {
                 // 跳动审计第 6 条：已验证互关的引用直接落全文，不再发请求、不再触发
                 // 行重载——重配时不再进入“占位→请求→补全文→重载→重配”循环。
                 // 行高由外层 configure / 回包分支结算，这里只落卡。

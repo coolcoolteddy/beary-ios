@@ -2721,7 +2721,7 @@ final class BearyDetailViewController: UIViewController {
             quoteView.isHidden = false
             return
         }
-        if quote.visibility == "friends" {
+        if BearyVisibility.isFriendsOnlyValue(quote.visibility) {
             showPlaceholderForQuote()
             let renderSeq = quoteRenderSeq
             BearyQuoteGate.resolveQuoteFullAccess(quote: quote) { [weak self] canView in
@@ -3363,7 +3363,7 @@ final class BearyDetailViewController: UIViewController {
             guard let self = self else { return }
             if BearyVisibility.isNoChange(target: targetVisibility, for: self.entry) { return }
             self.isVisibilityBusy = true
-            if targetVisibility == "public" {
+            if BearyVisibility.isPublicValue(targetVisibility) {
                 BearyQuoteGate.gatePublicToggle(from: self, entry: self.entry) { [weak self] result in
                     guard let self = self else { return }
                     switch result {

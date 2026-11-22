@@ -6772,7 +6772,7 @@ class BearyTimelineViewController: UIViewController {
             guard let strongSelf = self else { return }
             if BearyVisibility.isNoChange(target: targetVisibility, for: entry) { return }
             strongSelf.publishBusyIds.insert(entryId)
-            if targetVisibility == "public" {
+            if BearyVisibility.isPublicValue(targetVisibility) {
                 BearyQuoteGate.gatePublicToggle(from: strongSelf, entry: entry) { [weak self] result in
                     guard let strongSelf = self else { return }
                     switch result {

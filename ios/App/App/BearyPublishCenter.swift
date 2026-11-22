@@ -328,7 +328,7 @@ final class BearyPublishCenter {
                                 guard let self = self, let runningJob = runningJob, !runningJob.finished else { return }
                                 switch fetchResult {
                                 case .success(let entry):
-                                    if entry.isPublic == true || entry.visibility == "public" {
+                                    if entry.isPublic == true || BearyVisibility.isPublicValue(entry.visibility) {
                                         runningJob.sourcePublished = true
                                         self.uploadNext(runningJob)
                                     } else {

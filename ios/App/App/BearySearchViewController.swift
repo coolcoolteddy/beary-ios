@@ -2509,7 +2509,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 已在“我的”组出的篇不重复进公开组（本地公开篇进我的组后同此；
         // 与 appendResultRows 的 rowEntryIds 去重同口径）。
         let mineEntryIds = Set(mineEntries.compactMap { $0.id })
-        let publicEntries = (data.entries ?? []).filter { ($0.visibility == "public" || $0.isPublic == true) && !BearyEphemeral.isExpired($0) }.filter { !isBlockedForSearch(userId: $0.authorId) }.filter { $0.id.map { !mineEntryIds.contains($0) } ?? true }
+        let publicEntries = (data.entries ?? []).filter { ($0.isPublic == true || BearyVisibility.isPublicValue($0.visibility)) && !BearyEphemeral.isExpired($0) }.filter { !isBlockedForSearch(userId: $0.authorId) }.filter { $0.id.map { !mineEntryIds.contains($0) } ?? true }
         let users = (data.users ?? []).filter { !isBlockedForSearch(userId: $0.id) }
         if mineEntries.isEmpty && publicEntries.isEmpty && users.isEmpty {
             showNoneState(query: query)
@@ -2887,7 +2887,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         for entry in publicEntries {
             // 审计 #19：与 renderResults 逐字一致——公开信号（visibility/is_public 任一）
             // 即可，不过期、不拉黑；缺 is_public 不丢行。
-            if (entry.visibility == "public" || entry.isPublic == true) == false || BearyEphemeral.isExpired(entry) { continue }
+            if (entry.isPublic == true || BearyVisibility.isPublicValue(entry.visibility)) == false || BearyEphemeral.isExpired(entry) { continue }
             if isBlockedForSearch(userId: entry.authorId) { continue }
             guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
