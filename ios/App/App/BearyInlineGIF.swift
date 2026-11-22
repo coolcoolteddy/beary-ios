@@ -188,7 +188,8 @@ final class BearyInlineGIFOverlay: NSObject {
     private var visible: Bool = true
     /// 流量节省程序开时用户点按播过的 GIF（点一下才动；再点暂停回首帧）。
     private var playingKeys: Set<String> = []
-    /// 长按 GIF 时的回调（randKey → 调用方弹“添加表情”）。
+    /// 长按 GIF 时的回调（randKey → 调用方弹“添加表情”）；读屏
+    /// “添加到我的表情”自定义操作（第 25 轮 70 项）走同一回调。
     var onLongPressGIF: ((String) -> Void)?
 
     /// 绑 label + 本篇 images 里的 key + 长按回调；调后即按当前 attributedText 贴图。
@@ -248,10 +249,12 @@ final class BearyInlineGIFOverlay: NSObject {
         lastWidth = label.bounds.width
         let rects = attachmentRects(label: label, attributed: attributed)
         var seen: Set<String> = []
-        for (id, rand, rect) in rects {
+        for (offset, item) in rects.enumerated() {
+            let (id, rand, rect) = item
             seen.insert(id)
             if let view = views[id] {
                 if view.frame != rect { view.frame = rect }
+                applyGIFAccessibility(to: view, rand: rand, index: offset + 1)
                 continue
             }
             let view = UIImageView()
@@ -268,6 +271,7 @@ final class BearyInlineGIFOverlay: NSObject {
             let tap = UITapGestureRecognizer(target: self, action: #selector(overlayTapped(_:)))
             tap.delegate = self
             view.addGestureRecognizer(tap)
+            applyGIFAccessibility(to: view, rand: rand, index: offset + 1)
             label.addSubview(view)
             views[id] = view
             loadGIF(randKey: rand)
@@ -301,6 +305,19 @@ final class BearyInlineGIFOverlay: NSObject {
             candidate.image = effectiveImage(for: rand)
             return
         }
+    }
+
+    /// 第 25 轮 70 项：正文 GIF 附件的读屏入口——按正文顺序编号区分，
+    /// “添加到我的表情”自定义操作与长按同一路（弹确认底 sheet 再入库）。
+    private func applyGIFAccessibility(to view: UIImageView, rand: String, index: Int) {
+        view.isAccessibilityElement = true
+        view.accessibilityLabel = "GIF，第 \(index) 个"
+        view.accessibilityTraits = [.image]
+        view.accessibilityCustomActions = [UIAccessibilityCustomAction(name: "添加到我的表情") { [weak self] _ in
+            guard let self = self, !rand.isEmpty else { return false }
+            self.onLongPressGIF?(rand)
+            return true
+        }]
     }
 
     /// 用 NSLayoutManager 按 label 实际排版算 GIF 附件矩形（label 坐标系）；
