@@ -785,7 +785,7 @@ class BearyEditProfileViewController: UIViewController {
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
             closeButton.widthAnchor.constraint(equalToConstant: 44),
             saveButton.widthAnchor.constraint(equalToConstant: 44),
-            coverImageView.heightAnchor.constraint(equalToConstant: 180),
+            coverImageView.heightAnchor.constraint(equalToConstant: BearyProfileCover.height),
             // U7：三输入框高度改最小 28（默认档外观不变），大字号时随字长高、不裁字。
             nameField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
             signatureField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
@@ -1647,10 +1647,10 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
             // F14：封面预览高已改 180，裁剪窗比例同步。
             let previewWidth = coverImageView.bounds.width
             if previewWidth > 0 {
-                aspectRatio = previewWidth / 180
+                aspectRatio = previewWidth / BearyProfileCover.height
             } else {
                 let columnWidth = min(max(view.bounds.width - 40, 0), 600)
-                aspectRatio = columnWidth > 0 ? columnWidth / 180 : 2
+                aspectRatio = columnWidth > 0 ? columnWidth / BearyProfileCover.height : 2
             }
         }
         // Mantis 裁剪（3.1.1）：固定比例、确认先退场再回调（#952 同款口径），
