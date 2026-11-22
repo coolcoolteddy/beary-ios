@@ -3997,6 +3997,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // 容器贴键盘上方、不在内容栈里，见 buildLayout；本函数只布容器内部，
     // 分隔线 + 工具行约束不变，工具行左右仍与内容栈边距同宽 16）
 
+    /// 工具栏图标钮五件套（图 → 无障碍名 → 墨色 → 点按 → 按压反馈），6 钮共用；
+    /// 图标由调用方按各自取图口径解好传入（定位钮走 BearyLocationIcon，其余走 BearyIconImages）。
+    private func configureToolButton(button: UIButton, icon: UIImage?, label: String, action: Selector) {
+        button.setImage(icon, for: .normal)
+        button.accessibilityLabel = label
+        button.tintColor = BearyColors.ink
+        button.addTarget(self, action: action, for: .touchUpInside)
+        button.bearyAddPressFeedback()
+    }
+
     private func buildToolbarRow() {
         toolbarSeparator.backgroundColor = BearyColors.line
         let toolRow = UIStackView()
@@ -4010,39 +4020,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // cap 随间距同步收，故不重现热区重叠。
         toolRow.spacing = 20
         toolRow.alignment = .center
-        imageToolButton.setImage(BearyIconImages.image(named: "icon_image", pointSize: 24), for: .normal)
         // P1-26：工具栏图标钮按功能命名（图标本身无文字，VoiceOver 否则无读法）。
-        imageToolButton.accessibilityLabel = "添加图片"
         // D-G7：网页 .icon-btn 默认墨色（editor-tools 的 .nb 灰规则不适用这三个钮），工具钮灰改墨。
-        imageToolButton.tintColor = BearyColors.ink
-        imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
-        imageToolButton.bearyAddPressFeedback()
+        configureToolButton(button: imageToolButton, icon: BearyIconImages.image(named: "icon_image", pointSize: 24), label: "添加图片", action: #selector(didTapAddImage))
         // 批 E：定位钮插在图片钮右边、自定义钮之前（左组顺序：图片 → 定位 → 自定义 → @ → 引用 → #；天气钮已删，天气自动显示在底部元信息行）。
-        locationToolButton.setImage(BearyLocationIcon.image(pointSize: 24), for: .normal)
-        locationToolButton.accessibilityLabel = "添加位置"
-        locationToolButton.tintColor = BearyColors.ink
-        locationToolButton.addTarget(self, action: #selector(didTapLocationTool), for: .touchUpInside)
-        locationToolButton.bearyAddPressFeedback()
-        gifToolButton.setImage(BearyIconImages.image(named: "icon_image", pointSize: 24), for: .normal)
-        gifToolButton.accessibilityLabel = "自定义"
-        gifToolButton.tintColor = BearyColors.ink
-        gifToolButton.addTarget(self, action: #selector(didTapGIFTool), for: .touchUpInside)
-        gifToolButton.bearyAddPressFeedback()
-        recipientToolButton.setImage(BearyIconImages.image(named: "icon_at", pointSize: 24), for: .normal)
-        recipientToolButton.accessibilityLabel = "@ 谁"
-        recipientToolButton.tintColor = BearyColors.ink
-        recipientToolButton.addTarget(self, action: #selector(didTapRecipientTool), for: .touchUpInside)
-        recipientToolButton.bearyAddPressFeedback()
-        quoteToolButton.setImage(BearyIconImages.image(named: "icon_quote", pointSize: 24), for: .normal)
-        quoteToolButton.accessibilityLabel = "引用一篇日记"
-        quoteToolButton.tintColor = BearyColors.ink
-        quoteToolButton.addTarget(self, action: #selector(didTapQuoteTool), for: .touchUpInside)
-        quoteToolButton.bearyAddPressFeedback()
-        tagToolButton.setImage(BearyIconImages.image(named: "icon_tag", pointSize: 24), for: .normal)
-        tagToolButton.tintColor = BearyColors.ink
-        tagToolButton.accessibilityLabel = "添加标签"
-        tagToolButton.addTarget(self, action: #selector(didTapTagTool), for: .touchUpInside)
-        tagToolButton.bearyAddPressFeedback()
+        configureToolButton(button: locationToolButton, icon: BearyLocationIcon.image(pointSize: 24), label: "添加位置", action: #selector(didTapLocationTool))
+        // 自定义钮图标原与图片钮同名 icon_image（占位）：本钮开的是自定义表情选择器，改走单张熊脸 icon_mood（回应行同款官方资产）。
+        configureToolButton(button: gifToolButton, icon: BearyIconImages.image(named: "icon_mood", pointSize: 24), label: "自定义", action: #selector(didTapGIFTool))
+        configureToolButton(button: recipientToolButton, icon: BearyIconImages.image(named: "icon_at", pointSize: 24), label: "@ 谁", action: #selector(didTapRecipientTool))
+        configureToolButton(button: quoteToolButton, icon: BearyIconImages.image(named: "icon_quote", pointSize: 24), label: "引用一篇日记", action: #selector(didTapQuoteTool))
+        configureToolButton(button: tagToolButton, icon: BearyIconImages.image(named: "icon_tag", pointSize: 24), label: "添加标签", action: #selector(didTapTagTool))
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
