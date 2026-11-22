@@ -372,76 +372,24 @@ final class BearyDetailViewController: UIViewController {
 
     /// 图片条捏合拼图：双指捏合把间距 8 → 0、圆角 12 → 0（图贴在一起且无圆角），张开恢复 8 / 12。
     /// 只动 imagesStack.spacing 与槽位圆角，不动槽宽/高，不缩放单张图；灯箱自带的
-    /// 单图捏合缩放不在此改动范围。滚动视图本身未开 zoom（min/max 均为 1），
-    /// 其内置捏合手势不会抢占本手势。
-    private var stripPinchStartProgress: CGFloat = 0
-    private var stripPinchJoined = false
+    /// 单图捏合缩放不在此改动范围。状态机见共享 BearyImageStripPinch（BearyDiaryCardCell.swift）。
+    private let stripPinch = BearyImageStripPinch()
 
     private func installImageStripPinch() {
-        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(imageStripPinched(_:)))
-        pinch.delegate = self
-        imagesScrollView.addGestureRecognizer(pinch)
+        stripPinch.install(target: self, action: #selector(imageStripPinched(_:)), delegate: self, on: imagesScrollView)
     }
 
-    /// 捏合跟手圆角：progress 0 → 圆角 12，progress 1（贴合）→ 圆角 0，与间距同一进度走，
-    /// 不在松手瞬间跳变；只改槽位图层圆角，不动其他圆角。
+    /// 捏合跟手圆角（共享状态机入口）。
     private func applyImageStripCornerRadius(progress: CGFloat) {
-        let radius = 12 * (1 - max(0, min(1, progress)))
-        for slot in imageSlots { slot.layer.cornerRadius = radius }
+        stripPinch.applyCornerRadius(imageSlots, progress: progress)
     }
 
     @objc private func imageStripPinched(_ gesture: UIPinchGestureRecognizer) {
-        // 单图时无间距可收，不接管手势（也不禁滚动）。
-        let visibleCount = imageSlots.filter { !$0.isHidden }.count
-        guard visibleCount >= 2 else { return }
-        switch gesture.state {
-        case .began:
-            // 以当前实际间距起算，防上一轮贴合动画中途被新一轮捏合打断时跳变。
-            stripPinchStartProgress = max(0, min(1, 1 - imagesStack.spacing / 8))
-            imagesScrollView.isScrollEnabled = false
-        case .changed:
-            // scale < 1 为捏合（progress 增大、间距收小），scale > 1 为张开（反向）；
-            // 从贴合态起手张开同样走这条式子，不会出现“贴合后张开无效”。
-            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
-            imagesStack.spacing = 8 * (1 - progress)
-            applyImageStripCornerRadius(progress: progress)
-            // 审计动效组：跟手过程只改值 + setNeedsLayout，不逐帧强制 layout；
-            // 松手后的落点动画（.ended 的 UIView.animate 内）仍用 layoutIfNeeded 结算。
-            imagesScrollView.setNeedsLayout()
-        case .ended, .cancelled, .failed:
-            imagesScrollView.isScrollEnabled = true
-            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
-            let wasJoined = stripPinchJoined
-            stripPinchJoined = progress >= 0.5
-            // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
-            // 跟手过程、取消/失败、原地未变都不震；震动走 BearyHaptics 口径，
-            // 不拿减动效门控（两者不是一回事，见 BearyHaptics 头注释）。
-            if gesture.state == .ended && wasJoined != stripPinchJoined {
-                BearyHaptics.press()
-            }
-            // 捏合拼图落点走拖拽收尾统一弹簧 0.26s／damping 0.7（落点动画
-            // 属性是间距／圆角、非缩放量，捏合速度无直接映射，初速度取 0）；减动效直接落终值，不播弹簧。
-            if UIAccessibility.isReduceMotionEnabled {
-                self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
-                self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
-                self.imagesScrollView.layoutIfNeeded()
-            } else {
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
-                    self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
-                    self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
-                    self.imagesScrollView.layoutIfNeeded()
-                })
-            }
-        default:
-            break
-        }
+        stripPinch.handle(gesture, slots: imageSlots, stack: imagesStack, scrollView: imagesScrollView, visibleCount: imageSlots.filter { !$0.isHidden }.count, settleDuration: BearyMotion.normal)
     }
 
     private func resetImageStripPinch() {
-        stripPinchJoined = false
-        imagesStack.spacing = 8
-        applyImageStripCornerRadius(progress: 0)
-        imagesScrollView.isScrollEnabled = true
+        stripPinch.reset(slots: imageSlots, stack: imagesStack, scrollView: imagesScrollView)
     }
 
     /// 九宫格入口：图片数 > 3 时在图片条下方弹起；纯文字 pill（卡片同款，
