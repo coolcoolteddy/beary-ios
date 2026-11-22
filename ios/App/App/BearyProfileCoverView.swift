@@ -6,6 +6,23 @@ public enum ProfileCoverTheme: String, CaseIterable {
     case china, usa, japan, germany, canada, korea, qixi, christmas, newyear, easter, lantern, midautumn, muertos
 }
 
+extension ProfileCoverTheme {
+    /// 横向画布偏移（art 单位，正值＝整幅构图向左移，右侧主体进框）。
+    /// 只给烤进图集的主体在右缘外的主题：中秋月亮在图集右缘（art-x 980–1137，
+    /// 个人页只露三分之一）移 120；七夕小喜鹊在右缘外（帧 813–953，屏上只剩
+    /// 左缘一小条）移 175；复活节金蛋右缘出框约 7pt（帧 801–851）移 40。
+    /// 其余主题为 0。偏移同时作用于底图（canvasRectToView）与叠加层（drawOverlay
+    /// 的 ctx 变换、canvasPointToView），两边对齐、动态物不脱离背景。
+    var canvasShiftX: CGFloat {
+        switch self {
+        case .midautumn: return 120
+        case .qixi: return 175
+        case .easter: return 40
+        default: return 0
+        }
+    }
+}
+
 public final class ProfileCoverView: UIView {
     public let theme: ProfileCoverTheme
 
@@ -375,8 +392,10 @@ public final class ProfileCoverView: UIView {
         ctx.scaleBy(x: fit, y: fit)
         // 海报与分层帧共用同一套构图：1.037 倍缩放＋扩边（零倾斜时的 padded），
         // 底图解码回填后切帧不再跳位。分层首帧未淡入完时，海报留在下层衬着。
+        // 画布偏移（theme.canvasShiftX）：右缘外的主体（中秋月亮／七夕小喜鹊／
+        // 复活节金蛋）靠它进框，与底图 canvasRectToView、canvasPointToView 同值。
         ctx.scaleBy(x: 1.037, y: 1.037)
-        ctx.translateBy(x: -size.width / 2, y: -size.height / 2)
+        ctx.translateBy(x: -size.width / 2 - theme.canvasShiftX, y: -size.height / 2)
         let zeroTiltPoster = canvas.insetBy(dx: -32, dy: -12)
         if layeredBlend < 1, let poster = art[theme.rawValue + "-poster"] {
             poster.draw(in: zeroTiltPoster)
@@ -459,7 +478,7 @@ public final class ProfileCoverView: UIView {
             let width = height * 158 / 375, angle = 0.052 * travel
             let hookX = 892 + nearX
             let center = CGPoint(x: hookX - sin(angle) * height / 2, y: 60 + vertical + cos(angle) * height / 2)
-            glow(ctx, center: CGPoint(x: 980 + midX + 34 * x, y: 307 + y * 3), rx: 43, ry: 5,
+            glow(ctx, center: CGPoint(x: 940 + midX + 34 * x, y: 307 + y * 3), rx: 43, ry: 5,
                  color: UIColor(red: 0.82, green: 0.96, blue: 0.95, alpha: 1), alpha: 0.18 + 0.30 * abs(x))
             bitmap("chime", in: ctx, center: center, width: width, height: height, angle: angle) {
                 guard self.egg > 0 else { return }
@@ -689,7 +708,9 @@ public final class ProfileCoverView: UIView {
     /// 孔明灯（sky-lantern.png，120×110）：三盏错开相位循环上飘（周期约
     /// 14 秒，底部淡入、顶部淡出）；上飘由 App 实现——ProfileCoverView
     /// 用 step() 的 dt 累一个 lanternPhase（进页／停播时复位），灯的位置
-    /// （x 180／480／760）与大小（宽 56）是我定的，想挪直接改这两个数。
+    /// （x 320／600／890）与大小（宽 56）是我定的，想挪直接改这两个数。
+    /// 位置已含画布偏移的补偿：中秋整幅构图左移 120（canvasShiftX，月亮进框），
+    /// 灯若留在原位会被左缘裁掉，故整体右挪——左灯原 180 出框，320 落在屏内。
     private func drawMidautumn(_ ctx: CGContext, depth: CGFloat, travel: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
         let scaleY = padded.height / 323
@@ -707,7 +728,7 @@ public final class ProfileCoverView: UIView {
         let lanternHeight = lanternWidth * 110 / 120
         let period: CGFloat = 14
         let rise: CGFloat = 260
-        for (index, baseX) in [180, 480, 760].enumerated() {
+        for (index, baseX) in [320, 600, 890].enumerated() {
             let phase = (lanternPhase / period + CGFloat(index) / 3).truncatingRemainder(dividingBy: 1)
             let fade = min(phase / 0.15, (1 - phase) / 0.15, 1)
             guard fade > 0 else { continue }
@@ -730,8 +751,9 @@ public final class ProfileCoverView: UIView {
     /// 这两个数。
     /// 花瓣（marigold-petal-1～4.png，从一张四瓣图裁开，各瓣原生比不同）：
     /// 四片错开相位循环飘落（周期约 12 秒，从 y≈-30 落到 y≈350，首尾淡入淡出），
-    /// 横向轻摆 ±20px、微转；落点（x 150／420／680／900）与大小（宽 46）是我
-    /// 定的，想挪直接改这两个数。
+    /// 横向轻摆 ±20px、微转；落点（x 260／420／680／785）与大小（宽 46）是我
+    /// 定的，想挪直接改这两个数。两边落点往里收过：原 150／900 在个人页上
+    /// 左右缘外（屏 x 约 -21／439），260／785 落在屏内。
     private func drawMuertos(_ ctx: CGContext, depth: CGFloat, travel: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
         let scaleY = padded.height / 323
@@ -750,10 +772,10 @@ public final class ProfileCoverView: UIView {
         // 花瓣：四片错开相位循环飘落（周期 12 秒，从 y≈-30 落到 y≈350）。
         let petalWidth: CGFloat = 46
         let petalSizes: [(key: String, aspect: CGFloat, baseX: CGFloat)] = [
-            ("marigold-petal-1", 426 / 490, 150),
+            ("marigold-petal-1", 426 / 490, 260),
             ("marigold-petal-2", 417 / 683, 420),
             ("marigold-petal-3", 229 / 438, 680),
-            ("marigold-petal-4", 373 / 550, 900),
+            ("marigold-petal-4", 373 / 550, 785),
         ]
         let period: CGFloat = 12
         let fall: CGFloat = 380
@@ -829,7 +851,9 @@ public final class ProfileCoverView: UIView {
             }
 
         case .korea:
-            let hook = CGPoint(x: 1002 + nearX, y: 318 + vertical)
+            // 挂钩往里收过：原 1002 在个人页上贴右缘（屏 x 约 389，倾斜满幅时约 399），
+            // 960 留出余量；风筝由挂钩算出，跟着一起往里走，绳仍系在亭台基座上。
+            let hook = CGPoint(x: 960 + nearX, y: 318 + vertical)
             let radius: CGFloat = 276, theta = -1.10 + 0.039 * travel, angle = 0.095 + 0.052 * travel
             let end = CGPoint(x: hook.x + radius * sin(theta), y: hook.y - radius * cos(theta))
             let height: CGFloat = 106
@@ -861,7 +885,9 @@ public final class ProfileCoverView: UIView {
         guard bounds.width > 0, bounds.height > 0 else { return .zero }
         let size = Self.artSize
         let k = max(bounds.width / size.width, bounds.height / size.height) * extraScale
-        return CGRect(x: bounds.midX + k * (rect.minX - size.width / 2),
+        // 画布偏移与 drawOverlay 的 ctx 变换同值（theme.canvasShiftX），底图与
+        // 叠加层对齐；poster 层也走这里，海报与分层帧不跳位。
+        return CGRect(x: bounds.midX + k * (rect.minX - theme.canvasShiftX - size.width / 2),
                       y: bounds.midY + k * (rect.minY - size.height / 2),
                       width: rect.width * k, height: rect.height * k)
     }
@@ -956,7 +982,8 @@ public final class ProfileCoverView: UIView {
     private func canvasPointToView(_ point: CGPoint) -> CGPoint {
         let k = coverCanvasScale
         let size = Self.artSize
-        return CGPoint(x: bounds.midX + k * (point.x - size.width / 2),
+        // 画布偏移与 drawOverlay 的 ctx 变换、canvasRectToView 同值。
+        return CGPoint(x: bounds.midX + k * (point.x - theme.canvasShiftX - size.width / 2),
                        y: bounds.midY + k * (point.y - size.height / 2))
     }
 
