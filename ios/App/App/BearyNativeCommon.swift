@@ -96,6 +96,28 @@ enum BearyMotion {
     static let localStateDuration: TimeInterval = micro
 }
 
+/// 两张 ID 卡共用的翻面动画（BearyIDCardView／BearySettingsIDCardView 的 flip
+/// 原逐字相同）：点卡片绕 Y 轴 0.55s 弹簧翻转；减动效时直接换面。调用方管
+/// isShowingBack／isFlipping 状态：翻面前 toggle isShowingBack、置 isFlipping
+/// 为 true，completion 里置回 false（减动效分支 completion 同步回，无残留）。
+enum BearyCardFlip {
+    static func animate(container: UIView, showingBack: Bool, animated: Bool, completion: @escaping () -> Void) {
+        let target: CGFloat = showingBack ? .pi : 0
+        let applyTransform = {
+            var transform = CATransform3DIdentity
+            transform.m34 = -1.0 / 1200.0
+            transform = CATransform3DRotate(transform, target, 0, 1, 0)
+            container.layer.transform = transform
+        }
+        if animated && BearyMotion.animated(true) {
+            UIView.animate(withDuration: 0.55, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: applyTransform, completion: { _ in completion() })
+        } else {
+            applyTransform()
+            completion()
+        }
+    }
+}
+
 /// 新卡片入场统一配置（审计 r16 第 10 项，Li 定版 2026-11-06，规范 §6）：
 /// 首屏／筛子切换 60ms 步进、8pt 上移；分页追加 30ms 步进、8pt 上移；
 /// motion.normal 0.26s、封顶 0.24s、可交互。广场（BearyFeedViewController.

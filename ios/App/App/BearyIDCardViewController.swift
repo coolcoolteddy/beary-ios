@@ -985,20 +985,9 @@ final class BearyIDCardView: UIView {
     func flip(animated: Bool) {
         guard !isFlipping else { return }
         isShowingBack.toggle()
-        let target: CGFloat = isShowingBack ? CGFloat.pi : 0
-        let applyTransform = {
-            var transform = CATransform3DIdentity
-            transform.m34 = -1.0 / 1200.0
-            transform = CATransform3DRotate(transform, target, 0, 1, 0)
-            self.flipContainer.layer.transform = transform
-        }
-        if animated && BearyMotion.animated(true) {
-            isFlipping = true
-            UIView.animate(withDuration: 0.55, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: applyTransform, completion: { [weak self] _ in
-                self?.isFlipping = false
-            })
-        } else {
-            applyTransform()
+        isFlipping = true
+        BearyCardFlip.animate(container: flipContainer, showingBack: isShowingBack, animated: animated) { [weak self] in
+            self?.isFlipping = false
         }
     }
 
