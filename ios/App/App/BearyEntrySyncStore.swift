@@ -725,7 +725,9 @@ enum BearyEntrySyncStore {
     }
 
     /// 单条最多重拉次数：触顶即摘待办（不再无限重发；下次全量同步仍会拉回）。
-    static let publishRefetchMaxAttempts = 10
+    /// 口径见 BearyRetryPolicy.refetchMaxAttempts；10 次无退避是刻意的——
+    /// attempts 每 kick 最多 +1，不存在紧循环（详见 BearyRetryPolicy）。
+    static let publishRefetchMaxAttempts = BearyRetryPolicy.refetchMaxAttempts
 
     private static let publishRefetchFileName = "beary_publish_refetch.json"
 

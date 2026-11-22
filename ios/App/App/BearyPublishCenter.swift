@@ -203,7 +203,8 @@ final class BearyPublishCenter {
     /// 发布失败记录（key = draftId ?? clientReq）：原任务＋失败文案＋
     /// 失败时原日记是否已公开＋失败时草稿原样（重试指纹）。供 pill 状态表
     /// 与一键重试用；重试开始／新一轮发布开始即失效（另见 start()）；
-    /// 超 10 条时丢最旧一条。草稿删除不另行通知——重试前按指纹核对，
+    /// 超 BearyRetryPolicy.publishFailureRecordLimit 条时丢最旧一条
+    /// （内存 bound，不是重试次数）。草稿删除不另行通知——重试前按指纹核对，
     /// 草稿不在即失效、改走编辑器。
     private var failedJobs: [String: FailedPublish] = [:]
 
@@ -786,7 +787,7 @@ final class BearyPublishCenter {
 
     /// 失败留档：内存记录供 pill 状态表与一键重试；持久标记写草稿，
     /// 草稿箱据此出失败行与重试入口（重启后仍在）。写盘走 ioQueue 串行，
-    /// 与清标记按调用顺序落盘。记录超 10 条时丢最旧一条。
+    /// 与清标记按调用顺序落盘。记录超 BearyRetryPolicy.publishFailureRecordLimit 条时丢最旧一条。
     private func recordFailure(_ runningJob: RunningJob, message: String) {
         let snapshot = runningJob.job.snapshot
         let sourcePublished = runningJob.sourcePublished
@@ -800,7 +801,7 @@ final class BearyPublishCenter {
             }
         )
         failedJobs[runningJob.key] = record
-        if failedJobs.count > 10,
+        if failedJobs.count > BearyRetryPolicy.publishFailureRecordLimit,
            let oldestKey = failedJobs.min(by: { $0.value.failedAt < $1.value.failedAt })?.key {
             failedJobs.removeValue(forKey: oldestKey)
         }

@@ -1153,12 +1153,11 @@ final class BearyAPI {
         let completion: (Result<T, APIError>) -> Void = BearyDevPreviewState.networkSimulation == .slow
             ? { result in DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { outerCompletion(result) } }
             : outerCompletion
-        // 审计-性能：重试口径统一收进这里。
+        // 审计-性能：重试口径统一收进这里，次数／退避见 BearyRetryPolicy。
         // 发布（POST /beary/api/entries，publishEntry 唯一调用方）指数退避
-        // 重试最多 3 次（1s→2s→4s，原“立即重试 1 次”改为退避序列）；
-        // GET 统一重试 1 次、仅网络错误（读请求幂等，5xx 不重试，避免把
-        // 服务端压力放大一倍）；上传（POST /beary/api/images/upload）
-        // 只加超时、不重试（重发会重复落图）。
+        // 重试（1s→2s→4s，封顶 4s）；GET 统一重试 1 次、仅网络错误
+        // （读请求幂等，5xx 不重试，避免把服务端压力放大一倍）；上传
+        // （POST /beary/api/images/upload）只加超时、不重试（重发会重复落图）。
         // 返回值是首发任务，重试任务不经返回值返回（发布流程不中途取消
         // 在途请求）；epoch 沿用首发值，账户已切换时重试回包的 401 同样
         // 被 epoch 守卫压住，不踢新号。
@@ -1169,7 +1168,7 @@ final class BearyAPI {
         // payloadDecoder 仅改成功体解码器（默认全局 decoder）；错误体与
         // mapStatus 仍走全局 decoder，不受本参数影响。
         let isPublish = (method == "POST" && path == "/beary/api/entries")
-        let retriesLeft = isPublish ? 3 : (method == "GET" ? 1 : 0)
+        let retriesLeft = isPublish ? BearyRetryPolicy.publishMaxRetries : (method == "GET" ? BearyRetryPolicy.readMaxRetries : BearyRetryPolicy.uploadMaxRetries)
         return requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
                               suppressUnauthorized: suppressUnauthorized, timeout: timeout,
                               epoch: epoch, accountId: accountId,
@@ -1214,7 +1213,7 @@ final class BearyAPI {
                     // 都推 epoch 并重设账号），说明共享 cookie 已不属于
                     // 首发账号——停重试，原失败原样返回，不重发、不补 401。
                     if epoch == self.authEpoch && accountId == self.authAccountId {
-                        let nextDelay: TimeInterval = retryBackoff ? (retryDelay == 0 ? 1 : min(retryDelay * 2, 4)) : 0
+                        let nextDelay: TimeInterval = retryBackoff ? (retryDelay == 0 ? BearyRetryPolicy.publishBackoffInitialDelay : min(retryDelay * BearyRetryPolicy.publishBackoffMultiplier, BearyRetryPolicy.publishBackoffMaxDelay)) : 0
                         let retryBlock = { [weak self] in
                             guard let self = self else { return }
                             // 退避等待期间切号同样停重试：等待结束时再比一次。
