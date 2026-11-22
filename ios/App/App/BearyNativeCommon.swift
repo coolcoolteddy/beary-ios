@@ -445,7 +445,6 @@ final class BearyHit44SegmentedControl: UISegmentedControl {
         return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
     }
 }
-}
 
 // MARK: - 标签 chip 小工厂（卡片与编辑器共用）
 
