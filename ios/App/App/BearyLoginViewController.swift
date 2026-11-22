@@ -992,9 +992,7 @@ final class BearyLoginViewController: UIViewController {
     /// （与详情/盲盒 playDenyShake 同口径；减动效时只跳过视觉抖动，
     /// 震动与音效照常给）。摇整列 stack（表单收起时仍在树上可见）。
     private func playDenyShake() {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        BearyIconMotion.denyShake(on: stackView, key: "bearyLoginDenyShake")
+        BearyIconMotion.playDenyShake(on: stackView, key: "bearyLoginDenyShake")
     }
 
     private func setLoginTitle(_ text: String, for button: UIButton) {

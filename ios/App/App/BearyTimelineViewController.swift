@@ -1917,9 +1917,7 @@ final class BearyTimelineCell: UITableViewCell {
     /// playDenyShake 同口径：减动效只跳视觉抖动，震动照常给；
     /// 原 globe 钮已摘除，摇头目标改为 ⋯ 菜单钮，调用点与音效/震动不变）。
     func playPublishDenyShake() {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        BearyIconMotion.denyShake(on: moreButton, key: "bearyDenyShake")
+        BearyIconMotion.playDenyShake(on: moreButton, key: "bearyDenyShake")
     }
 
     @objc private func quoteTapped() {

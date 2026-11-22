@@ -514,9 +514,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
 
     /// 拒绝动效（详情页／编辑资料页同口径：values [0,-8,8,-5,5,0] / BearyMotion.screen）。
     private func playDenyShake(on button: UIButton) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        BearyIconMotion.denyShake(on: button, key: "bearyDenyShake")
+        BearyIconMotion.playDenyShake(on: button, key: "bearyDenyShake")
     }
 
     /// 116 数据填入动效：文案变化时只淡入该 label 本身（alpha 0→1、

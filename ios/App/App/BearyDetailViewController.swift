@@ -3270,9 +3270,7 @@ final class BearyDetailViewController: UIViewController {
     }
 
     private func playDenyShake(on button: UIButton) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        BearyIconMotion.denyShake(on: button, key: "bearyDetailDenyShake")
+        BearyIconMotion.playDenyShake(on: button, key: "bearyDetailDenyShake")
     }
 
     // MARK: - 回应行
@@ -3948,11 +3946,7 @@ final class BearyDetailViewController: UIViewController {
                         else { message = "切换失败，请重试" }
                         BearyToast.show(in: self.view, message: message)
                     }
-                    BearyHaptics.rejectionWarning()
-                    BearySoundPlayer.play(.refuseBonk)
-                    if UIAccessibility.isReduceMotionEnabled == false {
-                        BearyIconMotion.denyShake(on: self.moreButton, key: "bearyDenyShake")
-                    }
+                    BearyIconMotion.playDenyShake(on: self.moreButton, key: "bearyDenyShake")
                 }
             }
         }

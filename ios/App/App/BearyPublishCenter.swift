@@ -681,8 +681,7 @@ final class BearyPublishCenter {
         // 拒绝反馈：震动＋拒绝音成对（成功侧 publishSuccess 震动＋回应音同款）；
         // 旧版只有震动没有音，失败与成功不对称。401 路径另见 fail(error:)，
         // 其反馈是登录入口本身，不另补音。
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
+        BearyIconMotion.playDenyFeedback()
         recordFailure(runningJob, message: message)
         if runningJob.openDraftOnFailure, let openDraft = runningJob.job.onOpenDraft,
            let container = terminalToastContainer(for: runningJob) {

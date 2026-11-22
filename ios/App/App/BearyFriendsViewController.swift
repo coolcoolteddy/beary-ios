@@ -667,7 +667,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                                       requestEpoch == BearyAPI.shared.authEpoch else { return }
                                 // N5：失败行保留原位，不插回；震动＋拒绝音不依赖 cell 是否可见，
                                 // 只有摇头仍只在行可见时执行。
-                                self.playDenyFeedback()
+                                BearyIconMotion.playDenyFeedback()
                                 if let currentIndex = self.friends.firstIndex(where: { $0.id == userId }),
                                    let cell = self.tableView.cellForRow(at: IndexPath(row: currentIndex, section: 0)) {
                                     BearyIconMotion.denyShake(on: cell, key: "bearyDenyShake")
@@ -679,14 +679,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                 }
             },
         ])
-    }
-
-    /// 取关失败拒绝反馈：warning 震动＋拒绝音效，与 cell 是否可见无关；
-    /// 摇头只在行可见时由调用方另调 BearyIconMotion.denyShake(on:key:) 执行。
-    /// 减动效时只跳过视觉抖动，震动与音效照常给。
-    private func playDenyFeedback() {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
     }
 }
 

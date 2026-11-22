@@ -1466,9 +1466,7 @@ class BearyEditProfileViewController: UIViewController {
 
     /// 拒绝动效（卡片 playDenyShake 同口径：values [0,-8,8,-5,5,0] / 0.38s）。
     private func playDenyShake(on button: UIButton) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        BearyIconMotion.denyShake(on: button, key: "bearyDenyShake")
+        BearyIconMotion.playDenyShake(on: button, key: "bearyDenyShake")
     }
 
     private func handleErrorMessage(err: APIError) -> String {

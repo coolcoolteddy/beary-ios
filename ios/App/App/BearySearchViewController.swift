@@ -4005,9 +4005,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 搜索关注钮拒绝动效（个人页 playFollowDenyShake 同款：摇头＋warning 震动＋拒绝音效，toast 由调用方发；
     /// 减动效时只跳过视觉抖动，震动与音效照常给）。
     private func playFollowDenyShake(on button: UIButton) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        BearyIconMotion.denyShake(on: button, key: "bearySearchFollowDenyShake")
+        BearyIconMotion.playDenyShake(on: button, key: "bearySearchFollowDenyShake")
     }
 
     @objc private func entryRowTapped(_ sender: UIButton) {

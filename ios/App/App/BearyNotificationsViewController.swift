@@ -2747,8 +2747,7 @@ final class BearyNotificationsViewController: UIViewController {
                     }
                     // 失败有反馈：震动＋拒绝音效＋toast（行重回列表即是回滚本身；
                     // 不复用 playDenyShakeForRow——它按旧下标找行，删后重插下标已变）。
-                    BearyHaptics.rejectionWarning()
-                    BearySoundPlayer.play(.refuseBonk)
+                    BearyIconMotion.playDenyFeedback()
                     strongSelf.showToast(message: "删除失败，请重试")
                     completion?(false)
                 }
@@ -2758,8 +2757,7 @@ final class BearyNotificationsViewController: UIViewController {
 
     /// 单条标已读失败：对可见行摇头（行不可见时只给震动＋音效），配 toast 说明。
     private func playDenyShakeForRow(notificationId: Int) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
+        BearyIconMotion.playDenyFeedback()
         if UIAccessibility.isReduceMotionEnabled { return }
         guard let index = items.firstIndex(where: { $0.id == notificationId }),
               let rowIndex = displayRows.firstIndex(where: { $0.itemIndex == index }),

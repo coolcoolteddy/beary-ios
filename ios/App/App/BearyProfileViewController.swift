@@ -3748,9 +3748,7 @@ class BearyProfileViewController: UIViewController {
     /// 减动效时只跳过视觉抖动，震动与音效照常给；音效门控同 BearySoundPlayer：
     /// 设置页音效开关＋系统静音键，见 BearySoundPlayer.play）。
     private func playFollowDenyShake() {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        BearyIconMotion.denyShake(on: followButton, key: "bearyFollowDenyShake")
+        BearyIconMotion.playDenyShake(on: followButton, key: "bearyFollowDenyShake")
     }
 
     @objc private func followButtonTapped() {

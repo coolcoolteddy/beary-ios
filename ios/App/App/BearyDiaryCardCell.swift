@@ -3662,9 +3662,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private func playDenyShake(on button: UIButton) {
         // 拒绝震动不拿减动效门控：减动效只跳过视觉抖动，震动照常给。
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        BearyIconMotion.denyShake(on: button, key: "bearyDenyShake")
+        BearyIconMotion.playDenyShake(on: button, key: "bearyDenyShake")
     }
 
     /// 2026-10-31 卡片 ⋯ 显隐（时间线风格）：本人卡或他人公开卡显，其余藏；

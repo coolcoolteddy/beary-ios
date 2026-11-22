@@ -216,8 +216,6 @@ enum BearyNineGridPresenter {
     /// 非 Plus 拒绝动效：0.38s 摇头＋warning 震动＋拒绝音效（与详情 playDenyShake 同口径；
     /// 减动效时只跳视觉抖动），只摇触发入口。
     private static func playDenyShake(on view: UIView) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        BearyIconMotion.denyShake(on: view, key: "bearyNineGridDenyShake")
+        BearyIconMotion.playDenyShake(on: view, key: "bearyNineGridDenyShake")
     }
 }

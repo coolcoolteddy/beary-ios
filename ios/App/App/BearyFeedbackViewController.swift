@@ -1262,9 +1262,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     /// 分享失败拒绝动效（设置页同款：摇头＋warning 震动＋拒绝音效；
     /// 减动效时只跳过视觉抖动，震动与音效照常给）。
     private func playDenyShake(on button: UIButton) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        BearyIconMotion.denyShake(on: button, key: "bearyFeedbackDenyShake")
+        BearyIconMotion.playDenyShake(on: button, key: "bearyFeedbackDenyShake")
     }
 
     // MARK: - 邮件（系统 MFMailCompose；未配邮箱时按种类分流）

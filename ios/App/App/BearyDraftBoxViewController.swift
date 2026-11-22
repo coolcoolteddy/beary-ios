@@ -1092,12 +1092,6 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
         }, completion: { _ in completion?() })
     }
 
-    /// 拒绝反馈：warning 震动＋拒绝音（与好友页 playDenyFeedback 同口径）。
-    private func playDenyFeedback() {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-    }
-
     private func chipShell() -> UIView {
         let chip = UIView()
         chip.backgroundColor = BearyColors.surface2
@@ -1639,7 +1633,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
             // 拒绝反馈（震动＋音效＋toast），摇头等弹簧归位完成后再抖，
             // 免得与归位动画抢 transform。
             if let cardView = cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {
-                playDenyFeedback()
+                BearyIconMotion.playDenyFeedback()
                 resetDraftDragCard(cardView) { [weak self] in
                     guard let strongSelf = self else { return }
                     BearyIconMotion.denyShake(on: cardView, key: "bearyDenyShake")
@@ -1689,7 +1683,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
                 }
                 if let cardView = strongSelf.cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {
                     cardView.isUserInteractionEnabled = true
-                    strongSelf.playDenyFeedback()
+                    BearyIconMotion.playDenyFeedback()
                     // 删盘失败：卡片可能带着左滑位移进来（拖动进删不先复位），
                     // 不复位就停在半偏移位；先弹簧归位、摇头等归位完成后再抖
                     //（与发布中拒删分支同口径，免得摇头与归位抢 transform）。
