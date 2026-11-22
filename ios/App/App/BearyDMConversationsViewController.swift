@@ -533,11 +533,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     }
 
     private func load() {
-        guard SessionManager.shared.isLoggedIn else {
-            tableView.refreshControl?.endRefreshing()
-            onRequireLogin?()
-            return
-        }
+        if requireLoginOrEndRefreshing(tableView: tableView, onRequireLogin: onRequireLogin) { return }
         guard !loading else { return }
         loading = true
         loadFailed = false

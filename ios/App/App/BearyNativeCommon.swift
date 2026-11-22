@@ -4492,3 +4492,20 @@ extension UITableView {
         })
     }
 }
+
+// MARK: - 未登录加载拦截（DM 聊天／DM 会话列表／好友列表三处同形三联共用）
+
+extension UIViewController {
+
+    /// 加载前未登录拦截：停下拉刷新、调登录门。返回 true 表示已拦截，调用方直接 return。
+    /// 三处原先各写一份 `guard SessionManager.shared.isLoggedIn else` 块
+    ///（`refreshControl?.endRefreshing()`＋`onRequireLogin?()`＋`return`），收成一处。
+    func requireLoginOrEndRefreshing(tableView: UITableView?, onRequireLogin: (() -> Void)?) -> Bool {
+        guard SessionManager.shared.isLoggedIn else {
+            tableView?.refreshControl?.endRefreshing()
+            onRequireLogin?()
+            return true
+        }
+        return false
+    }
+}
