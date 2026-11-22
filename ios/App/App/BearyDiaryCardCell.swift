@@ -2398,34 +2398,13 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 非公开篇作者本人看精确名；他人只到区级、无区级不显示。
     /// display 返回 nil 时整组隐藏（无位置、他人视角无区级、公开篇无区级），不留空行。
     private func refreshLocationRow(entry: Entry) {
-        guard let line = BearyLocationDisplay.display(entry: entry) else {
-            locationLabel.text = nil
-            updateBottomRowVisibility()
-            return
-        }
-        locationLabel.text = line
-        updateBottomRowVisibility()
-        // 跳动审计第 12 条：缓存命中时首帧直接用解析后的行文，不等异步回包，
-        // 天气组首帧即在终位；缓存未命中才走异步回包。
-        if let cached = BearyLocationDisplayNames.cachedDisplayLine(for: entry) {
-            locationLabel.text = cached
-            updateBottomRowVisibility()
-            return
-        }
+        guard BearyBottomRow.refreshLocationRow(entry: entry, locationLabel: locationLabel, updateVisibility: { self.updateBottomRowVisibility() }) else { return }
         // 2026-11-14 存经纬度：有坐标时按当前语言重取地名；失败／无坐标时保留原存文本行。
         // 复用守卫以 cellEntryId 为准（configure 已先赋值；复用后旧回调凭 id 不符丢弃）。
         let entryId = entry.id
         BearyLocationDisplayNames.displayLine(for: entry) { [weak self] resolved in
             guard let self = self, let resolved = resolved, self.cellEntryId == entryId else { return }
-            // 文案没变不碰布局；变了用 0.18s 局部过渡推天气组，不瞬间横移
-            // （点赞宽度同款口径：约束直设改动画＋layoutIfNeeded；减动效／未进窗口时直设终值）。
-            guard resolved != self.locationLabel.text else { return }
-            self.locationLabel.text = resolved
-            self.updateBottomRowVisibility()
-            guard !UIAccessibility.isReduceMotionEnabled, self.locationLineRow.window != nil else { return }
-            UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
-                self.locationLineRow.layoutIfNeeded()
-            })
+            BearyBottomRow.applyResolvedLine(resolved, locationLabel: self.locationLabel, locationLineRow: self.locationLineRow, updateVisibility: { self.updateBottomRowVisibility() })
         }
     }
 
@@ -2470,12 +2449,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 底行（地址＋天气）显隐：地址与天气任一有内容即显，全无即整行隐藏、
     /// 不占位；无地址时地址组与间隔同藏，天气顶到左边缘。
     private func updateBottomRowVisibility() {
-        let hasLocation = !(locationLabel.text ?? "").isEmpty
-        let hasWeather = !weatherWrapLabel.isHidden || !weatherNameLabel.isHidden || !weatherTempLabel.isHidden
-        locationIconView.isHidden = !hasLocation
-        locationLabel.isHidden = !hasLocation
-        locationWeatherSpacer.isHidden = !hasLocation
-        locationStack.isHidden = !hasLocation && !hasWeather
+        BearyBottomRow.updateVisibility(locationLabel: locationLabel, locationIconView: locationIconView, weatherSpacer: locationWeatherSpacer, locationStack: locationStack, weatherWrapLabel: weatherWrapLabel, weatherNameLabel: weatherNameLabel, weatherTempLabel: weatherTempLabel)
     }
 
     /// 置顶标识行刷新：只认 entry.isPinned（显式 1）；隐藏后 stack 自动压为 0，不留空行。
