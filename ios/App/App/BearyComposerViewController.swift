@@ -5973,6 +5973,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         container.addGestureRecognizer(tap)
         // 图片上传转圈改网页同款圆环（不再用下拉刷新那套 icon_refresh）。
         let spinner = BearyWebRingSpinnerView()
+        // F7：上传行内进度——缩略图底边 3pt 橙条（F9 编辑资料页同款：
+        // BearyColors.orange、封顶 0.95、成功／失败回包即撤；圆环仍保留）。
+        // 平时隐藏，首个上传字节进度回调到达时才亮（选图后原图／压缩确认
+        // 窗口内不亮 0 进度条，只走圆环，与现行一致）。
+        let progressView = UIProgressView(progressViewStyle: .default)
+        progressView.translatesAutoresizingMaskIntoConstraints = false
+        progressView.progressTintColor = BearyColors.orange
+        progressView.trackTintColor = UIColor(white: 1, alpha: 0.4)
+        progressView.progress = 0
+        progressView.isHidden = true
+        // 上传态已由 × 钮的“取消上传 N”读出，条本身不单独进 VoiceOver。
+        progressView.isAccessibilityElement = false
         // 失败态：行内红底块（网页 thumb-fail 同款：红 10% 底 + 图标 + “上传失败，点按重试”），
         // 点块重试，不弹全局框；发布时有失败图直接 toast 拦截（决议第 5 项 A），不弹框。
         let failView = UIView()
@@ -6018,6 +6030,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // C11：左下角独立裁剪钮已删，点缩略图主体直接进裁剪页（见 didTapImageItem）。
         container.addSubview(imageView)
         container.addSubview(spinner)
+        container.addSubview(progressView)
         container.addSubview(failView)
         container.addSubview(removeButton)
         NSLayoutConstraint.activate([
@@ -6031,6 +6044,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             spinner.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             spinner.widthAnchor.constraint(equalToConstant: 20),
             spinner.heightAnchor.constraint(equalToConstant: 20),
+            progressView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            progressView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            progressView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            progressView.heightAnchor.constraint(equalToConstant: 3),
             failView.topAnchor.constraint(equalTo: container.topAnchor),
             failView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             failView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -6057,7 +6074,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if failed {
             imageView.isHidden = true
         }
-        let item = ComposerImageItem(key: key, uploading: uploading, localFile: localFile, failed: failed, container: container, imageView: imageView, spinner: spinner, failView: failView, removeButton: removeButton)
+        let item = ComposerImageItem(key: key, uploading: uploading, localFile: localFile, failed: failed, container: container, imageView: imageView, spinner: spinner, progressView: progressView, failView: failView, removeButton: removeButton)
         // 审计-编辑器详情：新建即上传态的项，× 同为取消入口。
         removeButton.accessibilityLabel = uploading ? "取消上传" : "删除图片"
         return item
@@ -6072,9 +6089,31 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.imageView.isHidden = false
         item.imageView.alpha = 1.0
         item.spinner.startSpinning()
+        // F7：新一轮起传即清进度（上一轮残值不带进本轮）；条仍隐藏，
+        // 首个上传字节进度回调到达时再亮（见 updateUploadProgress）。
+        item.uploadProgressValue = 0
+        item.progressView.setProgress(0, animated: false)
+        item.progressView.isHidden = true
         // 审计-编辑器详情：上传中 × 即取消入口，VoiceOver 明说。
         item.removeButton.accessibilityLabel = "取消上传"
         refreshAttachmentAccessibilityLabels()
+    }
+
+    /// F7：上传字节进度回调（URLSession delegate 线程，非主线程）——
+    /// 回主线程更新本项缩略图底边进度条；只认本轮代次（取消／重传推高代次
+    /// 后过期回调直接丢弃，不写回新一轮的条），进度单调递增、封顶 0.95
+    ///（字节发完、等回包期间不先满格；成功／失败回包由 markUploaded／
+    /// markFailed 撤条）。首个有效回调到达时才亮条。
+    private func updateUploadProgress(for item: ComposerImageItem, generation: Int, sent: Int64, expected: Int64) {
+        guard expected > 0, sent >= 0 else { return }
+        let value = min(Float(sent) / Float(expected), 0.95)
+        DispatchQueue.main.async { [weak self, weak item] in
+            guard let self, let item, item.uploading, generation == self.lockedUploadGeneration(of: item) else { return }
+            guard value > item.uploadProgressValue else { return }
+            item.uploadProgressValue = value
+            item.progressView.isHidden = false
+            item.progressView.setProgress(value, animated: true)
+        }
     }
 
     private func markUploaded(_ item: ComposerImageItem, key: String) {
@@ -6090,6 +6129,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.imageView.isHidden = false
         item.imageView.alpha = 1.0
         item.spinner.stopSpinning()
+        // F7：上传完成即撤行内进度条。
+        item.uploadProgressValue = 0
+        item.progressView.setProgress(0, animated: false)
+        item.progressView.isHidden = true
         item.removeButton.accessibilityLabel = "删除图片"
         refreshAttachmentAccessibilityLabels()
     }
@@ -6100,6 +6143,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func markLocalReady(_ item: ComposerImageItem) {
         item.uploading = false
         item.spinner.stopSpinning()
+        // F7：本地就绪（不上传）不亮进度条。
+        item.uploadProgressValue = 0
+        item.progressView.setProgress(0, animated: false)
+        item.progressView.isHidden = true
         item.removeButton.accessibilityLabel = "删除图片"
     }
 
@@ -6113,6 +6160,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.failView.isHidden = false
         item.imageView.isHidden = true
         item.spinner.stopSpinning()
+        // F7：上传失败即撤行内进度条（只亮红底重试块，不动失败态）。
+        item.uploadProgressValue = 0
+        item.progressView.setProgress(0, animated: false)
+        item.progressView.isHidden = true
         item.removeButton.accessibilityLabel = "删除图片"
         refreshAttachmentAccessibilityLabels()
     }
@@ -7048,7 +7099,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         let uploadGeneration = token.generation
-        item.uploadTask = BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: full.w, height: full.h, thumbDataUrl: thumbDataUrl, videoDataUrl: videoDataUrl) { [weak self, weak item] result in
+        // F7：预上传字节进度接缩略图底边进度条（发布中心同款 uploadProgress
+        // 接线；代次认领与完成回调同款，过期回调不写回新一轮的条）。
+        item.uploadTask = BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: full.w, height: full.h, thumbDataUrl: thumbDataUrl, videoDataUrl: videoDataUrl, uploadProgress: { [weak self, weak item] sent, expected in
+            guard let self, let item else { return }
+            self.updateUploadProgress(for: item, generation: uploadGeneration, sent: sent, expected: expected)
+        }) { [weak self, weak item] result in
             DispatchQueue.main.async {
                 guard let self = self, let item = item else { return }
                 var stillThere = false
@@ -7286,6 +7342,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.imageView.isHidden = false
         item.imageView.alpha = 1.0
         item.spinner.stopSpinning()
+        // F7：上传挂起（等发布时统一传）不亮进度条。
+        item.uploadProgressValue = 0
+        item.progressView.setProgress(0, animated: false)
+        item.progressView.isHidden = true
         item.removeButton.accessibilityLabel = "删除图片"
         refreshAttachmentAccessibilityLabels()
     }
@@ -10502,10 +10562,14 @@ private final class ComposerImageItem {
     let container: UIView
     let imageView: UIImageView
     let spinner: BearyWebRingSpinnerView
+    /// F7：缩略图底边上传进度条（3pt 橙条，F9 同款）＋已展示到的最大进度
+    ///（单调递增，防回包抖动回退；新一轮起传由 markUploading 清零）。
+    let progressView: UIProgressView
+    var uploadProgressValue: Float = 0
     let failView: UIView
     let removeButton: UIButton
 
-    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: BearyWebRingSpinnerView, failView: UIView, removeButton: UIButton) {
+    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: BearyWebRingSpinnerView, progressView: UIProgressView, failView: UIView, removeButton: UIButton) {
         self.key = key
         self.uploading = uploading
         self.localFile = localFile
@@ -10513,6 +10577,7 @@ private final class ComposerImageItem {
         self.container = container
         self.imageView = imageView
         self.spinner = spinner
+        self.progressView = progressView
         self.failView = failView
         self.removeButton = removeButton
     }
