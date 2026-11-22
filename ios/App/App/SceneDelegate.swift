@@ -73,9 +73,16 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
     }
 
     // UNUserNotificationCenterDelegate：前台收到本地通知时也显示横幅并播提示音
-    //（默认不设 delegate 时前台静默投递）。不按类别过滤、不改 badge、不处理点按。
+    //（默认不设 delegate 时前台静默投递）。不按类别过滤、不改 badge；点按见下方 didReceive 转发。
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])
+    }
+
+    // UNUserNotificationCenterDelegate：点按本地通知的路由（第 25 轮 60）。
+    // 落点逻辑在 BearyLocalNotifications（userInfo 带 kind＋账号＋目标 id），这里只转发；
+    // 前台横幅仍由上面的 willPresent 负责。
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        BearyLocalNotifications.shared.userNotificationCenter(center, didReceive: response, withCompletionHandler: completionHandler)
     }
 
     // 反馈日志：前后台切换只记固定事件名（不含任何用户内容）。
@@ -2268,6 +2275,19 @@ final class BearyChromeViewController: UIViewController {
         guard let route = BearyRoute.parse(url: url) else { return false }
         navigator.open(route)
         return true
+    }
+
+    /// 第 25 轮 60：本地通知点按落点（BearyLocalNotifications 的 delegate 回调）。
+    /// 账号已在 delegate 侧校验；单篇仍走 gotoEntry 的拉取＋可见性门。
+    func openLocalNotificationTarget(_ target: BearyLocalNotifications.NotificationTarget) {
+        switch target {
+        case .dailyReminder:
+            navigator.open(.editor)
+        case .entry(let entryId):
+            navigator.open(.entry(entryId))
+        case .pastDay:
+            navigator.open(.profile)
+        }
     }
 
     // MARK: - 原生页接线（批一：原生栏行为、动画、无障碍标签一律不动；页切换只在原生页之间）
@@ -4568,13 +4588,11 @@ final class BearyChromeViewController: UIViewController {
             self.feedVC?.refreshAll()
             // 发布成功落盘：单篇拉取后 upsert 到该北京日文件（失败静默，
             // 下次同步/切日刷新纠正）；内存日缓存由切日静默刷新接管，不在此处碰。
+            // 本地通知：落盘完成后重算（当天已写则取消今晚提醒）；回前台刷新是兜底。
             if let uid = SessionManager.shared.currentUser?.id {
-                BearyEntrySync.shared.upsertPublished(entryId: entryId, accountId: uid)
-            }
-            // 本地通知：落盘是异步拉取，2 秒后重算（当天已写则取消今晚提醒）；
-            // 回前台刷新是兜底。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                BearyLocalNotifications.shared.refreshAll(force: true)
+                BearyEntrySync.shared.upsertPublished(entryId: entryId, accountId: uid) {
+                    BearyLocalNotifications.shared.refreshAll(force: true)
+                }
             }
             // 只有最新一次发布、且顶层无其他 modal 时，才退场并切时间线；
             // 否则用户已在用后来打开的页面（下一篇编辑器、详情页等），
