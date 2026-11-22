@@ -192,6 +192,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
     func sceneWillEnterForeground(_ scene: UIScene) {
         // 本地通知：回前台按最新本地数据 + 开关重算待发送（5 分钟内只刷一次）。
         BearyLocalNotifications.shared.refreshAll()
+        // 图标未读角标：回前台按最新消息页未读数重设。
+        (window?.rootViewController as? BearyChromeViewController)?.syncAppIconBadge()
         // 遮罩回前台无验证直接撤掉（回前台不锁的口径不变）。
         BearyAppLockManager.shared.removeShield()
         (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
@@ -1147,9 +1149,11 @@ final class BearyChromeViewController: UIViewController {
         let stale = note.userInfo?["stale"] as? Bool ?? false
         if Thread.isMainThread {
             updateMessageBadge(unread: unread, stale: stale)
+            syncAppIconBadge(fallbackUnread: unread)
         } else {
             DispatchQueue.main.async { [weak self] in
                 self?.updateMessageBadge(unread: unread, stale: stale)
+                self?.syncAppIconBadge(fallbackUnread: unread)
             }
         }
     }
@@ -2217,6 +2221,7 @@ final class BearyChromeViewController: UIViewController {
     private func updateMessagesTabBadge() {
         guard let messages = messagesVC, let badge = messagesBadgeLabel else { return }
         let count = messages.unreadMessagesCount
+        BearyAppIconBadge.sync(count: count)
         let shouldShow = count > 0
         let text = count > 99 ? "99+" : "\(count)"
         let needsVisibilityChange = badge.isHidden == shouldShow
@@ -2224,6 +2229,12 @@ final class BearyChromeViewController: UIViewController {
         guard needsVisibilityChange || needsTextChange else { return }
         badge.text = text
         badge.isHidden = !shouldShow
+    }
+
+    /// 图标未读角标同步：跟消息页统一未读数（与底栏消息角标同数）；消息页未建时退回通知未读数。
+    /// 内部方法：SceneDelegate.sceneWillEnterForeground 回前台时也调。
+    func syncAppIconBadge(fallbackUnread: Int = 0) {
+        BearyAppIconBadge.sync(count: messagesVC?.unreadMessagesCount ?? fallbackUnread)
     }
 
     /// 未读角标几何跟随系统字号（同会话行 updateUnreadBadgeGeometry 口径）：
