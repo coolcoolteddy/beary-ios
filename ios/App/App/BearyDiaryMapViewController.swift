@@ -467,30 +467,30 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             applyDevForcedMap()
             return
         }
-        loadGeneration += 1
         // 扫荡 130：新一轮取数开始即记下当前视野——整批解析完成时只有
         // 用户没动过地图才整体调整（见 applyGeocodedGroups）。
         if !didInitialGeocode {
             regionBeforeFirstGeocode = mapView.region
         }
         beginLoadingIfEmpty()
-        fetchCollected = []
-        fetchResumeBefore = nil
-        fetchResumeBeforeId = nil
-        fetchResumePage = 1
-        fetchInterrupted = false
         fetchCapped = false
         inlineRetryButton.setTitle("重试", for: .normal)
         inlineRetryButton.isHidden = true
         // C3：全量取数走共用入口（内存 → 完整存档 → 网络，在途共用）；
         // 本页只消费结果（成表/部分成表/失败态），分页与截断口径归加载器。
-        let generation = loadGeneration
-        BearySharedEntryLoader.shared.load(scope: entriesScope) { [weak self] load in
-            DispatchQueue.main.async {
-                guard let self = self, generation == self.loadGeneration else { return }
-                self.applySharedLoad(load)
-            }
-        }
+        // 起步（代次＋游标复位＋共用加载＋代次守卫分发）与星图共用
+        // BearySharedEntryLoader.startFreshLoad。
+        BearySharedEntryLoader.startFreshLoad(
+            scope: entriesScope,
+            generation: &loadGeneration,
+            collected: &fetchCollected,
+            resumeBefore: &fetchResumeBefore,
+            resumeBeforeId: &fetchResumeBeforeId,
+            resumePage: &fetchResumePage,
+            interrupted: &fetchInterrupted,
+            isCurrentGeneration: { [weak self] generation in self?.loadGeneration == generation },
+            apply: { [weak self] load in self?.applySharedLoad(load) }
+        )
     }
 
     /// 共用取数回包应用（与旧 fetchEntriesPage 的终态分支一一对应）：
