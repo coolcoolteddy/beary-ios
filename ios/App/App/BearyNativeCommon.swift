@@ -4037,6 +4037,29 @@ enum BearyEphemeral {
     }
 }
 
+/// 限时倒计时 Timer 起停 plumbing（详情与卡片共用）：1 秒重复、RunLoop.main `.common`。
+/// tick 各留自己的——详情版到期走 applyEphemeralExpiryIfNeeded／scheduleEphemeralExpiry，
+/// 卡片版走 refreshEphemeralState＋updateDiaryStackSpacing（带 isLive 守卫），不要强行合。
+/// onTick 须由调用点包一层 [weak self]：Timer 强持有闭包，不弱引用会循环引用。
+final class BearyCountdownTimer {
+    private var timer: Timer?
+
+    /// 起：已在跑时直接返回；`canStart` 为额外守卫（卡片须在窗口内，`window != nil`）。
+    func start(canStart: Bool = true, onTick: @escaping () -> Void) {
+        guard timer == nil, canStart else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { _ in onTick() }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    deinit { timer?.invalidate() }
+}
+
 /// 审计 2026-11-02 第十节：可见性三档共享口径（已发布日记“修改权限”四处共用）。
 /// 服务端 visibility 字段值：private / friends / public；旧行缺失时调用方按
 /// isPublic 兜底（true=公开、其余=私密），绝不把缺失误标为仅好友。
