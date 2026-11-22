@@ -384,8 +384,6 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// 点图片条时触发（传图片下标与被点缩略图在 window 下的矩形，控制器开图片查看器；不再进详情；矩形供关场回到原处用；另传被点缩略图已显示的 UIImage，灯箱打开先显它）。
     var onImageTapped: ((Int, CGRect?, UIImage?) -> Void)?
-    /// 九宫格入口点按：容器接线（Plus 门控 + 开网格都在容器侧，本处只转发）。
-    var onNineGridTapped: ((UIButton) -> Void)?
     /// 引用卡点按：传引用 id（容器先 fetchEntry 校验可见性再放行，私密时显占位）。
     var onQuoteSelected: ((String) -> Void)?
     /// 标签完整版（2026-11-18）：卡片上标签 chip 点按，传标签原文；容器推聚合页。
@@ -1091,38 +1089,21 @@ class BearyDiaryCardCell: UITableViewCell {
         return btn
     }()
 
-    /// 九宫格入口：图片数 > 3 时在图片条下方弹起；纯文字 pill（官方手绘包里
-    /// 无现成网格图标，不自绘）。样式走规范 token：surface2 底、墨字、13 semibold、
-    /// 圆角 single 12、高 32。点按走 onNineGridTapped，Plus 门控在容器侧。
-    private lazy var nineGridButton: UIButton = {
-        let btn = BearyHit44Button(type: .system)
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
-        btn.titleLabel?.adjustsFontForContentSizeCategory = true
-        btn.setTitle("九宫格", for: .normal)
-        btn.setTitleColor(BearyColors.ink, for: .normal)
-        btn.backgroundColor = BearyColors.surface2
-        btn.layer.cornerRadius = 12
-        btn.clipsToBounds = true
-        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
-        return btn
-    }()
-
-    /// 九宫格按钮容器：左贴内容缘，栈内隐藏时自动压零、不留空位。
-    private lazy var nineGridWrapView: UIView = {
-        let v = UIView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.isHidden = true
-        v.alpha = 0
-        v.addSubview(nineGridButton)
-        NSLayoutConstraint.activate([
-            nineGridButton.leadingAnchor.constraint(equalTo: v.leadingAnchor),
-            nineGridButton.topAnchor.constraint(equalTo: v.topAnchor),
-            nineGridButton.bottomAnchor.constraint(equalTo: v.bottomAnchor),
-            nineGridButton.heightAnchor.constraint(equalToConstant: 32),
-        ])
-        return v
+    /// 九宫格直显（2026-11-22 Li 定，取代 2026-11-12 旧形态）：选了九宫格格式的
+    /// 日记直接以正文＋九宫格排版显示；旧「九宫格」按钮与单独网格页已删。
+    /// 点格走图片条点图同款回调（首页 onImageTapped／个人页 onTapImages），
+    /// 灯箱下标与 keys 与图片条同一组（currentImageKeys）。
+    private lazy var inlineNineGridView: BearyInlineNineGridView = {
+        let grid = BearyInlineNineGridView()
+        grid.onImageTapped = { [weak self] index, originFrame, thumbnail in
+            guard let self = self else { return }
+            if self.cardMode == .feed {
+                self.onImageTapped?(index, originFrame, thumbnail)
+            } else {
+                self.onTapImages?(self.currentImageKeys, index, originFrame, thumbnail)
+            }
+        }
+        return grid
     }()
 
     private let quoteView = BearyQuoteCardView()
@@ -1309,7 +1290,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 不再缩进到昵称位置；顶缘取头像底与头行底较大者 + 间距（见 setupConstraints）。
     private lazy var bodyStack: BearyPassThroughStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = BearyPassThroughStackView(arrangedSubviews: [entryTitleLabel, contentLabel, foldButton, imagesScrollView, nineGridWrapView, quoteView, locationStack, tagsScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = BearyPassThroughStackView(arrangedSubviews: [entryTitleLabel, contentLabel, foldButton, imagesScrollView, inlineNineGridView, quoteView, locationStack, tagsScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
         // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
         st.passThroughRoot = emoteFlowView
         st.translatesAutoresizingMaskIntoConstraints = false
@@ -1497,46 +1478,6 @@ class BearyDiaryCardCell: UITableViewCell {
         imagesStack.spacing = 8
         applyImageStripCornerRadius(progress: 0)
         imagesScrollView.isScrollEnabled = true
-    }
-
-    /// 九宫格入口隐藏动画代次：收起动画完成时若已有新一轮展开，须以新态为准、不再藏。
-    private var nineGridHideToken = 0
-
-    /// 九宫格入口显隐：图片数 > 3 才出现；状态真变时才动（复用滚动不闪）。
-    /// 出现走规范 §6 局部状态 0.18s 淡入，减动效直设；收起先淡出、完成再藏。
-    private func updateNineGridButton(count: Int) {
-        let shouldShow = count > 3
-        guard nineGridWrapView.isHidden == shouldShow else { return }
-        nineGridHideToken += 1
-        let animated = window != nil && !UIAccessibility.isReduceMotionEnabled
-        if shouldShow {
-            nineGridWrapView.isHidden = false
-            nineGridWrapView.alpha = animated ? 0 : 1
-            if animated {
-                UIView.animate(withDuration: 0.18) {
-                    self.nineGridWrapView.alpha = 1
-                }
-            }
-        } else {
-            if animated {
-                let token = nineGridHideToken
-                UIView.animate(withDuration: 0.18, animations: {
-                    self.nineGridWrapView.alpha = 0
-                }, completion: { _ in
-                    guard token == self.nineGridHideToken else { return }
-                    self.nineGridWrapView.isHidden = true
-                    self.updateDiaryStackSpacing()
-                })
-            } else {
-                nineGridWrapView.isHidden = true
-                nineGridWrapView.alpha = 0
-            }
-        }
-        updateDiaryStackSpacing()
-    }
-
-    @objc private func nineGridButtonTapped() {
-        onNineGridTapped?(nineGridButton)
     }
 
     private func makeImageSlots() {
@@ -2013,10 +1954,7 @@ class BearyDiaryCardCell: UITableViewCell {
         onQuoteTap = nil
         onFoldToggle = nil
         onTapImages = nil
-        onNineGridTapped = nil
-        nineGridHideToken += 1
-        nineGridWrapView.isHidden = true
-        nineGridWrapView.alpha = 0
+        inlineNineGridView.configure(keys: [])
         currentEntry = nil
         cellEntryId = nil
         currentImageKeys = []
@@ -2326,9 +2264,9 @@ class BearyDiaryCardCell: UITableViewCell {
         bodyStack.setCustomSpacing(14, after: foldButton)
         // 图片→定位 12（ChatGPT 间距跟进）：图片条与定位行中间隔着引用卡，
         // 两段相邻间距（图片→引用、引用→定位）各取 12（天气已并进定位行）；
-        // 九宫格按钮在图片条与引用卡之间时，图片条→按钮、按钮→引用卡各取 12。
+        // 九宫格直显时图片条藏起、网格占图片条原位，图片条→网格、网格→引用卡各取 12。
         bodyStack.setCustomSpacing(12, after: imagesScrollView)
-        bodyStack.setCustomSpacing(12, after: nineGridWrapView)
+        bodyStack.setCustomSpacing(12, after: inlineNineGridView)
         bodyStack.setCustomSpacing(12, after: quoteView)
         // 批 E：位置行→标签行 12；标签行→操作行 14（标签完整版 2026-11-18）；
         // 任一行隐藏时 stack 自动忽略该间距，不留空隙。
@@ -2605,7 +2543,7 @@ class BearyDiaryCardCell: UITableViewCell {
         configureQuoteFeed(for: entry)
 
         // F5：图片条 216 高、按宽高比定宽、圆角 12、间距 8、横向滚动（94 包槽位复用）。
-        renderImages(keys: entry.images ?? [], dims: entry.imgDims, liveVideos: entry.liveVideos)
+        renderImages(keys: entry.images ?? [], dims: entry.imgDims, liveVideos: entry.liveVideos, layout: entry.layout)
         // 批 E：位置行（图片条之后、操作行之前）。
         refreshLocationRow(entry: entry)
         // 标签完整版（2026-11-18）：标签行（位置行之后、操作行之前）。
@@ -2719,7 +2657,7 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         configureQuoteProfile(entry: entry)
         // 图片条 216 高、按宽高比定宽（原 stripW 口径；94 包槽位复用 + 合并后补重试）。
-        renderImages(keys: entry.images ?? [], dims: entry.imgDims, liveVideos: entry.liveVideos)
+        renderImages(keys: entry.images ?? [], dims: entry.imgDims, liveVideos: entry.liveVideos, layout: entry.layout)
         // 批 E：位置行（个人页模式同款，图片条之后、操作行之前）。
         refreshLocationRow(entry: entry)
         // 标签完整版（2026-11-18）：标签行（位置行之后、操作行之前）。
@@ -2771,7 +2709,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// 实况：调用方传本条 entry.liveVideos；无实况的图映射里无项，覆盖层
     /// 即清掉（旧静态图、纯静态新图一律走这里，不动原静态加载）。
-    private func renderImages(keys: [String], dims: [String: [Int]]?, liveVideos: [String: String]? = nil) {
+    private func renderImages(keys: [String], dims: [String: [Int]]?, liveVideos: [String: String]? = nil, layout: String? = nil) {
         resetImageStripPinch()
         // 内联图不进图条：已插进正文/标题里播，再进图条会同一张图
         // 出现两次（正文动画＋图条静态）；图条只放照片。
@@ -2780,7 +2718,16 @@ class BearyDiaryCardCell: UITableViewCell {
         // 第 10 张起既不渲染也不进灯箱；逐项再 guard 三池下标，防池化异常越界。
         let keys = Array(keys.filter { BearyGIF.isInlineImageKey($0, content: currentEntry?.content ?? "") == false }.prefix(9))
         currentImageKeys = keys
-        updateNineGridButton(count: keys.count)
+        // 九宫格直显（2026-11-22 Li 定）：选了九宫格格式的日记直接显示
+        // 正文＋九宫格，图片条整条藏起（槽位内容不动，下次切回条状重填）；
+        // 条状走原路，网格同步藏起。
+        if layout == "grid", !keys.isEmpty {
+            imagesScrollView.isHidden = true
+            imageHeightConstraint?.constant = 0
+            inlineNineGridView.configure(keys: keys)
+            return
+        }
+        inlineNineGridView.configure(keys: [])
         if imageSlots.isEmpty { makeImageSlots() }
         if keys.isEmpty {
             imagesScrollView.isHidden = true
@@ -4823,8 +4770,15 @@ extension BearyDiaryCardCell {
         height += textHeight
         if hasEphemeral { height += 40 }                                // 气泡上下内边距 20 + 20
         if overflow { height += 6 + 20 + 14 } else { height += 14 }      // 折叠钮行 / 正文→下行
-        if hasImages { height += 216 + 12 }                              // 图片条 + 间距
-        if imageKeys.count > 3 { height += 32 + 12 }                     // 九宫格入口 + 间距
+        if hasImages {
+            // 九宫格直显（2026-11-22 Li 定）：选了九宫格格式的日记按网格高估算
+            //（与实际布局同一公式）；条状仍是图片条 216 + 间距。
+            if entry.isNineGridLayout {
+                height += BearyInlineNineGridView.height(forWidth: contentWidth, count: min(imageKeys.count, 9)) + 12
+            } else {
+                height += 216 + 12                                       // 图片条 + 间距
+            }
+        }
         if hasQuote { height += 72 + 12 }                                // 引用卡（近似）+ 间距
         if hasLocation { height += 18 + 14 }                             // 位置行 + 间距
         if hasTags { height += 28 + 14 }                                 // 标签行 28 + 标签行→操作行间距 14

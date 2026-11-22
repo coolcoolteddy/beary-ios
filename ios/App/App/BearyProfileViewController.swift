@@ -9773,10 +9773,6 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: BearyMotion.animated(true), completion: nil)
         }
-        cellValue.onNineGridTapped = { [weak self] button in
-            guard let strongSelf = self else { return }
-            BearyNineGridPresenter.present(from: strongSelf, anchorView: button, imageKeys: entryValue.images ?? [], liveVideos: entryValue.liveVideos)
-        }
         return cellValue
     }
 

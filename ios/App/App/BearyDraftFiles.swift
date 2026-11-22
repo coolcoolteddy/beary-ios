@@ -107,6 +107,9 @@ struct BearyDraft: Codable {
     var visibilitySegmentIndex: Int = 0
     /// 标签完整版（2026-11-18）：草稿里选中的标签列；老草稿缺本键时按 nil 解码，即无标签。
     var tags: [String]? = nil
+    /// 九宫格版式（2026-11-22 Li 定新口径）：'grid' = 草稿里选了九宫格格式，
+    /// 恢复时回到选择行；老草稿缺本键时按 nil 解码，即默认条状。
+    var layout: String? = nil
     /// 草稿限时态（顶栏三态循环的限时档；老草稿缺本键时按 false 解码，
     /// 即旧私密/公开态，不凭空变限时；编辑态不写草稿，恒为 false）。
     var ephemeralEnabled: Bool = false

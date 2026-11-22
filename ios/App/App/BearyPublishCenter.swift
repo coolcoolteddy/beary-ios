@@ -21,6 +21,9 @@ struct PublishSnapshot {
     let title: String?
     /// 标签完整版（2026-11-18）：新建时选中的标签列；空组不发 tags 键。
     let tags: [String]?
+    /// 九宫格版式（2026-11-22 Li 定新口径）：'grid' = 发布时选了九宫格格式，
+    /// 发布请求里带上；nil = 默认条状，不发 layout 键。
+    let layout: String?
     var ephemeral: Int?
     let locationName: String?
     let locationDistrict: String?
@@ -591,6 +594,7 @@ final class BearyPublishCenter {
             liveVideos: runningJob.liveVideos.isEmpty ? nil : runningJob.liveVideos,
             visibility: snapshot.visibility,
             tags: snapshot.tags,
+            layout: snapshot.layout,
             uploadProgress: progressHandler
         ) { [weak self, weak runningJob] result in
             DispatchQueue.main.async {

@@ -2695,7 +2695,7 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, locationLatitude: Double? = nil, locationLongitude: Double? = nil, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, tags: [String]? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, locationLatitude: Double? = nil, locationLongitude: Double? = nil, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, tags: [String]? = nil, layout: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
         // 实况：非空才发 live_videos（无实况的新建与旧版 body 一字相同）；
         // 空映射不发（新建无旧态可清，编辑清实况走 updateEntry 的显式空映射）。
@@ -2736,6 +2736,9 @@ extension BearyAPI {
         if let mentioned = mentionedUserId { body["mentioned_user_id"] = mentioned }
         // 标签完整版（2026-11-18）：非空才发 tags（新建无旧态可清，空组不发、服务端不建关联行）。
         if let tags = tags, !tags.isEmpty { body["tags"] = tags }
+        // 九宫格版式（2026-11-22 Li 定新口径）：只发显式 'grid'；条状／未选
+        // 一律省略（服务端缺省 NULL 即条状，与旧版 body 一字相同）。
+        if layout == "grid" { body["layout"] = "grid" }
         request("/beary/api/entries", method: "POST", jsonBody: body, uploadProgress: uploadProgress, completion: completion)
     }
 
