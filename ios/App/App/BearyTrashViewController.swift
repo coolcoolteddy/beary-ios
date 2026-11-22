@@ -1146,7 +1146,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             rowView.transform = .identity
             return
         }
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
             rowView.transform = .identity
         }, completion: nil)
     }

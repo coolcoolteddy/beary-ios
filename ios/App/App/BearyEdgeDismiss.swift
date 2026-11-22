@@ -292,7 +292,7 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
     /// 取消／失败无有效松手速度，调用方不传（默认 0）。
     private func resetCompletionFollow(view: UIView, initialSpringVelocity: CGFloat = 0) {
         guard view.transform != .identity else { return }
-        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: [], animations: {
+        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: initialSpringVelocity, options: [], animations: {
             view.transform = .identity
         })
     }
@@ -352,7 +352,7 @@ private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnim
             let width = container.bounds.width
             // 拖拽收尾统一弹簧 0.26s／damping 0.7：交互式过渡的 animator
             // 实例在手势开始时已建、无松手速度可传，故初速度取 0。
-            UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+            UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [], animations: {
                 fromView.transform = CGAffineTransform(translationX: width, y: 0)
             }, completion: { _ in
                 // 115 设置页空白守卫（根因未证实）：转场取消 / 中断时显式

@@ -1284,7 +1284,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             completion?()
             return
         }
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
             card.transform = .identity
         }, completion: { _ in completion?() })
     }
@@ -1690,7 +1690,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                     restore()
                     UIAccessibility.post(notification: .layoutChanged, argument: strongSelf.sheetView)
                 } else {
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [], animations: restore) { _ in
+                    BearyMotion.springAnimate(animations: restore) { _ in
                         UIAccessibility.post(notification: .layoutChanged, argument: strongSelf.sheetView)
                     }
                 }
@@ -1752,7 +1752,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
             self.backdropButton.alpha = 0
         })
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+        BearyMotion.springAnimate(animations: {
             if self.isPadLayout {
                 self.sheetView.alpha = 0
                 self.sheetView.transform = CGAffineTransform(translationX: 0, y: self.sheetView.bounds.height * 0.04)
@@ -1808,7 +1808,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                     UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
                 } else {
                     let offset = BearySheetDrag.offset(for: translation.y)
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore) { _ in
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore) { _ in
                         UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
                     }
                 }
@@ -1823,7 +1823,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 restore()
                 UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
             } else {
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore) { _ in
+                BearyMotion.springAnimate(animations: restore) { _ in
                     UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
                 }
             }

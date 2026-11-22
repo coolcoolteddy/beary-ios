@@ -717,7 +717,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                     restore()
                 } else {
                     let offset = BearySheetDrag.offset(for: translation.y)
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
                 }
             }
         case .cancelled, .failed:
@@ -728,7 +728,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
+                BearyMotion.springAnimate(animations: restore)
             }
         default:
             break
@@ -1345,7 +1345,7 @@ final class BearySheetSlideTransition: NSObject, UIViewControllerTransitioningDe
             transitionContext.completeTransition(true)
             return
         }
-        UIView.animate(withDuration: BearyMotion.screen, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
+        UIView.animate(withDuration: BearyMotion.screen, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [], animations: {
             sheet.transitionSetSheetOffset(height)
         }, completion: { _ in transitionContext.completeTransition(true) })
         // 遮罩 0.38s 单独淡出（与面板下滑解耦，遮罩本身不位移、不瞬间消失）。
@@ -1588,7 +1588,7 @@ final class BearyQuoteSheetViewController: UIViewController, BearySheetTransitio
                     restore()
                 } else {
                     let offset = BearySheetDrag.offset(for: translation.y)
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
                 }
             }
         case .cancelled, .failed:
@@ -1599,7 +1599,7 @@ final class BearyQuoteSheetViewController: UIViewController, BearySheetTransitio
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
+                BearyMotion.springAnimate(animations: restore)
             }
         default:
             break

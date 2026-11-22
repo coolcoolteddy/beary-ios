@@ -337,7 +337,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
                     restore()
                 } else {
                     let offset = BearySheetDrag.offset(for: translation.y)
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
                 }
             }
         case .cancelled, .failed:
@@ -349,7 +349,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
+                BearyMotion.springAnimate(animations: restore)
             }
         default:
             break

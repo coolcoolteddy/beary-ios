@@ -107,7 +107,7 @@ final class BearySettingsIDCardView: UIView {
         }
         if animated && BearyMotion.animated(true) {
             isFlipping = true
-            UIView.animate(withDuration: 0.55, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: applyTransform, completion: { [weak self] _ in
+            UIView.animate(withDuration: 0.55, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [], animations: applyTransform, completion: { [weak self] _ in
                 self?.isFlipping = false
             })
         } else {

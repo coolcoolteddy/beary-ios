@@ -91,6 +91,12 @@ enum BearyMotion {
     static let normal: TimeInterval = 0.26
     static let screen: TimeInterval = 0.38
     static let springDamping: CGFloat = 0.7
+    /// 弹簧动画统一入口：与 `UIView.animate(withDuration: normal, delay: 0,
+    /// usingSpringWithDamping: springDamping, initialSpringVelocity: 0,
+    /// options: [], animations:)` 同形；duration／options 不同时作参数传。
+    static func springAnimate(duration: TimeInterval = normal, options: UIView.AnimationOptions = [], animations: @escaping () -> Void, completion: ((Bool) -> Void)? = nil) {
+        UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: springDamping, initialSpringVelocity: 0, options: options, animations: animations, completion: completion)
+    }
     /// 局部状态动效统一时长（规格附录第 3 项已定）：开关、选中等小反馈取 micro。
     /// 拒绝摇头 0.38s 是拒绝动效、不是局部状态动效，不走本值。
     static let localStateDuration: TimeInterval = micro
