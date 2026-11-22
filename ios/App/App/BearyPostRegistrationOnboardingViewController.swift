@@ -655,13 +655,6 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         ])
     }
 
-    private func spacer(_ height: CGFloat) -> UIView {
-        let view = UIView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        view.heightAnchor.constraint(equalToConstant: height).isActive = true
-        return view
-    }
-
     private func addPressFeedback(to button: UIButton) {
         button.addTarget(self, action: #selector(blackButtonTouchDown(_:)), for: .touchDown)
         button.addTarget(self, action: #selector(blackButtonTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
@@ -673,20 +666,6 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
 
     @objc private func blackButtonTouchUp(_ sender: UIButton) {
         UIView.animate(withDuration: BearyMotion.micro) { sender.alpha = 1.0 }
-    }
-
-    /// 黑色主按钮（预览口径；与 BearyButton 工厂的 surface2 灰底主钮不同，见 PR 说明）。
-    private func makeBlackButton(title: String) -> UIButton {
-        let button = UIButton(type: .custom)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.backgroundColor = BearyOnboardingPalette.ink
-        button.setTitleColor(.white, for: .normal)
-        button.titleLabel?.font = BearyDynamicType.buttonFont()
-        button.setTitle(title, for: .normal)
-        button.layer.cornerRadius = 12
-        button.heightAnchor.constraint(equalToConstant: 52).isActive = true
-        addPressFeedback(to: button)
-        return button
     }
 
     /// 中性 user 图标头像（示例卡用，不放熊头）。
@@ -716,9 +695,9 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func makeP0View() -> UIView {
         let (scrollView, stack) = makeStepScrollView(centered: false)
         stack.addArrangedSubview(makeTitleLabel("在这里写日记"))
-        stack.addArrangedSubview(spacer(12))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(12))
         stack.addArrangedSubview(makeLeadLabel("写下今天的事和心情。"))
-        stack.addArrangedSubview(spacer(28))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(28))
         let emoteWrap = UIView()
         let emote = BearyEmoteView(key: "thinking", animated: true)
         emote.translatesAutoresizingMaskIntoConstraints = false
@@ -731,7 +710,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             emote.bottomAnchor.constraint(equalTo: emoteWrap.bottomAnchor),
         ])
         stack.addArrangedSubview(emoteWrap)
-        stack.addArrangedSubview(spacer(28))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(28))
         stack.addArrangedSubview(makeDiaryMockCard(headerRightText: nil, body: "今天，想记住什么？", bodyFontSize: 18, showFooter: true))
         return scrollView
     }
@@ -739,11 +718,11 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func makeP1View() -> UIView {
         let (scrollView, stack) = makeStepScrollView(centered: false)
         stack.addArrangedSubview(makeTitleLabel("写下来，也选好谁能看。"))
-        stack.addArrangedSubview(spacer(12))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(12))
         stack.addArrangedSubview(makeLeadLabel("发布前，确认这篇日记的可见范围。"))
-        stack.addArrangedSubview(spacer(24))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(24))
         stack.addArrangedSubview(makeDiaryMockCard(headerRightText: nil, body: "今天，想记住什么？", bodyFontSize: 16, showFooter: false))
-        stack.addArrangedSubview(spacer(20))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(20))
         stack.addArrangedSubview(makeVisibilityCard())
         return scrollView
     }
@@ -751,12 +730,12 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func makeP2View() -> UIView {
         let (scrollView, stack) = makeStepScrollView(centered: false)
         stack.addArrangedSubview(makeTitleLabel("用小熊回应日记。"))
-        stack.addArrangedSubview(spacer(12))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(12))
         // 预览里导语与标题是同一句，原文保留（见 PR 说明）。
         stack.addArrangedSubview(makeLeadLabel("用小熊回应这篇日记。"))
-        stack.addArrangedSubview(spacer(24))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(24))
         stack.addArrangedSubview(makeDiaryMockCard(headerRightText: "仅自己可见", body: "傍晚沿着河边走了一圈，风很舒服。", bodyFontSize: 16, showFooter: false))
-        stack.addArrangedSubview(spacer(20))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(20))
         reactionChips = []
         let row = UIStackView()
         row.axis = .horizontal
@@ -769,7 +748,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             reactionChips.append(chip)
         }
         stack.addArrangedSubview(row)
-        stack.addArrangedSubview(spacer(12))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(12))
         let noteLabel = UILabel()
         noteLabel.numberOfLines = 0
         noteLabel.textAlignment = .center
@@ -804,9 +783,9 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func makeP3View() -> UIView {
         let (scrollView, stack) = makeStepScrollView(centered: false)
         stack.addArrangedSubview(makeTitleLabel("从今天的一小件事开始。"))
-        stack.addArrangedSubview(spacer(12))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(12))
         stack.addArrangedSubview(makeLeadLabel("想写什么，就写什么。"))
-        stack.addArrangedSubview(spacer(24))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(24))
         stack.addArrangedSubview(makePaperMock())
         return scrollView
     }
@@ -1089,11 +1068,11 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             mapView.bottomAnchor.constraint(equalTo: mapWrap.bottomAnchor),
         ])
         stack.addArrangedSubview(mapWrap)
-        stack.addArrangedSubview(spacer(24))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(24))
         stack.addArrangedSubview(makeHeadingLabel("写日记时自动带上地点？"))
-        stack.addArrangedSubview(spacer(10))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(10))
         stack.addArrangedSubview(makeSubLabel("开启后，每篇日记会自动带上地点和天气；\n不开也可以每次手动添加。"))
-        stack.addArrangedSubview(spacer(24))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(24))
         // 城市只读框。
         let field = UIView()
         field.translatesAutoresizingMaskIntoConstraints = false
@@ -1115,7 +1094,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             fieldLabel.centerYAnchor.constraint(equalTo: field.centerYAnchor),
         ])
         stack.addArrangedSubview(field)
-        stack.addArrangedSubview(spacer(12))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(12))
         // 点击自动定位。
         let locateButton = UIButton(type: .system)
         locateButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1136,8 +1115,8 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             locateButton.heightAnchor.constraint(equalToConstant: 44),
         ])
         stack.addArrangedSubview(locateWrap)
-        stack.addArrangedSubview(spacer(20))
-        let primary = makeBlackButton(title: locationChoiceMade ? "继续" : "开启定位")
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(20))
+        let primary = BearyOnboardingFactory.makeBlackButton(title: locationChoiceMade ? "继续" : "开启定位") { [weak self] button in self?.addPressFeedback(to: button) }
         primary.addTarget(self, action: #selector(locationPrimaryTapped), for: .touchUpInside)
         primary.isEnabled = !isRequestingLocation
         stack.addArrangedSubview(primary)
@@ -1231,14 +1210,14 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             bellView.bottomAnchor.constraint(equalTo: bellWrap.bottomAnchor),
         ])
         stack.addArrangedSubview(bellWrap)
-        stack.addArrangedSubview(spacer(20))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(20))
         stack.addArrangedSubview(makeHeadingLabel("每天提醒你写日记"))
-        stack.addArrangedSubview(spacer(10))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(10))
         stack.addArrangedSubview(makeSubLabel("到了时间，轻轻提醒你一句。"))
-        stack.addArrangedSubview(spacer(24))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(24))
         stack.addArrangedSubview(makeNotificationRowsCard())
-        stack.addArrangedSubview(spacer(20))
-        let primary = makeBlackButton(title: notificationChoiceMade ? "继续" : "开启提醒")
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(20))
+        let primary = BearyOnboardingFactory.makeBlackButton(title: notificationChoiceMade ? "继续" : "开启提醒") { [weak self] button in self?.addPressFeedback(to: button) }
         primary.addTarget(self, action: #selector(notificationPrimaryTapped), for: .touchUpInside)
         primary.isEnabled = !isRequestingNotification
         stack.addArrangedSubview(primary)
@@ -1416,13 +1395,13 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             checkLabel.centerYAnchor.constraint(equalTo: checkCircle.centerYAnchor),
         ])
         stack.addArrangedSubview(checkWrap)
-        stack.addArrangedSubview(spacer(24))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(24))
         let titleLabel = UILabel()
         titleLabel.numberOfLines = 0
         titleLabel.textAlignment = .center
         titleLabel.attributedText = attributed("设置完成", font: .onboardingSerif(ofSize: 30), color: BearyOnboardingPalette.ink, lineHeightMultiple: 1.35)
         stack.addArrangedSubview(titleLabel)
-        stack.addArrangedSubview(spacer(10))
+        stack.addArrangedSubview(BearyOnboardingFactory.spacer(10))
         let leadLabel = UILabel()
         leadLabel.numberOfLines = 0
         leadLabel.textAlignment = .center
