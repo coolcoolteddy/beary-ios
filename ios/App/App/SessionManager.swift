@@ -13,6 +13,10 @@ import Foundation
 final class SessionManager {
     static let shared = SessionManager()
 
+    /// 注销待删除时间戳的 UserDefaults 键（全局键，不按账号分桶）。
+    /// 写入：设置页提交注销后；清除：登录成功（注销取消）与切号时。
+    static let pendingDeleteAtKey = "bearyPendingDeleteAt"
+
     /// 审计 C4：currentUser 跨线程读写锁——写仍收敛主线程（见下 runOnMain
     /// 注释），但 isCurrentAuthSession 等只读判断任意线程可调，后台读与
     /// 主线程写并发时会读到旧值（stale read；Swift ARC 下不野指针）。
@@ -799,7 +803,7 @@ final class SessionManager {
                     // 下次登录校验服务端会重报 pendingDelete/deleteAt；且该键
                     // 全仓无读取方，清除无功能损失。退出时不清理（冷静期截止日
                     // 要留到下次登录），登录成功取消注销时由登录页清除。
-                    UserDefaults.standard.removeObject(forKey: "bearyPendingDeleteAt")
+                    UserDefaults.standard.removeObject(forKey: SessionManager.pendingDeleteAtKey)
                     _ = vault.save(user: user, token: target.token, tokenExpiresAtMs: target.tokenExpiresAtMs)
                     self.notifyUserChanged(user)
                     finish(.switched(user))

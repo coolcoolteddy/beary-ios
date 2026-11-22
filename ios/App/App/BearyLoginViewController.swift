@@ -1184,7 +1184,7 @@ final class BearyLoginViewController: UIViewController {
                         }
                     } else if resp.ok == true {
                         // 验证组④：登录成功即注销已取消（冷静期登录即取消），清掉注销时持久化的 delete_at。
-                        UserDefaults.standard.removeObject(forKey: "bearyPendingDeleteAt")
+                        UserDefaults.standard.removeObject(forKey: SessionManager.pendingDeleteAtKey)
                         // 会话 cookie 已由共享 URLSession 存好；容器随后刷新登录态。
                         // 审计登录杂项：绑定文案经回调带给容器，进 App 后 toast 一次。
                         strongSelf.handleLoginReferralFeedback(resp: resp, submittedInviteCode: inviteCode)
@@ -1270,7 +1270,7 @@ final class BearyLoginViewController: UIViewController {
                         }
                     } else if resp.ok == true {
                         // 验证组④同款：登录成功即注销已取消，清掉注销时持久化的 delete_at。
-                        UserDefaults.standard.removeObject(forKey: "bearyPendingDeleteAt")
+                        UserDefaults.standard.removeObject(forKey: SessionManager.pendingDeleteAtKey)
                         strongSelf.pendingAppleCredential = nil
                         BearySoundPlayer.play(.loginChime)
                         strongSelf.onLoggedIn?(nil)
