@@ -1783,34 +1783,23 @@ final class BearyTimelineCell: UITableViewCell {
             quoteCard.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
             quoteCard.isHidden = false
         } else if let quote = entry.quote {
-            // B-G2 decision order (web tlQuoteHtml order: gone -> locked -> visibility):
-            // non-empty server fields win; missing fields fall back to old heuristic.
+            // 引用判定走 BearyQuoteGate 共享判定表（详情／卡片同一份顺序）；
+            // 时间线不接异步互关补刷，friendsPending 即终态占位（与个人主页同口径）。
             let quoteBody = (quote.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if quote.gone == true {
+            switch BearyQuoteGate.quoteVisibility(quote: quote) {
+            case .deleted:
                 quoteCard.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
                 quoteCard.isHidden = false
-            } else if quote.locked == true {
-                let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: true, visibility: quote.visibility)
+            case .lockedPlaceholder(let locked):
+                let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: locked, visibility: quote.visibility)
                 quoteCard.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
                 quoteCard.isHidden = false
-            } else if quoteBody.isEmpty {
-                if quote.isPublic == true {
-                    quoteCard.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
-                } else {
-                    let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
-                    quoteCard.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
-                }
-                quoteCard.isHidden = false
-            } else if quote.isPublic != true && !(quote.isMine == true || (quote.authorId != nil && quote.authorId == SessionManager.shared.currentUser?.id)) {
-                // iCity viewer 实时判定：被引篇非公开且 viewer 不是被引作者时，
-                // 即使服务端透传了正文也以占位替代，绝不泄漏正文与图片
-                //（旧口径以宿主是否本人为代理，已作废；Quote 现有 authorId/isMine 字段）。
-                // 10a：仅好友来源走定版句（其余仍回落私密/未公开档，见 placeholderTextForQuote）。
+            case .friendsPending:
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
                 quoteCard.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
                 quoteCard.isHidden = false
-            } else {
-                // 正常态：缩略图门控与旧自绘卡 F2 一致——仅公开引用或 viewer
+            case .full:
+                // 正常态：缩略图门控与旧自绘卡 F2 一致——仅当前有效公开引用或 viewer
                 // 是被引作者时出图（allowThumbs），无图不占位；池化由公共卡内做。
                 quoteCard.configure(
                     authorName: quote.authorName ?? "",
@@ -1819,7 +1808,7 @@ final class BearyTimelineCell: UITableViewCell {
                     images: quote.images ?? [],
                     dims: quote.imgDims,
                     createdAt: quote.createdAt,
-                    allowThumbs: quote.isPublic == true || quote.isMine == true || (quote.authorId != nil && quote.authorId == SessionManager.shared.currentUser?.id),
+                    allowThumbs: quote.isEffectivelyPublic || BearyQuoteGate.sourceIsMine(quote: quote),
                     authorHandle: quote.authorHandle,
                     sourceTappable: true,
                     quoteId: quote.id

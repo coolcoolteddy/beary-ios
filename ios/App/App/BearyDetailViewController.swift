@@ -2210,6 +2210,8 @@ final class BearyDetailViewController: UIViewController {
             || oldQuote?.authorHandle != newQuote?.authorHandle
             || oldQuote?.createdAt != newQuote?.createdAt
             || oldQuote?.visibility != newQuote?.visibility
+            || oldQuote?.authorId != newQuote?.authorId
+            || oldQuote?.isMine != newQuote?.isMine
             || oldQuote?.publishedAt != newQuote?.publishedAt
             || oldQuote?.ephemeralUntil != newQuote?.ephemeralUntil
         if quoteChanged {
@@ -2656,9 +2658,10 @@ final class BearyDetailViewController: UIViewController {
     /// 用闭包捕获的旧快照覆盖新卡（同 ID 内容更新也会触发新渲染）。
     private var quoteRenderSeq = 0
 
-    /// 引用卡 viewer 实时判定（卡片 presentQuoteCard 同口径）：作者本人或已公开才显全文，
-    /// 否则占位；gone → 已删除，locked／未公开 → 引用规则简化占位文案
-    /// （曾公开“该日记已设为私密”＋提醒句，从未公开“该日记未公开”，见 BearyQuoteGate.placeholderText）。
+    /// 引用卡 viewer 实时判定走 BearyQuoteGate 共享判定表（卡片／时间线同口径）：
+    /// 作者本人或当前有效公开才显全文，否则占位；gone → 已删除，
+    /// locked／未公开 → 引用规则简化占位文案（曾公开“该日记已设为私密”＋提醒句，
+    /// 从未公开“该日记未公开”，见 BearyQuoteGate.placeholderText）。
     private func renderQuote() {
         quoteRenderSeq += 1
         guard let quote = entry.quote, let quoteId = quote.id, !quoteId.isEmpty else {
@@ -2667,45 +2670,28 @@ final class BearyDetailViewController: UIViewController {
         }
         // A2：与广场卡片共用同一份视图外展开键（宿主 + 引用）。
         let detailExpandKey = BearyQuoteExpandState.key(hostId: entry.id, quoteId: quoteId)
-        let viewerId = SessionManager.shared.currentUser?.id
-        let quoteIsMine = quote.authorId != nil && viewerId != nil && quote.authorId == viewerId
-        if quote.gone == true {
-            // A2：已删除为终态占位，忘掉该键的展开态。
-            BearyQuoteExpandState.forget(key: detailExpandKey)
-            quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
-            quoteView.isHidden = false
-            return
-        }
-        if quote.locked == true {
-            // A2：锁定为终态占位，忘掉该键的展开态。
-            BearyQuoteExpandState.forget(key: detailExpandKey)
-            let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: true, visibility: quote.visibility)
-            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
-            quoteView.isHidden = false
-            return
-        }
         let content = quote.content ?? ""
-        if content.isEmpty {
-            // A2：正文空的占位为终态，忘掉该键的展开态。
-            BearyQuoteExpandState.forget(key: detailExpandKey)
-            if quote.isEffectivelyPublic == false {
-                let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
-                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
-            } else {
-                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
-            }
-            quoteView.isHidden = false
-            return
-        }
-        // 审计 2026-11-02 第十节：引用判定统一走有效态＋互关通道——作者本人或
-        // 当前有效公开即显全文；仅好友档先占位、state 回包确认互关后再补全文
-        // （回包到达时若引用已换篇或已有更新的渲染则丢弃，fail-closed）；其余一律占位。
+        // 引用判定走 BearyQuoteGate 共享判定表（卡片／时间线同一份顺序）；
+        // 仅好友档先占位、state 回包确认互关后再补全文（回包到达时若引用已换篇
+        // 或已有更新的渲染则丢弃，fail-closed）；其余一律占位。
         let showPlaceholderForQuote = {
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
             self.quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
             self.quoteView.isHidden = false
         }
-        if quoteIsMine || quote.isEffectivelyPublic {
+        switch BearyQuoteGate.quoteVisibility(quote: quote) {
+        case .deleted:
+            // A2：已删除为终态占位，忘掉该键的展开态。
+            BearyQuoteExpandState.forget(key: detailExpandKey)
+            quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+            quoteView.isHidden = false
+        case .lockedPlaceholder(let locked):
+            // A2：锁定／未公开占位为终态，忘掉该键的展开态。
+            BearyQuoteExpandState.forget(key: detailExpandKey)
+            let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: locked, visibility: quote.visibility)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
+            quoteView.isHidden = false
+        case .full:
             quoteView.configure(
                 authorName: quote.authorName ?? "",
                 authorAvatar: quote.authorAvatar,
@@ -2713,16 +2699,14 @@ final class BearyDetailViewController: UIViewController {
                 images: quote.images ?? [],
                 dims: quote.imgDims,
                 createdAt: quote.createdAt,
-                allowThumbs: quote.isEffectivelyPublic || quoteIsMine,
+                allowThumbs: quote.isEffectivelyPublic || BearyQuoteGate.sourceIsMine(quote: quote),
                 authorHandle: quote.authorHandle,
                 sourceTappable: true,
                 quoteId: quote.id,
                 hostId: entry.id
             )
             quoteView.isHidden = false
-            return
-        }
-        if quote.visibility == "friends" {
+        case .friendsPending:
             showPlaceholderForQuote()
             let renderSeq = quoteRenderSeq
             BearyQuoteGate.resolveQuoteFullAccess(quote: quote) { [weak self] canView in
@@ -2742,11 +2726,7 @@ final class BearyDetailViewController: UIViewController {
                 )
                 self.quoteView.isHidden = false
             }
-            return
         }
-        // A2：此处占位为终态（非仅好友待确认分支），忘掉该键的展开态。
-        BearyQuoteExpandState.forget(key: detailExpandKey)
-        showPlaceholderForQuote()
     }
 
     // MARK: - 操作行
