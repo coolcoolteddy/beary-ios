@@ -702,6 +702,11 @@ final class BearyAPI {
 
     static func makeDedicatedSession() -> URLSession {
         let config = URLSessionConfiguration.default
+        // 审计 §一-1 收窄修：无端点级超时配置的端点默认 60s 兜底（与
+        // defaultTimeout 表的其余端点口径一致，原先靠 URLSession 隐式
+        // 默认），断网时等网络恢复再发、不立即失败。
+        config.timeoutIntervalForRequest = 60
+        config.waitsForConnectivity = true
         config.httpMaximumConnectionsPerHost = 6
         config.httpCookieStorage = HTTPCookieStorage.shared
         config.httpCookieAcceptPolicy = .always
