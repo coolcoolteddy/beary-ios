@@ -941,9 +941,13 @@ final class BearyPublishCenter {
     // MARK: - 文案与进度口径
 
     /// 失败文案（从 BearyComposerViewController 原样移入）：服务端业务码
-    /// 各分支原样，默认「发布失败，请重试」。
+    /// 各分支原样，默认「发布失败，请重试」。共用三分支走
+    /// BearyServerErrorMessages 共享码表，这里只留专属分支。
     static func message(forPublishError error: APIError) -> String {
         if case .server(let code, _) = error {
+            if let shared = BearyServerErrorMessages.sharedMessage(forServerCode: code) {
+                return shared
+            }
             switch code {
             case "create_gap":
                 return "发布太频繁，请稍后再试"
@@ -951,12 +955,6 @@ final class BearyPublishCenter {
                 return "今日发布次数已达上限，请明天再试"
             case "create_dup":
                 return "这篇和你写过的一篇一模一样"
-            case "content too long":
-                return "正文最多 2000 字"
-            case "title too long":
-                return "标题最多 30 字"
-            case "image unavailable":
-                return "图片已失效，请重新添加"
             case "recipient_invalid", "mentioned_user_invalid":
                 return "无法提到这位用户，请重新选择"
             default:
