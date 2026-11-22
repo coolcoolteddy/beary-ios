@@ -2881,7 +2881,29 @@ final class BearyDetailViewController: UIViewController {
             list.append(item)
         }
         let newSignature = BearyEmoteOrder.signature(list)
-        if newSignature == renderedEmoteSignature {
+        if isAuthor {
+            // §八：作者本人只读——没有 + 钮、不能贴回应；0 回应时整行藏起、不占位。
+            // + 钮在作者态下永不挂树，此处防御摘掉（防未来改动串入可点入口）。
+            emoteAddButton?.removeFromSuperview()
+            if list.isEmpty {
+                for chip in emoteFlowView.subviews.compactMap({ $0 as? BearyEmoteChipView }) {
+                    chip.removeFromSuperview()
+                }
+                chipKeys = []
+                renderedEmoteSignature = newSignature
+                emoteFlowView.isHidden = true
+                emoteFlowHeight?.constant = 0
+                lastFlowWidth = 0
+                view.setNeedsLayout()
+                return
+            }
+            emoteFlowView.isHidden = false
+            // 签名一致且 + 钮已摘：chip 内容无变化，直接返回（不走下方建 chip 路径）。
+            if newSignature == renderedEmoteSignature {
+                return
+            }
+            // 否则落入下方共用建 chip 路径（+ 钮创建处以 isAuthor 守卫，不建不挂）。
+        } else if newSignature == renderedEmoteSignature {
             // 签名一致直接返回（+ 钮已在首渲染时挂进 flow，不在此重建）；
             // 防御：+ 钮若不在场（不应发生），补挂一次，防行末无入口。
             if let add = emoteAddButton, add.superview == nil {
@@ -2991,26 +3013,29 @@ final class BearyDetailViewController: UIViewController {
         // 复用一个实例；必须在 chip 置顶后再置顶一次——flow 按 subviews 顺序
         // 换行布局，chip 置顶会把先挂的 + 钮挤到行首，不补这一步 + 钮就跑到
         // chip 前面去了（本批实测逻辑点，见 PR 说明）。
-        let addButton: BearyDiaryCardDashedAddButton
-        if let reused = emoteAddButton {
-            addButton = reused
-        } else {
-            let made = BearyDiaryCardDashedAddButton(frame: .zero)
-            made.translatesAutoresizingMaskIntoConstraints = false
-            made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
-            made.tintColor = BearyColors.gray
-            made.accessibilityLabel = "贴一只小熊"
-            made.widthAnchor.constraint(equalToConstant: 34).isActive = true
-            made.heightAnchor.constraint(equalToConstant: 34).isActive = true
-            made.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
-            made.bearyAddPressFeedback()
-            emoteAddButton = made
-            addButton = made
+        // §八：作者只读视图没有 + 钮，整块只走他人态（不建实例、不挂树）。
+        if !isAuthor {
+            let addButton: BearyDiaryCardDashedAddButton
+            if let reused = emoteAddButton {
+                addButton = reused
+            } else {
+                let made = BearyDiaryCardDashedAddButton(frame: .zero)
+                made.translatesAutoresizingMaskIntoConstraints = false
+                made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
+                made.tintColor = BearyColors.gray
+                made.accessibilityLabel = "贴一只小熊"
+                made.widthAnchor.constraint(equalToConstant: 34).isActive = true
+                made.heightAnchor.constraint(equalToConstant: 34).isActive = true
+                made.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
+                made.bearyAddPressFeedback()
+                emoteAddButton = made
+                addButton = made
+            }
+            if addButton.superview == nil {
+                emoteFlowView.addSubview(addButton)
+            }
+            emoteFlowView.bringSubviewToFront(addButton)
         }
-        if addButton.superview == nil {
-            emoteFlowView.addSubview(addButton)
-        }
-        emoteFlowView.bringSubviewToFront(addButton)
         // 重排位移：新顺序已定（chip 与 + 钮均已置顶），先把 flow 按新顺序
         // 落位（行高变化先结算，防动画中途布局重算把 chip 帧位重置），再把
         // 位移的在场 chip／+ 钮用 transform 平移回旧位、0.26s 滑到新位。
@@ -3055,8 +3080,8 @@ final class BearyDetailViewController: UIViewController {
         // 删除：未被本轮留用的现存 chip（含孤 chip）走 transform／opacity
         // 淡出，结束再移出；淡出期间先禁点按，防旧 tag 错指新 chipKeys。
         // 移出时若该 key 已复活（chipKeys 又含它）则不动。减动效直删。
-        // 批 B：flow 非游客恒显（含 + 钮），chip 全空时也不藏行（旧实现
-        // list 为空即藏行，+ 钮入口随之消失；现由 + 钮兜底回应入口）。
+        // §八：他人 0 回应时行仍占位（行末 + 钮兜底回应入口）；作者 0 回应
+        // 整行藏起已在本函数入口处理——到这里的都是显行态（作者有回应／他人任意）。
         let departing = allChips.filter { chip in
             !placed.contains(where: { $0 === chip })
         }
@@ -3121,6 +3146,8 @@ final class BearyDetailViewController: UIViewController {
     /// 失败回滚＋拒绝动效；未登录走登录提示（先行态复原），非公开弹“公开后才能回应”。
     private func chooseEmote(key: String) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
+        // §八：作者不能给自己贴回应（服务端门保留；此处是客户端纵深守卫）。
+        if isAuthor { return }
         if !BearyEphemeral.isEffectivelyPublic(entry) {
             BearyToast.show(in: view, message: "公开后才能回应")
             return
@@ -3182,6 +3209,35 @@ final class BearyDetailViewController: UIViewController {
             }
         }
         present(sheet, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    /// §八：作者本人在详情页点表情 chip，看该表情的贴出人名单（只读底部 sheet）。
+    /// 标题取表情名（BearyText.moodNames，仓内唯一表情名表）＋本表情总数；
+    /// 名单数据走 GET .../emotes/:emote/reactors（服务端待补端点，未上线前
+    /// 请求失败、sheet 弹 toast 后关闭；见 PR 说明）。
+    private func presentEmoteMembers(key: String) {
+        guard isAuthor, presentedViewController == nil else { return }
+        guard let entryId = entry.id, !entryId.isEmpty, !key.isEmpty else { return }
+        let total = (entry.emotes ?? []).first(where: { ($0.emote ?? "") == key })?.count ?? 0
+        guard total > 0 else { return }
+        let name = BearyText.moodNames[key] ?? key
+        let sheet = BearyEmoteMemberSheetViewController(entryId: entryId, emoteKey: key, emoteName: name, totalCount: total)
+        sheet.onLoadFailed = { [weak self] in
+            guard let self = self else { return }
+            BearyToast.show(in: self.view, message: "加载失败，请重试")
+        }
+        let delegate = BearyBottomSheetTransitioningDelegate()
+        sheet.sheetDelegate = delegate
+        sheet.transitioningDelegate = delegate
+        sheet.modalPresentationStyle = .custom
+        sheet.loadViewIfNeeded()
+        let presenterWidth = view.bounds.width
+        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
+        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
+        sheet.view.setNeedsLayout()
+        sheet.view.layoutIfNeeded()
+        sheet.updatePreferredContentSize(extraBottomInset: view.safeAreaInsets.bottom)
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     // MARK: - 分享
@@ -3688,6 +3744,8 @@ final class BearyDetailViewController: UIViewController {
             onRequireLogin?()
             return
         }
+        // §八：作者没有 + 钮（只读视图）；此处是纵深守卫，正常路径到不了这里。
+        if isAuthor { return }
         if !BearyEphemeral.isEffectivelyPublic(entry) {
             BearyToast.show(in: view, message: "公开后才能回应")
             return
@@ -3702,6 +3760,12 @@ final class BearyDetailViewController: UIViewController {
     @objc private func emoteChipTapped(_ sender: UIButton) {
         let index = sender.tag
         guard index >= 0, index < chipKeys.count else { return }
+        // §八：作者点 chip 是看贴出人名单（只读），不贴／撤自己的回应；
+        // 别人点 chip 是贴／撤自己的回应，不弹名单。
+        if isAuthor {
+            presentEmoteMembers(key: chipKeys[index])
+            return
+        }
         chooseEmote(key: chipKeys[index])
     }
 
@@ -4043,5 +4107,229 @@ enum BearyDetailCache {
             index.removeValue(forKey: safeEntryId(entryId))
             saveIndex(index, bucket: bucket)
         }
+    }
+}
+
+// MARK: - §八：贴出人名单（仅作者本人可见的只读底部 sheet）
+
+/// 贴出人名单行模型：GET /beary/api/entries/:id/emotes/:emote/reactors
+/// 回包 users[] 的元素。avatar 为头像路径（走 BearyImageURLs.avatarURL）；
+/// createdAt 只用于排序（最新在上），行内不显示时间。
+struct BearyEmoteReactor: Decodable {
+    var id: Int?
+    var name: String?
+    var handle: String?
+    var avatar: String?
+    var createdAt: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, handle, avatar
+        case createdAt = "created_at"
+    }
+}
+
+struct BearyEmoteReactorsResponse: Decodable {
+    var users: [BearyEmoteReactor]?
+}
+
+/// 作者在详情页点表情 chip 弹出的贴出人名单：标题「表情名 · 总数」，
+/// 每行头像 44＋昵称＋@handle，行高 64（memberRow），最多露 6 行（memberRows）、
+/// 超出滚动；无时间、无分隔线；按贴出时间倒序；下滑或点遮罩关闭
+/// （走 BearyBottomSheet 容器，不另加手势）。
+/// 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
+final class BearyEmoteMemberSheetViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
+
+    var onLoadFailed: (() -> Void)?
+
+    /// transitioningDelegate 是弱引用，须由本页自己强持有（公告 sheet 同款做法）。
+    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
+
+    private let entryId: String
+    private let emoteKey: String
+    private let emoteName: String
+    private let totalCount: Int
+
+    private let grabberView = UIView()
+    private let titleLabel = UILabel()
+    private let tableView = UITableView(frame: .zero, style: .plain)
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private var tableHeightConstraint: NSLayoutConstraint?
+    private var members: [BearyEmoteReactor] = []
+
+    init(entryId: String, emoteKey: String, emoteName: String, totalCount: Int) {
+        self.entryId = entryId
+        self.emoteKey = emoteKey
+        self.emoteName = emoteName
+        self.totalCount = totalCount
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.surface3
+        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.layer.masksToBounds = true
+
+        grabberView.translatesAutoresizingMaskIntoConstraints = false
+        grabberView.backgroundColor = BearyColors.gray
+        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
+        view.addSubview(grabberView)
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = "\(emoteName) · \(totalCount)"
+        titleLabel.font = BearyDynamicType.smallActionFont()
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.textAlignment = .center
+        view.addSubview(titleLabel)
+
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.separatorStyle = .none
+        tableView.rowHeight = 64
+        tableView.backgroundColor = .clear
+        tableView.register(BearyEmoteMemberCell.self, forCellReuseIdentifier: "BearyEmoteMemberCell")
+        view.addSubview(tableView)
+
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.hidesWhenStopped = true
+        view.addSubview(spinner)
+
+        // 加载中先留 1 行高给转圈；取到名单后按 min(人数, 6) * 64 重算。
+        tableHeightConstraint = tableView.heightAnchor.constraint(equalToConstant: 64)
+        tableHeightConstraint?.isActive = true
+        NSLayoutConstraint.activate([
+            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
+            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
+            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
+
+            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 12),
+            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+
+            tableView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
+
+            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
+        ])
+        fetchMembers()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePreferredContentSize()
+    }
+
+    /// 按当前宽度算内容高，推给容器当 sheet 高（公告 sheet 同款）；
+    /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
+        let width = view.bounds.width > 0 ? view.bounds.width : 375
+        let titleHeight = max(titleLabel.intrinsicContentSize.height, 20)
+        let tableHeight = tableHeightConstraint?.constant ?? 64
+        let height = BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 12 + titleHeight + 8 + tableHeight + 8 + view.safeAreaInsets.bottom + extraBottomInset
+        let preferred = CGSize(width: width, height: ceil(height))
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+        }
+    }
+
+    private func fetchMembers() {
+        spinner.startAnimating()
+        let safeId = entryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entryId
+        let safeKey = emoteKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? emoteKey
+        BearyAPI.shared.request("/beary/api/entries/\(safeId)/emotes/\(safeKey)/reactors") { [weak self] (result: Result<BearyEmoteReactorsResponse, APIError>) in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.spinner.stopAnimating()
+                switch result {
+                case .success(let resp):
+                    // 服务端已按 created_at 倒序；客户端再按一次防旧回包串序。
+                    let users = resp.users ?? []
+                    self.members = users.sorted(by: { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) })
+                    self.tableHeightConstraint?.constant = CGFloat(min(max(self.members.count, 1), 6) * 64)
+                    self.tableView.reloadData()
+                    self.view.setNeedsLayout()
+                case .failure:
+                    self.dismiss(animated: BearyMotion.animated(true)) {
+                        self.onLoadFailed?()
+                    }
+                }
+            }
+        }
+    }
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return members.count
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "BearyEmoteMemberCell", for: indexPath) as? BearyEmoteMemberCell ?? BearyEmoteMemberCell(style: .default, reuseIdentifier: "BearyEmoteMemberCell")
+        cell.configure(with: members[indexPath.row])
+        return cell
+    }
+}
+
+/// 贴出人名单行：头像 44＋昵称＋@handle，行高 64，无分隔线、无时间、不可点。
+final class BearyEmoteMemberCell: UITableViewCell {
+
+    private let avatarView = BearyAvatarView()
+    private let nameLabel = UILabel()
+    private let handleLabel = UILabel()
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = .clear
+        selectionStyle = .none
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(avatarView)
+        let textStack = UIStackView(arrangedSubviews: [nameLabel, handleLabel])
+        textStack.axis = .vertical
+        textStack.spacing = 2
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(textStack)
+        nameLabel.font = BearyDynamicType.smallSemiboldFont()
+        nameLabel.textColor = BearyColors.ink
+        handleLabel.font = BearyDynamicType.secondaryFont()
+        handleLabel.textColor = BearyColors.gray
+        NSLayoutConstraint.activate([
+            avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            avatarView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            avatarView.widthAnchor.constraint(equalToConstant: 44),
+            avatarView.heightAnchor.constraint(equalToConstant: 44),
+            textStack.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 12),
+            textStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            textStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        avatarView.reset()
+        nameLabel.text = nil
+        handleLabel.text = nil
+    }
+
+    func configure(with member: BearyEmoteReactor) {
+        let name = (member.name?.isEmpty == false) ? member.name! : "beary 用户"
+        nameLabel.text = name
+        if let handle = member.handle, !handle.isEmpty {
+            handleLabel.text = "@" + handle
+        } else {
+            handleLabel.text = nil
+        }
+        avatarView.configure(displayName: name, avatarURL: BearyImageURLs.avatarURL(member.avatar), ownerID: member.id)
     }
 }

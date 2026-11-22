@@ -23,10 +23,17 @@ enum BearyEmoteKeys {
     static let nonBearFaceKeys: Set<String> = ["candle", "flower", "letter", "paperplane", "sprout", "tea", "umbrella", "wish"]
     /// 熊脸 key 集 = 全部回应 key 减去非熊脸 key；个人页小熊回应墙只显示这些。
     static let bearFaceKeys: Set<String> = Set(all).subtracting(nonBearFaceKeys)
-    /// 选择器用的保序熊脸列表 = all 原顺序去掉非熊脸（32 项）；不要直接用
-    /// bearFaceKeys（Set 迭代顺序不定，会打乱选择器原有顺序）。回应选择器
-    /// 与墙共用同一口径：只留熊脸。
-    static let bearFaces: [String] = all.filter { !nonBearFaceKeys.contains($0) }
+    /// 选择器用的保序熊脸列表（32 项，规范 §八／附录 A 冻结顺序，与 all 的
+    /// 40 项资产序不同——all 是资产序，附录 A 是冻结序，两者莫混；也不引
+    /// bearMoodKeys 的前 32 项（活枚举，前面插一项含义就变，见规范 §三）。
+    /// 不要直接用 bearFaceKeys（Set 迭代顺序不定，会打乱选择器原有顺序）。
+    /// 回应选择器与墙共用同一口径：只留熊脸。
+    static let bearFaces: [String] = [
+        "agree", "happy", "applause", "cheer", "comfort", "confused", "love", "determined",
+        "facepalm", "shy", "goodnight", "hug", "wink", "idea", "kiss", "thinking",
+        "listening", "lonely", "speechless", "nope", "surprised", "pat", "peek", "sleepy",
+        "proud", "shrug", "sorry", "cry", "angry", "thanks", "zap", "wave",
+    ]
 }
 
 // MARK: - 视觉批 2-2：表情选择器首行“最近使用”

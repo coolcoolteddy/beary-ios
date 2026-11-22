@@ -2748,7 +2748,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // Feed 的 configure(with:) 不走本分支，行为不动。
         let guestExpanded = SessionManager.shared.isGuestMode && isExpanded
         actionStack.isHidden = guestExpanded
-        emoteFlowView.isHidden = guestExpanded
+        // §八：作者本人的卡片不显示回应行——renderEmotes 已清行藏起，
+        // 此处须把作者态并进显隐，否则 guestExpanded=false 会把行重新放出来。
+        emoteFlowView.isHidden = guestExpanded || isEntryAuthor(entry)
         guestLoginPromptButton.isHidden = !guestExpanded
         refreshEphemeralState(entry: entry)
         updateDiaryStackSpacing()
@@ -4256,6 +4258,21 @@ class BearyDiaryCardCell: UITableViewCell {
     /// animatedLayout：用户动作（先行贴/摘、回滚）时 + 钮与已存 chip 随新布局平滑移位
     /// （flow 帧动画，只动位置，不重播已有 chip）；服务端对齐与初始渲染走瞬时。
     private func renderEmotes(animatedLayout: Bool = false) {
+        // §八：作者本人看自己的日记，卡片不显示回应行（整行藏起、不占位）。
+        // 复用时 prepareForReuse 已清 flow 子视图、行高与签名，下一行非作者时
+        // 照常重建；本分支只清不建，不碰 chip 池（池 chip 离树留池供下轮复用）。
+        if let entry = currentEntry, isEntryAuthor(entry) {
+            for sub in emoteFlowView.subviews {
+                sub.removeFromSuperview()
+            }
+            chipKeys = []
+            currentEmoteList = []
+            cellEmoteSignature = ""
+            cellEmoteSignatureValid = false
+            emoteFlowView.isHidden = true
+            emoteRowHeightConstraint?.constant = 0
+            return
+        }
         let list = (currentEntry?.emotes ?? []).sorted(by: { ($0.count ?? 0) > ($1.count ?? 0) })
         let newSignature = BearyEmoteOrder.signature(list.filter { ($0.emote ?? "").isEmpty == false })
         if cellEmoteSignatureValid && newSignature == cellEmoteSignature {
@@ -4506,6 +4523,9 @@ class BearyDiaryCardCell: UITableViewCell {
     func handleEmoteSheetPick(entryIdValue: String, key: String) {
         if cellEntryId != entryIdValue { return }
         if key.isEmpty { return }
+        // §八：作者不能给自己贴回应（选择器入口的纵深守卫；作者卡无 + 钮，
+        // 正常路径到不了这里）。
+        if let entry = currentEntry, isEntryAuthor(entry) { return }
         if emotePickLocked { return }
         if SessionManager.shared.isLoggedIn == false {
             onRequireLogin?()
@@ -4528,6 +4548,9 @@ class BearyDiaryCardCell: UITableViewCell {
     private func chooseEmote(key: String) {
         if key.isEmpty || isEmoteBusy { return }
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
+        // §八：作者不能给自己贴回应（服务端门保留；此处是客户端纵深守卫，
+        // 卡片行已藏、正常路径到不了这里）。
+        if let entry = currentEntry, isEntryAuthor(entry) { return }
         if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
         if SessionManager.shared.isLoggedIn == false {
             onRequireLogin?()
