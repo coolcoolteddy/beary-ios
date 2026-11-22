@@ -95,10 +95,10 @@ class BearyFeedViewController: UIViewController {
     /// 由 handlePageEnter 登录翻转分支置位，refreshAllInternal 消费一次。
     private var refreshAllBypassInFlight = false
     /// 自定义下拉刷新（消息页同款，统一手感批）：指示与触发见 updateCustomPullIndicator / beginCustomPullRefresh。
-    private var isCustomPullRefreshing = false
-    private var customPullStartTime: Date?
+    private var isCustomPullRefreshing: Bool { pullRefreshController.isRefreshing }
+    /// 自定义下拉刷新接线共享件：四页 begin／endCustomPullRefresh 的同形骨架（见 CustomPullRefreshController）。
+    private lazy var pullRefreshController = CustomPullRefreshController(endBehavior: .releaseImmediately)
     private var pullEngageTranslation: CGFloat?
-    private var customPullEndScheduled = false
     private var plazaError = false
     /// since 补拉缺口态：hasGap 回包后置位，游标钉在缺口前的旧表头
     /// （plazaGapCursor），重试/再刷新仍从它起拉、不越过缺口；无缺口
@@ -1007,34 +1007,23 @@ class BearyFeedViewController: UIViewController {
         if isCustomPullRefreshing {
             return
         }
-        isCustomPullRefreshing = true
-        customPullStartTime = Date()
-        refreshIconView.startSpinning()
-        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
-        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
-        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”；
-        // 旧 0.32s 默认 easeInOut 零初速起手、与手指甩速脱节，手感发轻。
-        tableView.setContentOffset(tableView.contentOffset, animated: false)
-        let baseline = feedPullBaselineTop()
-        let pullIn = {
-            self.tableView.contentInset.top = baseline + 84
-            self.tableView.scrollIndicatorInsets.top = baseline + 84
-            self.tableView.contentOffset = CGPoint(x: 0, y: -(baseline + 84))
-            self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
+        pullRefreshController.begin(
+            scrollView: tableView,
+            pullView: pullView,
+            icon: refreshIconView,
+            baseline: .init(top: feedPullBaselineTop()),
+            killInertia: true,
+            animation: .screen
+        ) {
+            // 112 刷新节流（仅手势下拉）：上次首拉成功 5 秒内且已有内容时，
+            // 不再发网络请求，指示头随收回动画收回（第 2 项后不再等 500ms）；程序侧刷新
+            //（重拍 tab/登录翻转/外部调用）不受此限，照常走 refreshAll。
+            if let last = lastFeedLoadAt, Date().timeIntervalSince(last) < 5, !plazaRaw.isEmpty {
+                endCustomPullRefresh()
+                return
+            }
+            refreshAllInternal(showCentralSpinner: false)
         }
-        if UIAccessibility.isReduceMotionEnabled {
-            pullIn()
-        } else {
-            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
-        }
-        // 112 刷新节流（仅手势下拉）：上次首拉成功 5 秒内且已有内容时，
-        // 不再发网络请求，指示头随收回动画收回（第 2 项后不再等 500ms）；程序侧刷新
-        //（重拍 tab/登录翻转/外部调用）不受此限，照常走 refreshAll。
-        if let last = lastFeedLoadAt, Date().timeIntervalSince(last) < 5, !plazaRaw.isEmpty {
-            endCustomPullRefresh()
-            return
-        }
-        refreshAllInternal(showCentralSpinner: false)
     }
 
     /// 自定义下拉刷新结束：回包到即复位到基线内边距（第 2 项后无最低展示）；旧回包守卫
@@ -1043,34 +1032,13 @@ class BearyFeedViewController: UIViewController {
     /// 不再把 contentOffset 拽回 -baseline 顶部，只复位内边距、藏指示头，留在原位置；
     /// 仍停在下拉位的才按旧口径回到 -baseline（指示区须收掉）。
     private func endCustomPullRefresh() {
-        if !isCustomPullRefreshing || customPullEndScheduled {
-            return
-        }
-        // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，回包到即收回，
-        // 不再用 asyncAfter 补满剩余时间；触发口径不动，收回动画随 454 改 0.38s easeOut。
-        customPullEndScheduled = true
-        isCustomPullRefreshing = false
-        customPullEndScheduled = false
-        let baseline = feedPullBaselineTop()
-        // 下拉位 = -(baseline + 84)（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
-        let stillAtPullPosition = !self.tableView.isDragging
-            && self.tableView.contentOffset.y <= -(baseline + 84) + 8
-        let pullOut = {
-            self.tableView.contentInset.top = baseline
-            self.tableView.scrollIndicatorInsets.top = baseline
-            if stillAtPullPosition {
-                self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
-            }
-            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
-        }
-        if UIAccessibility.isReduceMotionEnabled {
-            pullOut()
-            self.refreshIconView.stopSpinning()
-        } else {
-            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
-                self.refreshIconView.stopSpinning()
-            })
-        }
+        pullRefreshController.end(
+            scrollView: tableView,
+            pullView: pullView,
+            icon: refreshIconView,
+            baseline: .init(top: feedPullBaselineTop()),
+            animation: .screen
+        )
     }
 
     // MARK: - 公开接口：下拉刷新与外部调用都走它，重拉广场

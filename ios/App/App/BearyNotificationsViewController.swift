@@ -278,7 +278,9 @@ final class BearyNotificationsViewController: UIViewController {
     /// 与整页成功加载时落袋；saveNotificationCache 只凭它写盘，
     /// 写盘时再核对一次与当前登录账号一致，不直接用当前登录 ID。
     private var displayedPageAccountId: Int?
-    private var isCustomPullRefreshing = false
+    private var isCustomPullRefreshing: Bool { pullRefreshController.isRefreshing }
+    /// 自定义下拉刷新接线共享件：四页 begin／endCustomPullRefresh 的同形骨架（见 CustomPullRefreshController）。
+    private lazy var pullRefreshController = CustomPullRefreshController(endBehavior: .holdThroughRetract)
     /// 合并消息页下拉刷新宿主表：嵌入态子页 view 不进层级、自身滚动代理收不到拖动，
     /// 下拉指示器改挂宿主表（容器表），由容器表滚动驱动；为 nil 时用自身表（独立通知页原口径）。
     /// 与 letterModalHostView / hostVisibilityProvider 同款宿主注入口径。
@@ -298,11 +300,8 @@ final class BearyNotificationsViewController: UIViewController {
     }
     /// 下拉指示器实际挂靠的表：有宿主时为宿主表，否则为自身表。
     private var pullTableView: UITableView { pullHostTableView ?? tableView }
-    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
-    private var customPullEndInFlight = false
     /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
     private var headerTopInsetVisible = false
-    private var customPullStartTime: Date?
     private var pullEngageTranslation: CGFloat?
     private var isCardAnimating = false
     /// C-G11：卡片动画代次与方向——动画中同卡再点可反转（见 reverseCardAnimation），
@@ -1491,66 +1490,30 @@ final class BearyNotificationsViewController: UIViewController {
         if isCustomPullRefreshing || isLoadingFirstPage {
             return
         }
-        isCustomPullRefreshing = true
-        customPullStartTime = Date()
-        pullIconView.startSpinning()
-        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
-        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
-        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”；
-        // 旧 0.32s 默认 easeInOut 零初速起手、与手指甩速脱节，手感发轻。
-        pullTableView.setContentOffset(pullTableView.contentOffset, animated: false)
-        // A5-3：下拉刷新进场查减动效开关——减动效时直接落位，不播 0.38s 动画。
-        let pullIn = {
-            self.pullTableView.contentInset.top = 84
-            self.pullTableView.scrollIndicatorInsets.top = 84
-            self.pullTableView.contentOffset = CGPoint(x: 0, y: -84)
-            self.pullView.frame = CGRect(x: 0, y: -84, width: self.pullTableView.bounds.width, height: 84)
+        pullRefreshController.begin(
+            scrollView: pullTableView,
+            pullView: pullView,
+            icon: pullIconView,
+            baseline: .init(top: 0),
+            killInertia: true,
+            animation: .screen
+        ) {
+            loadFirstPage(completion: { [weak self] in
+                guard let strongSelf = self else { return }
+                // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，loadFirstPage 回包到即收回。
+                strongSelf.endCustomPullRefresh()
+            })
         }
-        if UIAccessibility.isReduceMotionEnabled {
-            pullIn()
-        } else {
-            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
-        }
-        loadFirstPage(completion: { [weak self] in
-            guard let strongSelf = self else { return }
-            // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，loadFirstPage 回包到即收回。
-            strongSelf.endCustomPullRefresh()
-        })
     }
 
     private func endCustomPullRefresh() {
-        if !isCustomPullRefreshing || customPullEndInFlight {
-            return
-        }
-        customPullEndInFlight = true
-        // 收回动画全程仍持刷新旗（同广场端）：跟随侧不中途重写 pullView.frame。
-        // A5-3：下拉刷新收回同样查减动效开关——减动效时直接复位并停圈。
-        // 广场端同款保护：结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
-        // 不再把 contentOffset 拽回 0 顶部，只复位内边距、藏指示头，留在原位置；
-        // 仍停在下拉位的才按旧口径回到 0（指示区须收掉）。
-        // 下拉位 = -84（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
-        let stillAtPullPosition = !self.pullTableView.isDragging
-            && self.pullTableView.contentOffset.y <= -84 + 8
-        let pullOut = {
-            self.pullTableView.contentInset.top = 0
-            self.pullTableView.scrollIndicatorInsets.top = 0
-            if stillAtPullPosition {
-                self.pullTableView.contentOffset = CGPoint(x: 0, y: 0)
-            }
-            self.pullView.frame = CGRect(x: 0, y: -116, width: self.pullTableView.bounds.width, height: 116)
-        }
-        if UIAccessibility.isReduceMotionEnabled {
-            pullOut()
-            self.isCustomPullRefreshing = false
-            self.customPullEndInFlight = false
-            self.pullIconView.stopSpinning()
-        } else {
-            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
-                self.isCustomPullRefreshing = false
-                self.customPullEndInFlight = false
-                self.pullIconView.stopSpinning()
-            })
-        }
+        pullRefreshController.end(
+            scrollView: pullTableView,
+            pullView: pullView,
+            icon: pullIconView,
+            baseline: .init(top: 0),
+            animation: .screen
+        )
     }
 
     /// 互动行判定：非系统、非信件、非私信——私信只留在私信会话列表里，

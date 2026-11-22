@@ -2562,10 +2562,9 @@ class BearyTimelineViewController: UIViewController {
     private var tableViewTopToViewTopConstraint: NSLayoutConstraint?
     private var tableViewTopToBannerConstraint: NSLayoutConstraint?
     /// 自定义下拉刷新进行中标志（消息页 isCustomPullRefreshing 同款）。
-    private var isCustomPullRefreshing = false
-    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
-    private var customPullEndInFlight = false
-    private var customPullStartTime: Date?
+    private var isCustomPullRefreshing: Bool { pullRefreshController.isRefreshing }
+    /// 自定义下拉刷新接线共享件：四页 begin／endCustomPullRefresh 的同形骨架（见 CustomPullRefreshController）。
+    private lazy var pullRefreshController = CustomPullRefreshController(endBehavior: .holdThroughRetract)
     private var pullEngageTranslation: CGFloat?
 
     /// 自定义下拉指示器（消息页 pullView 同款口径）：固定高 116、藏在表内容上方
@@ -3785,87 +3784,47 @@ class BearyTimelineViewController: UIViewController {
         if isCustomPullRefreshing || timelineState == .loading {
             return
         }
-        isCustomPullRefreshing = true
-        customPullStartTime = Date()
-        refreshIconView.startSpinning()
-        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
-        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
-        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”；
-        // 旧 0.32s 默认 easeInOut 零初速起手、与手指甩速脱节，手感发轻。
-        tableView.setContentOffset(tableView.contentOffset, animated: false)
-        let baseTop = view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0)
-        let baseBottom = 90 + view.safeAreaInsets.bottom
-        let pullIn = {
-            self.tableView.contentInset.top = baseTop + 84
-            self.tableView.contentInset.bottom = baseBottom
-            self.tableView.scrollIndicatorInsets.top = baseTop + 84
-            self.tableView.scrollIndicatorInsets.bottom = baseBottom
-            self.tableView.contentOffset = CGPoint(x: 0, y: -(baseTop + 84))
-            self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
+        pullRefreshController.begin(
+            scrollView: tableView,
+            pullView: pullView,
+            icon: refreshIconView,
+            baseline: .init(top: view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0),
+                            bottom: 90 + view.safeAreaInsets.bottom),
+            killInertia: true,
+            animation: .screen
+        ) {
+            // 112 刷新节流（仅手势下拉）：上次首屏网络成功 5 秒内且已有行时，
+            // 不再发网络请求，指示头随 0.38s 收回动画收回（第 2 项后首屏完成
+            // 分支也不再等 500ms）；程序侧刷新（重拍 tab/详情回写/
+            // 登录翻转）不受此限。begin 顶部的
+            // timelineState == .loading 守卫仍在：静默对齐在途时下拉直接忽略。
+            if let last = lastTimelineFirstPageSuccessAt, Date().timeIntervalSince(last) < 5, !timelineEntries.isEmpty {
+                endCustomPullRefresh()
+                return
+            }
+            // 原 pullToRefresh 体（触觉改由 scrollViewDidEndDragging 给一次，见下）：
+            // G16：刷新时先保存选中日（reloadTimeline keepDay 分支内保留），
+            // 跳过当日拉取，只拉一次最终选中日；不再先拉今天再拉回原选中日。
+            // 第 2 项 A 调用点 2/2（下拉刷新）：keepSelectedDay 下守卫接在刷新
+            // 完成后——当日/月份回包到达时消费本标志；2026-11-04 不跳日口径：
+            // 选中日已空也不跳转，只清挂起、走正常空态。
+            pendingEntryJumpCheck = true
+            reloadTimeline(keepSelectedDay: true)
+            // fixall-sync 5-27 集成接线：被守卫挡下的同步在下拉刷新时重跑（内部去重已覆盖已同步/在途）。
+            BearyEntrySync.shared.kickForCurrentUser()
+            refreshHeaderHeight()
         }
-        if UIAccessibility.isReduceMotionEnabled {
-            pullIn()
-        } else {
-            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
-        }
-        // 112 刷新节流（仅手势下拉）：上次首屏网络成功 5 秒内且已有行时，
-        // 不再发网络请求，指示头随 0.38s 收回动画收回（第 2 项后首屏完成
-        // 分支也不再等 500ms）；程序侧刷新（重拍 tab/详情回写/
-        // 登录翻转）不受此限。begin 顶部的
-        // timelineState == .loading 守卫仍在：静默对齐在途时下拉直接忽略。
-        if let last = lastTimelineFirstPageSuccessAt, Date().timeIntervalSince(last) < 5, !timelineEntries.isEmpty {
-            endCustomPullRefresh()
-            return
-        }
-        // 原 pullToRefresh 体（触觉改由 scrollViewDidEndDragging 给一次，见下）：
-        // G16：刷新时先保存选中日（reloadTimeline keepDay 分支内保留），
-        // 跳过当日拉取，只拉一次最终选中日；不再先拉今天再拉回原选中日。
-        // 第 2 项 A 调用点 2/2（下拉刷新）：keepSelectedDay 下守卫接在刷新
-        // 完成后——当日/月份回包到达时消费本标志；2026-11-04 不跳日口径：
-        // 选中日已空也不跳转，只清挂起、走正常空态。
-        pendingEntryJumpCheck = true
-        reloadTimeline(keepSelectedDay: true)
-        // fixall-sync 5-27 集成接线：被守卫挡下的同步在下拉刷新时重跑（内部去重已覆盖已同步/在途）。
-        BearyEntrySync.shared.kickForCurrentUser()
-        refreshHeaderHeight()
     }
 
     private func endCustomPullRefresh() {
-        if !isCustomPullRefreshing || customPullEndInFlight {
-            return
-        }
-        customPullEndInFlight = true
-        // 收回动画全程仍持刷新旗（同广场端）：跟随侧不中途重写 pullView.frame。
-        let baseTop = view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0)
-        let baseBottom = 90 + view.safeAreaInsets.bottom
-        // 广场端同款保护：结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
-        // 不再把 contentOffset 拽回 -baseTop 顶部，只复位内边距、藏指示头，留在原位置；
-        // 仍停在下拉位的才按旧口径回到 -baseTop（指示区须收掉）。
-        // 下拉位 = -(baseTop + 84)（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
-        let stillAtPullPosition = !self.tableView.isDragging
-            && self.tableView.contentOffset.y <= -(baseTop + 84) + 8
-        let pullOut = {
-            self.tableView.contentInset.top = baseTop
-            self.tableView.contentInset.bottom = baseBottom
-            self.tableView.scrollIndicatorInsets.top = baseTop
-            self.tableView.scrollIndicatorInsets.bottom = baseBottom
-            if stillAtPullPosition {
-                self.tableView.contentOffset = CGPoint(x: 0, y: -baseTop)
-            }
-            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
-        }
-        if UIAccessibility.isReduceMotionEnabled {
-            pullOut()
-            self.isCustomPullRefreshing = false
-            self.customPullEndInFlight = false
-            self.refreshIconView.stopSpinning()
-        } else {
-            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
-                self.isCustomPullRefreshing = false
-                self.customPullEndInFlight = false
-                self.refreshIconView.stopSpinning()
-            })
-        }
+        pullRefreshController.end(
+            scrollView: tableView,
+            pullView: pullView,
+            icon: refreshIconView,
+            baseline: .init(top: view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0),
+                            bottom: 90 + view.safeAreaInsets.bottom),
+            animation: .screen
+        )
     }
 
     // MARK: - TL-2 1 秒 tick（仅限时到期复核；编辑倒计时已随锁取消）
