@@ -366,12 +366,10 @@ class BearyFeedViewController: UIViewController {
     /// （2026-10-30 全 App 统一 icon_refresh：32pt 真尺寸，不再用 medium 圈 ×1.6 放大。）
     private let centralSpinner = BearyRefreshIconView()
 
-    /// 已有内容刷新失败条（私信会话列表同款）：已有内容时刷新失败不 toast、
+    /// 已有内容刷新失败条（RefreshFailedBanner，四页共用）：已有内容时刷新失败不 toast、
     /// 不清列表，内容顶下方出“未能刷新 · 重试”常驻条；成功或下次刷新时收起。
     /// 显隐只切换表顶约束，不动 contentOffset、不清列表。
-    private let refreshFailedBanner = UIView()
-    private let refreshFailedLabel = UILabel()
-    private let refreshFailedRetryButton = UIButton(type: .system)
+    private let refreshFailedBanner = RefreshFailedBanner(retryAccessibilityHint: "重新拉取广场列表，不改变当前列表位置")
     private var refreshFailedBannerTopConstraint: NSLayoutConstraint?
     private var tableViewTopToViewTopConstraint: NSLayoutConstraint?
     private var tableViewTopToBannerConstraint: NSLayoutConstraint?
@@ -678,29 +676,11 @@ class BearyFeedViewController: UIViewController {
         tableView.prefetchDataSource = self
         view.addSubview(centralSpinner)
         view.addSubview(newContentPill)
-        // 已有内容刷新失败条（私信会话列表同款）：常驻于内容顶下方、列表上方
+        // 已有内容刷新失败条（RefreshFailedBanner，四页共用）：常驻于内容顶下方、列表上方
         //（非弹框、非 toast，失败不消失直至下次成功）；点“重试”走下拉同入口，
         // 只重拉，不改列表与滚动位置。
-        refreshFailedBanner.translatesAutoresizingMaskIntoConstraints = false
-        refreshFailedBanner.backgroundColor = BearyColors.alpha(BearyColors.red, 0.12)
-        refreshFailedBanner.isHidden = true
+        refreshFailedBanner.onRetry = { [weak self] in self?.refreshAllInternal(showCentralSpinner: false) }
         view.addSubview(refreshFailedBanner)
-        refreshFailedLabel.translatesAutoresizingMaskIntoConstraints = false
-        refreshFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        refreshFailedLabel.adjustsFontForContentSizeCategory = true
-        refreshFailedLabel.textColor = BearyColors.ink
-        refreshFailedLabel.text = "未能刷新"
-        refreshFailedBanner.addSubview(refreshFailedLabel)
-        refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
-        refreshFailedRetryButton.setTitle("重试", for: .normal)
-        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
-        refreshFailedRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        refreshFailedRetryButton.setTitleColor(BearyColors.ink, for: .normal)
-        refreshFailedRetryButton.accessibilityLabel = "重试"
-        refreshFailedRetryButton.accessibilityHint = "重新拉取广场列表，不改变当前列表位置"
-        refreshFailedRetryButton.addTarget(self, action: #selector(refreshFailedRetryTapped), for: .touchUpInside)
-        refreshFailedRetryButton.bearyAddPressFeedback()
-        refreshFailedBanner.addSubview(refreshFailedRetryButton)
         refreshFailedBannerTopConstraint = refreshFailedBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: (headerTopInsetVisible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset)
         refreshFailedBannerTopConstraint?.isActive = true
         tableViewTopToViewTopConstraint = tableView.topAnchor.constraint(equalTo: view.topAnchor)
@@ -719,13 +699,6 @@ class BearyFeedViewController: UIViewController {
         NSLayoutConstraint.activate([
             refreshFailedBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             refreshFailedBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            refreshFailedBanner.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            refreshFailedLabel.leadingAnchor.constraint(equalTo: refreshFailedBanner.leadingAnchor, constant: 16),
-            refreshFailedLabel.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
-            refreshFailedRetryButton.trailingAnchor.constraint(equalTo: refreshFailedBanner.trailingAnchor, constant: -16),
-            refreshFailedRetryButton.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
-            refreshFailedRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            refreshFailedRetryButton.leadingAnchor.constraint(greaterThanOrEqualTo: refreshFailedLabel.trailingAnchor, constant: 8),
             tableView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
             tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -2749,16 +2722,12 @@ class BearyFeedViewController: UIViewController {
         refreshIconView.stopSpinning()
     }
 
-    /// 已有内容刷新失败条显隐（私信会话列表同款）：只换表顶约束，不碰
+    /// 已有内容刷新失败条显隐（RefreshFailedBanner，四页共用）：只换表顶约束，不碰
     /// contentOffset、不清列表，滚动位置不动。
     private func setRefreshFailedBannerVisible(_ visible: Bool) {
-        refreshFailedBanner.isHidden = !visible
+        refreshFailedBanner.setVisible(visible, animated: false)
         tableViewTopToViewTopConstraint?.isActive = !visible
         tableViewTopToBannerConstraint?.isActive = visible
-    }
-
-    @objc private func refreshFailedRetryTapped() {
-        refreshAllInternal(showCentralSpinner: false)
     }
 
     // MARK: - 失败行 cell
