@@ -76,7 +76,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let stateSubtitle = UILabel()
     private let stateRetryButton = BearyHit44Button(type: .system)
     private var users: [SearchUser] = []
-    private var searchTimer: Timer?
+    /// 搜索防抖走共用 BearyDebouncer（0.25s；与全站搜索同款计时 plumbing）。
+    private let searchDebouncer = BearyDebouncer(interval: 0.25)
     private var searchSeq = 0
     /// 审计二轮 03：在途搜索任务——清空或换词时取消，防晚到回包；seq 守卫仍保留。
     private var searchTask: URLSessionDataTask?
@@ -170,7 +171,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     deinit {
-        searchTimer?.invalidate()
+        searchDebouncer.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -758,10 +759,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     @objc private func searchFieldChanged() {
-        // 250ms 防抖 + 序号防旧响应（与网页搜索同款）。
-        searchTimer?.invalidate()
+        // 250ms 防抖 + 序号防旧响应（与网页搜索同款；计时走共用防抖器）。
         let text = searchField.text ?? ""
-        searchTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
+        searchDebouncer.schedule { [weak self] in
             guard let self = self else { return }
             self.runSearch(query: text)
         }
@@ -769,7 +769,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         textField.resignFirstResponder()
-        searchTimer?.invalidate()
+        searchDebouncer.cancel()
         runSearch(query: textField.text ?? "")
         return true
     }
