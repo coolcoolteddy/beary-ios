@@ -2565,6 +2565,108 @@ struct BookmarkResponse: Decodable {
     var bookmarked: Bool?
 }
 
+// MARK: - 串行取反提交器（收藏快连点竞态修，2026-11-23）
+
+/// 服务端取反接口（POST 一次即取反，无目标态）快连点竞态修：并行两发、
+/// 一发失败一发成功时，最终态会与最后一次点按相反，且旧失败回包被静默丢弃。
+/// 本提交器一次只发一个请求；在途点按只记最新意图，回包后按意图补发一次；
+/// 意图与已确认态相同（两次点按互相抵消）时不补发，只把界面刷回确认态。
+/// 失败时若有待补发的意图，静默补发、不报失败（最终落定才报一次）；
+/// 无待补发意图时才把失败交给调用方回滚＋提示。
+/// 三处收藏共用：详情页、首页卡片、个人页。点赞仍各走各的串行／代次，本支不动。
+final class BearySerialToggle {
+    /// 最后服务端确认态（成功回包即更新；失败不变）。
+    private(set) var confirmed: Bool
+    /// 是否有请求在途（供补拉合并等处判断“确认态是否可信”）。
+    private(set) var isInFlight = false
+    private var pendingTarget: Bool?
+    /// 提交代次：复用换条／换页签时 reset 会递增，在途旧请求的回包按代次丢弃，
+    /// 不得覆盖新条目的确认态（卡片复用场景）。
+    private var generation = 0
+
+    init(confirmed: Bool) {
+        self.confirmed = confirmed
+    }
+
+    /// 外部同步确认态（补拉合并／控制器全副本同步）；在途时不覆盖，
+    /// 在途请求的落定值才是新确认态。
+    func syncConfirmed(_ value: Bool) {
+        guard !isInFlight else { return }
+        confirmed = value
+    }
+
+    /// 复用换条／换页签时重置：旧请求的回包按代次丢弃。
+    func reset(confirmed value: Bool) {
+        generation += 1
+        confirmed = value
+        isInFlight = false
+        pendingTarget = nil
+    }
+
+    /// 点按一次（调用方已先行渲染到 target）。
+    /// - request: 发一次取反请求；target 为本次发出请求的期望态，
+    ///   供服务端回包缺 bookmarked 时兜底；成功时 Result 带新态。
+    /// - onSettled: 每次请求落定调用一次（成功带新确认态；失败仅在
+    ///   无补发时调用一次）。
+    /// - onRefresh: 意图与确认态抵消、不补发时调用（只刷回确认态，
+    ///   不播音效、不发提示）。
+    func tap(target: Bool,
+             request: @escaping (Bool, @escaping (Result<Bool, APIError>) -> Void) -> Void,
+             onSettled: @escaping (Result<Bool, APIError>) -> Void,
+             onRefresh: @escaping (Bool) -> Void) {
+        if isInFlight {
+            pendingTarget = target
+            return
+        }
+        submit(target: target, request: request, onSettled: onSettled, onRefresh: onRefresh)
+    }
+
+    private func submit(target: Bool,
+                        request: @escaping (Bool, @escaping (Result<Bool, APIError>) -> Void) -> Void,
+                        onSettled: @escaping (Result<Bool, APIError>) -> Void,
+                        onRefresh: @escaping (Bool) -> Void) {
+        let gen = generation
+        isInFlight = true
+        request(target) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self, gen == self.generation else { return }
+                switch result {
+                case .success(let newState):
+                    self.confirmed = newState
+                    self.isInFlight = false
+                    onSettled(.success(newState))
+                    self.drain(request: request, onSettled: onSettled, onRefresh: onRefresh)
+                case .failure(let err):
+                    if let pending = self.pendingTarget, pending != self.confirmed {
+                        // 有更新的意图待补发：静默重试，不报失败、不回滚，
+                        // 界面保持最新意图（调用方点按时已先行渲染）。
+                        self.pendingTarget = nil
+                        self.isInFlight = false
+                        self.submit(target: pending, request: request, onSettled: onSettled, onRefresh: onRefresh)
+                    } else {
+                        self.pendingTarget = nil
+                        self.isInFlight = false
+                        onSettled(.failure(err))
+                    }
+                }
+            }
+        }
+    }
+
+    private func drain(request: @escaping (Bool, @escaping (Result<Bool, APIError>) -> Void) -> Void,
+                       onSettled: @escaping (Result<Bool, APIError>) -> Void,
+                       onRefresh: @escaping (Bool) -> Void) {
+        guard let pending = pendingTarget else { return }
+        pendingTarget = nil
+        if pending != confirmed {
+            submit(target: pending, request: request, onSettled: onSettled, onRefresh: onRefresh)
+        } else {
+            // 两次点按互相抵消：不补发，只把界面刷回确认态。
+            onRefresh(confirmed)
+        }
+    }
+}
+
 struct EmoteResponse: Decodable {
     var ok: Bool?
     var emotes: [EmoteCount]?

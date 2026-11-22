@@ -79,15 +79,17 @@ final class BearyDetailViewController: UIViewController {
     /// 回包后按最新意图补发，先前成功的回包不再被并行请求丢弃。
     private var likeSeq = 0
     private var likeConfirmedSeq = 0
-    private var bookmarkSeq = 0
-    private var bookmarkConfirmedSeq = 0
     private var confirmedLiked = false
     private var confirmedLikeCount = 0
     private var likeInFlight = false
     private var pendingLikeTarget: Bool?
+    /// 收藏串行提交器（2026-11-23 快连点竞态修）：三处收藏共用
+    /// BearySerialToggle（见 BearyNativeCommon），一次只发一个取反请求，
+    /// 在途点按只记最新意图，回包后按意图补发；点赞仍走自己的
+    /// likeSeq／likeInFlight 串行提交，本支不动。
+    private var bookmarkToggle = BearySerialToggle(confirmed: false)
     private var lastNavigationAt: Date?
     private var lastImageViewerAt: Date?
-    private var confirmedBookmarked = false
     private var isEmoteBusy = false
     private var isVisibilityBusy = false
     /// 审计三轮第二批 9：限时到期单次定时器（只按最近 ephemeralUntil 排一次，
@@ -702,7 +704,7 @@ final class BearyDetailViewController: UIViewController {
         // 传入的 entry 来自服务端数据，即初始确认态。
         self.confirmedLiked = entry.likedByMe ?? false
         self.confirmedLikeCount = entry.likeCount ?? 0
-        self.confirmedBookmarked = entry.bookmarkedByMe ?? false
+        self.bookmarkToggle.reset(confirmed: entry.bookmarkedByMe ?? false)
         let viewerId = SessionManager.shared.currentUser?.id
         // R22-A1：authorId 在时以它为准；isMine 只在同一已验证会话且缺
         // 作者 ID 时兜底（进页前容器 routeFetchedEntry 已验过会话）。
@@ -2107,11 +2109,11 @@ final class BearyDetailViewController: UIViewController {
             confirmedLikeCount = merged.likeCount ?? 0
         }
         let bookmarkChangedDuringFetch = baseline.map { $0.bookmarkedByMe != old.bookmarkedByMe } ?? false
-        if bookmarkSeq != bookmarkConfirmedSeq || bookmarkChangedDuringFetch {
+        if bookmarkToggle.isInFlight || bookmarkChangedDuringFetch {
             merged.bookmarkedByMe = old.bookmarkedByMe
             merged.bookmarkCount = old.bookmarkCount
         } else {
-            confirmedBookmarked = merged.bookmarkedByMe ?? false
+            bookmarkToggle.syncConfirmed(merged.bookmarkedByMe ?? false)
         }
         let emotesChangedDuringFetch = baseline.map { $0.emotesSignature != BearyEmoteOrder.signature(old.emotes) } ?? false
         if isEmoteBusy || emotesChangedDuringFetch {
@@ -3628,7 +3630,9 @@ final class BearyDetailViewController: UIViewController {
             onRequireLogin?()
             return
         }
-        // 及时性口径：快连点每次都立即落地，防重入只靠代次守卫。
+        // 及时性口径：快连点每次都立即落地；串行提交（2026-11-23 收藏竞态修，
+        // 与点赞 submitLike 同款）：一次只发一个取反请求，在途点按只记最新
+        // 意图，回包后按意图补发一次。
         let currentlyBookmarked = entry.bookmarkedByMe ?? false
         let flipped = !currentlyBookmarked
         entry.bookmarkedByMe = flipped
@@ -3639,39 +3643,39 @@ final class BearyDetailViewController: UIViewController {
         // 成功回包按最终态播 bookmarkTick／deleteSwoosh，失败走拒绝音；
         // 否则失败时点按音与拒绝音先后两声。
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
-        bookmarkSeq += 1
-        let reqSeq = bookmarkSeq
-        BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                // 代次守卫：已有更新点按时，过期回包直接丢弃。
-                guard reqSeq == self.bookmarkSeq else { return }
-                self.bookmarkConfirmedSeq = reqSeq
-                switch result {
-                case .success(let resp):
-                    let newBookmarked = resp.bookmarked ?? flipped
-                    self.entry.bookmarkedByMe = newBookmarked
-                    self.confirmedBookmarked = newBookmarked
-                    self.refreshActionRow()
-                    // 收藏音按最终结果只播一次（成功按最终态播 bookmarkTick／
-                    // deleteSwoosh，失败分支走拒绝音 refuse_bonk）。
-                    BearySoundPlayer.play(newBookmarked ? .bookmarkTick : .deleteSwoosh)
-                    self.onInteractionChanged?(entryId, nil, nil, newBookmarked, nil)
-                case .failure(let err):
-                    // 失败回滚到最后服务端确认态。
-                    self.entry.bookmarkedByMe = self.confirmedBookmarked
-                    self.refreshActionRow()
-                    // 回滚到未填色：在飞的收藏微粒一并清掉。
-                    BearyBurstParticles.clear(from: self.bookmarkButton)
-                    if case .unauthorized = err {
-                        self.onRequireLogin?()
-                    } else {
-                        self.playDenyShake(on: self.bookmarkButton)
-                        BearyToast.show(in: self.view, message: "操作失败，请重试")
-                    }
+        bookmarkToggle.tap(target: flipped, request: { target, completion in
+            BearyAPI.shared.toggleBookmark(id: entryId) { result in
+                completion(result.map { $0.bookmarked ?? target })
+            }
+        }, onSettled: { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let newBookmarked):
+                self.entry.bookmarkedByMe = newBookmarked
+                self.refreshActionRow()
+                // 收藏音按最终结果只播一次（成功按最终态播 bookmarkTick／
+                // deleteSwoosh，失败分支走拒绝音 refuse_bonk）。
+                BearySoundPlayer.play(newBookmarked ? .bookmarkTick : .deleteSwoosh)
+                self.onInteractionChanged?(entryId, nil, nil, newBookmarked, nil)
+            case .failure(let err):
+                // 失败回滚到最后服务端确认态。
+                self.entry.bookmarkedByMe = self.bookmarkToggle.confirmed
+                self.refreshActionRow()
+                // 回滚到未填色：在飞的收藏微粒一并清掉。
+                BearyBurstParticles.clear(from: self.bookmarkButton)
+                if case .unauthorized = err {
+                    self.onRequireLogin?()
+                } else {
+                    self.playDenyShake(on: self.bookmarkButton)
+                    BearyToast.show(in: self.view, message: "操作失败，请重试")
                 }
             }
-        }
+        }, onRefresh: { [weak self] confirmed in
+            // 两次点按互相抵消、不补发：只把界面刷回确认态，不播音效。
+            guard let self = self else { return }
+            self.entry.bookmarkedByMe = confirmed
+            self.refreshActionRow()
+        })
     }
 
     @objc private func shareTapped() {
