@@ -17,6 +17,8 @@ final class BearyPlusPageViewController: UIViewController {
     /// 本页自己拉一次（防御性兜底，设置页现行必传）。
     private var sharedLoad: BearySharedLoad<BearyPlusDetailResponse>?
     private var inviteTransitionDelegate: UIViewControllerTransitioningDelegate?
+    /// 来源明细新页窄屏左缘右滑的 transitioningDelegate（弱引用，本页强持）。
+    private var grantsEdgeDismiss: BearyEdgeDismissController?
 
     init(isPlus: Bool, sharedLoad: BearySharedLoad<BearyPlusDetailResponse>? = nil) {
         self.isPlusValue = isPlus
@@ -133,7 +135,6 @@ final class BearyPlusPageViewController: UIViewController {
         buildHero()
         buildBenefitList()
         buildInviteRow()
-        buildGrantsSection()
         buildFoot()
 
         NSLayoutConstraint.activate([
@@ -380,290 +381,46 @@ final class BearyPlusPageViewController: UIViewController {
         contentStack.addArrangedSubview(row)
     }
 
-    // MARK: - 来源明细（2026-11-19 七组版：Plus 页内来源明细）
-    /// 内测限免、专属会员、其他发放记录统一列出；行格式与
-    /// 原来源明细页同款（当前状态／专属会员／内测限免行 +
-    /// 来源名 15 墨 + 「日期 · +N 天」13 灰、空态「暂无发放记录」、
-    /// 失败态「加载失败」+ 重试）。数据优先接设置页同一份在途结果（A2），
-    /// 未拉到时本页自己拉一次。
-    private let grantsSectionView = UIView()
-    private var grantsStack: UIStackView?
-    private var plusDetail: BearyPlusDetailResponse?
-    private var grantsLoadFailed = false
-    private var isRetryingGrants = false
-    private var grantsRetryGeneration = 0
-
-    private func buildGrantsSection() {
-        grantsSectionView.translatesAutoresizingMaskIntoConstraints = false
-        let stack = UIStackView()
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.spacing = 0
-        stack.alignment = .fill
-        grantsSectionView.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: grantsSectionView.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: grantsSectionView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: grantsSectionView.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: grantsSectionView.bottomAnchor),
-        ])
-        grantsStack = stack
-        contentStack.addArrangedSubview(grantsSectionView)
-        renderGrantsSection()
-        loadGrantsSection()
-    }
-
-    private func loadGrantsSection() {
-        if let sharedLoad = sharedLoad {
-            // A2：接设置页同会话在途结果——在途则等同一份回包，已取到
-            // 则直接用缓存；失败则走失败态。回包已在主线程（见 loader）。
-            sharedLoad.load { [weak self] result in
-                guard let self = self else { return }
-                switch result {
-                case .success(let detail):
-                    self.plusDetail = detail
-                    self.grantsLoadFailed = false
-                case .failure:
-                    self.grantsLoadFailed = true
-                }
-                self.renderGrantsSection()
-            }
-        } else {
-            BearyAPI.shared.fetchPlusDetail { [weak self] result in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    switch result {
-                    case .success(let detail):
-                        self.plusDetail = detail
-                        self.grantsLoadFailed = false
-                    case .failure(let error):
-                        if case .cancelled = error { return }
-                        self.grantsLoadFailed = true
-                    }
-                    self.renderGrantsSection()
-                }
-            }
-        }
-    }
-
-    /// 设置页 fillPlusDetail 同款状态文案。
-    private static func grantsStatusText(detail: BearyPlusDetailResponse) -> String {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        if detail.permanent == true { return "Plus 会员 · 永久" }
-        if let effective = detail.effectiveUntil, effective > now {
-            return "Plus 会员 · 至 " + BearyAccountText.dateString(ms: effective)
-        }
-        return "普通用户"
-    }
-
-    /// 来源明细页同款专属会员文案。
-    private static func grantsPersonalText(detail: BearyPlusDetailResponse) -> String {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        let personal = detail.personalUntil ?? 0
-        let freeUntil = detail.freeUntil ?? 0
-        if detail.permanent == true { return "永久会员" }
-        if personal > now {
-            var text = "至 " + BearyAccountText.dateString(ms: personal)
-            if freeUntil > 0 && personal > freeUntil {
-                text += " · 限免结束后保留 \((personal - freeUntil) / 86400000) 天"
-            } else if freeUntil > now {
-                text += " · 与限免期重叠"
-            }
-            return text
-        }
-        return "暂无（好友注册并绑定邀请码，双方各得 +30 天）"
-    }
-
-    /// 内测限免行文案（旧设置页 Plus 组同款）。
-    private static func grantsFreeText(detail: BearyPlusDetailResponse) -> String {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        let freeUntil = detail.freeUntil ?? 0
-        if freeUntil > now {
-            return "全体内测用户免费 · 至 " + BearyAccountText.dateString(ms: freeUntil)
-        }
-        return "已结束 · " + BearyAccountText.dateString(ms: freeUntil) + " 到期"
-    }
-
-    private func renderGrantsSection() {
-        guard let stack = grantsStack else { return }
-        for view in stack.arrangedSubviews {
-            stack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        // 区头（与“权益”区头同款：13 灰、顶 20、左右 16、底 -8）。
-        let headerWrap = UIView()
-        headerWrap.translatesAutoresizingMaskIntoConstraints = false
-        let headerLabel = UILabel()
-        headerLabel.translatesAutoresizingMaskIntoConstraints = false
-        headerLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        headerLabel.adjustsFontForContentSizeCategory = true
-        headerLabel.textColor = BearyColors.gray
-        headerLabel.text = "来源明细"
-        headerWrap.addSubview(headerLabel)
-        NSLayoutConstraint.activate([
-            headerLabel.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 20),
-            headerLabel.leadingAnchor.constraint(equalTo: headerWrap.leadingAnchor, constant: 16),
-            headerLabel.trailingAnchor.constraint(equalTo: headerWrap.trailingAnchor, constant: -16),
-            headerLabel.bottomAnchor.constraint(equalTo: headerWrap.bottomAnchor, constant: -8),
-        ])
-        stack.addArrangedSubview(headerWrap)
-        if plusDetail == nil && !grantsLoadFailed {
-            // 拉取进行中：先显加载行，不闪空态（回包后重绘）。
-            let spinner = BearyRefreshIconView()
-            spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
-            spinner.startSpinning()
-            let loadingLabel = UILabel()
-            loadingLabel.translatesAutoresizingMaskIntoConstraints = false
-            loadingLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-            loadingLabel.adjustsFontForContentSizeCategory = true
-            loadingLabel.textColor = BearyColors.gray
-            loadingLabel.text = "加载中…"
-            let loadingRow = UIStackView(arrangedSubviews: [spinner, loadingLabel])
-            loadingRow.axis = .horizontal
-            loadingRow.spacing = 8
-            loadingRow.alignment = .center
-            stack.addArrangedSubview(grantsRowWrap(content: loadingRow, isLast: true))
-        } else if grantsLoadFailed {
-            let failedLabel = UILabel()
-            failedLabel.translatesAutoresizingMaskIntoConstraints = false
-            failedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-            failedLabel.adjustsFontForContentSizeCategory = true
-            failedLabel.textColor = BearyColors.gray
-            failedLabel.text = "加载失败"
-            let retryButton = BearyButton.retryInline()
-            retryButton.addTarget(self, action: #selector(grantsRetryTapped), for: .touchUpInside)
-            retryButton.bearyAddPressFeedback()
-            let failedStack = UIStackView(arrangedSubviews: [failedLabel, retryButton])
-            failedStack.axis = .vertical
-            failedStack.spacing = 8
-            failedStack.alignment = .leading
-            stack.addArrangedSubview(grantsRowWrap(content: failedStack, isLast: true))
-        } else if let detail = plusDetail {
-            var contents: [UIView] = []
-            contents.append(grantsStatusContent(title: "当前状态", detail: Self.grantsStatusText(detail: detail)))
-            contents.append(grantsStatusContent(title: "专属会员", detail: Self.grantsPersonalText(detail: detail)))
-            if (detail.freeUntil ?? 0) > 0 {
-                contents.append(grantsStatusContent(title: "内测限免", detail: Self.grantsFreeText(detail: detail)))
-            }
-            let grants = detail.grants ?? []
-            if grants.isEmpty {
-                let emptyLabel = UILabel()
-                emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-                emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-                emptyLabel.adjustsFontForContentSizeCategory = true
-                emptyLabel.textColor = BearyColors.gray
-                emptyLabel.numberOfLines = 0
-                emptyLabel.text = "暂无发放记录"
-                contents.append(emptyLabel)
-            } else {
-                for grant in grants {
-                    let nameLabel = UILabel()
-                    nameLabel.translatesAutoresizingMaskIntoConstraints = false
-                    nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
-                    nameLabel.adjustsFontForContentSizeCategory = true
-                    nameLabel.textColor = BearyColors.ink
-                    nameLabel.numberOfLines = 0
-                    nameLabel.text = BearyAccountText.grantSourceName(grant.source)
-                    let detailLabel = UILabel()
-                    detailLabel.translatesAutoresizingMaskIntoConstraints = false
-                    detailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-                    detailLabel.adjustsFontForContentSizeCategory = true
-                    detailLabel.textColor = BearyColors.gray
-                    detailLabel.numberOfLines = 0
-                    detailLabel.text = BearyAccountText.dateString(ms: grant.createdAt) + " · " + BearyAccountText.grantValueText(days: grant.days)
-                    let rowStack = UIStackView(arrangedSubviews: [nameLabel, detailLabel])
-                    rowStack.axis = .vertical
-                    rowStack.spacing = 4
-                    contents.append(rowStack)
-                }
-            }
-            for (index, content) in contents.enumerated() {
-                stack.addArrangedSubview(grantsRowWrap(content: content, isLast: index == contents.count - 1))
-            }
-        }
-    }
-
-    /// 状态行内容（标题 15 墨左、文案 14 灰右，来源明细页同款）。
-    private func grantsStatusContent(title: String, detail: String) -> UIView {
-        let titleLabel = UILabel()
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
-        titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.textColor = BearyColors.ink
-        titleLabel.numberOfLines = 0
-        titleLabel.text = title
-        titleLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        let detailLabel = UILabel()
-        detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        detailLabel.adjustsFontForContentSizeCategory = true
-        detailLabel.textColor = BearyColors.gray
-        detailLabel.numberOfLines = 0
-        detailLabel.textAlignment = .right
-        detailLabel.text = detail
-        let row = UIStackView(arrangedSubviews: [titleLabel, detailLabel])
-        row.axis = .horizontal
-        row.spacing = 12
-        row.alignment = .center
-        return row
-    }
-
-    /// 来源明细行包容器（与 benefitRow 同款：顶细线、上下各 14、左右 16，
-    /// 末行补底细线）。
-    private func grantsRowWrap(content: UIView, isLast: Bool) -> UIView {
-        let row = UIView()
-        row.translatesAutoresizingMaskIntoConstraints = false
+    /// 来源明细入口行（2026-11-22 Li 定：内联区块挪出，页底只留一个按钮进新页）：
+    /// 行式与邀请行同款（顶底细线、16 墨标题、右箭头），无说明文字；整行可点。
+    private func buildGrantsRow() {
+        let rowButton = UIButton(type: .custom)
+        rowButton.translatesAutoresizingMaskIntoConstraints = false
+        rowButton.addTarget(self, action: #selector(grantsButtonTapped), for: .touchUpInside)
+        rowButton.bearyAddPressHaptic()
+        rowButton.accessibilityLabel = "来源明细"
         let topLine = hairline()
-        row.addSubview(topLine)
-        content.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(content)
-        var constraints: [NSLayoutConstraint] = [
-            topLine.topAnchor.constraint(equalTo: row.topAnchor),
-            topLine.leadingAnchor.constraint(equalTo: row.leadingAnchor),
-            topLine.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-            content.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
-            content.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
-            content.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
-            content.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
-        ]
-        if isLast {
-            let bottomLine = hairline()
-            row.addSubview(bottomLine)
-            constraints.append(contentsOf: [
-                bottomLine.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-                bottomLine.leadingAnchor.constraint(equalTo: row.leadingAnchor),
-                bottomLine.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-            ])
-        }
-        NSLayoutConstraint.activate(constraints)
-        return row
-    }
-
-    @objc private func grantsRetryTapped() {
-        // 109：同会员来源明细页——在途重试直接忽略，先 render 加载态，
-        // 回包后恢复。
-        guard !isRetryingGrants else { return }
-        isRetryingGrants = true
-        grantsRetryGeneration += 1
-        let gen = grantsRetryGeneration
-        plusDetail = nil
-        grantsLoadFailed = false
-        renderGrantsSection()
-        BearyAPI.shared.fetchPlusDetail { [weak self] result in
-            DispatchQueue.main.async {
-                // 先解锁再判代次：成功/失败/过期回包一律解锁，不留死锁。
-                self?.isRetryingGrants = false
-                guard let self = self, self.grantsRetryGeneration == gen else { return }
-                switch result {
-                case .success(let detail):
-                    self.plusDetail = detail
-                    self.grantsLoadFailed = false
-                case .failure:
-                    self.grantsLoadFailed = true
-                }
-                self.renderGrantsSection()
-            }
-        }
+        rowButton.addSubview(topLine)
+        let titleLabelValue = UILabel()
+        titleLabelValue.translatesAutoresizingMaskIntoConstraints = false
+        titleLabelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+        titleLabelValue.adjustsFontForContentSizeCategory = true
+        titleLabelValue.textColor = BearyColors.ink
+        titleLabelValue.text = "来源明细"
+        rowButton.addSubview(titleLabelValue)
+        let chevron = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 16))
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.tintColor = BearyColors.gray
+        chevron.contentMode = .scaleAspectFit
+        rowButton.addSubview(chevron)
+        let bottomLine = hairline()
+        rowButton.addSubview(bottomLine)
+        NSLayoutConstraint.activate([
+            topLine.topAnchor.constraint(equalTo: rowButton.topAnchor),
+            topLine.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor),
+            topLine.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor),
+            titleLabelValue.topAnchor.constraint(equalTo: rowButton.topAnchor, constant: 16),
+            titleLabelValue.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor, constant: 16),
+            titleLabelValue.bottomAnchor.constraint(equalTo: rowButton.bottomAnchor, constant: -16),
+            chevron.centerYAnchor.constraint(equalTo: rowButton.centerYAnchor),
+            chevron.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: -16),
+            chevron.widthAnchor.constraint(equalToConstant: 16),
+            chevron.heightAnchor.constraint(equalToConstant: 16),
+            bottomLine.bottomAnchor.constraint(equalTo: rowButton.bottomAnchor),
+            bottomLine.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor),
+            bottomLine.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor),
+        ])
+        contentStack.addArrangedSubview(rowButton)
     }
 
     private func buildFoot() {
@@ -673,6 +430,7 @@ final class BearyPlusPageViewController: UIViewController {
         spacer.setContentHuggingPriority(.defaultLow, for: .vertical)
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         contentStack.addArrangedSubview(spacer)
+        buildGrantsRow()
 
         // 已开通：页尾无按钮，状态只由顶部“已开通”交代；协议正文未定，
         // 协议入口已去掉（见文件头注释），不留死入口。
@@ -703,6 +461,23 @@ final class BearyPlusPageViewController: UIViewController {
     }
 
     // MARK: - 动作
+
+    @objc private func grantsButtonTapped() {
+        // 来源明细新页：全屏呈现；窄屏左缘右滑返回同 Plus 页口径（本页强持
+        // edgeDismiss，transitioningDelegate 是弱引用）；宽屏走 fadeRise。
+        guard presentedViewController == nil else { return }
+        let vc = BearyPlusGrantsViewController(sharedLoad: sharedLoad)
+        vc.modalPresentationStyle = .fullScreen
+        if traitCollection.horizontalSizeClass == .compact {
+            let edgeDismiss = BearyEdgeDismissController()
+            edgeDismiss.attach(to: vc)
+            vc.transitioningDelegate = edgeDismiss
+            grantsEdgeDismiss = edgeDismiss
+        } else if let fadeRise = SceneDelegate.chrome?.fadeRiseTransitionDelegate {
+            vc.transitioningDelegate = fadeRise
+        }
+        present(vc, animated: BearyMotion.animated(true))
+    }
 
     @objc private func backButtonTapped() {
         dismiss(animated: BearyMotion.animated(true), completion: nil)
