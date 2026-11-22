@@ -4420,6 +4420,49 @@ enum BearyQuoteGate {
 }
 
 extension BearyQuoteGate {
+    /// 引用卡可见性共享判定表（第十三批第 10 项；App 先用，网页侧按同一表收）。
+    /// 判定顺序（与详情／卡片／时间线原口径逐项对过）：
+    /// gone → 已删除；locked → 锁定占位；正文空（去空白后）→ 有效公开则已删除、否则锁定占位；
+    /// 作者本人或当前有效公开 → 全文；仅好友 → 先占位、互关确认后再补全文；其余 → 锁定占位。
+    /// 与网页 quoteVisible（beary.html:1688–1696）同顺序、同终态，分叉处不硬合：
+    /// 网页“无 author_id＋非公开＋有正文即显全文”是以后端裁剪为前提的形状推断，
+    /// App 一律 fail-closed（作者身份只认 isMine／authorId，不凭正文反推）；
+    /// 加载中／加载失败是 App 卡片异步拉取才有的态，不进本表；
+    /// 时间线与个人主页不接异步互关补刷，friendsPending 在该两处即终态占位。
+    /// 异步互关补刷仍由调用方接（详情 renderQuote／卡片 presentQuoteCard），
+    /// 展开态忘掉（BearyQuoteExpandState.forget）只发生在终态占位分支，调用方按态处理。
+    enum Visibility: Equatable {
+        case full
+        case deleted
+        case lockedPlaceholder(locked: Bool)
+        case friendsPending
+    }
+
+    /// 共享判定表（Quote 体入口；作者身份走 sourceIsMine，isMine 优先）。
+    static func quoteVisibility(quote: Quote) -> Visibility {
+        quoteVisibility(
+            gone: quote.gone,
+            locked: quote.locked,
+            content: quote.content ?? "",
+            isEffectivelyPublic: quote.isEffectivelyPublic,
+            viewerIsAuthor: sourceIsMine(quote: quote),
+            visibility: quote.visibility
+        )
+    }
+
+    /// 共享判定表（分解入参入口，供只有分解字段的调用方，如卡片 presentQuoteCard；
+    /// 其 isPublic 入参调用方已折算为有效公开态，见该函数注释）。
+    static func quoteVisibility(gone: Bool?, locked: Bool?, content: String, isEffectivelyPublic: Bool, viewerIsAuthor: Bool, visibility: String?) -> Visibility {
+        if gone == true { return .deleted }
+        if locked == true { return .lockedPlaceholder(locked: true) }
+        if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return isEffectivelyPublic ? .deleted : .lockedPlaceholder(locked: false)
+        }
+        if viewerIsAuthor || isEffectivelyPublic { return .full }
+        if visibility == "friends" { return .friendsPending }
+        return .lockedPlaceholder(locked: false)
+    }
+
     /// 10a 定版（2026-11-02 Li 定）：仅好友来源占位——服务端在 locked 体里
     /// 透传 visibility=friends 时，非好友 viewer 走本句；好友 viewer 服务端应直传
     /// 全文而不走 locked，App 不凭本地好友关系反推（无 per-entry 好友判定接口）。

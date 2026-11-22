@@ -2995,8 +2995,9 @@ class BearyDiaryCardCell: UITableViewCell {
     // MARK: - 引用 lite 卡（首页异步 / 个人主页同步，各保各的；视图共享）
 
     /// 引用卡统一落点（首页模式）。服务端 attachQuotes 直传 gone/locked（Quote 模型已解码，
-    /// F3 收尾）；字段非空时优先用字段判定，缺失时回退 is_public + 正文启发式：
-    /// iCity viewer 实时判定：作者本人（quoteIsMine 或 quoteAuthorId == 当前用户）或被引篇已公开
+    /// F3 收尾）；判定走 BearyQuoteGate 共享判定表（详情／时间线同一份顺序），
+    /// isPublic 入参调用方已折算为有效公开态（限时过期即非公开）：
+    /// iCity viewer 实时判定：作者本人（quoteIsMine 或 quoteAuthorId == 当前用户）或被引篇当前有效公开
     /// 才显全文，否则 showGone 占位（占位不带日期与缩略图，见 BearyQuoteCardView.showGone）。
     /// - gone：gone 态 → “引用的日记已删除”（点按无动作）；
     /// - locked / 未公开：→ 引用规则简化占位文案（见 BearyQuoteGate.placeholderText；
@@ -3012,39 +3013,28 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteTapId = quoteId
         quoteTapGoneOrLocked = false
         quoteTapLoadFailed = false
-        if gone == true {
+        let viewerId = SessionManager.shared.currentUser?.id
+        let viewerIsAuthor = quoteIsMine == true || (quoteAuthorId != nil && viewerId != nil && quoteAuthorId == viewerId)
+        // 引用判定走 BearyQuoteGate 共享判定表（详情／时间线同一份顺序）；
+        // isPublic 入参调用方已折算为有效公开态（限时过期即非公开）。
+        // .full 时落到下方 configure；其余态上面落卡并 return。
+        switch BearyQuoteGate.quoteVisibility(gone: gone, locked: locked, content: content, isEffectivelyPublic: isPublic == true, viewerIsAuthor: viewerIsAuthor, visibility: quoteVisibility) {
+        case .deleted:
             quoteTapGoneOrLocked = true
             // A2：已删除为终态占位，忘掉该键的展开态。
             BearyQuoteExpandState.forget(key: expandKey)
             quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
             quoteView.isHidden = false
             return
-        }
-        if locked == true {
+        case .lockedPlaceholder(let locked):
             quoteTapGoneOrLocked = true
-            // A2：锁定为终态占位，忘掉该键的展开态。
+            // A2：锁定／未公开占位为终态，忘掉该键的展开态。
             BearyQuoteExpandState.forget(key: expandKey)
-            let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: true, visibility: quoteVisibility)
+            let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: locked, visibility: quoteVisibility)
             quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
             quoteView.isHidden = false
             return
-        }
-        if content.isEmpty {
-            quoteTapGoneOrLocked = true
-            // A2：正文空的占位为终态，忘掉该键的展开态。
-            BearyQuoteExpandState.forget(key: expandKey)
-            if isPublic == false {
-                let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: false, visibility: quoteVisibility)
-                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
-            } else {
-                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
-            }
-            quoteView.isHidden = false
-            return
-        }
-        let viewerId = SessionManager.shared.currentUser?.id
-        let viewerIsAuthor = quoteIsMine == true || (quoteAuthorId != nil && viewerId != nil && quoteAuthorId == viewerId)
-        guard viewerIsAuthor || isPublic == true else {
+        case .friendsPending:
             quoteTapGoneOrLocked = true
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: false, visibility: quoteVisibility)
             quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
@@ -3113,6 +3103,8 @@ class BearyDiaryCardCell: UITableViewCell {
                 BearyQuoteExpandState.forget(key: expandKey)
             }
             return
+        case .full:
+            break
         }
         quoteView.configure(
             authorName: authorName,
