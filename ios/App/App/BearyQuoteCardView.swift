@@ -710,7 +710,8 @@ final class BearyQuoteCardView: UIView {
             paragraph.lineBreakMode = .byCharWrapping
             // 正文里的 [mood:]/[gif:] 记号走卡片同款渲染（原先纯文本直显，
             // 记号原文会露出来）；行高/断行口径与原来一致。
-            contentLabel.attributedText = BearyText.inlineAttributedText(from: content, font: BearyDynamicType.secondaryFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: images)
+            // 正文仅表情放大（2026-11-18 Li 定）：1–3 个纯表情时字号 ×2，与卡片/详情同口径。
+            contentLabel.attributedText = BearyText.inlineAttributedText(from: content, font: BearyText.effectiveBodyFont(BearyDynamicType.secondaryFont(), for: content), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: images)
         }
         if keepExpanded {
             // 同引用重配：恢复展开态（行数与展开钮随之恢复，不等下一轮布局）。

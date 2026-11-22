@@ -3271,7 +3271,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         contentLabel.clipsToBounds = true
         // 横向栈内正文先让位：固定 44 宽缩略图不被挤，正文换行承接剩余宽度。
         contentLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        contentLabel.attributedText = highlightedMoodText(snippetText, query: query, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, lineHeightMultiple: 1.6, lineBreakMode: .byCharWrapping, gifImageKeys: entry.images)
+        // 正文仅表情放大（2026-11-18 Li 定）：摘要为 1–3 个纯表情时字号 ×2，与卡片/详情同口径。
+        contentLabel.attributedText = highlightedMoodText(snippetText, query: query, font: BearyText.effectiveBodyFont(BearyDynamicType.diaryBodyFont(), for: snippetText), color: BearyColors.ink, lineHeightMultiple: 1.6, lineBreakMode: .byCharWrapping, gifImageKeys: entry.images)
 
         // 第十三轮第 2 项：搜索结果行加标题（作者·日期 → 标题 → 正文 → 图片）。
         // 标题用卡片同款 16.5 粗体（cardTitleFont）、最多两行截尾；命中词走
