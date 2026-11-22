@@ -1600,51 +1600,78 @@ final class BearyImageLoader {
         // 尺寸合并为一次磁盘读与一次下载），再把尺寸记录插表；解码与内存
         // 仍按尺寸各做各的。原始订阅先于插表建立，取消路径总能找到它。
         // 原始回包在后台队列执行，解码转 diskAndDecodeQueue 做，不占主线程。
-        let (rawKey, rawId) = loadRawData(for: url, bucket: bucket) { [weak self, weak entry] result in
-            guard let self = self, let entry = entry else { return }
-            self.inFlightLock.lock()
-            let live = self.inFlight[key] === entry && !entry.subscribers.isEmpty && !entry.finishing
-            self.inFlightLock.unlock()
-            guard live else { return }
-            // 审计 r1-images 第 1 项：完成方先置位、不摘表——解码/交付
-            // 期间同键新加载挂到同一记录上，交付时一并分发。
-            self.inFlightLock.lock()
-            entry.finishing = true
-            self.inFlightLock.unlock()
-            switch result {
-            case .failure(let err):
-                self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: nil, result: .failure(err))
-            case .success(let raw):
-                // S4：解码进后台队列（与磁盘解码共用 diskAndDecodeQueue，信号量限 2 路
-                // 并发）；原始回包队列立即释放，一张图的解码不再拖住后续回包。
-                // entry.finishing 已在上面置位，解码期间同键新订阅仍挂同一记录、
-                // 交付时一并分发，不再因摘表过早另起加载链。
-                // S1 校验（HTTP/MIME）与写盘已在原始字节层（loadRawData）做过，
-                // 这里只解码、存内存、交付，不再重复校验与写盘。
-                Self.diskAndDecodeQueue.async { [weak self, weak entry] in
-                    guard let self = self, let entry = entry else { return }
-                    _ = Self.networkDecodeSemaphore.wait()
-                    let img = BearyImageLoader.decodedImage(data: raw.data, downsampleToWidth: downsampleToWidth)
-                    Self.networkDecodeSemaphore.signal()
-                    guard let img = img else {
-                        self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: nil, result: .failure(.invalidData))
-                        return
+        // 图片加载失败自动重试一次（静默重试，不改加载态、不 toast、
+        // 不用三点）：首次失败（网络／脏数据／解码失败）后立即再发一次；
+        // 取消不重试，第二次失败即按现有失败态交付——离线时两次失败即停。
+        // 重试复用同一在途记录与订阅表，调用方只收到一次最终回调；
+        // entry.finishing 在失败分支复位，否则重试回包会被 live 门拦住。
+        func startRawLoad(attempt: Int) {
+            let (rawKey, rawId) = loadRawData(for: url, bucket: bucket) { [weak self, weak entry] result in
+                guard let self = self, let entry = entry else { return }
+                self.inFlightLock.lock()
+                let live = self.inFlight[key] === entry && !entry.subscribers.isEmpty && !entry.finishing
+                self.inFlightLock.unlock()
+                guard live else { return }
+                // 审计 r1-images 第 1 项：完成方先置位、不摘表——解码/交付
+                // 期间同键新加载挂到同一记录上，交付时一并分发。
+                self.inFlightLock.lock()
+                entry.finishing = true
+                self.inFlightLock.unlock()
+                switch result {
+                case .failure(let err):
+                    if attempt == 0 {
+                        switch err {
+                        case .cancelled:
+                            self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: nil, result: .failure(err))
+                        default:
+                            self.inFlightLock.lock()
+                            entry.finishing = false
+                            self.inFlightLock.unlock()
+                            startRawLoad(attempt: 1)
+                        }
+                    } else {
+                        self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: nil, result: .failure(err))
                     }
-                    // 审计 22 项：写内存前验代次，代次已变即不写内存（磁盘
-                    // 文件本身已被 purge/evict 删掉或即将删掉，读到的是删除前
-                    // 已解码在手的旧字节，不得再留存）；交付走 finishDelivery，
-                    // 其内另按逐出戳核对。
-                    // A5：内存与交付共用原始字节的到期时间（磁盘支为磁盘剩余
-                    // TTL、网络支为现在 + 24 小时），与 HEAD 的口径一致。
-                    if capturedGeneration == self.generation(for: bucket) {
-                        self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration, expiresAt: raw.expiresAt)
+                case .success(let raw):
+                    // S4：解码进后台队列（与磁盘解码共用 diskAndDecodeQueue，信号量限 2 路
+                    // 并发）；原始回包队列立即释放，一张图的解码不再拖住后续回包。
+                    // entry.finishing 已在上面置位，解码期间同键新订阅仍挂同一记录、
+                    // 交付时一并分发，不再因摘表过早另起加载链。
+                    // S1 校验（HTTP/MIME）与写盘已在原始字节层（loadRawData）做过，
+                    // 这里只解码、存内存、交付，不再重复校验与写盘。
+                    Self.diskAndDecodeQueue.async { [weak self, weak entry] in
+                        guard let self = self, let entry = entry else { return }
+                        _ = Self.networkDecodeSemaphore.wait()
+                        let img = BearyImageLoader.decodedImage(data: raw.data, downsampleToWidth: downsampleToWidth)
+                        Self.networkDecodeSemaphore.signal()
+                        guard let img = img else {
+                            if attempt == 0 {
+                                self.inFlightLock.lock()
+                                entry.finishing = false
+                                self.inFlightLock.unlock()
+                                startRawLoad(attempt: 1)
+                            } else {
+                                self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: nil, result: .failure(.invalidData))
+                            }
+                            return
+                        }
+                        // 审计 22 项：写内存前验代次，代次已变即不写内存（磁盘
+                        // 文件本身已被 purge/evict 删掉或即将删掉，读到的是删除前
+                        // 已解码在手的旧字节，不得再留存）；交付走 finishDelivery，
+                        // 其内另按逐出戳核对。
+                        // A5：内存与交付共用原始字节的到期时间（磁盘支为磁盘剩余
+                        // TTL、网络支为现在 + 24 小时），与 HEAD 的口径一致。
+                        if capturedGeneration == self.generation(for: bucket) {
+                            self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration, expiresAt: raw.expiresAt)
+                        }
+                        self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: raw.expiresAt, result: .success(img))
                     }
-                    self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: raw.expiresAt, result: .success(img))
                 }
             }
+            entry.rawKey = rawKey
+            entry.rawId = rawId
         }
-        entry.rawKey = rawKey
-        entry.rawId = rawId
+        startRawLoad(attempt: 0)
         inFlightLock.lock()
         if let existing = inFlight[key] {
             // 插表竞态：已有后来者先插表，本次的尺寸记录直接丢弃（订阅挂到
@@ -1690,7 +1717,7 @@ struct BearyImagePrefetchBudget {
 /// 不抢首屏：只在滚动停稳（didEndDecelerating / 不减速的 didEndDragging）
 /// 与切回本页时触发，逐张错峰 0.15s 起步（首张再等 0.25s），新滚动
 /// 开始即 cancel（在途预热订阅摘除；若与可见 cell 合并在途，可见侧
-/// 的下载不受影响）；预热失败静默丢弃，不 toast、不重试、不亮失败态。
+/// 的下载不受影响）；预热失败静默丢弃，不 toast、不另行重试、不亮失败态。
 /// 私密口径：只预热当前 viewer 可见的篇——已公开，或作者是本人；
 /// 占位篇（placeholder）与他人私密篇一律跳过，不进任何缓存桶。
 /// 账号隔离：窗口计算时快照当前账号桶，换号后旧桶的 warmed 与 pending
@@ -1910,7 +1937,7 @@ final class BearyImagePrefetcher {
                         self.noteWarmed(item.warmedKey)
                     }
                     self.lock.unlock()
-                    // 预热失败静默丢弃：不 toast、不重试；滑到该屏时 cell
+                    // 预热失败静默丢弃：不 toast、不另行重试；滑到该屏时 cell
                     // 仍按需加载，不会因预热失败而缺图。
                 }
                 if let task = task { self.inFlight.append(task) }
