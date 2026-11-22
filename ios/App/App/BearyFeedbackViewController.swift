@@ -486,7 +486,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 内容（自上而下：状态卡 → 描述 → 附件 → 提交 → 「诊断信息」折叠）
 
     private func buildContent() {
-        let statusCard = makeCard()
+        let statusCard = BearySettingsUI.makeCardView()
         let statusRow = UIStackView()
         statusRow.translatesAutoresizingMaskIntoConstraints = false
         statusRow.axis = .horizontal
@@ -527,8 +527,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             statusRow.bottomAnchor.constraint(equalTo: statusCard.bottomAnchor, constant: -14),
         ])
 
-        let descLabel = makeSectionLabel("问题描述")
-        let descCard = makeCard()
+        let descLabel = BearySettingsUI.makeSectionTitle("问题描述", font: UIFont.systemFont(ofSize: 13), kern: nil, lines: 1)
+        let descCard = BearySettingsUI.makeCardView()
         typeSegmented.translatesAutoresizingMaskIntoConstraints = false
         typeSegmented.selectedSegmentIndex = 0
         typeSegmented.selectedSegmentTintColor = BearyColors.ink
@@ -575,8 +575,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             descInner.bottomAnchor.constraint(equalTo: descCard.bottomAnchor, constant: -12),
         ])
 
-        let mediaLabel = makeSectionLabel("图片或视频（可选，最多 5 个）")
-        let attachCard = makeCard()
+        let mediaLabel = BearySettingsUI.makeSectionTitle("图片或视频（可选，最多 5 个）", font: UIFont.systemFont(ofSize: 13), kern: nil, lines: 1)
+        let attachCard = BearySettingsUI.makeCardView()
         attachLabelButton.translatesAutoresizingMaskIntoConstraints = false
         attachLabelButton.setTitle("添加图片或视频", for: .normal)
         attachLabelButton.setTitleColor(BearyColors.ink, for: .normal)
@@ -643,8 +643,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             attachProgressHeightValue,
         ])
 
-        let deviceLabel = makeSectionLabel("设备信息")
-        let deviceCard = makeCard()
+        let deviceLabel = BearySettingsUI.makeSectionTitle("设备信息", font: UIFont.systemFont(ofSize: 13), kern: nil, lines: 1)
+        let deviceCard = BearySettingsUI.makeCardView()
         let deviceStack = UIStackView()
         deviceStack.translatesAutoresizingMaskIntoConstraints = false
         deviceStack.axis = .vertical
@@ -731,10 +731,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         logOnlyButton.bearyAddPressFeedback()
 
         // 「诊断信息」折叠（任务 8）：标题行 + 体栈，设置页折叠同款。
-        // 标题行走本页组标题口径（makeSectionLabel）+ 行尾下箭头（官方包
+        // 标题行走共享组标题口径（BearySettingsUI.makeSectionTitle，13pt 无 kern）+ 行尾下箭头（官方包
         // icon_chevron_down 16 灰）；体默认收起（isHidden，栈自动归零高度），
         // 内含设备信息（标题 + 8 行卡）与两个日志操作钮。
-        let diagnosticsTitleLabel = makeSectionLabel("诊断信息")
+        let diagnosticsTitleLabel = BearySettingsUI.makeSectionTitle("诊断信息", font: UIFont.systemFont(ofSize: 13), kern: nil, lines: 1)
         diagnosticsChevron.translatesAutoresizingMaskIntoConstraints = false
         diagnosticsChevron.image = BearyIconImages.image(named: "icon_chevron_down", pointSize: 16)
         diagnosticsChevron.tintColor = BearyColors.gray
@@ -800,25 +800,6 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         ])
     }
 
-    private func makeCard() -> UIView {
-        let card = UIView()
-        card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = BearyColors.surface1
-        card.layer.cornerRadius = 12
-        card.layer.borderWidth = 0
-        card.clipsToBounds = true
-        return card
-    }
-
-    private func makeSectionLabel(_ text: String) -> UILabel {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.secondaryFont()
-        label.adjustsFontForContentSizeCategory = true
-        label.textColor = BearyColors.gray
-        label.text = text
-        return label
-    }
 
     private func updateSubmitEnabled() {
         let hasText = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

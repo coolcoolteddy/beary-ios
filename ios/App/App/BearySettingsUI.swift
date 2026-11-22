@@ -30,24 +30,33 @@ enum BearySettingsUI {
 
     /// F4：组标题改走网页 group-title 口径——12px 灰、放卡内（不再是卡外 14 粗体）。
     /// 字距 1px（网页 letter-spacing:1px）用 kern 复现。
-    static func makeSectionTitle(_ text: String) -> UILabel {
-        let label = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray)
+    /// - Parameters:
+    ///   - font: 未缩放的基准字（默认 12pt 系统字；经 makeLabel 一次 scaled，
+    ///     与各页现行 scaled 字体等值）。反馈页传 13pt 系统字，即其现行
+    ///     `BearyDynamicType.secondaryFont()`。
+    ///   - kern: 字距（默认 1；传 nil 时用纯文本，不设 attributedText）。
+    ///   - lines: 行数（默认 0，多行自适应；反馈页传 1，保持其现行单行）。
+    static func makeSectionTitle(_ text: String, font: UIFont? = nil, kern: CGFloat? = 1, lines: Int = 0) -> UILabel {
+        let label = makeLabel(font: font ?? UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: lines)
         // P1-7：分组标题多行自适应——大字号下可换行，卡内标题包容器
         // 上下约束已定，行高随文字自动撑开，不钉固定高度。
-        label.numberOfLines = 0
-        label.attributedText = NSAttributedString(string: text, attributes: [.kern: 1, .font: label.font])
+        if let kernValue = kern {
+            label.attributedText = NSAttributedString(string: text, attributes: [.kern: kernValue, .font: label.font])
+        } else {
+            label.text = text
+        }
         return label
     }
 
     // MARK: - 分组卡
 
-    static func makeCardView() -> UIView {
+    static func makeCardView(cornerRadius: CGFloat = BearyCorners.single) -> UIView {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
         // 卡片底色走 surface1（页上卡片层；2026-11-07 微明度定版：1px 外框已去掉）。
         card.backgroundColor = BearyColors.surface1
         card.layer.borderWidth = 0
-        card.layer.cornerRadius = BearyCorners.single
+        card.layer.cornerRadius = cornerRadius
         card.clipsToBounds = true
         return card
     }
