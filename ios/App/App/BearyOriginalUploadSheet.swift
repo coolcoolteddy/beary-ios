@@ -179,7 +179,7 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
     /// 的原图行右端挂皇冠（与个人页皇冠同款资产），点按后走 Plus 提示。
     private func configureOptionButton(_ button: UIButton, title: String, subtitle: String, showsCrown: Bool) {
         button.backgroundColor = BearyColors.surface2
-        button.layer.cornerRadius = 12
+        button.layer.cornerRadius = BearyCorners.single
         button.clipsToBounds = true
         button.translatesAutoresizingMaskIntoConstraints = false
         let titleLabel = UILabel()

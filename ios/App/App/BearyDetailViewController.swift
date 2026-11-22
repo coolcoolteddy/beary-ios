@@ -456,7 +456,7 @@ final class BearyDetailViewController: UIViewController {
         btn.setTitle("九宫格", for: .normal)
         btn.setTitleColor(BearyColors.ink, for: .normal)
         btn.backgroundColor = BearyColors.surface2
-        btn.layer.cornerRadius = 12
+        btn.layer.cornerRadius = BearyCorners.single
         btn.clipsToBounds = true
         btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
@@ -643,7 +643,7 @@ final class BearyDetailViewController: UIViewController {
         stack.spacing = 8
         stack.alignment = .center
         stack.backgroundColor = BearyColors.surface2
-        stack.layer.cornerRadius = 12
+        stack.layer.cornerRadius = BearyCorners.single
         stack.clipsToBounds = true
         stack.isLayoutMarginsRelativeArrangement = true
         stack.layoutMargins = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
@@ -1175,7 +1175,7 @@ final class BearyDetailViewController: UIViewController {
             slot.backgroundColor = BearyColors.line
             slot.contentMode = .scaleAspectFill
             slot.clipsToBounds = true
-            slot.layer.cornerRadius = 12
+            slot.layer.cornerRadius = BearyCorners.single
             slot.isUserInteractionEnabled = true
             slot.tag = index
             slot.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:))))

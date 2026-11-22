@@ -283,7 +283,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         container.backgroundColor = .white
         container.layer.borderColor = BearyOnboardingPalette.line.cgColor
         container.layer.borderWidth = 1
-        container.layer.cornerRadius = 12
+        container.layer.cornerRadius = BearyCorners.single
         container.heightAnchor.constraint(equalToConstant: 50).isActive = true
     }
 
@@ -301,7 +301,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         button.setTitleColor(.white, for: .normal)
         button.titleLabel?.font = BearyDynamicType.buttonFont()
         button.setTitle(title, for: .normal)
-        button.layer.cornerRadius = 12
+        button.layer.cornerRadius = BearyCorners.single
         button.heightAnchor.constraint(equalToConstant: 52).isActive = true
         button.addTarget(self, action: #selector(sheetButtonTouchDown(_:)), for: .touchDown)
         button.addTarget(self, action: #selector(sheetButtonTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
@@ -807,7 +807,7 @@ final class BearyIDCardSheetViewController: UIViewController {
         saveButton.setTitleColor(.white, for: .normal)
         saveButton.titleLabel?.font = BearyDynamicType.buttonFont()
         saveButton.setTitle("保存至相册", for: .normal)
-        saveButton.layer.cornerRadius = 12
+        saveButton.layer.cornerRadius = BearyCorners.single
         saveButton.heightAnchor.constraint(equalToConstant: 52).isActive = true
         saveButton.addTarget(self, action: #selector(saveTapped), for: .touchUpInside)
         stack.addArrangedSubview(saveButton)

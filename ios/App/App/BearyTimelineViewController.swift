@@ -935,7 +935,7 @@ final class BearyTimelineCell: UITableViewCell {
         btn.setTitle("九宫格", for: .normal)
         btn.setTitleColor(BearyColors.ink, for: .normal)
         btn.backgroundColor = BearyColors.surface2
-        btn.layer.cornerRadius = 12
+        btn.layer.cornerRadius = BearyCorners.single
         btn.clipsToBounds = true
         btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
@@ -1839,7 +1839,7 @@ final class BearyTimelineCell: UITableViewCell {
             imageView.translatesAutoresizingMaskIntoConstraints = false
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = true
-            imageView.layer.cornerRadius = 12
+            imageView.layer.cornerRadius = BearyCorners.single
             imageView.backgroundColor = BearyColors.surface2
             // N7：主图条点按接灯箱（UIImageView 默认不接收触摸，必须显式开启；
             // 手势会截获此次点按，行点按进详情不再触发）。tag 记下标，

@@ -688,7 +688,7 @@ final class BearyChromeViewController: UIViewController {
         let b = BearyHit44Button(type: .custom)
         b.setImage(topIconImage(named: imageName, officialFallback: officialFallback), for: .normal)
         b.tintColor = tint
-        b.layer.cornerRadius = 12
+        b.layer.cornerRadius = BearyCorners.single
         b.addTarget(self, action: action, for: .touchUpInside)
         b.bearyAddPressFeedback()
         b.translatesAutoresizingMaskIntoConstraints = false

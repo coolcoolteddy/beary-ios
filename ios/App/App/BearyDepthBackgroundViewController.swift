@@ -376,7 +376,7 @@ private final class BearyDepthBackgroundCell: UITableViewCell {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.clipsToBounds = true
-        viewValue.layer.cornerRadius = 12
+        viewValue.layer.cornerRadius = BearyCorners.single
         viewValue.backgroundColor = BearyColors.surface2
         return viewValue
     }()

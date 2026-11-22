@@ -360,7 +360,7 @@ final class BearyLoginViewController: UIViewController {
         // “使用其他邮箱登录”次要钮（细线框白底黑字，点开同页展开邮箱表单）。
         emailLoginButton.translatesAutoresizingMaskIntoConstraints = false
         emailLoginButton.backgroundColor = BearyColors.bg
-        emailLoginButton.layer.cornerRadius = 12
+        emailLoginButton.layer.cornerRadius = BearyCorners.single
         emailLoginButton.layer.borderWidth = 1
         emailLoginButton.layer.bearyDynamicBorderColor = BearyColors.line
         emailLoginButton.setTitle("使用其他邮箱登录", for: .normal)
@@ -412,7 +412,7 @@ final class BearyLoginViewController: UIViewController {
         configureLegalLine()
 
         sendButton.translatesAutoresizingMaskIntoConstraints = false
-        sendButton.layer.cornerRadius = 12
+        sendButton.layer.cornerRadius = BearyCorners.single
         sendButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 15, bottom: 0, right: 15)
         sendButton.addTarget(self, action: #selector(sendCodeTapped), for: .touchUpInside)
         sendButton.bearyAddPressFeedback()
@@ -442,7 +442,7 @@ final class BearyLoginViewController: UIViewController {
         // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，登录钮改 surface2 柔和灰底 + ink 字
         //（标题前景见 setLoginTitle，同改 ink）。
         loginButton.backgroundColor = BearyColors.surface2
-        loginButton.layer.cornerRadius = 12
+        loginButton.layer.cornerRadius = BearyCorners.single
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
         loginButton.bearyAddPressFeedback()
         // 登录处理转圈与下拉/加载同款 icon_refresh（#224 误用 icon_restore 已回退）。
@@ -627,7 +627,7 @@ final class BearyLoginViewController: UIViewController {
         let style: ASAuthorizationAppleIDButton.Style = traitCollection.userInterfaceStyle == .dark ? .white : .black
         let button = ASAuthorizationAppleIDButton(authorizationButtonType: .signIn, authorizationButtonStyle: style)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.cornerRadius = 12
+        button.cornerRadius = BearyCorners.single
         button.addTarget(self, action: #selector(appleLoginTapped), for: .touchUpInside)
         appleButtonContainer.addSubview(button)
         NSLayoutConstraint.activate([

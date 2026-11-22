@@ -1331,7 +1331,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         detailButton.bearyAddPressFeedback()
         detailButton.setTitleColor(BearyColors.onBrand, for: .normal)
         detailButton.backgroundColor = BearyColors.orange
-        detailButton.layer.cornerRadius = 12
+        detailButton.layer.cornerRadius = BearyCorners.single
         detailButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)
         detailButton.accessibilityIdentifier = entry.id
         detailButton.addTarget(self, action: #selector(didTapSheetEntry(_:)), for: .touchUpInside)

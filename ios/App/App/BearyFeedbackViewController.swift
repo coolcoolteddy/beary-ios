@@ -804,7 +804,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
         card.backgroundColor = BearyColors.surface1
-        card.layer.cornerRadius = 12
+        card.layer.cornerRadius = BearyCorners.single
         card.layer.borderWidth = 0
         card.clipsToBounds = true
         return card

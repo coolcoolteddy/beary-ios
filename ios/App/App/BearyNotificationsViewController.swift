@@ -3423,7 +3423,7 @@ final class BearyLetterViewController: UIViewController {
 
         quoteWrap.translatesAutoresizingMaskIntoConstraints = false
         quoteWrap.backgroundColor = BearyColors.surface2
-        quoteWrap.layer.cornerRadius = 12
+        quoteWrap.layer.cornerRadius = BearyCorners.single
         quoteWrap.clipsToBounds = true
         quoteBar.translatesAutoresizingMaskIntoConstraints = false
         quoteBar.backgroundColor = BearyColors.gray

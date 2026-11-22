@@ -639,7 +639,7 @@ final class BearySettingsViewController: UIViewController {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.backgroundColor = BearyColors.bg
-        container.layer.cornerRadius = 12
+        container.layer.cornerRadius = BearyCorners.single
         container.clipsToBounds = true
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
