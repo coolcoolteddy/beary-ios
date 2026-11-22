@@ -2159,7 +2159,6 @@ class BearyTimelineViewController: UIViewController {
     /// 112 手势下拉节流时钟：最近一次首屏网络成功的时间。
     private var lastTimelineFirstPageSuccessAt: Date?
     private var lastNavigationAt: Date?
-    private var lastImageViewerAt: Date?
     /// 112 增量当日面板：keepDay 刷新时暂存选中日，不立即另发当日请求；
     /// 首屏回包若已覆盖该日（页内出现更早日的篇），直接从首屏派生面板，
     /// 否则回落正向 fetchDayEntries；首屏失败时同样回落正向拉取。
@@ -6990,14 +6989,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         let viewerEntry = sections[indexPath.section].entries[indexPath.row]
         cell.onTapImages = { [weak self] keys, index, originFrame, thumbnail in
             guard let self = self, self.presentedViewController == nil else { return }
-            let now = Date()
-            if let last = self.lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-            self.lastImageViewerAt = now
-            let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: viewerEntry.liveVideos, startIndex: index)
-            viewer.initialThumbnail = thumbnail
-            viewer.originFrameInWindow = originFrame
-            viewer.modalPresentationStyle = .fullScreen
-            self.present(viewer, animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
+            self.presentImageViewer(imageKeys: keys, liveVideos: viewerEntry.liveVideos, startIndex: index, thumbnail: thumbnail, originFrame: originFrame)
         }
         cell.onNineGridTapped = { [weak self] button in
             guard let strongSelf = self else { return }

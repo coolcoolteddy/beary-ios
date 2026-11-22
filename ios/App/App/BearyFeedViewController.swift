@@ -250,7 +250,6 @@ class BearyFeedViewController: UIViewController {
     /// 行/图点按防连点：各自独立时间戳，0.8 秒内同一动作重复点按直接丢弃。
     /// 看图与进详情分开节流：点图进灯箱后关闭、立即点行进详情，不再被看图的时钟丢弃；
     /// 同一动作连续快点仍各自防叠页。
-    private var lastImageViewerAt: Date?
     private var lastEntryNavigationAt: Date?
     /// 滚动藏栏（清单第 2 项首页部分）：上次处理的滚动偏移（2pt 死区内不更新，
     /// 慢速滚动的位移可累积到位再判定方向）；feedChromeHidden 是本页已下发的栏态，
@@ -1282,21 +1281,6 @@ class BearyFeedViewController: UIViewController {
         present(activity, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
     }
 
-    /// F1：图片查看器统一复用 BearyEntryImageViewerViewController（自定义
-    /// pinch＋双击、失败重试），不再用本文件内旧版。
-    /// presented 守卫 + 本动作导航节流（0.8 秒，独立时钟，不与进详情共用），防连点叠页（E4）。
-    private func presentImageViewer(imageKeys: [String], startIndex: Int, liveVideos: [String: String]? = nil, originFrame: CGRect? = nil, thumbnail: UIImage? = nil) {
-        if imageKeys.isEmpty { return }
-        if presentedViewController != nil { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
-        let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: liveVideos, startIndex: startIndex)
-        viewer.initialThumbnail = thumbnail
-        viewer.originFrameInWindow = originFrame
-        viewer.modalPresentationStyle = .fullScreen
-        present(viewer, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
-    }
 
     /// E4：行点按导航节流——0.8 秒内重复点按直接丢弃，防详情叠页。
     /// 独立时钟，不与看图共用：关灯箱后立即点行不再被看图的节流丢弃。

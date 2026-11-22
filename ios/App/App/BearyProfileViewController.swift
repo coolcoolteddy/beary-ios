@@ -443,7 +443,6 @@ class BearyProfileViewController: UIViewController {
     // 不改缓存、不改失败态、不弹确认框。
     private var backgroundReconcileFailToasted = false
     private var rowTapGuardUntil: Date?
-    private var lastImageViewerAt: Date?
     /// 清单 2 滚动藏栏（个人主页部分）：与首页／时间线同款 120pt 阈值；
     /// 本页主滚动视图即 tableView（头部为 tableHeaderView、contentInset.top = 0，
     /// offset 语义与首页一致，无需自定阈值）。
@@ -8073,9 +8072,6 @@ class BearyProfileViewController: UIViewController {
         let allPhotos = photoWallPhotosValue
         guard !allPhotos.isEmpty, startIndex >= 0, startIndex < allPhotos.count else { return }
         guard presentedViewController == nil else { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
 
         var wallLiveVideos: [String: String] = [:]
         for photo in allPhotos {
@@ -8083,24 +8079,21 @@ class BearyProfileViewController: UIViewController {
                 wallLiveVideos[photo.imageKey] = liveKey
             }
         }
-let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.imageKey }, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex)
-        viewer.initialThumbnail = thumbnail
-        viewer.originFrameInWindow = originFrame
-        viewer.modalPresentationStyle = .fullScreen
-        viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
-            guard let strongSelf = self, let viewerValue = viewer else { return }
-            guard tappedIndex >= 0, tappedIndex < allPhotos.count else { return }
-            // 灯箱按打开时的快照建图：跳转凭快照里该图的 key 在实时墙里定位日记，
-            // 不用下标读实时列表——打开期间墙重排/删图，下标会错位到别篇。
-            let tappedKey = allPhotos[tappedIndex].imageKey
-            let targetEntry = strongSelf.photoWallPhotosValue
-                .first(where: { $0.imageKey == tappedKey })?.entry
-                ?? allPhotos[tappedIndex].entry
-            viewerValue.dismiss(animated: BearyMotion.animated(true)) {
-                strongSelf.onOpenEntry?(targetEntry)
+        presentImageViewer(imageKeys: allPhotos.map { $0.imageKey }, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex, thumbnail: thumbnail, originFrame: originFrame) { [weak self] viewer in
+            viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
+                guard let strongSelf = self, let viewerValue = viewer else { return }
+                guard tappedIndex >= 0, tappedIndex < allPhotos.count else { return }
+                // 灯箱按打开时的快照建图：跳转凭快照里该图的 key 在实时墙里定位日记，
+                // 不用下标读实时列表——打开期间墙重排/删图，下标会错位到别篇。
+                let tappedKey = allPhotos[tappedIndex].imageKey
+                let targetEntry = strongSelf.photoWallPhotosValue
+                    .first(where: { $0.imageKey == tappedKey })?.entry
+                    ?? allPhotos[tappedIndex].entry
+                viewerValue.dismiss(animated: BearyMotion.animated(true)) {
+                    strongSelf.onOpenEntry?(targetEntry)
+                }
             }
         }
-        present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
 
     /// 加载三件套·底部脚部：加载中 3 个跳动小圆点（0.45s 错峰 0.15s）。
@@ -9995,14 +9988,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         // N7 主页图片灯箱：复用独立文件内的查看器，全屏模态弹出，弹出方式与时间线同款（已弹出时不叠加、减动效直显）。
         cellValue.onTapImages = { [weak self] keys, index, originFrame, thumbnail in
             guard let self = self, self.presentedViewController == nil else { return }
-            let now = Date()
-            if let last = self.lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-            self.lastImageViewerAt = now
-let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: entryValue.liveVideos, startIndex: index)
-            viewer.initialThumbnail = thumbnail
-            viewer.originFrameInWindow = originFrame
-            viewer.modalPresentationStyle = .fullScreen
-            self.present(viewer, animated: BearyMotion.animated(true), completion: nil)
+            self.presentImageViewer(imageKeys: keys, liveVideos: entryValue.liveVideos, startIndex: index, thumbnail: thumbnail, originFrame: originFrame)
         }
         cellValue.onNineGridTapped = { [weak self] button in
             guard let strongSelf = self else { return }
@@ -10229,12 +10215,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     @objc private func avatarViewTapped() {
         guard let image = avatarImageView.image else { return }
         guard presentedViewController == nil else { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
-        let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
-        viewer.originFrameInWindow = avatarImageView.convert(avatarImageView.bounds, to: nil)
-        present(viewer, animated: BearyMotion.animated(true), completion: nil)
+        presentImageViewer(localImages: [image], startIndex: 0, originFrame: avatarImageView.convert(avatarImageView.bounds, to: nil))
     }
 
     @objc private func coverViewTapped() {
@@ -10270,20 +10251,13 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     /// 的实况快照，不再看被主题盖住的旧上传图——带上所见即灯箱所见）。
     private func presentCoverLightbox() {
         guard presentedViewController == nil else { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
         if profileCoverView != nil || festivalWallpaperView != nil {
             guard let snapshot = coverSnapshot() else { return }
-            let viewer = BearyEntryImageViewerViewController(images: [snapshot], startIndex: 0)
-            viewer.originFrameInWindow = coverClipView.convert(coverClipView.bounds, to: nil)
-            present(viewer, animated: BearyMotion.animated(true), completion: nil)
+            presentImageViewer(localImages: [snapshot], startIndex: 0, originFrame: coverClipView.convert(coverClipView.bounds, to: nil))
             return
         }
         guard let image = coverImageView.image else { return }
-        let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
-        viewer.originFrameInWindow = coverImageView.convert(coverImageView.bounds, to: nil)
-        present(viewer, animated: BearyMotion.animated(true), completion: nil)
+        presentImageViewer(localImages: [image], startIndex: 0, originFrame: coverImageView.convert(coverImageView.bounds, to: nil))
     }
 
     /// 动态封面实况快照：把带上当前这一帧渲成图给灯箱看；六地与节日款同走
