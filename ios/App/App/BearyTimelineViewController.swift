@@ -1764,7 +1764,8 @@ final class BearyTimelineCell: UITableViewCell {
         // 标题隐藏时其后间距置 0，正文直接贴头行间距（卡片／详情同款口径；
         // UIStackView 会把 setCustomSpacing 的值算在隐藏行之后，不归零会多 6pt）。
         cardStackReference?.setCustomSpacing(trimmedTitle.isEmpty ? 0 : 6, after: titleLabel)
-        contentLabel.attributedText = BearyText.inlineAttributedText(from: body, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
+        // 正文仅表情放大（2026-11-18 Li 定）：1–3 个纯表情时字号 ×2，与卡片/详情同口径。
+        contentLabel.attributedText = BearyText.inlineAttributedText(from: body, font: BearyText.effectiveBodyFont(BearyDynamicType.diaryBodyFont(), for: body), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
         // TL-3 引用卡（C4 起复用公共 BearyQuoteCardView，不再自绘）：
         // 引用日记在时间线里必须有痕迹，卡内附 42px 引用缩略图行，无图不占位。
         // B-G2 (privacy, server fields first): Quote.gone/locked ARE decoded
@@ -6997,7 +6998,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
     private func estimatedTimelineRowHeight(for entry: Entry, tableWidth: CGFloat) -> CGFloat {
         let contentWidth = max(0, tableWidth - 84)
         let text = entry.content ?? ""
-        let textHeight = BearyDiaryCardCell.estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.75)
+        let textHeight = BearyDiaryCardCell.estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.75, font: BearyText.effectiveBodyFont(BearyDynamicType.diaryBodyFont(), for: text))
         let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && !BearyGIF.isInlineImageKey($0, content: text) }
         let hasImages = !imageKeys.isEmpty
         let hasTitle = !(entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

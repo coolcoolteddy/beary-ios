@@ -1324,7 +1324,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     /// 盲盒日记验证（后端是否预处理、含记号的盲盒日记是否真露出原串均未核查）。
     private func renderReceivedContent() {
         let content = received?.content ?? ""
-        let font = receivedContentLabel.font ?? BearyDynamicType.diaryBodyFont()
+        // 正文仅表情放大（2026-11-18 Li 定）：1–3 个纯表情时字号 ×2，与卡片/详情同口径。
+        let font = BearyText.effectiveBodyFont(receivedContentLabel.font ?? BearyDynamicType.diaryBodyFont(), for: content)
         receivedContentLabel.attributedText = BearyText.inlineAttributedText(from: content, font: font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
     }
 
