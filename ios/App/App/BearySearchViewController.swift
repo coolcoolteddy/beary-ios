@@ -127,12 +127,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var savedResultsOffsetY: CGFloat?
     private var searchBoxFocused: Bool = false
     // 88 包 M13：结果区底部常驻尾行（对齐时间线/个人主页尾行形态）。
-    // sweep32-2：尾行新增“加载更多”态（加载中转圈、失败重试复用重试钮）；
-    // 仍是 44 高居中形态，三态互斥显隐，见 updateSearchFooter。
+    // 搜索页自动加载：尾行改复用共享 BearyLoadMoreFooterView（加载中三点、
+    // 到底“没有更多了”、失败重试），手动“加载更多”钮已由滑到底自动
+    // 预加载取代（见 scrollViewDidScroll）；重试走脚部 onRetry → retryTapped，
+    // 翻页重试与整搜重试仍按 searchFooterRetryIsLoadMore 分流。
     private let searchFooterRow = UIView()
-    private let searchFooterRetryButton = BearyButton.retryPage()
-    private let searchFooterLoadMoreButton = BearyButton.retryPill()
-    private let searchFooterSpinnerView = UIImageView()
+    private let searchLoadMoreFooterView = BearyLoadMoreFooterView()
     // sweep32-2 翻页状态：三组各有 hasMore 与游标（游标取服务端回包原始
     // 末条，不取客户端过滤后末条——过滤掉的拉黑/过期行仍占服务端页内位置，
     // 用过滤后末条当游标会把已回包的行重拉一遍，LIMIT 截断下还可能卡住进度）。
@@ -639,6 +639,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === self.scrollView else { return }
         updateStickyBoxPosition()
         // S5：滚动露出新行时，屏外排队的关注状态按可见优先重排队头；
         // 无待办时不做帧量算。
@@ -648,6 +649,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if !followStatePendingIds.isEmpty,
            shouldReorderFollowStatesForScroll(offsetY: scrollView.contentOffset.y) {
             requestFollowStatesForVisibleRows()
+        }
+        // 加载三件套·加载更多：滑到离底部一屏时预加载下一页（复用现有
+        // loadMore，三组各按本组游标发请求；loading/失败/无更多时守卫拦住）。
+        if showingResults, !isLoadingMore, !loadMoreFailed,
+           searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers || searchMineLocalHasMore {
+            let y = scrollView.contentOffset.y
+            let remaining = scrollView.contentSize.height - (y + scrollView.bounds.height - scrollView.adjustedContentInset.bottom)
+            if remaining <= scrollView.bounds.height {
+                loadMore()
+            }
         }
     }
 
@@ -746,7 +757,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchSeq += 1
         // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
         // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
-        // “加载更多”再也点不动；新搜索另有 resetSearchPagination 兜底。
+        // 自动翻页再也触发不了；新搜索另有 resetSearchPagination 兜底。
         // 离页时在途翻页被取消：记一笔，回来时按原游标续跑（见 viewDidAppear）。
         loadMoreCancelledMidFlight = isLoadingMore
         for task in currentLoadMoreTasks { task.cancel() }
@@ -772,7 +783,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchSeq += 1
         // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
         // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
-        // “加载更多”再也点不动；新搜索另有 resetSearchPagination 兜底。
+        // 自动翻页再也触发不了；新搜索另有 resetSearchPagination 兜底。
         // 同 viewWillDisappear：记一笔，回来时按原游标续跑。
         loadMoreCancelledMidFlight = isLoadingMore
         for task in currentLoadMoreTasks { task.cancel() }
@@ -1051,44 +1062,23 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         resultsStack.spacing = 0
         contentStack.addArrangedSubview(resultsStack)
 
-        // 88 包 M13：结果区尾行（加载态转圈＋失败重试），平时隐藏；高度 44
-        // 与时间线尾行同口径，内容居中，避免显隐两态约束冲突。
+        // 88 包 M13：结果区尾行（共享脚部：加载中三点／到底／失败重试），
+        // 平时隐藏；高度与 BearyLoadMoreFooterView.height 同口径。
         searchFooterRow.translatesAutoresizingMaskIntoConstraints = false
         searchFooterRow.isHidden = true
         contentStack.addArrangedSubview(searchFooterRow)
-        // 重试两档·整页档（BearyButton.retryPage，与失败态重试钮同档）。
-        searchFooterRetryButton.translatesAutoresizingMaskIntoConstraints = false
-        searchFooterRetryButton.setTitle("重试", for: .normal)
-        searchFooterRetryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        searchFooterRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButton.retryPageStyle.height).isActive = true
-        searchFooterRetryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
-        searchFooterRetryButton.bearyAddPressFeedback()
-        searchFooterRow.addSubview(searchFooterRetryButton)
-        // sweep32-2：加载更多钮（与重试钮同工厂紧凑档）与加载中转圈，
-        // 三态互斥显隐（见 updateSearchFooter），约束与重试钮同槽位居中。
-        searchFooterLoadMoreButton.translatesAutoresizingMaskIntoConstraints = false
-        searchFooterLoadMoreButton.setTitle("加载更多", for: .normal)
-        searchFooterLoadMoreButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        searchFooterLoadMoreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height).isActive = true
-        searchFooterLoadMoreButton.addTarget(self, action: #selector(loadMoreTapped), for: .touchUpInside)
-        searchFooterLoadMoreButton.bearyAddPressFeedback()
-        searchFooterRow.addSubview(searchFooterLoadMoreButton)
-        searchFooterSpinnerView.translatesAutoresizingMaskIntoConstraints = false
-        searchFooterSpinnerView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 21)
-        searchFooterSpinnerView.tintColor = BearyColors.gray
-        searchFooterSpinnerView.contentMode = .scaleAspectFit
-        searchFooterSpinnerView.isHidden = true
-        searchFooterRow.addSubview(searchFooterSpinnerView)
+        // 尾行改复用共享脚部（BearyLoadMoreFooterView：加载中三点、到底
+        // “没有更多了”、失败重试）；脚部重试走 retryTapped，翻页重试与
+        // 整搜重试仍按 searchFooterRetryIsLoadMore 分流。
+        searchLoadMoreFooterView.translatesAutoresizingMaskIntoConstraints = false
+        searchLoadMoreFooterView.onRetry = { [weak self] in self?.retryTapped() }
+        searchFooterRow.addSubview(searchLoadMoreFooterView)
         NSLayoutConstraint.activate([
-            searchFooterRow.heightAnchor.constraint(equalToConstant: 44),
-            searchFooterRetryButton.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
-            searchFooterRetryButton.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
-            searchFooterLoadMoreButton.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
-            searchFooterLoadMoreButton.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
-            searchFooterSpinnerView.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
-            searchFooterSpinnerView.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
-            searchFooterSpinnerView.widthAnchor.constraint(equalToConstant: 21),
-            searchFooterSpinnerView.heightAnchor.constraint(equalToConstant: 21),
+            searchFooterRow.heightAnchor.constraint(equalToConstant: BearyLoadMoreFooterView.height),
+            searchLoadMoreFooterView.topAnchor.constraint(equalTo: searchFooterRow.topAnchor),
+            searchLoadMoreFooterView.leadingAnchor.constraint(equalTo: searchFooterRow.leadingAnchor),
+            searchLoadMoreFooterView.trailingAnchor.constraint(equalTo: searchFooterRow.trailingAnchor),
+            searchLoadMoreFooterView.bottomAnchor.constraint(equalTo: searchFooterRow.bottomAnchor),
         ])
 
         updateBorderColors()
@@ -1206,8 +1196,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// updateSearchBoxShadow）；搜索框边框恒为 0，此处不再给它赋边框色。
     private func updateBorderColors() {
         retryButton.layer.bearyDynamicBorderColor = BearyColors.line
-        searchFooterRetryButton.layer.bearyDynamicBorderColor = BearyColors.line
-        searchFooterLoadMoreButton.layer.bearyDynamicBorderColor = BearyColors.line
         updateSearchBoxShadow()
     }
 
@@ -1281,11 +1269,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         runSearch(query: lastQuery)
     }
 
-    @objc private func loadMoreTapped() {
-        loadMore()
-    }
-
-    /// sweep32-2 搜索翻页：尾行“加载更多”只在还有下一批时出现。
+    /// sweep32-2 搜索翻页：滑到底自动拉下一批（见 scrollViewDidScroll），
+    /// 脚部只亮状态，不再有手动“加载更多”钮。
     /// 为何按组各发一请求：服务端三组共用同一套 before/before_id 参，
     /// 一组游标套到另一组会重复或漏项（公开组与“我的”组各按 created_at
     /// DESC + id DESC、用户组按 id 升序，游标语义本就不同）。故有下一批
@@ -1351,7 +1336,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 // clearResultRows 会拆掉全部行重建，页越多每翻越重）；
                 // 改增量追加本批新行（游标/hasMore/去重口径不动，见
                 // appendResultRows）；末尾 updateSearchFooter 按新 hasMore
-                // 决定尾行（取尽则隐藏、失败则亮翻页重试）。
+                // 决定尾行（取尽则亮“没有更多了”、失败则亮翻页重试）。
                 self.appendResultRows(data: merged, mine: freshMineEntries + freshLocalMineEntries, publicEntries: freshPublicEntries, users: freshUsersList, query: query)
             }
             self.updateSearchFooter()
@@ -2302,32 +2287,35 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         banner.removeFromSuperview()
     }
 
-    /// 尾行四态（与时间线/个人主页尾行同形态；搜索进行时不显示尾行，只转框内圈）：
-    /// 未出结果时隐藏；出结果后：翻页进行中 → 转圈；翻页失败 → 重试钮
-    /// （走 loadMore 再试）；整搜失败保结果 → 重试钮（走整搜重跑，见
-    /// searchFooterRetryIsLoadMore）；还有下一批 → “加载更多”钮；三组都
-    /// 取尽 → 隐藏。加载更多钮与重试钮同槽位居中、互斥显隐。
+    /// 尾行四态（共享 BearyLoadMoreFooterView，与广场/时间线同形态；
+    /// 搜索进行时不显示尾行，只转框内圈）：未出结果时隐藏；出结果后：
+    /// 翻页进行中 → 三点；翻页失败 → “加载失败，重试”（走 loadMore 再试）；
+    /// 整搜失败保结果 → “加载失败，重试”（走整搜重跑，见
+    /// searchFooterRetryIsLoadMore）；还有下一批 → 隐藏（滑到底自动拉）；
+    /// 三组都取尽 → “没有更多了”。
     private func updateSearchFooter() {
-        searchFooterRetryButton.isHidden = true
-        searchFooterLoadMoreButton.isHidden = true
-        searchFooterSpinnerView.isHidden = true
-        BearyIconMotion.stopSpin(on: searchFooterSpinnerView, key: "bearySearchFooterSpin")
-        guard showingResults else {
-            searchFooterRow.isHidden = true
-            return
-        }
-        if isLoadingMore {
-            searchFooterRow.isHidden = false
-            searchFooterSpinnerView.isHidden = false
-            BearyIconMotion.startSpin(on: searchFooterSpinnerView, duration: 0.9, key: "bearySearchFooterSpin")
-        } else if loadMoreFailed {
-            searchFooterRow.isHidden = false
-            searchFooterRetryButton.isHidden = false
-        } else if searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers || searchMineLocalHasMore {
-            searchFooterRow.isHidden = false
-            searchFooterLoadMoreButton.isHidden = false
-        } else {
-            searchFooterRow.isHidden = true
+        // 脚部只属于搜索翻页：加载中三点、到底“没有更多了”、失败重试；
+        // 手动“加载更多”按钮已由滑到底自动预加载取代（见 scrollViewDidScroll）。
+        // 有更多未在加载时脚部隐藏（自动加载在滑到底时触发，见下预取）。
+        let hasMore = searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers || searchMineLocalHasMore
+        let footerState: BearyLoadMoreFooterView.State = {
+            guard showingResults else { return .hidden }
+            if isLoadingMore { return .loading }
+            if loadMoreFailed { return .failed }
+            if !hasMore { return .end }
+            return .hidden
+        }()
+        searchLoadMoreFooterView.setState(footerState)
+        searchFooterRow.isHidden = footerState == .hidden
+        // 内容不满一屏时滑不到底：渲染完即预取下一页，免得有更多却拉不动；
+        // loadMore 自带 isLoadingMore/hasMore 守卫，不会重入。
+        if footerState == .hidden, hasMore, !isLoadingMore, !loadMoreFailed, showingResults,
+           scrollView.contentSize.height <= scrollView.bounds.height {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.view.window != nil, self.showingResults,
+                      !self.isLoadingMore, !self.loadMoreFailed else { return }
+                self.loadMore()
+            }
         }
     }
 
