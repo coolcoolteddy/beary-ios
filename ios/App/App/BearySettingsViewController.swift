@@ -3572,7 +3572,7 @@ final class BearySettingsViewController: UIViewController {
             let now = Int(Date().timeIntervalSince1970 * 1000)
             return BearyDeveloperMode.effectivePlus(detail.permanent == true || (detail.effectiveUntil ?? 0) > now)
         }
-        return BearyDeveloperMode.effectivePlus(SessionManager.shared.currentUser?.plus == true)
+        return SessionManager.shared.isPlus
     }
 
     @objc private func openPlusPage() {

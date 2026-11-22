@@ -419,10 +419,10 @@ class BearyEditProfileViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // 景深背景门控初值：与九宫格门控同口径读共享会话 currentUser.plus。
+        // 景深背景门控初值：读共享 Plus 态 SessionManager.isPlus。
         // 此前初值 false，且正常入口（带 userId）从不走 refreshLinkRowFromMe
         // 的 /me 补写，Plus 用户进页即被判非 Plus，封面行全锁“Plus 专属”。
-        fetchedPlus = SessionManager.shared.currentUser?.plus == true
+        fetchedPlus = SessionManager.shared.isPlus
         view.backgroundColor = BearyColors.bg
         buildLayout()
         // U3：输入框 Return 收起/切换 + 滑动收键盘 + 键盘顶起时调 inset
@@ -485,27 +485,29 @@ class BearyEditProfileViewController: UIViewController {
     /// meFetchFailed；thenCopy 时拿到 handle/id 即补复制，否则按
     /// “未登录”或“加载失败”分别提示，不静默。
     private func refreshLinkRowFromMe(thenCopy: Bool = false) {
-        BearyAPI.shared.fetchMe { [weak self] result in
+        // 取态收口：走 SessionManager.refreshPlusStatus（在途合并，/me 回包
+        // 同时写回 currentUser；此前直调 BearyAPI.fetchMe 不写 currentUser，
+        // fetchedPlus 与共享态是两份值）。未取到时按旧口径记 meFetchFailed。
+        SessionManager.shared.refreshPlusStatus { [weak self] isPlus, user in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                switch result {
-                case .success(let user):
-                    strongSelf.meFetchFailed = false
-                    strongSelf.fetchedUserId = user?.id
-                    strongSelf.fetchedPlus = BearyDeveloperMode.effectivePlus(user?.plus == true)
-                    strongSelf.updateLinkRow()
-                    strongSelf.fetchInitialSignature()
-                    if thenCopy {
-                        if !strongSelf.effectiveHandle.isEmpty || strongSelf.fetchedUserId != nil {
-                            strongSelf.copyLinkButtonTapped()
-                        } else {
-                            strongSelf.presentSimpleAlert(message: "请先登录")
-                        }
-                    }
-                case .failure:
+                guard let isPlus = isPlus else {
                     strongSelf.meFetchFailed = true
                     if thenCopy {
                         strongSelf.presentSimpleAlert(message: "加载失败，请重试")
+                    }
+                    return
+                }
+                strongSelf.meFetchFailed = false
+                strongSelf.fetchedUserId = user?.id
+                strongSelf.fetchedPlus = isPlus
+                strongSelf.updateLinkRow()
+                strongSelf.fetchInitialSignature()
+                if thenCopy {
+                    if !strongSelf.effectiveHandle.isEmpty || strongSelf.fetchedUserId != nil {
+                        strongSelf.copyLinkButtonTapped()
+                    } else {
+                        strongSelf.presentSimpleAlert(message: "请先登录")
                     }
                 }
             }
@@ -980,7 +982,7 @@ class BearyEditProfileViewController: UIViewController {
     private func presentDepthBackgroundPicker() {
         // 进选择页前按共享会话重读一次 Plus 态：本页打开期间刚到账的 Plus
         //（邀请绑定后 refreshMe 已写回 currentUser）不等下次进页即生效。
-        fetchedPlus = SessionManager.shared.currentUser?.plus == true
+        fetchedPlus = SessionManager.shared.isPlus
         let picker = BearyDepthBackgroundViewController(
             currentTheme: storedFestivalTheme(),
             isPlus: fetchedPlus,
@@ -1012,7 +1014,7 @@ class BearyEditProfileViewController: UIViewController {
         // 默认档人人可回，非 Plus 选节日档只提示。
         let plus = isPlus ?? fetchedPlus
         if option != .none, !plus {
-            BearyToast.show(in: view, message: "仅 Plus 会员可使用景深背景")
+            BearyPlusGate.deny(in: view, message: BearyPlusGate.depthBackgroundMessage)
             return false
         }
         UserDefaults.standard.set(option.rawValue, forKey: festivalThemeDefaultsKey)

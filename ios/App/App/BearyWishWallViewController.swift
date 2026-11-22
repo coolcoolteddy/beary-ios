@@ -1616,10 +1616,12 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
                         self.setWishFieldError(self.fieldError(forBadWish: title, detail: detail))
                         return
                     }
-                    let message: String
                     if case .server(let code, _) = err, code == "not_plus" {
-                        message = "仅 Plus 会员可发起许愿"
-                    } else if case .server(let code, _) = err, code == "rate_limited" {
+                        BearyPlusGate.showServerNotPlusToast(in: self.view, message: BearyPlusGate.wishMessage)
+                        return
+                    }
+                    let message: String
+                    if case .server(let code, _) = err, code == "rate_limited" {
                         message = "操作太频繁，请稍后再试"
                     } else {
                         message = "发布失败，请重试"

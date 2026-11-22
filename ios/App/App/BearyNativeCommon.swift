@@ -3615,6 +3615,32 @@ enum BearyHaptics {
     }
 }
 
+/// Plus 门收口：三处“仅 Plus…”文案集中于此；拒绝反馈（拒绝震动＋toast）与
+/// 服务端 not_plus 回包的 toast 共用。查态本身走 SessionManager.isPlus。
+/// 未收成一句话 requirePlus 的原因：九宫格拒绝含摇头＋拒绝音（自有
+/// playDenyShake，与 helper 的震动重复不得叠加），编辑资料页景深门控是
+/// 两档值（选择页 fresh 值优先、fetchedPlus 兜底），故各门保留自己的
+/// 查态，只共用文案与拒绝反馈。
+enum BearyPlusGate {
+    /// 仅 Plus 会员可使用九宫格版式
+    static let nineGridMessage = "仅 Plus 会员可使用九宫格版式"
+    /// 仅 Plus 会员可使用景深背景
+    static let depthBackgroundMessage = "仅 Plus 会员可使用景深背景"
+    /// 仅 Plus 会员可发起许愿
+    static let wishMessage = "仅 Plus 会员可发起许愿"
+
+    /// 拒绝反馈（调用方已判过态时用）：拒绝震动＋toast。
+    static func deny(in view: UIView, message: String) {
+        BearyHaptics.rejectionWarning()
+        BearyToast.show(in: view, message: message)
+    }
+
+    /// 服务端 not_plus 回包：只 toast，不震动。
+    static func showServerNotPlusToast(in view: UIView, message: String) {
+        BearyToast.show(in: view, message: message)
+    }
+}
+
 // MARK: - iCity 共享助手（可见性相对时间 / 已举报本地态 / 举报与拉黑流程）
 
 /// 广场卡相对时间：“X 分钟 / 小时 / 天前”；1 分钟内为“刚刚”。

@@ -7344,7 +7344,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// Plus 判定（九宫格 BearyNineGridPresenter 同款口径：/me 的 plus 字段）：
+    /// Plus 判定（收口：走 SessionManager.refreshPlusStatus 共享取态，
+    /// 在途合并、不另发 /me；派生口径唯一真值 SessionManager.isPlus）：
     /// 本编辑器会话内缓存一次；只缓存成功拉到的结果，拉取失败不缓存、不判定，
     /// 下次再拉——已开通用户遇网络失败不再被误认为非 Plus。
     /// completion(nil) 表示拉取失败；未登录（/me 回 nil）按非 Plus 计。
@@ -7353,16 +7354,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             completion(cached)
             return
         }
-        BearyAPI.shared.fetchMe { [weak self] result in
+        SessionManager.shared.refreshPlusStatus { [weak self] isPlus, _ in
             DispatchQueue.main.async {
-                switch result {
-                case .success(let user):
-                    let isPlus = BearyDeveloperMode.effectivePlus(user?.plus == true)
+                if let isPlus = isPlus {
                     self?.cachedPlusStatus = isPlus
-                    completion(isPlus)
-                case .failure:
-                    completion(nil)
                 }
+                completion(isPlus)
             }
         }
     }
@@ -7624,7 +7621,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// Plus 页（个人页皇冠点按同款呈现：窄屏全屏＋左缘右滑、宽屏默认呈现）。
     private func presentPlusPage() {
         guard presentedViewController == nil else { return }
-        let page = BearyPlusPageViewController(isPlus: cachedPlusStatus == true)
+        let page = BearyPlusPageViewController(isPlus: SessionManager.shared.isPlus)
         if traitCollection.horizontalSizeClass == .compact {
             page.modalPresentationStyle = .fullScreen
             let edgeDismiss = BearyEdgeDismissController()

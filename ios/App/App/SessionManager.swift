@@ -1,5 +1,12 @@
 import Foundation
 
+extension Notification.Name {
+    /// Plus 态翻转广播；userInfo["isPlus"] 为新值。refreshPlusStatus 在
+    /// /me 回包派生值与旧值不同时发；各页按需订阅（本批三页仍按各自
+    /// 出现／加载时机刷新，见 NOTES）。
+    static let bearyPlusStatusChanged = Notification.Name("bearyPlusStatusChanged")
+}
+
 // ===== 会话管理（第一阶段；批一删网页同步）=====
 // 原生侧独占 teddy_session（Domain=.teddyhn.com，30 天，HttpOnly），走共享 HTTPCookieStorage：
 // 批一之前网页登录/退出还要与 WK 同步 cookie，批一 App 不再含网页视图，同步函数整段删掉，
@@ -33,6 +40,11 @@ final class SessionManager {
         }
     }
     var isLoggedIn: Bool { currentUser != nil }
+    /// Plus 态唯一真值：/me 的 plus 字段过开发者覆盖
+    ///（BearyDeveloperMode.effectivePlus；真实已开通保持开通，覆盖开着且
+    /// 开发者模式开着时按开通）。全仓 Plus 判定都应读这里，不再各处拼
+    /// effectivePlus(currentUser?.plus == true)。
+    var isPlus: Bool { BearyDeveloperMode.effectivePlus(currentUser?.plus == true) }
     /// 游客模式（只读）：用户在登录页点“先逛逛”进入的无账号浏览态，只能看公开日记。
     /// 内存态，不持久化（重开 App 回登录页）；登录成功与显式退出时清零。
     /// 游客态与未登录态的区别：未登录可能是会话过期等被动状态，游客是用户主动选的浏览态；
@@ -240,6 +252,32 @@ final class SessionManager {
         meWaiters = mePendingWaiters
         mePendingWaiters = []
         startMeRequest()
+    }
+
+    /// 三页取态收口（Plus 状态判定共享入口）：走已有 refreshMe
+    ///（在途合并，不另发 /me），回包按同一口径派生 isPlus；值翻转时
+    /// 广播 bearyPlusStatusChanged（userInfo["isPlus"] 为新值）。
+    /// - effectivePlus 为 nil = 本次未取到（失败／取消），调用方按各自守卫处理：
+    ///   编辑器 completion(nil)（不缓存，下次重拉），景深页保留旧值
+    ///  （fail-open），编辑资料页按旧口径记 meFetchFailed。
+    /// - user 原样透传：景深页用 user?.plus 守 nil 字段（未下发时保留旧值），
+    ///   编辑资料页取 id；未登录（user 为 nil）时 effectivePlus 按非 Plus 计，
+    ///   与三处旧口径一致。
+    func refreshPlusStatus(completion: @escaping (_ effectivePlus: Bool?, _ user: MeUser?) -> Void) {
+        let previous = isPlus
+        refreshMe { [weak self] result in
+            guard let self else { completion(nil, nil); return }
+            switch result {
+            case .success(let user):
+                let plus = BearyDeveloperMode.effectivePlus(user?.plus == true)
+                if plus != previous {
+                    NotificationCenter.default.post(name: .bearyPlusStatusChanged, object: nil, userInfo: ["isPlus": plus])
+                }
+                completion(plus, user)
+            case .failure:
+                completion(nil, nil)
+            }
+        }
     }
 
     /// refreshMe 回包的主线程应用体（原回调本体原样挪入，只补

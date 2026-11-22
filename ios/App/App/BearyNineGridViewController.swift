@@ -184,11 +184,11 @@ enum BearyNineGridPresenter {
             }
             return
         }
-        guard BearyDeveloperMode.effectivePlus(SessionManager.shared.currentUser?.plus == true) else {
+        guard SessionManager.shared.isPlus else {
             if let anchorView {
                 playDenyShake(on: anchorView)
             }
-            BearyToast.show(in: viewController.view, message: "仅 Plus 会员可使用九宫格版式")
+            BearyToast.show(in: viewController.view, message: BearyPlusGate.nineGridMessage)
             return
         }
         let keys = Array(imageKeys.filter { !$0.isEmpty }.prefix(9))
