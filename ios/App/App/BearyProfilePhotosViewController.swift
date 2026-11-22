@@ -38,6 +38,10 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// 翻页失败持续态：true 时尾部多一节重试入口；只由显式点按清掉，
     /// fetchNextPageIfNeeded 有本旗守门，willDisplay 不自动重拉（见守门处注释）。
     private var photosPageLoadFailed = false
+    /// 失败静默自动重试一次（2026-11-22 Li 定，盲盒 poolSilentRetried 同款口径）：
+    /// 每批翻页首次失败先静默重拉同一页，再失败才落失败态；每批（自动续拉／
+    /// 点按重试／灯箱续页）各一次。
+    private var photosSilentRetried = false
     /// 03：空相册续拉失败持续态——照片为 0 时重试节插进已被隐藏的网格里
     /// 看不见，改由空态区的重试按钮承载；只由显式点按清掉，不走第 1 节。
     private var photosEmptyLoadFailed = false
@@ -804,6 +808,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         photosHasMore = false
         photosFetching = false
         photosPageLoadFailed = false
+        photosSilentRetried = false
         // 合入时补：03 空态失败态也是旧账号的残留状态，切号即清，否则重拉
         // 期间空态会把旧失败画出来（分支基线早于 03，未处理此旗）。
         photosEmptyLoadFailed = false
@@ -1161,7 +1166,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         updateTitleAndEmpty()
     }
 
-    private func fetchNextPageIfNeeded() {
+    private func fetchNextPageIfNeeded(silentRetry: Bool = false) {
         // 04：失败后自动入口守门——失败态下 willDisplay 不再自动重拉，只留
         // 手动重试（尾部重试节 / 空态重试按钮）；点“重试”清掉失败态后才再拉。
         guard photosHasMore, !photosFetching, !photosPageLoadFailed, !photosEmptyLoadFailed, let authorId = authorIdValue else { return }
@@ -1172,6 +1177,11 @@ final class BearyProfilePhotosViewController: UIViewController {
               let lastCreated = cursorEntry.createdAt, let lastId = cursorEntry.id else {
             photosHasMore = false
             return
+        }
+        // 静默重试复位：每批新翻页各一次；静默重拉本身（silentRetry）不复位，
+        // 否则每次失败都复位、循环重拉。
+        if !silentRetry {
+            photosSilentRetried = false
         }
         photosFetching = true
         // r24-#2：代次快照——切号换代后本页旧分页回包在写回前丢弃，
@@ -1331,7 +1341,25 @@ final class BearyProfilePhotosViewController: UIViewController {
                             strongSelf.fetchMoreWhileEmptyIfNeeded()
                         }
                     })
-                case .failure:
+                case .failure(let error):
+                    // 失败静默自动重试一次（2026-11-22 Li 定，盲盒 poolSilentRetried
+                    // 同款口径）：每批翻页首次失败先静默重拉同一页——失败未追加，
+                    // 游标仍从 diaryEntriesValue 取，页码／游标不动；重拉在途不亮
+                    // 失败态、不弹 toast、不通知灯箱。再失败才落失败态。取消与离线
+                    // 是确定性失败，不重试。
+                    let isDeterministicFailure: Bool = {
+                        if case .cancelled = error { return true }
+                        if case .network(let underlying) = error,
+                           let urlError = underlying as? URLError {
+                            return urlError.code == .notConnectedToInternet
+                        }
+                        return false
+                    }()
+                    if !strongSelf.photosSilentRetried, !isDeterministicFailure {
+                        strongSelf.photosSilentRetried = true
+                        strongSelf.fetchNextPageIfNeeded(silentRetry: true)
+                        return
+                    }
                     // 109：续拉失败不再封死 hasMore，但失败态下 willDisplay 不再
                     // 自动重拉（fetchNextPageIfNeeded 有失败态守门）；同时给一次
                     // 失败提示（toast，与全 App 失败提示口径一致），已有照片照常看。
