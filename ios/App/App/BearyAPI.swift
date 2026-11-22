@@ -115,7 +115,7 @@ struct Quote: Codable {
     /// 引用有效公开态：公开且未过期；仅好友/私密/过期一律 false（fail-closed）。
     var isEffectivelyPublic: Bool {
         guard isPublic == true else { return false }
-        if let until = ephemeralUntil, until <= Int(Date().timeIntervalSince1970 * 1000) { return false }
+        if let until = ephemeralUntil, until <= Date.nowMs { return false }
         return true
     }
 }

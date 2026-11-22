@@ -1338,7 +1338,7 @@ final class BearyLoginViewController: UIViewController {
 
     /// 注销冷静期文案（网页端 lgDelCfm 同款口径）：邮箱登录与 Apple 登录共用。
     private func pendingDeleteMessage(deleteAt: Int?) -> String {
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let nowMs = Date.nowMs
         // 验证组⑧：deleteAt 缺失时不得按 epoch 渲染（1970 年）；无截止日时
         // 只提示注销中，不拼倒计时与日期（缺失字段不等于 1970）。
         var message = "账号正在注销中。继续登录将取消注销。"

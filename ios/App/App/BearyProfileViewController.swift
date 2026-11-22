@@ -5214,7 +5214,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func pastSelfNowMs() -> Int {
-        Int(Date().timeIntervalSince1970 * 1000)
+        Date.nowMs
     }
 
     private func pastSelfDisplayDate(_ yyyyMMdd: String) -> String {
@@ -8867,7 +8867,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         let originalPrevious = previousPinnedId.flatMap { id in diaryEntries.first(where: { $0.id == id }) }
         var optimistic = entry
         optimistic.pinned = pinning ? 1 : 0
-        optimistic.pinnedAt = pinning ? Int(Date().timeIntervalSince1970 * 1000) : nil
+        optimistic.pinnedAt = pinning ? Date.nowMs : nil
         updateEntryInAllTabs(entry: optimistic)
         if let prev = originalPrevious {
             var cleared = prev

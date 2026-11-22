@@ -121,7 +121,7 @@ enum BearyPlazaFeaturedPicker {
     /// 当日选中 id 顺序按身份 + 日期缓存（只存 id，不存正文）；缓存 id 若
     /// 不全在当前列表里（删篇/翻私密），就地按分数重挑，不渲染旧内容。
     static func pick(from entries: [Entry]) -> [Entry] {
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let nowMs = Date.nowMs
         let candidates = entries.filter { entry in
             guard let id = entry.id, !id.isEmpty else { return false }
             guard BearyEphemeral.isEffectivelyPublic(entry) else { return false }
@@ -187,7 +187,7 @@ enum BearyPlazaFeaturedPicker {
         let key = cacheKey()
         UserDefaults.standard.set(ids, forKey: key + ".ids")
         // 新鲜度时间戳：当日桶天然过期（键含日期），写下它只为排查找证。
-        UserDefaults.standard.set(Int(Date().timeIntervalSince1970 * 1000), forKey: key + ".savedAt")
+        UserDefaults.standard.set(Date.nowMs, forKey: key + ".savedAt")
     }
 
     /// 显式退出时清该号当日精选桶（与 BlindBoxState.clearAccount 同口径；

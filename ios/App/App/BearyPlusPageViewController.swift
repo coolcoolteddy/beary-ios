@@ -448,7 +448,7 @@ final class BearyPlusPageViewController: UIViewController {
 
     /// 设置页 fillPlusDetail 同款状态文案。
     private static func grantsStatusText(detail: BearyPlusDetailResponse) -> String {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let now = Date.nowMs
         if detail.permanent == true { return "Plus 会员 · 永久" }
         if let effective = detail.effectiveUntil, effective > now {
             return "Plus 会员 · 至 " + BearyAccountText.dateString(ms: effective)
@@ -458,7 +458,7 @@ final class BearyPlusPageViewController: UIViewController {
 
     /// 来源明细页同款专属会员文案。
     private static func grantsPersonalText(detail: BearyPlusDetailResponse) -> String {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let now = Date.nowMs
         let personal = detail.personalUntil ?? 0
         let freeUntil = detail.freeUntil ?? 0
         if detail.permanent == true { return "永久会员" }
@@ -476,7 +476,7 @@ final class BearyPlusPageViewController: UIViewController {
 
     /// 内测限免行文案（旧设置页 Plus 组同款）。
     private static func grantsFreeText(detail: BearyPlusDetailResponse) -> String {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let now = Date.nowMs
         let freeUntil = detail.freeUntil ?? 0
         if freeUntil > now {
             return "全体内测用户免费 · 至 " + BearyAccountText.dateString(ms: freeUntil)

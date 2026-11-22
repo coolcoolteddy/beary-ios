@@ -1329,7 +1329,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 第 18 轮⑨：重发锚定本次发送时间——认领窗口按待发 createdAt 算，
         // 沿用首次发送时间会让超 60 秒后重发的行认领不上、与服务端行双气泡。
         // 内存待发与落盘记录同步改成本次时间（重启恢复也按新时间认领）。
-        let retryMs = Int(Date().timeIntervalSince1970 * 1000)
+        let retryMs = Date.nowMs
         if let row = messages.firstIndex(where: { $0.localKey == key }) {
             messages[row].createdAt = retryMs
         }
@@ -1956,7 +1956,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         isPersistingSend = true
         updateSendButton()
         let key = UUID().uuidString
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let nowMs = Date.nowMs
         let temp = BearyAPI.DMMessage(id: nil, senderId: myId, fromMe: true, body: body, createdAt: nowMs, localKey: key)
         // 审计四轮增量 12：待发先落盘（独立待发文件，与主库损坏保护互不干扰）——
         // 发送中/失败态被系统终止，重启后仍能恢复查看、长按复制，不自动重发。

@@ -1030,7 +1030,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         expiryRefilterTimer?.invalidate()
         expiryRefilterTimer = nil
         guard !ownProfileValue else { return }
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let nowMs = Date.nowMs
         guard let next = diaryEntriesValue.compactMap({ $0.ephemeralUntil }).filter({ $0 > nowMs }).min() else { return }
         let interval = TimeInterval(next - nowMs) / 1000.0 + 0.5
         expiryRefilterTimer = Timer.scheduledTimer(withTimeInterval: max(interval, 0.5), repeats: false) { [weak self] _ in

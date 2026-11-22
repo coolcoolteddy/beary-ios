@@ -143,7 +143,7 @@ enum BearyStarMap {
     static func isEffectivelyPublic(_ entry: Entry, nowMs: Int? = nil) -> Bool {
         guard entry.isPublic == true else { return false }
         if let until = entry.ephemeralUntil {
-            let now = nowMs ?? Int(Date().timeIntervalSince1970 * 1000)
+            let now = nowMs ?? Date.nowMs
             if until <= now { return false }
         }
         return true

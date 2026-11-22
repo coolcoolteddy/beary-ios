@@ -99,3 +99,10 @@ enum BearyBeijingDay {
         return range.count
     }
 }
+
+// MARK: - 当前时刻毫秒（共享入口）
+
+extension Date {
+    /// 当前时刻毫秒（真实时间；开发者模式假时间不走这里——假时间缝只在 BearyEphemeral 读路径保留）。
+    static var nowMs: Int { Int(Date().timeIntervalSince1970 * 1000) }
+}

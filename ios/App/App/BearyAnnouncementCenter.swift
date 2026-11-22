@@ -112,7 +112,7 @@ final class BearyAnnouncementCenter {
         }
         let lastBuild = UserDefaults.standard.object(forKey: lastBuildKey) as? Int ?? current
         UserDefaults.standard.set(current, forKey: lastRunBuildKey)
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let nowMs = Date.nowMs
         let shown = shownIds()
         let candidate = list.first { ann in
             guard !shown.contains(ann.id) else { return false }

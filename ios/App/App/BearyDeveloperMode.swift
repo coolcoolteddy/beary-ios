@@ -109,7 +109,7 @@ final class BearyDeveloperMode {
     /// 1000 篇假日记：id 一律 "dev-fake-xxxx"（确定性编号，重拉不抖动 diff），
     /// createdAt 按天递减；作者取当前用户；公开态。只写内存模型，不写磁盘。
     func makeFakeEntries(count: Int) -> [Entry] {
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let nowMs = Date.nowMs
         let me = SessionManager.shared.currentUser
         return (0..<count).map { i in
             var e = Entry()
@@ -155,7 +155,7 @@ final class BearyDeveloperMode {
             chainId: chainId,
             authorId: SessionManager.shared.currentUser?.id ?? -1,
             body: "（开发者模式预览）一年前留给自己的话，今天到了。",
-            createdAtMs: Int(Date().timeIntervalSince1970 * 1000),
+            createdAtMs: Date.nowMs,
             deliverOn: today,
             revokedAtMs: nil,
             replyToMessageId: nil,
