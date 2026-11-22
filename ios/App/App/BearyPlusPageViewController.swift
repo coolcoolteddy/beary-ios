@@ -247,15 +247,13 @@ final class BearyPlusPageViewController: UIViewController {
     }
 
     private func benefitRow(title: String, desc: String?, isLast: Bool) -> UIView {
-        let row = UIView()
-        row.translatesAutoresizingMaskIntoConstraints = false
-        let topLine = hairline()
-        row.addSubview(topLine)
+        let content = UIView()
+        content.translatesAutoresizingMaskIntoConstraints = false
         let check = UIImageView(image: BearyIconImages.image(named: "icon_check", pointSize: 20))
         check.translatesAutoresizingMaskIntoConstraints = false
         check.tintColor = BearyColors.deepGreenText
         check.contentMode = .scaleAspectFit
-        row.addSubview(check)
+        content.addSubview(check)
         let titleLabelValue = UILabel()
         titleLabelValue.translatesAutoresizingMaskIntoConstraints = false
         titleLabelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
@@ -263,7 +261,7 @@ final class BearyPlusPageViewController: UIViewController {
         titleLabelValue.textColor = BearyColors.ink
         titleLabelValue.numberOfLines = 0
         titleLabelValue.text = title
-        row.addSubview(titleLabelValue)
+        content.addSubview(titleLabelValue)
         let descLabel = UILabel()
         descLabel.translatesAutoresizingMaskIntoConstraints = false
         descLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
@@ -271,40 +269,28 @@ final class BearyPlusPageViewController: UIViewController {
         descLabel.textColor = BearyColors.gray
         descLabel.numberOfLines = 0
         var constraints: [NSLayoutConstraint] = [
-            topLine.topAnchor.constraint(equalTo: row.topAnchor),
-            topLine.leadingAnchor.constraint(equalTo: row.leadingAnchor),
-            topLine.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-            check.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
-            check.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
+            check.topAnchor.constraint(equalTo: content.topAnchor),
+            check.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             check.widthAnchor.constraint(equalToConstant: 20),
             check.heightAnchor.constraint(equalToConstant: 20),
-            titleLabelValue.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
+            titleLabelValue.topAnchor.constraint(equalTo: content.topAnchor),
             titleLabelValue.leadingAnchor.constraint(equalTo: check.trailingAnchor, constant: 12),
-            titleLabelValue.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
+            titleLabelValue.trailingAnchor.constraint(equalTo: content.trailingAnchor),
         ]
         if let desc = desc {
             descLabel.text = desc
-            row.addSubview(descLabel)
+            content.addSubview(descLabel)
             constraints.append(contentsOf: [
                 descLabel.topAnchor.constraint(equalTo: titleLabelValue.bottomAnchor, constant: 4),
                 descLabel.leadingAnchor.constraint(equalTo: titleLabelValue.leadingAnchor),
-                descLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
-                descLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
+                descLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+                descLabel.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             ])
         } else {
-            constraints.append(titleLabelValue.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14))
-        }
-        if isLast {
-            let bottomLine = hairline()
-            row.addSubview(bottomLine)
-            constraints.append(contentsOf: [
-                bottomLine.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-                bottomLine.leadingAnchor.constraint(equalTo: row.leadingAnchor),
-                bottomLine.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-            ])
+            constraints.append(titleLabelValue.bottomAnchor.constraint(equalTo: content.bottomAnchor))
         }
         NSLayoutConstraint.activate(constraints)
-        return row
+        return plusRowWrap(content: content, isLast: isLast)
     }
 
     private func buildBenefitList() {
@@ -535,7 +521,7 @@ final class BearyPlusPageViewController: UIViewController {
             loadingRow.axis = .horizontal
             loadingRow.spacing = 8
             loadingRow.alignment = .center
-            stack.addArrangedSubview(grantsRowWrap(content: loadingRow, isLast: true))
+            stack.addArrangedSubview(plusRowWrap(content: loadingRow, isLast: true))
         } else if grantsLoadFailed {
             let failedLabel = UILabel()
             failedLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -550,7 +536,7 @@ final class BearyPlusPageViewController: UIViewController {
             failedStack.axis = .vertical
             failedStack.spacing = 8
             failedStack.alignment = .leading
-            stack.addArrangedSubview(grantsRowWrap(content: failedStack, isLast: true))
+            stack.addArrangedSubview(plusRowWrap(content: failedStack, isLast: true))
         } else if let detail = plusDetail {
             var contents: [UIView] = []
             contents.append(grantsStatusContent(title: "当前状态", detail: Self.grantsStatusText(detail: detail)))
@@ -591,7 +577,7 @@ final class BearyPlusPageViewController: UIViewController {
                 }
             }
             for (index, content) in contents.enumerated() {
-                stack.addArrangedSubview(grantsRowWrap(content: content, isLast: index == contents.count - 1))
+                stack.addArrangedSubview(plusRowWrap(content: content, isLast: index == contents.count - 1))
             }
         }
     }
@@ -621,9 +607,9 @@ final class BearyPlusPageViewController: UIViewController {
         return row
     }
 
-    /// 来源明细行包容器（与 benefitRow 同款：顶细线、上下各 14、左右 16，
-    /// 末行补底细线）。
-    private func grantsRowWrap(content: UIView, isLast: Bool) -> UIView {
+    /// Plus 页行包容器（顶细线、上下各 14、左右 16，末行补底细线）：
+    /// 权益行与来源明细行共用，内容视图作参数。
+    private func plusRowWrap(content: UIView, isLast: Bool) -> UIView {
         let row = UIView()
         row.translatesAutoresizingMaskIntoConstraints = false
         let topLine = hairline()
