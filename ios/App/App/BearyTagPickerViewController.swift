@@ -79,7 +79,7 @@ final class BearyTagPickerViewController: UIViewController {
     /// 空态 44），避免表与空态各绑内容底边互相顶死。
     private let tagsAreaView = UIView()
     private let tagsTableView = UITableView(frame: .zero, style: .plain)
-    private let emptyLabel = UILabel()
+    private let emptyLabel = BearyEmptyLabel.make(text: "还没有用过的标签，在上方输入新建", font: BearyDynamicType.smallBodyFont())
     private let buttonStack = UIStackView()
     private let confirmButton = BearyButton(style: .primaryPill(.ink))
     private var tagsAreaHeightConstraint: NSLayoutConstraint?
@@ -162,12 +162,6 @@ final class BearyTagPickerViewController: UIViewController {
         tagsTableView.register(UITableViewCell.self, forCellReuseIdentifier: "BearyTagPickerCell")
         tagsAreaView.addSubview(tagsTableView)
 
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        emptyLabel.text = "还没有用过的标签，在上方输入新建"
-        emptyLabel.font = BearyDynamicType.smallBodyFont()
-        emptyLabel.textColor = BearyColors.gray
-        emptyLabel.textAlignment = .center
-        emptyLabel.isHidden = true
         tagsAreaView.addSubview(emptyLabel)
 
         buttonStack.translatesAutoresizingMaskIntoConstraints = false

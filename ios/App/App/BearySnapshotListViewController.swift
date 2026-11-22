@@ -25,7 +25,7 @@ final class BearySnapshotListViewController: UIViewController {
     private let clearButton = UIButton(type: .system)
     private let descriptionLabel = UILabel()
     private let tableView = UITableView(frame: .zero, style: .plain)
-    private let emptyLabel = UILabel()
+    private let emptyLabel = BearyEmptyLabel.make(font: BearyDynamicType.secondaryFont())
     private var tableHeightConstraint: NSLayoutConstraint?
 
     /// 量高缓存（快照弹窗卡顿根因，见 updatePreferredContentSize）：
@@ -98,11 +98,6 @@ final class BearySnapshotListViewController: UIViewController {
         tableView.register(BearySnapshotRowCell.self, forCellReuseIdentifier: "BearySnapshotRowCell")
         view.addSubview(tableView)
 
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        emptyLabel.font = BearyDynamicType.secondaryFont()
-        emptyLabel.textColor = BearyColors.gray
-        emptyLabel.textAlignment = .center
-        emptyLabel.numberOfLines = 0
         view.addSubview(emptyLabel)
 
         let tableHeight = tableView.heightAnchor.constraint(equalToConstant: Self.emptyTableHeight)

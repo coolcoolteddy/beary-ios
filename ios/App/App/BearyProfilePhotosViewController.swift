@@ -217,17 +217,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         return collectionValue
     }()
 
-    private let emptyLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
-        labelValue.adjustsFontForContentSizeCategory = true
-        labelValue.textColor = BearyColors.gray
-        labelValue.textAlignment = .center
-        labelValue.text = "还没有照片"
-        labelValue.isHidden = true
-        return labelValue
-    }()
+    private let emptyLabel = BearyEmptyLabel.make(text: "还没有照片", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15)))
 
     /// 03：空相册失败时的重试按钮——重试节在网格里，照片为 0 时网格整个
     /// 隐藏、节看不见，空态下只能由这个按钮承载重试入口。

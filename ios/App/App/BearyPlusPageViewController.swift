@@ -547,13 +547,7 @@ final class BearyPlusPageViewController: UIViewController {
             }
             let grants = detail.grants ?? []
             if grants.isEmpty {
-                let emptyLabel = UILabel()
-                emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-                emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-                emptyLabel.adjustsFontForContentSizeCategory = true
-                emptyLabel.textColor = BearyColors.gray
-                emptyLabel.numberOfLines = 0
-                emptyLabel.text = "暂无发放记录"
+                let emptyLabel = BearyEmptyLabel.make(text: "暂无发放记录", isHidden: false)
                 contents.append(emptyLabel)
             } else {
                 for grant in grants {

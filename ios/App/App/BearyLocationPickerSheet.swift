@@ -88,7 +88,7 @@ final class BearyLocationPickerViewController: UIViewController {
     private let currentClearButton = BearyHit44Button(type: .system)
     private let listAreaView = UIView()
     private let listTableView = UITableView(frame: .zero, style: .plain)
-    private let emptyLabel = UILabel()
+    private let emptyLabel = BearyEmptyLabel.make(font: BearyDynamicType.smallBodyFont())
     private var listAreaHeightConstraint: NSLayoutConstraint?
     /// 地名行右端到卡片右端的约束（卡上有 × 时改贴 × 左侧，无 × 时贴卡片右端）。
     private var currentNameTrailingToCard: NSLayoutConstraint?
@@ -194,11 +194,6 @@ final class BearyLocationPickerViewController: UIViewController {
         listTableView.backgroundColor = .clear
         listTableView.isScrollEnabled = false
         listAreaView.addSubview(listTableView)
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        emptyLabel.font = BearyDynamicType.smallBodyFont()
-        emptyLabel.textColor = BearyColors.gray
-        emptyLabel.textAlignment = .center
-        emptyLabel.numberOfLines = 0
         listAreaView.addSubview(emptyLabel)
 
         let contentStack = UIStackView()
