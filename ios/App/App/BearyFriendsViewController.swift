@@ -552,6 +552,15 @@ private final class BearyFriendCell: UITableViewCell {
     private let avatarView = BearyAvatarView()
     private let nameLabel = UILabel()
     private let handleLabel = UILabel()
+    /// 名字＋handle 纵向栈：整块相对头像垂直居中（约束见 init）。
+    private let textStack: UIStackView = {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 1
+        stack.alignment = .fill
+        return stack
+    }()
     private let separatorView = UIView()
     private var moreHandler: ((UIButton) -> Void)?
 
@@ -586,25 +595,29 @@ private final class BearyFriendCell: UITableViewCell {
         separatorView.translatesAutoresizingMaskIntoConstraints = false
         separatorView.backgroundColor = BearyColors.line
         contentView.addSubview(avatarView)
-        contentView.addSubview(nameLabel)
-        contentView.addSubview(handleLabel)
+        textStack.addArrangedSubview(nameLabel)
+        textStack.addArrangedSubview(handleLabel)
+        contentView.addSubview(textStack)
         contentView.addSubview(moreButton)
         contentView.addSubview(separatorView)
+        // 名字＋handle 整块相对头像垂直居中：栈 centerY 钉头像 centerY（999，
+        // 大字号下上下守卫先 binding 时让位；守卫对称故回落时仍居中）；
+        // 无 handle 时栈自动收起单行名字，同样居中。行高仍由头像与栈共同决定，
+        // 头像垂直居中、上下各留最小 14（行高下限 72 兜底）。
+        let textStackCenterY = textStack.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor)
+        textStackCenterY.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            // 行高改文字栈决定：头像垂直居中，上下各留最小 14（行高下限 72 兜底）。
             avatarView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             avatarView.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 14),
             avatarView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
             avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),
-            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
-            nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: moreButton.leadingAnchor, constant: -8),
-            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
-            handleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: moreButton.leadingAnchor, constant: -8),
-            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
+            textStackCenterY,
+            textStack.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 14),
+            textStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
+            textStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
+            textStack.trailingAnchor.constraint(lessThanOrEqualTo: moreButton.leadingAnchor, constant: -8),
             moreButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             moreButton.widthAnchor.constraint(equalToConstant: 44),
