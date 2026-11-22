@@ -1559,11 +1559,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     private func loadLatest() {
         guard let userId = peer.id else { return }
-        guard SessionManager.shared.isLoggedIn else {
-            tableView.refreshControl?.endRefreshing()
-            onRequireLogin?()
-            return
-        }
+        if requireLoginOrEndRefreshing(tableView: tableView, onRequireLogin: onRequireLogin) { return }
         guard ensureIdentityCurrent() else { return }
         // 分开加载态：翻旧在途时下拉刷新不再被共用锁静默吞掉——排队，
         // 刷新控件保持转圈（可见反馈），翻旧结束即跑这次刷新；
