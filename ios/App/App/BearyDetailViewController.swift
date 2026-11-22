@@ -126,7 +126,7 @@ final class BearyDetailViewController: UIViewController {
     /// 回应行一律全宽（左右与内容列齐平），不再缩进到昵称位置。
     private let bodyStack = BearyPassThroughStackView()
     private var headerStackTopConstraint: NSLayoutConstraint?
-    /// 作者行顶对齐约束：authorRow.top == avatarButton.top（用户名顶部与头像顶部平行）。
+    /// 作者行顶对齐约束：titleRow.stack.top == avatarButton.top（用户名顶部与头像顶部平行）。
     /// 只在 recipientRow 藏时激活（见 updateDiaryStackSpacing）；
     /// @ 行显时停用、改走头行顶约束。
     private var authorRowTopConstraint: NSLayoutConstraint?
@@ -141,20 +141,15 @@ final class BearyDetailViewController: UIViewController {
     // Hit44 扩热区，视觉不动。
     private let closeButton = BearyHit44Button(type: .custom)
     private let avatarButton = BearyHit44Button(type: .custom)
-    private let avatarImageView = UIImageView()
-    /// 首页卡片同款：无图时背后首字母圆透出（avatarImageView 为空时可见）。
-    private let avatarInitialLabel: UILabel = {
-        let lb = UILabel()
-        lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.boldSystemFont(ofSize: 16)
-        lb.textColor = BearyColors.gray
-        lb.textAlignment = .center
-        return lb
-    }()
-    /// 审计 P2-14：头像失败重试钮（广场同款，28pt 圆盘）。
-    private lazy var avatarRetryButton: BearyFeedRetryButton = {
-        bearyFeedRetryButton(target: self, action: #selector(detailImageRetryTapped(_:)))
-    }()
+    /// 首页卡片同款：无图时背后首字母圆透出（authorAvatar.imageView 为空时可见）。
+    /// 作者头像簇（卡片／详情共享 helper）：40pt 圆角容器内首字母＋图＋重试钮；
+    /// 图底 line，加载走 Feed 口径 bearyFeedLoadImage（详情下采样 80）。
+    private lazy var authorAvatar = BearyAuthorAvatar(
+        container: avatarButton,
+        retryTarget: self,
+        retryAction: #selector(detailImageRetryTapped(_:)),
+        imageBackground: BearyColors.line
+    )
     /// 审计 11：上次已渲染的头像 URL——URL 不变时保留当前图片，不重走
     /// bearySetImage（它会取消在途任务、清图重下，造成头像闪烁）。
     private var lastRenderedAvatarURL: URL?
@@ -200,41 +195,14 @@ final class BearyDetailViewController: UIViewController {
         st.onActivate = { [weak self] in self?.openMentionedUser() ?? false }
         return st
     }()
-    /// 作者行：首页 titleStack 同款（名 + 皇冠 + 垫片 + 时间 + 天气 + 心情，
+    /// 作者行：首页卡片作者行同款（名 + 皇冠 + 垫片 + 时间 + 天气 + 心情，
     /// 间距 8、.firstBaseline 对齐）。
     private let nameButton = UIButton(type: .custom)
-    private let crownView: BearyCrownView = {
-        let v = BearyCrownView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.isHidden = true
-        return v
-    }()
+    /// 作者标题行六件套共享 helper（卡片／详情同款）：名＋皇冠＋垫片＋时间＋
+    /// 限时 pill＋心情；名字视图是本页 nameButton（卡片是 nameLabel）。
+    /// 必须是 lazy：皇冠容器高 == 名字高要求两端已有共同祖先（118 闪退修复）。
+    private lazy var titleRow = BearyAuthorTitleRow(nameView: nameButton, moodSpacing: 3)
 
-    /// 皇冠容器（卡片同款原因：作者行是 .firstBaseline 栈，纯 UIView 基线即底边，
-    /// 皇冠直接进栈时底边钉在名字基线上、中心比 cap 中心高约 3.6pt）。
-    /// 容器与名字按钮等高、底边钉基线，皇冠在内居中后中心即 cap 中心。
-    private let crownWrapView: UIView = {
-        let v = UIView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.isHidden = true
-        return v
-    }()
-    private let titleSpacerLabel: UILabel = {
-        let lb = UILabel()
-        lb.translatesAutoresizingMaskIntoConstraints = false
-        return lb
-    }()
-    // 109：详情作者行时间与卡片同口径（13pt 灰 + 动态字号跟随；此前仅
-    // UILabel() 默认，实为 17pt 默认色，与文件头“时间 13 灰”注释不符）。
-    private let timeLabel: UILabel = {
-        let lb = UILabel()
-        lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.gray
-        lb.numberOfLines = 1
-        return lb
-    }()
     private let weatherImageView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
@@ -292,36 +260,6 @@ final class BearyDetailViewController: UIViewController {
         st.axis = .horizontal
         st.spacing = 6
         st.alignment = .center
-        return st
-    }()
-    private let moodLabel: UILabel = {
-        let lb = UILabel()
-        lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.gray
-        lb.numberOfLines = 1
-        return lb
-    }()
-    private lazy var moodStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [moodLabel])
-        st.translatesAutoresizingMaskIntoConstraints = false
-        st.axis = .horizontal
-        st.spacing = 3
-        st.alignment = .center
-        st.isHidden = true
-        return st
-    }()
-    private var moodEmoteView: BearyEmoteView?
-    private lazy var authorRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameButton, crownWrapView, titleSpacerLabel, timeLabel, limitedPillView, moodStack])
-        st.translatesAutoresizingMaskIntoConstraints = false
-        st.axis = .horizontal
-        // 姓名→皇冠间距 6（2026-11-05 ChatGPT 间距跟进；徽章已下线摘掉，
-        // 皇冠直接贴名字；整行统一间距，名字→皇冠、皇冠→时间等同值）。
-        st.spacing = 6
-        st.alignment = .firstBaseline
-        st.distribution = .fill
         return st
     }()
     /// 右上角 ⋯ 钮：时间线 moreButton 同款（21pt 灰色、28 框、44 热区），
@@ -687,9 +625,6 @@ final class BearyDetailViewController: UIViewController {
         return v
     }()
 
-    /// 限时 pill（作者行时间后；13 semibold 蓝档，存活“限时”虚线边／到期“私密”实线边）。
-    private let limitedPillView = BearyLimitedPillView()
-
     /// 限时倒计时 1 秒 tick：仅存活期限时篇在页时跑；离页／到期即停。
     private var limitedCountdownTimer: Timer?
     /// 上次应用的倒计时档位：tick 只在档位跃迁时整组重算，其余只刷文字。
@@ -994,34 +929,15 @@ final class BearyDetailViewController: UIViewController {
     /// 首页卡片头部同款：左列头像 40 + 头行（@ 行、作者行）；⋯ 钮不进作者行，
     /// 挂内容列右上角、对齐作者行（见 buildLayout 末尾外的约束，此处一次设好）。
     private func buildCardHeader() {
-        avatarImageView.translatesAutoresizingMaskIntoConstraints = false
-        avatarImageView.contentMode = .scaleAspectFill
-        avatarImageView.clipsToBounds = true
-        avatarImageView.layer.cornerRadius = 20
-        // 首页 avatarContainer 同款 line 底：无图时首字母圆透出（旧详情 faint 底已改掉）。
-        avatarImageView.backgroundColor = BearyColors.line
+        // 作者头像簇走共享 helper（首字母＋图＋重试钮 44，图底 line；40 尺寸见下）。
+        _ = authorAvatar
         avatarButton.translatesAutoresizingMaskIntoConstraints = false
-        avatarButton.addSubview(avatarInitialLabel)
-        avatarButton.addSubview(avatarImageView)
-        avatarButton.addSubview(avatarRetryButton)
         contentColumnView.addSubview(avatarButton)
         NSLayoutConstraint.activate([
-            avatarInitialLabel.centerXAnchor.constraint(equalTo: avatarButton.centerXAnchor),
-            avatarInitialLabel.centerYAnchor.constraint(equalTo: avatarButton.centerYAnchor),
-            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarButton.centerXAnchor),
-            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarButton.centerYAnchor),
-            // 头像重试与卡片同款 44（卡片头像帧已改 44，详情仍 28、同一
-            // 元件两页一边大一边小；图片槽重试仍 28，不动）。
-            avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
-            avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
-            avatarImageView.topAnchor.constraint(equalTo: avatarButton.topAnchor),
-            avatarImageView.leadingAnchor.constraint(equalTo: avatarButton.leadingAnchor),
-            avatarImageView.trailingAnchor.constraint(equalTo: avatarButton.trailingAnchor),
-            avatarImageView.bottomAnchor.constraint(equalTo: avatarButton.bottomAnchor),
             avatarButton.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 16),
             avatarButton.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor),
-            avatarButton.widthAnchor.constraint(equalToConstant: 40),
-            avatarButton.heightAnchor.constraint(equalToConstant: 40),
+            avatarButton.widthAnchor.constraint(equalToConstant: BearyAuthorAvatar.size),
+            avatarButton.heightAnchor.constraint(equalToConstant: BearyAuthorAvatar.size),
         ])
         avatarButton.addTarget(self, action: #selector(authorTapped), for: .touchUpInside)
         avatarButton.bearyAddPressFeedback()
@@ -1043,19 +959,19 @@ final class BearyDetailViewController: UIViewController {
         recipientRow.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(mentionTapped)))
         headerStack.addArrangedSubview(recipientRow)
 
-        // 118 闪退修复（.ips 实证）：作者行必须是懒初始化的 authorRow，
-        // 它的 arrangedSubviews（nameButton、crownWrapView 等）只有在
-        // authorRow 首次被访问时才入层级。下面皇冠块里有一条跨视图约束
-        // crownWrapView.height == nameButton.height，若 authorRow 在此之前
+        // 118 闪退修复（.ips 实证）：作者行必须是懒初始化的 titleRow，
+        // 它的 arrangedSubviews（名字视图、皇冠容器等）只有在
+        // titleRow.stack 首次被访问时才入层级。下面皇冠块里有一条跨视图约束
+        // （皇冠容器高 == 名字高），若 titleRow 在此之前
         // 从未被访问，两端在激活时无共同祖先，NSLayoutConstraint 直接抛
-        // 异常 → SIGABRT，全入口进详情必崩（与 106 同类）。故 authorRow
+        // 异常 → SIGABRT，全入口进详情必崩（与 106 同类）。故 titleRow.stack
         // 必须在此先入栈（顺序不变：仍在 recipientRow 之后、⋯ 钮之前），
-        // 让两端先同属 authorRow 层级，再激活皇冠约束才安全。
-        headerStack.addArrangedSubview(authorRow)
+        // 让两端先同属 titleRow.stack 层级，再激活皇冠约束才安全。
+        headerStack.addArrangedSubview(titleRow.stack)
 
         // 作者行顶对齐约束：初始不激活，只在 @ 行藏时启用（见 updateDiaryStackSpacing）。
-        // 建在此处：authorRow 已入栈、avatarButton 已入内容列，两端已同属内容列层级。
-        authorRowTopConstraint = authorRow.topAnchor.constraint(equalTo: avatarButton.topAnchor)
+        // 建在此处：titleRow.stack 已入栈、avatarButton 已入内容列，两端已同属内容列层级。
+        authorRowTopConstraint = titleRow.stack.topAnchor.constraint(equalTo: avatarButton.topAnchor)
 
         nameButton.titleLabel?.font = BearyDynamicType.cardTitleFont()
         nameButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -1068,24 +984,8 @@ final class BearyDetailViewController: UIViewController {
         nameButton.addTarget(self, action: #selector(authorTapped), for: .touchUpInside)
         nameButton.bearyAddPressFeedback()
         // 详情页皇冠无辉光（辉光仅首页 feed 卡片，见 CardCell 的 cardMode == .feed 门控）。
-        nameButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        titleSpacerLabel.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
-        titleSpacerLabel.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
-        crownView.setContentCompressionResistancePriority(.required, for: .horizontal)
-        crownWrapView.setContentCompressionResistancePriority(.required, for: .horizontal)
-        // 皇冠在等高容器内居中（容器底边钉基线，中心即 cap 中心）。
-        crownWrapView.addSubview(crownView)
-        let crownWrapWidth = crownWrapView.widthAnchor.constraint(equalToConstant: 19)
-        crownWrapWidth.priority = UILayoutPriority(999)
-        let crownWrapHeight = crownWrapView.heightAnchor.constraint(equalTo: nameButton.heightAnchor)
-        crownWrapHeight.priority = UILayoutPriority(999)
-        NSLayoutConstraint.activate([
-            crownView.centerXAnchor.constraint(equalTo: crownWrapView.centerXAnchor),
-            crownView.centerYAnchor.constraint(equalTo: crownWrapView.centerYAnchor),
-            crownWrapWidth,
-            crownWrapHeight,
-        ])
+        // 标题行抗压／抱紧＋皇冠居中与 19pt 尺寸走共享 helper（999 优先级）。
+        titleRow.installConstraints(crownPriority: UILayoutPriority(999))
         // 天气图标在包内居中（15×15 盒固定，图标在盒内居中；盒不再与
         // timeLabel 等高，天气行高由气温标签字号定）。
         weatherWrapLabel.addSubview(weatherImageView)
@@ -1096,12 +996,10 @@ final class BearyDetailViewController: UIViewController {
             weatherImageView.heightAnchor.constraint(equalToConstant: 15),
         ])
         weatherWrapLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 隐藏子视图的固定尺寸用 999 优先级，避免与 stack 压零冲突（首页同款）。
+        // 皇冠 19pt 尺寸已并进 titleRow.installConstraints（见上）。
         let recipientIconHeight = recipientIconView.heightAnchor.constraint(equalToConstant: 13)
         recipientIconHeight.priority = UILayoutPriority(999)
-        let crownWidth = crownView.widthAnchor.constraint(equalToConstant: 19)
-        crownWidth.priority = UILayoutPriority(999)
         let weatherWidth = weatherWrapLabel.widthAnchor.constraint(equalToConstant: 15)
         weatherWidth.priority = UILayoutPriority(999)
         let weatherWrapHeight = weatherWrapLabel.heightAnchor.constraint(equalToConstant: 15)
@@ -1109,12 +1007,10 @@ final class BearyDetailViewController: UIViewController {
         NSLayoutConstraint.activate([
             recipientIconView.widthAnchor.constraint(equalToConstant: 13),
             recipientIconHeight,
-            crownWidth,
-            crownView.heightAnchor.constraint(equalToConstant: 19),
             weatherWidth,
             weatherWrapHeight,
         ])
-        // authorRow 入栈已移到皇冠块之前（见上，118 闪退修复），此处不再重复添加。
+        // titleRow.stack 入栈已移到皇冠块之前（见上，118 闪退修复），此处不再重复添加。
         // 右上角 ⋯ 钮：时间线 moreButton 同款（21pt 灰色、28 框、44 热区），图标恒为三点。
         // 2026-11-12：从作者行挪到顶栏——挂 view（不跟内容滚动），右缘与返回钮
         // 左缘对称（安全区 ±16），中心线与返回钮（closeButton，44 高）对齐。
@@ -1369,7 +1265,7 @@ final class BearyDetailViewController: UIViewController {
             headerStackTopConstraint?.isActive = true
             headerStackTopConstraint?.constant = 17
         }
-        headerStack.setCustomSpacing(4, after: authorRow)
+        headerStack.setCustomSpacing(4, after: titleRow.stack)
         // 正文紧贴用户名下方：头行→正文栈间距取规范标题→正文档 6（原 16 有标题／
         // 14 无标题，见规范 §3；该槽位改动须走规范同步）。头像底约束保留——
         // 正文全宽，必须 clearance 头像底；正文顶即 max(头像底，头行底) + 6，
@@ -1794,7 +1690,7 @@ final class BearyDetailViewController: UIViewController {
         // 32 注销口径：作者已注销时显“用户已注销”，头像首字母同步为“用”。
         let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? "beary 用户"
         nameButton.setTitle(authorNameValue, for: .normal)
-        avatarInitialLabel.text = String(authorNameValue.prefix(1)).uppercased()
+        authorAvatar.initialLabel.text = String(authorNameValue.prefix(1)).uppercased()
         if let createdAt = entry.createdAt {
             // 冲突清单第 4 条：公开内容显示「编辑于 X」（编辑过才显；私密不显）。
             // 时间一律相对时间（与私信/通知/广场卡同口径：刚刚/X 分钟前/X 小时前/X 天前，
@@ -1803,27 +1699,25 @@ final class BearyDetailViewController: UIViewController {
             if BearyEphemeral.isEffectivelyPublic(entry),
                let updatedAt = entry.updatedAt, updatedAt > createdAt {
                 let editedText = BearyVisibilityText.publishedRelativeString(publishedAtMs: updatedAt) ?? BearyDiaryCardCell.feedTimeString(ms: updatedAt)
-                timeLabel.text = "\(createdText) · 编辑于 \(editedText)"
+                titleRow.timeLabel.text = "\(createdText) · 编辑于 \(editedText)"
             } else {
-                timeLabel.text = createdText
+                titleRow.timeLabel.text = createdText
             }
         } else {
-            timeLabel.text = nil
+            titleRow.timeLabel.text = nil
         }
         if let avatarPath = entry.authorAvatar, let url = BearyImageURLs.avatarURL(avatarPath) {
             // 审计 11：URL 不变且已有图时保留当前图片，不重走加载流程；
             // 在途任务不被取消、已图不被清掉。URL 变了、或上次加载已失败
             // （无图且重试钮已亮）时才重新加载；在途（无图、重试钮未亮）
             // 时不打断，让原任务自然完成。
-            if lastRenderedAvatarURL != url || (avatarImageView.image == nil && !avatarRetryButton.isHidden) {
-                bearyFeedLoadImage(into: avatarImageView, url: url, retryButton: avatarRetryButton, downsampleToWidth: 80)
+            if lastRenderedAvatarURL != url || (authorAvatar.imageView.image == nil && !authorAvatar.retryButton.isHidden) {
+                authorAvatar.load(url: url, downsampleToWidth: 80)
                 lastRenderedAvatarURL = url
             }
         } else {
-            if lastRenderedAvatarURL != nil || avatarImageView.image != nil {
-                avatarImageView.bearySetImage(url: nil)
-                avatarRetryButton.isHidden = true
-                avatarRetryButton.retryURL = nil
+            if lastRenderedAvatarURL != nil || authorAvatar.imageView.image != nil {
+                authorAvatar.clear()
                 lastRenderedAvatarURL = nil
             }
         }
@@ -1838,12 +1732,9 @@ final class BearyDetailViewController: UIViewController {
             setRecipientRowAccessibility(tappable: false)
         }
         // Plus 皇冠按 authorPlus 显示（徽章已下线摘掉，皇冠不受影响）。
-        setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
+        titleRow.setCrownHidden((entry.authorPlus ?? 0) != 1 || !titleRow.crownView.hasCrown)
         renderWeatherTemp()
-        moodStack.isHidden = true
-        moodLabel.text = nil
-        moodEmoteView?.removeFromSuperview()
-        moodEmoteView = nil
+        titleRow.clearMood()
     }
 
     /// 天气动态图标：底层静态图作 fallback（卡片落点行 playWeatherLottie 同款）。
@@ -2145,7 +2036,7 @@ final class BearyDetailViewController: UIViewController {
             // 116：头信息文案变化时只淡入真正变化的元素（头像图与
             // 天气图标为图片，到达即显，不在此淡入；气温是文字，变了才淡入）。
             if nameChanged { fadeButtonTitle(nameButton) }
-            if timeChanged { fadeLabel(timeLabel) }
+            if timeChanged { fadeLabel(titleRow.timeLabel) }
             if recipientChanged { fadeLabel(recipientLabel) }
             if weatherChanged && !weatherTempLabel.isHidden { fadeLabel(weatherTempLabel) }
         } else if weatherChanged {
@@ -2351,10 +2242,10 @@ final class BearyDetailViewController: UIViewController {
         let live = BearyEphemeral.isLive(entry)
         // pill：限时篇才显（存活“限时”／到期“私密”，蓝档）；其余不显。
         if hasEphemeral {
-            limitedPillView.isHidden = false
-            limitedPillView.configure(text: live ? "限时" : "私密", expired: !live)
+            titleRow.limitedPillView.isHidden = false
+            titleRow.limitedPillView.configure(text: live ? "限时" : "私密", expired: !live)
         } else {
-            limitedPillView.isHidden = true
+            titleRow.limitedPillView.isHidden = true
         }
         // 气泡＋倒计时：限时篇（存活或到期）才显；其余按普通详情。
         if hasEphemeral, let until = entry.ephemeralUntil {
@@ -2456,15 +2347,6 @@ final class BearyDetailViewController: UIViewController {
             let text = BearyEphemeral.countdownText(until: entry.ephemeralUntil!)
             if limitedCountdownLabel.text != text { limitedCountdownLabel.text = text }
         }
-    }
-
-    /// 皇冠显隐：本人卡显皇冠（与名字同行）；他人／游客无皇冠。
-    /// 游客永非作者，到不了本人分支。
-    /// 皇冠显隐唯一入口：容器与皇冠同藏同显，不留 19pt 空位。
-    private func setCrownHidden(_ hidden: Bool) {
-        crownWrapView.isHidden = hidden
-        crownView.isHidden = hidden
-        if hidden { crownView.stop() } else { crownView.start() }
     }
 
     private func refreshAuthorActions() {
