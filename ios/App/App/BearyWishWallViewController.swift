@@ -702,7 +702,7 @@ final class BearyWishWallViewController: UIViewController {
             wishStateView.isHidden = true
         } else {
             // P2-18：加载态走 BearyStateView（转圈 + “加载中…”）；成功/失败回包时统一收起。
-            wishStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
+            wishStateView.configure(kind: .loading, title: BearyRepeatedCopy.loading, subtitle: nil, iconName: nil, actionTitle: nil)
             showStateViewFaded()
         }
         BearyAPI.shared.fetchWishes { [weak self] result in
@@ -1620,7 +1620,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
                     if case .server(let code, _) = err, code == "not_plus" {
                         message = "仅 Plus 会员可发起许愿"
                     } else if case .server(let code, _) = err, code == "rate_limited" {
-                        message = "操作太频繁，请稍后再试"
+                        message = BearyRepeatedCopy.tooFrequentRetryLater
                     } else {
                         message = "发布失败，请重试"
                     }

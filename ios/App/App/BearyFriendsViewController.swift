@@ -311,7 +311,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         // 有旧数据时不遮内容，后台刷新完直接换行。
         if firstLoadPending && friends.isEmpty && tableView.refreshControl?.isRefreshing != true {
             emptyStateView.isHidden = true
-            firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
+            firstLoadStateView.configure(kind: .loading, title: BearyRepeatedCopy.loading, subtitle: nil, iconName: nil, actionTitle: nil)
             firstLoadStateView.isHidden = false
         }
         let requestUid = SessionManager.shared.currentUser?.id

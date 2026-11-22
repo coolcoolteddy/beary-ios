@@ -831,7 +831,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                     }
                     BearyHaptics.rejectionWarning()
                     BearySoundPlayer.play(.refuseBonk)
-                    strongSelf.showToast(message: "删除失败，请重试")
+                    strongSelf.showToast(message: BearyRepeatedCopy.deleteFailedRetry)
                     completion?(false)
                 }
             }

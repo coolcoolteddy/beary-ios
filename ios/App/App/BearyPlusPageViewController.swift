@@ -517,7 +517,7 @@ final class BearyPlusPageViewController: UIViewController {
             loadingLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
             loadingLabel.adjustsFontForContentSizeCategory = true
             loadingLabel.textColor = BearyColors.gray
-            loadingLabel.text = "加载中…"
+            loadingLabel.text = BearyRepeatedCopy.loading
             let loadingRow = UIStackView(arrangedSubviews: [spinner, loadingLabel])
             loadingRow.axis = .horizontal
             loadingRow.spacing = 8

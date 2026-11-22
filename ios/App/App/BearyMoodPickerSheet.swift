@@ -297,7 +297,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             shake.duration = BearyMotion.screen
             target?.layer.add(shake, forKey: "bearyMoodPickerDeleteFailShake")
         }
-        BearyToast.show(in: view, message: "删除失败，请重试")
+        BearyToast.show(in: view, message: BearyRepeatedCopy.deleteFailedRetry)
     }
     // MARK: - 网格
 

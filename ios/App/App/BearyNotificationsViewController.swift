@@ -1381,7 +1381,7 @@ final class BearyNotificationsViewController: UIViewController {
             return
         }
         loginPromptShown = true
-        showToast(message: "请先登录")
+        showToast(message: BearyRepeatedCopy.loginRequired)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let strongSelf = self else { return }
             strongSelf.onRequireLogin?()
@@ -2219,7 +2219,7 @@ final class BearyNotificationsViewController: UIViewController {
                     if case APIError.unauthorized = apiError {
                         return
                     }
-                    strongSelf.showToast(message: "操作失败，请重试")
+                    strongSelf.showToast(message: BearyRepeatedCopy.operationFailedRetry)
                     strongSelf.loadFirstPage()
                 }
             }
@@ -2738,7 +2738,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 不复用 playDenyShakeForRow——它按旧下标找行，删后重插下标已变）。
                     BearyHaptics.rejectionWarning()
                     BearySoundPlayer.play(.refuseBonk)
-                    strongSelf.showToast(message: "删除失败，请重试")
+                    strongSelf.showToast(message: BearyRepeatedCopy.deleteFailedRetry)
                     completion?(false)
                 }
             }

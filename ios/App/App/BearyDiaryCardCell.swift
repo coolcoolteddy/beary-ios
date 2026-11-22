@@ -3016,7 +3016,7 @@ class BearyDiaryCardCell: UITableViewCell {
             quoteTapGoneOrLocked = true
             // A2：已删除为终态占位，忘掉该键的展开态。
             BearyQuoteExpandState.forget(key: expandKey)
-            quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+            quoteView.showGone(message: BearyRepeatedCopy.quotedEntryDeleted, iconName: "icon_quote", sourceDeleted: true)
             quoteView.isHidden = false
             return
         }
@@ -3037,7 +3037,7 @@ class BearyDiaryCardCell: UITableViewCell {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: false, visibility: quoteVisibility)
                 quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
             } else {
-                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+                quoteView.showGone(message: BearyRepeatedCopy.quotedEntryDeleted, iconName: "icon_quote", sourceDeleted: true)
             }
             quoteView.isHidden = false
             return
@@ -3379,7 +3379,7 @@ class BearyDiaryCardCell: UITableViewCell {
             if let quoteId = entry.quoteId, !quoteId.isEmpty {
                 // A2：无引用体为终态占位，忘掉该键的展开态。
                 BearyQuoteExpandState.forget(key: profileExpandKey)
-                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+                quoteView.showGone(message: BearyRepeatedCopy.quotedEntryDeleted, iconName: "icon_quote", sourceDeleted: true)
                 quoteView.isHidden = false
             } else {
                 quoteView.isHidden = true
@@ -3395,7 +3395,7 @@ class BearyDiaryCardCell: UITableViewCell {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quoteValue.publishedAt, locked: quoteValue.locked == true, visibility: quoteValue.visibility)
                 quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt)
             } else {
-                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
+                quoteView.showGone(message: BearyRepeatedCopy.quotedEntryDeleted, iconName: "icon_quote", sourceDeleted: true)
             }
             quoteView.isHidden = false
             return

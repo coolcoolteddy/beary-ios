@@ -1938,7 +1938,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     @objc private func retryPublishTapped(_ sender: UIButton) {
         guard let draftValue = retryEntries.first(where: { $0.button === sender })?.draftValue else { return }
         if BearyPublishCenter.shared.isPublishing(draftId: draftValue.draftId) {
-            showDraftToast(message: "发布中…")
+            showDraftToast(message: BearyRepeatedCopy.publishing)
             return
         }
         switch BearyPublishCenter.shared.retryPublish(draftId: draftValue.draftId) {
@@ -1948,7 +1948,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 self?.dismissWithExitAnimation { }
             }
         case .alreadyRunning:
-            showDraftToast(message: "发布中…")
+            showDraftToast(message: BearyRepeatedCopy.publishing)
         case .needsEditor:
             exitWithUndoGuard(confirmTitle: "仍要继续") { [weak self] in
                 self?.dismissWithExitAnimation { [weak self] in
@@ -1982,7 +1982,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                     strongSelf.denyShake(on: cardView)
                 }
             }
-            showDraftToast(message: "发布中…")
+            showDraftToast(message: BearyRepeatedCopy.publishing)
             return
         }
         // G17：按 draftId 查找下标，不再依赖删除钮数组与草稿数组的下标对齐。
@@ -2038,7 +2038,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 if let deleteButton = strongSelf.deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {
                     deleteButton.isEnabled = true
                 }
-                strongSelf.showDraftToast(message: "删除失败，请重试")
+                strongSelf.showDraftToast(message: BearyRepeatedCopy.deleteFailedRetry)
                 return
             }
             // 2026-11-14 点仍要关闭后已删草稿复活修：删盘成功即通知编辑器，

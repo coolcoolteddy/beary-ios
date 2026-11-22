@@ -1099,7 +1099,7 @@ final class BearySettingsViewController: UIViewController {
         loginHintLabel.textColor = BearyColors.gray
         loginHintLabel.numberOfLines = 0
         loginHintLabel.textAlignment = .center
-        loginHintLabel.text = "请先登录"
+        loginHintLabel.text = BearyRepeatedCopy.loginRequired
         loginButton.setTitle("去登录", for: .normal)
         loginButton.setTitleColor(BearyColors.ink, for: .normal)
         loginButton.titleLabel?.font = BearyDynamicType.smallActionFont()
@@ -1649,7 +1649,7 @@ final class BearySettingsViewController: UIViewController {
         if expiredSwitchUserIds.contains(accountIdValue) {
             // 该号会话已被上次切换预检证实失效：不再发注定 401 的预检，
             // 直走过期重登（与下面 .expired 分支同一入口）。
-            showToast("登录已过期，请重新登录")
+            showToast(BearyRepeatedCopy.sessionExpiredRelogin)
             openLoginForAccountSwitch()
             return
         }
@@ -1680,10 +1680,10 @@ final class BearySettingsViewController: UIViewController {
                 // 不再装成可直接切换），再弹重登页；取消回来时标记仍在。
                 self.expiredSwitchUserIds.insert(accountIdValue)
                 self.refreshAccountSwitchSection()
-                self.showToast("登录已过期，请重新登录")
+                self.showToast(BearyRepeatedCopy.sessionExpiredRelogin)
                 self.openLoginForAccountSwitch()
             case .network:
-                self.showToast("网络不稳定，请稍后再试")
+                self.showToast(BearyRepeatedCopy.networkUnstable)
             case .failed, .unavailable:
                 self.showToast("切换失败，请稍后再试")
             }
@@ -4993,7 +4993,7 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
                     // “重新加载”动作，旧 toast 口径同步保留一次提示）。
                     self.blockedStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重新加载", onAction: { [weak self] in self?.blockedRetryTapped() })
                     self.blockedStateView.isHidden = false
-                    BearyToast.show(in: self.view, message: "加载失败，请重试")
+                    BearyToast.show(in: self.view, message: BearyRepeatedCopy.loadFailedRetry)
                 }
             }
         }

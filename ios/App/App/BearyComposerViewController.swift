@@ -1908,7 +1908,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let contentRight = publishButton.contentEdgeInsets.right
         let titleRight = publishButton.titleEdgeInsets.right
         let normalTitle = isEditMode ? "保存" : "发布"
-        let busyTitle = isEditMode ? "保存中…" : "发布中…"
+        let busyTitle = isEditMode ? "保存中…" : BearyRepeatedCopy.publishing
         let sendImageWidth = BearyIconImages.image(named: "icon_send", pointSize: 24)?.size.width ?? 24
         let normalWidth = contentLeft + sendImageWidth + 6 + textWidth(normalTitle) + titleRight + contentRight
         let busyWidth = contentLeft + Self.publishSpinnerTitleInset + textWidth(busyTitle) + titleRight + contentRight
@@ -2543,7 +2543,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteDeletedRow.alignment = .center
         quoteDeletedRow.isLayoutMarginsRelativeArrangement = true
         quoteDeletedRow.layoutMargins = UIEdgeInsets(top: 16, left: 2, bottom: 14, right: 2)
-        quoteDeletedLabel.text = "引用的日记已删除"
+        quoteDeletedLabel.text = BearyRepeatedCopy.quotedEntryDeleted
         quoteDeletedLabel.font = UIFont.systemFont(ofSize: 13)
         quoteDeletedLabel.textColor = BearyColors.gray
         quoteDeletedRemoveButton.setTitle("移除", for: .normal)
@@ -2719,7 +2719,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         self.refreshQuoteSection()
                         self.showToast(message: "原日记已公开")
                     case .failure:
-                        self.showToast(message: "原日记公开失败，请重试")
+                        self.showToast(message: BearyRepeatedCopy.originalPublishFailedRetry)
                     }
                 }
             }
@@ -3313,8 +3313,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 面板行空态文案按 tab 分三句（网页 QP_EMPTY 同款：我的/赞过的/收藏的）。
     private func quotePanelEmptyText() -> String {
         switch quotePanelTab {
-        case "liked": return "还没有赞过的日记"
-        case "saved": return "还没有收藏的日记"
+        case "liked": return BearyRepeatedCopy.emptyNoLikedEntries
+        case "saved": return BearyRepeatedCopy.emptyNoSavedEntries
         default: return "还没有可引用的日记"
         }
     }
@@ -4160,7 +4160,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     @objc private func didTapQuoteTool() {
         // P1-14：冻结之外的第二道守卫（按钮禁用本已拦点按，防其他调用路径）。
         if isPublishing {
-            showToast(message: isEditMode ? "保存中…" : "发布中…")
+            showToast(message: isEditMode ? "保存中…" : BearyRepeatedCopy.publishing)
             return
         }
         setQuotePanelOpen(!quotePanelOpen)
@@ -4525,7 +4525,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         if isPublishing {
-            showToast(message: isEditMode ? "保存中…" : "发布中…")
+            showToast(message: isEditMode ? "保存中…" : BearyRepeatedCopy.publishing)
             return
         }
         if activeToolStrip != nil {
@@ -5590,7 +5590,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 非发布中时恢复标题与发送图标。按钮本身在发布中保持禁用（防重发）。
     private func refreshPublishBusyState() {
         if isPublishing {
-            publishButton.setTitle(isEditMode ? "保存中…" : "发布中…", for: .normal)
+            publishButton.setTitle(isEditMode ? "保存中…" : BearyRepeatedCopy.publishing, for: .normal)
             publishButton.setImage(nil, for: .normal)
             publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: Self.publishSpinnerTitleInset, bottom: 0, right: 0)
             publishRingView.isHidden = false
@@ -8676,7 +8676,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // P1-14：发布在途时不开箱（冻结已禁 pill，此为第二道守卫），
         // 否则切草稿会把在途发布的那篇换掉/删错篇。
         if isPublishing {
-            showToast(message: "发布中…")
+            showToast(message: BearyRepeatedCopy.publishing)
             return
         }
         // presented 守卫 + 在途标记（E4-3）：连点不叠开两个草稿箱。
@@ -8688,7 +8688,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // P0-2：落盘排队期间用户已点发布（发布在途），此时不开箱——
             // 箱内切篇会换掉在途发布的那篇，之后回包清理就与新篇交错。
             if self.isPublishing {
-                self.showToast(message: "发布中…")
+                self.showToast(message: BearyRepeatedCopy.publishing)
                 return
             }
             if self.presentedViewController != nil || self.isDraftBoxPresenting { return }
@@ -8779,7 +8779,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if isEditMode { return }
         // P0-2：发布在途不切篇，等回包后再切。
         if isPublishing {
-            showToast(message: "发布中…")
+            showToast(message: BearyRepeatedCopy.publishing)
             return
         }
         if hasEditorContent() {
@@ -8919,13 +8919,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // P0-2：发布在途不切篇，等回包后再切——在途发布成功后只清提交的那篇，
         // 切篇本身须等回包，否则清理与新篇状态交错。
         if isPublishing {
-            showToast(message: "发布中…")
+            showToast(message: BearyRepeatedCopy.publishing)
             return
         }
         // 发布后台化：本篇正在发布中心跑发布（编辑器已退场），同样不切篇，
         // 等发布结束后再打开重发；否则新编辑器会与在途任务抢同一篇草稿。
         if BearyPublishCenter.shared.isPublishing(draftId: draft.draftId) {
-            showToast(message: "发布中…")
+            showToast(message: BearyRepeatedCopy.publishing)
             return
         }
         // 109：切篇先重置草稿状态——此前全程不碰 draftStatusLevel、不调
@@ -9486,7 +9486,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // didTapCancelFromEdgeSwipe 走本函数，容器侧 onCancelled 在新建态
         // 只从本函数触发，故不存在另一条在途关闭路径。
         if isPublishing {
-            showToast(message: isEditMode ? "保存中…" : "发布中…")
+            showToast(message: isEditMode ? "保存中…" : BearyRepeatedCopy.publishing)
             return false
         }
         // R14 P1-6：退出保存进行中再点取消不重走取消流程——第一笔退出已在
@@ -9700,7 +9700,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if !SessionManager.shared.isLoggedIn {
             // G26：登录态未知（网络失败）时不弹登录页，改给网络不稳定提示。
             if SessionManager.shared.authUnknown {
-                showToast(message: "网络不稳定，请稍后再试")
+                showToast(message: BearyRepeatedCopy.networkUnstable)
                 return
             }
             onRequireLogin?()
@@ -9958,7 +9958,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             isPublishing = false
             updatePublishState()
             publishedCurrentDraft = false
-            showToast(message: "发布中…")
+            showToast(message: BearyRepeatedCopy.publishing)
             return
         }
         // 编辑器退出：presenting 方（Chrome）关页，连同其上可能残留的

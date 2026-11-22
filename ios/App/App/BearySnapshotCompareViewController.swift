@@ -232,7 +232,7 @@ final class BearySnapshotPreviewViewController: UIViewController {
                     self.refreshStarButton()
                     self.onStarChanged?(snapshotId, starred)
                 case .failure:
-                    BearyToast.show(in: self.view, message: "操作失败，请重试")
+                    BearyToast.show(in: self.view, message: BearyRepeatedCopy.operationFailedRetry)
                 }
             }
         }

@@ -1460,7 +1460,7 @@ final class BearyChromeViewController: UIViewController {
             if self.currentPage == .notif || self.currentPage == .timeline || self.currentPage == .me || self.currentPage == .friends || self.currentPage == .conversations || self.currentPage == .messages {
                 self.showPage(.home)
             }
-            self.showToast(message: "请先登录")
+            self.showToast(message: BearyRepeatedCopy.loginRequired)
             let triggerPage = self.currentPage
             // 登录循环修：已有待触发的自动弹登录定时器时不再排队，避免多个 401
             // 各排一个定时器、关掉一个又弹一个。
@@ -1487,7 +1487,7 @@ final class BearyChromeViewController: UIViewController {
             if self?.profileMeWaitPending == true {
                 DispatchQueue.main.async { [weak self] in self?.resumePendingProfileAfterMe() }
             }
-            self?.showToast(message: "网络不稳定，请稍后再试")
+            self?.showToast(message: BearyRepeatedCopy.networkUnstable)
         }
         // 秒开-启动瘦身：启动期 /me 不在此处立即发——已改由 showPage 之前注册的
         // scheduleDeferredStartupMe 调度（首屏信号或 3 秒兜底，见下方两方法）。
@@ -1534,7 +1534,7 @@ final class BearyChromeViewController: UIViewController {
             } else if reason == "kicked" {
                 text = "已在其他设备退出，请重新登录"
             } else {
-                text = "登录已过期，请重新登录"
+                text = BearyRepeatedCopy.sessionExpiredRelogin
             }
             DispatchQueue.main.async { [weak self] in self?.showToast(message: text) }
         }
@@ -2373,7 +2373,7 @@ final class BearyChromeViewController: UIViewController {
     /// 否则取消本次自动弹登录。登录循环修：与 401 回调共用待触发标记，已有
     /// 定时器在排队时不再重复排队（toast 照常发，只不叠定时器）。
     private func showTabLoginGate() {
-        showToast(message: "请先登录")
+        showToast(message: BearyRepeatedCopy.loginRequired)
         let triggerPage = currentPage
         guard !autoLoginPromptPending else { return }
         autoLoginPromptPending = true
@@ -2497,7 +2497,7 @@ final class BearyChromeViewController: UIViewController {
                         } else if reason == "kicked" {
                             text = "已在其他设备退出，请重新登录"
                         } else {
-                            text = "登录已过期，请重新登录"
+                            text = BearyRepeatedCopy.sessionExpiredRelogin
                         }
                         DispatchQueue.main.async { [weak self] in self?.showToast(message: text) }
                     }
@@ -2886,10 +2886,10 @@ final class BearyChromeViewController: UIViewController {
                             // 压住全局回调、或用户已重登），全局入口不会再弹，
                             // 才落本地 toast 提示重试。
                             if SessionManager.shared.isLoggedIn {
-                                self.showToast(message: "删除失败，请重试")
+                                self.showToast(message: BearyRepeatedCopy.deleteFailedRetry)
                             }
                         } else {
-                            self.showToast(message: "删除失败，请重试")
+                            self.showToast(message: BearyRepeatedCopy.deleteFailedRetry)
                         }
                     }
                 }
@@ -4266,7 +4266,7 @@ final class BearyChromeViewController: UIViewController {
                             if let cached = snap?.entry {
                                 self.routeFetchedEntry(cached, request: request, source: source)
                             } else {
-                                self.showToast(message: "网络不稳定，请稍后再试")
+                                self.showToast(message: BearyRepeatedCopy.networkUnstable)
                             }
                         }
                     } else {

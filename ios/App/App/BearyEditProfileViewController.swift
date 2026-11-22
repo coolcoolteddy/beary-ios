@@ -499,13 +499,13 @@ class BearyEditProfileViewController: UIViewController {
                         if !strongSelf.effectiveHandle.isEmpty || strongSelf.fetchedUserId != nil {
                             strongSelf.copyLinkButtonTapped()
                         } else {
-                            strongSelf.presentSimpleAlert(message: "请先登录")
+                            strongSelf.presentSimpleAlert(message: BearyRepeatedCopy.loginRequired)
                         }
                     }
                 case .failure:
                     strongSelf.meFetchFailed = true
                     if thenCopy {
-                        strongSelf.presentSimpleAlert(message: "加载失败，请重试")
+                        strongSelf.presentSimpleAlert(message: BearyRepeatedCopy.loadFailedRetry)
                     }
                 }
             }
@@ -1163,7 +1163,7 @@ class BearyEditProfileViewController: UIViewController {
             ])
             return
         } else {
-            presentSimpleAlert(message: "请先登录")
+            presentSimpleAlert(message: BearyRepeatedCopy.loginRequired)
             return
         }
         copyLinkButton.setTitle("已复制", for: .normal)
@@ -1476,7 +1476,7 @@ class BearyEditProfileViewController: UIViewController {
         switch err {
         case .unauthorized:
             onRequireLogin?()
-            return "登录已过期，请重新登录"
+            return BearyRepeatedCopy.sessionExpiredRelogin
         case .server(let code, _):
             switch code {
             case "taken": return "这个用户名已被占用"
@@ -1493,7 +1493,7 @@ class BearyEditProfileViewController: UIViewController {
         switch err {
         case .unauthorized:
             onRequireLogin?()
-            return "登录已过期，请重新登录"
+            return BearyRepeatedCopy.sessionExpiredRelogin
         case .server(let code, _):
             switch code {
             case "name_taken": return "这个昵称已被使用"

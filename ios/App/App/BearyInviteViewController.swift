@@ -282,7 +282,7 @@ final class BearyInviteViewController: UIViewController {
 
         statsLabel.translatesAutoresizingMaskIntoConstraints = false
         // U6：加载中不再先显示“已邀请 0 人”假零值，拿到数据后 render() 再写数字。
-        statsLabel.text = "加载中…"
+        statsLabel.text = BearyRepeatedCopy.loading
         statsLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         statsLabel.adjustsFontForContentSizeCategory = true
         statsLabel.textColor = BearyColors.ink
@@ -609,8 +609,8 @@ final class BearyInviteViewController: UIViewController {
         retryButton.isHidden = true
         // U6：加载中统计区显示“加载中…”，复制钮在拿到码之前禁用；码区
         // 等待期间同样先显“加载中…”，不再直接给缺省态“—”。
-        setLabelTextFaded(codeLabel, "加载中…")
-        setStatsLabelTextCrossfaded("加载中…")
+        setLabelTextFaded(codeLabel, BearyRepeatedCopy.loading)
+        setStatsLabelTextCrossfaded(BearyRepeatedCopy.loading)
         updateCopyButton()
         SessionManager.shared.refreshMe { [weak self] result in
             DispatchQueue.main.async {
@@ -627,7 +627,7 @@ final class BearyInviteViewController: UIViewController {
                         if let onRequireLogin = strongSelf.onRequireLogin {
                             onRequireLogin()
                         } else {
-                            strongSelf.showMessage("请先登录")
+                            strongSelf.showMessage(BearyRepeatedCopy.loginRequired)
                         }
                         return
                     }
@@ -640,7 +640,7 @@ final class BearyInviteViewController: UIViewController {
                     if let onRequireLogin = strongSelf.onRequireLogin {
                         onRequireLogin()
                     } else {
-                        strongSelf.showMessage("请先登录")
+                        strongSelf.showMessage(BearyRepeatedCopy.loginRequired)
                     }
                 case .failure(.cancelled):
                     // 在途 /me 被新会话取代（退出/切号）：按当前会话重定——
@@ -650,7 +650,7 @@ final class BearyInviteViewController: UIViewController {
                     } else if let onRequireLogin = strongSelf.onRequireLogin {
                         onRequireLogin()
                     } else {
-                        strongSelf.showMessage("请先登录")
+                        strongSelf.showMessage(BearyRepeatedCopy.loginRequired)
                     }
                 case .failure(.network):
                     // 清单第 14 项：网络失败时统计区不许继续停在“加载中…”——
@@ -664,7 +664,7 @@ final class BearyInviteViewController: UIViewController {
                         strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
                         strongSelf.pendingBindMessage = nil
                     } else {
-                        strongSelf.showMessage("网络不稳定，请稍后再试")
+                        strongSelf.showMessage(BearyRepeatedCopy.networkUnstable)
                     }
                     strongSelf.retryButton.isHidden = false
                 case .failure:
@@ -675,7 +675,7 @@ final class BearyInviteViewController: UIViewController {
                         strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
                         strongSelf.pendingBindMessage = nil
                     } else {
-                        strongSelf.showMessage("加载失败，请重试")
+                        strongSelf.showMessage(BearyRepeatedCopy.loadFailedRetry)
                     }
                     strongSelf.retryButton.isHidden = false
                 }
@@ -727,7 +727,7 @@ final class BearyInviteViewController: UIViewController {
             // #405 的文案淡入保留）。
             setStatsLabelTextCrossfaded("已邀请 \(invited) 人 · 累计获得 \(months * 30) 天 Plus")
         } else {
-            setStatsLabelTextCrossfaded("加载中…")
+            setStatsLabelTextCrossfaded(BearyRepeatedCopy.loading)
         }
         boundRow.isHidden = true
         bindRow.isHidden = true
@@ -905,7 +905,7 @@ final class BearyInviteViewController: UIViewController {
                 case .failure(.server(let message, _)):
                     strongSelf.showBindFailure(message)
                 case .failure(.network):
-                    strongSelf.showBindFailure("网络不稳定，请稍后再试")
+                    strongSelf.showBindFailure(BearyRepeatedCopy.networkUnstable)
                 case .failure:
                     strongSelf.showBindFailure("绑定失败，请稍后再试")
                 }

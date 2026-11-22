@@ -1590,7 +1590,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         if firstLoadPending && messages.isEmpty && tableView.refreshControl?.isRefreshing != true {
             emptyLabel.isHidden = true
             emptyStateView.isHidden = true
-            firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
+            firstLoadStateView.configure(kind: .loading, title: BearyRepeatedCopy.loading, subtitle: nil, iconName: nil, actionTitle: nil)
             firstLoadStateView.isHidden = false
             loadFailedStateView.isHidden = true
         }

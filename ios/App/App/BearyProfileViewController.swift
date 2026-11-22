@@ -4761,12 +4761,12 @@ class BearyProfileViewController: UIViewController {
     /// 部分语料文案明示“未完整”，不冒充全量聚合。
     private func updateModulesRetryRow() {
         if modulesRetrying {
-            modulesRetryLabel.text = "加载中…"
+            modulesRetryLabel.text = BearyRepeatedCopy.loading
             modulesRetryButton.isEnabled = false
         } else if modulesCorpus.isEmpty {
             // r17-C7：有旧结果且刷新失败时标“显示的是上次的数据”，不清空；
             // 无快照时才显加载失败。
-            modulesRetryLabel.text = showingCachedStats ? "显示的是上次的数据" : "加载失败，请重试"
+            modulesRetryLabel.text = showingCachedStats ? "显示的是上次的数据" : BearyRepeatedCopy.loadFailedRetry
             modulesRetryButton.isEnabled = true
         } else {
             modulesRetryLabel.text = "只加载了部分日记，请重试"
@@ -7433,9 +7433,9 @@ class BearyProfileViewController: UIViewController {
     /// 不造新文案。日记 tab 的“还没有公开的日记”沿用脚部原话（脚部亦如此写）。
     private var ownEmptyPlaceholderText: (title: String, subtitle: String) {
         switch currentTab {
-        case .diary: return ("还没有公开的日记", "写下第一篇，默认私密")
-        case .liked: return ("还没有赞过的日记", "去广场逛逛吧")
-        case .saved: return ("还没有收藏的日记", "看到喜欢的日记，点书签存到这里，只有你能看到")
+        case .diary: return (BearyRepeatedCopy.emptyNoPublicEntries, "写下第一篇，默认私密")
+        case .liked: return (BearyRepeatedCopy.emptyNoLikedEntries, "去广场逛逛吧")
+        case .saved: return (BearyRepeatedCopy.emptyNoSavedEntries, "看到喜欢的日记，点书签存到这里，只有你能看到")
         }
     }
 
@@ -8049,21 +8049,21 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             // 取广场空态前半句“公开的日记会出现在这里”（后半句“写一篇并
             // 公开试试”是给本人的动作指引，他人页不适用，故不取）；本人页
             // 原文案一字不动。
-            titleText = isOwnProfile ? "还没有公开的日记" : "TA 还没有公开的日记"
+            titleText = isOwnProfile ? BearyRepeatedCopy.emptyNoPublicEntries : "TA 还没有公开的日记"
             subtitleText = isOwnProfile ? "写下第一篇，默认私密" : "公开的日记会出现在这里"
             let pencilView = BearyPencilView()
             pencilView.strokeColor = BearyColors.gray
             graphicView = pencilView
         case .liked:
             // 网页 beary.html:2693 的 nb-static 口径：仅描边轮廓，无动画。
-            titleText = isOwnProfile ? "还没有赞过的日记" : "TA 还没有赞过的日记"
+            titleText = isOwnProfile ? BearyRepeatedCopy.emptyNoLikedEntries : "TA 还没有赞过的日记"
             subtitleText = "去广场逛逛吧"
             let heartView = BearyHeartView()
             heartView.strokeColor = BearyColors.gray
             graphicView = heartView
         case .saved:
             // 网页 beary.html:2692 的 nb-static 口径：仅描边轮廓，无动画。
-            titleText = "还没有收藏的日记"
+            titleText = BearyRepeatedCopy.emptyNoSavedEntries
             subtitleText = "看到喜欢的日记，点书签存到这里，只有你能看到"
             let bookmarkView = BearyBookmarkView()
             bookmarkView.strokeColor = BearyColors.gray
@@ -8225,7 +8225,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         stateView.translatesAutoresizingMaskIntoConstraints = false
         // 未登录引导态走统一 BearyStateView（无图标行，标题 + 动作钮；边框深浅切换
         // 由 StateView 兜底重刷，不再另起一套）。
-        stateView.configure(kind: .login, title: "请先登录", subtitle: nil, iconName: nil, actionTitle: "去登录", onAction: { [weak self] in
+        stateView.configure(kind: .login, title: BearyRepeatedCopy.loginRequired, subtitle: nil, iconName: nil, actionTitle: "去登录", onAction: { [weak self] in
             if let strongSelf = self {
                 strongSelf.loginButtonTapped()
             }
@@ -8961,7 +8961,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                                     strongSelf.performCellVisibilityToggle(entry: entry, targetVisibility: targetVisibility, publishTogetherSourceId: sourceId)
                                 case .failure:
                                     strongSelf.pubBusyIds.remove(entryId)
-                                    BearyToast.show(in: strongSelf.view, message: "原日记公开失败，请重试")
+                                    BearyToast.show(in: strongSelf.view, message: BearyRepeatedCopy.originalPublishFailedRetry)
                                 }
                             }
                         }
@@ -9051,8 +9051,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                         }
                     } else {
                         let message: String
-                        if case .server(let code, _) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
-                        else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
+                        if case .server(let code, _) = err, code == "rate_limited" { message = BearyRepeatedCopy.tooFrequentRetryLater }
+                        else if case .http(let status, _) = err, status == 429 { message = BearyRepeatedCopy.tooFrequentRetryLater }
                         else { message = "切换失败，请重试" }
                         BearyToast.show(in: strongSelf.view, message: message)
                     }
@@ -9441,7 +9441,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                     } else {
                         cell?.shakeEmoteAddButton()
                     }
-                    BearyToast.show(in: strongSelf.view, message: "操作失败，请重试")
+                    BearyToast.show(in: strongSelf.view, message: BearyRepeatedCopy.operationFailedRetry)
                 }
             }
         }
@@ -9478,7 +9478,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             // iCity：gone 直接按已删除提示；其余一律先 fetchEntry 校验服务端可见性再放行
             //（quoteCache 快路径已删——缓存可见性可能滞后于翻转）。
             if quoteValue.gone == true {
-                presentSimpleAlert(message: "引用的日记已删除")
+                presentSimpleAlert(message: BearyRepeatedCopy.quotedEntryDeleted)
                 return
             }
             guard let quoteId = quoteValue.id, !quoteId.isEmpty else { return }
@@ -9504,14 +9504,14 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                             strongSelf.presentSimpleAlert(message: fetched.isFriendsOnly ? "该日记仅好友可见" : "该日记已设为私密")
                         }
                     case .failure:
-                        strongSelf.presentSimpleAlert(message: "引用的日记已删除")
+                        strongSelf.presentSimpleAlert(message: BearyRepeatedCopy.quotedEntryDeleted)
                     }
                 }
             }
             return
         }
         if let quoteId = entry.quoteId, !quoteId.isEmpty {
-            presentSimpleAlert(message: "引用的日记已删除")
+            presentSimpleAlert(message: BearyRepeatedCopy.quotedEntryDeleted)
         }
     }
 }

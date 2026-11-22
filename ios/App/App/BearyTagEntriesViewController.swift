@@ -282,7 +282,7 @@ final class BearyTagEntriesViewController: UIViewController {
     /// 卡片互动失败与首页同款：确认弹窗「操作失败，请重试」。
     private func presentActionFailedAlert() {
         if presentedViewController != nil { return }
-        BearyConfirmSheet.show(from: self, title: "", message: "操作失败，请重试", actions: [
+        BearyConfirmSheet.show(from: self, title: "", message: BearyRepeatedCopy.operationFailedRetry, actions: [
             BearyConfirmSheet.Action(title: "确定", style: .default),
         ])
     }
@@ -295,7 +295,7 @@ final class BearyTagEntriesViewController: UIViewController {
             case .success(let entry):
                 self.onOpenEntry?(entry)
             case .failure:
-                BearyToast.show(in: self.view, message: "加载失败，请重试")
+                BearyToast.show(in: self.view, message: BearyRepeatedCopy.loadFailedRetry)
             }
         }
     }
@@ -354,7 +354,7 @@ final class BearyTagEntriesViewController: UIViewController {
         }
         cell.onEmoteFailed = { [weak self] in
             guard let self = self else { return }
-            BearyToast.show(in: self.view, message: "操作失败，请重试")
+            BearyToast.show(in: self.view, message: BearyRepeatedCopy.operationFailedRetry)
         }
         cell.onRequireLogin = { [weak self] in
             self?.onRequireLogin?()
