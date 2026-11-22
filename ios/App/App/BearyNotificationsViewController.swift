@@ -4118,8 +4118,8 @@ class BearyNotificationCell: UITableViewCell {
     private var avatarTopConstraint: NSLayoutConstraint?
     private var avatarCenterYConstraint: NSLayoutConstraint?
     private var avatarBottomGuardConstraint: NSLayoutConstraint?
-    /// 标题栈顶锚点：独立页沿用内容顶 +14；合并页改锚头像顶
-    ///（见 applyAvatarVerticalStyle），标题字形顶对齐圆圈顶。
+    /// 标题栈顶锚点：独立页沿用内容顶 +14；合并页改标题栈相对头像垂直居中
+    ///（见 applyAvatarVerticalStyle），上下留白对头像相等。
     private var bodyStackTopToContentConstraint: NSLayoutConstraint?
     private var bodyStackTopToAvatarConstraint: NSLayoutConstraint?
     /// 标题栈右缘：三角隐藏时钉内容右缘 -16（消息页，时间右端与私信行一致）；
@@ -4127,6 +4127,9 @@ class BearyNotificationCell: UITableViewCell {
     /// 见 applyBodyStackTrailing。
     private var bodyStackTrailingToContentConstraint: NSLayoutConstraint?
     private var bodyStackTrailingToChevronConstraint: NSLayoutConstraint?
+    /// 合并页标题栈相对头像垂直居中约束（bodyStack.centerY = 头像 centerY），
+    /// 只在合并消息页激活；独立通知页仍走顶锚。
+    private var bodyStackCenterYToAvatarConstraint: NSLayoutConstraint?
 
     /// 聚合头像组：单头像位替换为头像栈；bodyStack 左缘在单头像/栈之间切换。
     private let avatarStackView = BearyAvatarStackView()
@@ -4232,10 +4235,11 @@ class BearyNotificationCell: UITableViewCell {
         avatarTopConstraint = avatarImageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
         avatarCenterYConstraint = avatarImageView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
         avatarTopConstraint?.isActive = true
-        // 标题栈顶锚点：默认内容顶 +14（独立通知页现行）；合并页改锚头像顶
-        //（见 applyAvatarVerticalStyle），头像锚默认不激活。
+        // 标题栈顶锚点：默认内容顶 +14（独立通知页现行）；合并页改标题栈相对
+        // 头像垂直居中（见 applyAvatarVerticalStyle），顶锚默认不激活。
         bodyStackTopToContentConstraint = bodyStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
         bodyStackTopToAvatarConstraint = bodyStack.topAnchor.constraint(equalTo: avatarImageView.topAnchor, constant: 0)
+        bodyStackCenterYToAvatarConstraint = bodyStack.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor)
         bodyStackTopToContentConstraint?.isActive = true
         NSLayoutConstraint.activate([
             unreadBgView.topAnchor.constraint(equalTo: contentView.topAnchor),
@@ -4342,6 +4346,7 @@ class BearyNotificationCell: UITableViewCell {
         avatarTopConstraint?.isActive = true
         avatarBottomGuardConstraint?.constant = 16
         bodyStackTopToAvatarConstraint?.isActive = false
+        bodyStackCenterYToAvatarConstraint?.isActive = false
         bodyStackTopToContentConstraint?.isActive = true
         bodyStack.spacing = 2
         nestedLineView.isHidden = true
@@ -4461,24 +4466,23 @@ class BearyNotificationCell: UITableViewCell {
 
     /// 合并消息页口径：头像改垂直居中（与私信行同款；居中 42 圆在 72 高行内
     /// 上下各 15，底 guard 相应改为 15）；独立通知页仍走顶锚 14 + 底 guard 16。
-    /// 合并页标题栈顶同时改锚头像顶，标题字形顶对齐圆圈顶。
+    /// 合并页标题栈（标题行＋摘要）相对头像垂直居中：标题栈 centerY 锚头像
+    /// centerY，上下留白对头像相等；多行标题与大字号下也居中。时间在标题行内
+    /// 跟首行基线，不用另动；未读点位置不动。
     /// 只由两 configure 方法的 mergedList 分支调；复用复位见 prepareForReuse。
     private func applyAvatarVerticalStyle(mergedList: Bool) {
         if mergedList {
             avatarTopConstraint?.isActive = false
             avatarCenterYConstraint?.isActive = true
             avatarBottomGuardConstraint?.constant = 15
-            // 标题顶对齐圆圈顶：16 粗标题字形顶比 label 框顶低 ascender-capHeight
-            //（默认字号约 4pt），标题栈顶改锚头像顶再上移该量，字形顶即落到头像顶；
-            // 按当前字号实算，大字号下仍对齐。时间在标题行内跟首行基线，不用另动。
-            let titleFont = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
-            bodyStackTopToAvatarConstraint?.constant = -(titleFont.ascender - titleFont.capHeight)
             bodyStackTopToContentConstraint?.isActive = false
-            bodyStackTopToAvatarConstraint?.isActive = true
+            bodyStackTopToAvatarConstraint?.isActive = false
+            bodyStackCenterYToAvatarConstraint?.isActive = true
         } else {
             avatarCenterYConstraint?.isActive = false
             avatarTopConstraint?.isActive = true
             avatarBottomGuardConstraint?.constant = 16
+            bodyStackCenterYToAvatarConstraint?.isActive = false
             bodyStackTopToAvatarConstraint?.isActive = false
             bodyStackTopToContentConstraint?.isActive = true
         }

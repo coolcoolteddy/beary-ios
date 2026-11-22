@@ -984,10 +984,12 @@ final class BearyDMConversationCell: UITableViewCell {
         contentView.addSubview(timeLabel)
         contentView.addSubview(unreadBadge)
         contentView.addSubview(separatorView)
-        // 标题顶锚头像顶：名称字形顶比 label 框顶低 ascender-capHeight，
-        // 上移该量后字形顶落到头像顶（常数由 configure 按当前字号重算）。
-        nameLabelTopToAvatarConstraint = nameLabel.topAnchor.constraint(equalTo: avatarView.topAnchor, constant: -(nameLabel.font.ascender - nameLabel.font.capHeight))
+        // 标题＋摘要整块相对头像垂直居中：块顶 = 头像顶 + (头像高 − 块高) / 2，
+        // 块高 = 标题行高 + 4 + 摘要行高（摘要隐藏时只算标题）；常数由
+        // updateNameLabelTopOffset 按当前字号与摘要显隐重算（init 与 configure 都调）。
+        nameLabelTopToAvatarConstraint = nameLabel.topAnchor.constraint(equalTo: avatarView.topAnchor, constant: 0)
         nameLabelTopToAvatarConstraint?.isActive = true
+        updateNameLabelTopOffset()
         NSLayoutConstraint.activate([
             // 行高改文字栈决定：头像垂直居中，上下各留最小 14（行高下限 72 兜底）。
             avatarView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
@@ -1004,7 +1006,7 @@ final class BearyDMConversationCell: UITableViewCell {
             snippetLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
             snippetLabel.trailingAnchor.constraint(lessThanOrEqualTo: unreadBadge.leadingAnchor, constant: -8),
             snippetLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            // 时间跟标题顶走（现行两顶差 2pt 不变），标题上移时时间同步上移。
+            // 时间跟标题顶走（现行两顶差 2pt 不变），标题移动时时间同步移动。
             timeLabel.topAnchor.constraint(equalTo: nameLabel.topAnchor, constant: 2),
             timeLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             unreadBadge.topAnchor.constraint(equalTo: timeLabel.bottomAnchor, constant: 6),
@@ -1064,16 +1066,27 @@ final class BearyDMConversationCell: UITableViewCell {
         lastAtMs = nil
     }
 
+    /// 标题＋摘要整块相对头像垂直居中：块顶偏移 = (44 − 块高) / 2，
+    /// 块高按当前字号行高实算（标题约 20＋4＋摘要约 15）；摘要隐藏时只算标题。
+    /// 只动纵向锚定，不改字号、行距、间距数值、行高下限与头像尺寸；
+    /// 时间跟标题走（timeLabel.top = nameLabel.top + 2），不用另动。
+    private func updateNameLabelTopOffset() {
+        let titleHeight = ceil(nameLabel.font.lineHeight)
+        let snippetHeight = snippetLabel.isHidden ? 0 : ceil(snippetLabel.font.lineHeight)
+        let blockHeight = titleHeight + 4 + snippetHeight
+        nameLabelTopToAvatarConstraint?.constant = (44 - blockHeight) / 2
+    }
+
     func configure(conversation: BearyAPI.DMConversation) {
         let peer = conversation.peer
         let displayName = (peer?.displayName?.isEmpty == false) ? peer!.displayName! : "beary 用户"
-        // 标题顶对齐圆圈顶：按当前名称字号重算字形顶偏移（默认字号约 4pt）。
-        nameLabelTopToAvatarConstraint?.constant = -(nameLabel.font.ascender - nameLabel.font.capHeight)
         nameLabel.text = displayName
         // 审计：摘要空行折叠——空白摘要整行隐藏，不留空白行。
         let snippet = (conversation.lastBody ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         snippetLabel.text = snippet
         snippetLabel.isHidden = snippet.isEmpty
+        // 标题＋摘要整块相对头像垂直居中（摘要显隐变了块高，这里重算）。
+        updateNameLabelTopOffset()
         // 时间口径与通知行一致（相对时间：刚刚/X 分钟前/X 小时前/X 天前；2026-11-11 定版带空格，取代 2026-11-05 无空格口径）。
         if let lastAt = conversation.lastAt {
             lastAtMs = lastAt
