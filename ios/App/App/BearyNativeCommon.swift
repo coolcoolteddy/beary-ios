@@ -118,7 +118,7 @@ enum KeyboardInset {
     /// 按通知的系统时长／曲线，把 scrollView 两处 bottom inset 改到重叠量；
     /// inputFrame 为 nil（无当前输入框）时垫 0。additionalAnimations 在同一动画块内跑
     ///（如登录页把输入框滚到键盘上方 12pt）。
-    static func apply(to scrollView: UIScrollView, keyboardFrame: CGRect, inputFrame: CGRect?, in view: UIView, note: Notification, additionalAnimations: (() -> Void)? = nil) {
+    static func apply(to scrollView: UIScrollView, keyboardFrame: CGRect, inputFrame: CGRect?, in view: UIView, note: Notification, additionalAnimations: @escaping (() -> Void)? = nil) {
         let bottom = inputFrame.map { bottom(forKeyboardFrame: keyboardFrame, inputFrame: $0, in: view) } ?? 0
         animate(note: note) {
             scrollView.contentInset.bottom = bottom
