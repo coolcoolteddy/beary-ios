@@ -3065,18 +3065,18 @@ final class BearySettingsViewController: UIViewController {
         if let value = entry.title { dict["title"] = value }
         if let images = entry.images {
             dict["images"] = images.map { key in
-                let encoded = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
-                return BearyImageURLs.base + "/beary/api/images/" + encoded
+                BearyImageURLs.imageURL(key: key, thumb: false)?.absoluteString
+                    ?? (BearyImageURLs.base + "/beary/api/images/" + (key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key))
             }
         }
         if let liveVideos = entry.liveVideos, !liveVideos.isEmpty {
             // 实况：静图 key → 视频 key 的配对须原样保留，两边都按 images 同款拼完整 URL。
             dict["live_videos"] = liveVideos.map { stillKey, videoKey in
-                let stillEncoded = stillKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? stillKey
-                let videoEncoded = videoKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? videoKey
                 return [
-                    "image": BearyImageURLs.base + "/beary/api/images/" + stillEncoded,
-                    "video": BearyImageURLs.base + "/beary/api/images/" + videoEncoded,
+                    "image": BearyImageURLs.imageURL(key: stillKey, thumb: false)?.absoluteString
+                        ?? (BearyImageURLs.base + "/beary/api/images/" + (stillKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? stillKey)),
+                    "video": BearyImageURLs.imageURL(key: videoKey, thumb: false)?.absoluteString
+                        ?? (BearyImageURLs.base + "/beary/api/images/" + (videoKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? videoKey)),
                 ] as [String: Any]
             }
         }
