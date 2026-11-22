@@ -831,20 +831,11 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                     }
                     BearyHaptics.rejectionWarning()
                     BearySoundPlayer.play(.refuseBonk)
-                    strongSelf.showToast(message: "删除失败，请重试")
+                    strongSelf.showToast(message: "删除失败，请重试", toastOverride: strongSelf.toastOverride)
                     completion?(false)
                 }
             }
         }
-    }
-
-    /// 失败 toast：嵌入消息页时投容器 view，独立页投本页 view。
-    private func showToast(message: String) {
-        if let override = toastOverride {
-            override(message)
-            return
-        }
-        BearyToast.show(in: view, message: message)
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {

@@ -1381,7 +1381,7 @@ final class BearyNotificationsViewController: UIViewController {
             return
         }
         loginPromptShown = true
-        showToast(message: "请先登录")
+        showToast(message: "请先登录", toastOverride: toastOverride)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let strongSelf = self else { return }
             strongSelf.onRequireLogin?()
@@ -2011,7 +2011,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 不产生新行，哨兵留位、滚出再滚回才重触（见 scrollViewDidScroll 重 arm）。
                     // P1-22：失败前先灭卡片动画（见 cancelCardAnimation），摘掉在途快照。
                     strongSelf.loadMoreFailed = true
-                    strongSelf.showToast(message: "加载失败")
+                    strongSelf.showToast(message: "加载失败", toastOverride: strongSelf.toastOverride)
                     strongSelf.cancelCardAnimation()
                     // 第七轮 12：失败只翻哨兵态，只刷新哨兵行。
                     strongSelf.refreshSentinelRow()
@@ -2219,7 +2219,7 @@ final class BearyNotificationsViewController: UIViewController {
                     if case APIError.unauthorized = apiError {
                         return
                     }
-                    strongSelf.showToast(message: "操作失败，请重试")
+                    strongSelf.showToast(message: "操作失败，请重试", toastOverride: strongSelf.toastOverride)
                     strongSelf.loadFirstPage()
                 }
             }
@@ -2298,7 +2298,7 @@ final class BearyNotificationsViewController: UIViewController {
                         // 旧缓存态原样保留（重验调用点只对已有缓存态发请求）。
                     } else {
                         self.followCardStates[actorId] = .loadFailed
-                        self.showToast(message: "回关状态加载失败，点按可重试")
+                        self.showToast(message: "回关状态加载失败，点按可重试", toastOverride: self.toastOverride)
                     }
                 }
                 self.refreshFollowCardRows(actorId: actorId)
@@ -2411,7 +2411,7 @@ final class BearyNotificationsViewController: UIViewController {
                         if let notificationId = notificationId {
                             self.playDenyShakeForRow(notificationId: notificationId)
                         }
-                        self.showToast(message: wasFollowBack ? "回关失败，请重试" : "关注失败，请重试")
+                        self.showToast(message: wasFollowBack ? "回关失败，请重试" : "关注失败，请重试", toastOverride: self.toastOverride)
                     }
                 }
             }
@@ -2664,7 +2664,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 失败有反馈：摇头＋warning 震动＋拒绝音效＋toast（此前静默
                     // 回滚，用户不知道标已读没成）。
                     strongSelf.playDenyShakeForRow(notificationId: notificationId)
-                    strongSelf.showToast(message: "标为已读失败，请重试")
+                    strongSelf.showToast(message: "标为已读失败，请重试", toastOverride: strongSelf.toastOverride)
                 }
             }
         }
@@ -2738,7 +2738,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 不复用 playDenyShakeForRow——它按旧下标找行，删后重插下标已变）。
                     BearyHaptics.rejectionWarning()
                     BearySoundPlayer.play(.refuseBonk)
-                    strongSelf.showToast(message: "删除失败，请重试")
+                    strongSelf.showToast(message: "删除失败，请重试", toastOverride: strongSelf.toastOverride)
                     completion?(false)
                 }
             }
@@ -2975,18 +2975,6 @@ final class BearyNotificationsViewController: UIViewController {
         if visibleState == .empty {
             loadFirstPage()
         }
-    }
-
-    /// toast：委托统一 BearyToast（A5-3 减动效口径由统一组件承接，
-    /// 三处调用点请先登录 / 加载失败 / 操作失败仍走本方法）。C5-B 后
-    /// FAB 仅首页/时间线显示，消息页无 FAB 但底栏分段器仍在，落点由
-    /// 组件算到分段器顶之上；调用签名与文案、触发时机不变。
-    private func showToast(message: String) {
-        if let override = toastOverride {
-            override(message)
-            return
-        }
-        BearyToast.show(in: view, message: message)
     }
 
     /// 系统信整页阅读（2026-11-19 Li 定：居中弹窗改整页读）：容器接了

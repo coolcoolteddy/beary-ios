@@ -1445,10 +1445,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         shake.duration = BearyMotion.screen
         rowView.layer.add(shake, forKey: "bearyTrashFailShake")
     }
-
-    private func showToast(message: String) {
-        BearyToast.show(in: view, message: message)
-    }
 }
 
 // MARK: - 网页文案口径（fmtDayTime / fmtDelLabel / trash-meta）
