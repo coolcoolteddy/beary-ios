@@ -1031,24 +1031,68 @@ final class BearyAPI {
         requestWithToken("/beary/api/entries", query: q, token: token, completion: completion)
     }
 
+    /// 服务端错误体里 .server 第一值的取用口径（两路调用方正好相反，收口前已定案，
+    /// 见本文件 APIError.server 的注释；绝不盲目统一）：
+    /// - `.codeFirst`（通用路 mapStatus）：调用方按业务码分流（rate_limited／
+    ///   pool_empty／dm_not_allowed 等，见 BlindBox／Composer／Detail 等处的
+    ///   `case .server(let code, _)` 匹配），第一值必须是 `error` 码。
+    /// - `.messageFirst`（账户动作路 accountActionError，唯一调用方 sendCode）：
+    ///   调用方（BearyLoginViewController.sendCodeTapped）把第一值原样当 toast
+    ///   展示，第一值必须是 `message` 展示文案；无 message 时才回落到 `error` 码。
+    private enum APIServerValue {
+        case codeFirst
+        case messageFirst
+    }
+
+    /// 服务端错误映射共享入口（mapStatus 与 accountActionError 共用骨架）：
+    /// 取消 → 网络错 →（401／404 特殊处理，仅通用路）→ 2xx 直回 nil →
+    /// 非 2xx 解 ServerErrorBody 按 serverValue 选 .server 第一值 → .http 回落。
+    /// 各留的差异全部以参数保留，不抹掉：
+    /// - `handleAuthStatus` 为真（通用路）：401 走 suppressUnauthorized／epoch 门＋
+    ///   onUnauthorized 回调、404 回 .notFound；为假（账户动作路）：401／404 不特殊
+    ///   处理，按普通非 2xx 走体映射，绝不触发统一登出回调。
+    /// - `serverValue` 见 APIServerValue：通用路 codeFirst、账户动作路 messageFirst。
+    /// - message 升 .server 时状态传 nil（第一值是展示文案不是业务码，不凭文案判权限，
+    ///   与 APIError.server 注释一致）；code 升 .server 时带真实 status（调用方凭
+    ///   status 判 5xx／403，见 BearyProfileViewController.isServerError5xx 与
+    ///   APIError.isPermissionDenied）。
+    private func mapAPIError(
+        _ status: Int,
+        data: Data?,
+        error: Error?,
+        handleAuthStatus: Bool,
+        serverValue: APIServerValue,
+        suppressUnauthorized: Bool = false,
+        epoch: Int? = nil
+    ) -> APIError? {
+        if let e = error as NSError?, e.code == NSURLErrorCancelled { return .cancelled }
+        if let e = error { return .network(e) }
+        if handleAuthStatus {
+            if status == 401 {
+                if !suppressUnauthorized, epoch == nil || epoch == authEpoch { onUnauthorized?() }
+                return .unauthorized
+            }
+            if status == 404 { return .notFound }
+        }
+        if (200...299).contains(status) { return nil }
+        if let data = data, let eb = try? decoder.decode(ServerErrorBody.self, from: data) {
+            switch serverValue {
+            case .codeFirst:
+                if let code = eb.error { return .server(code, status) }
+            case .messageFirst:
+                if let message = eb.message, !message.isEmpty { return .server(message, nil) }
+                if let code = eb.error, !code.isEmpty { return .server(code, status) }
+            }
+        }
+        return .http(status, errorSnippet(from: data))
+    }
+
     // 状态码分流（401/404/业务错误码/HTTP 错误共用；401 默认通知 onUnauthorized，
     // suppressUnauthorized 为真时只返回 .unauthorized，不触发 onUnauthorized；
     // 账号隔离 3 号：epoch 与发起时不一致时同样只返回、不触发）。
+    // 骨架见 mapAPIError；本路 .server 第一值取 error 码（调用方按码分流）。
     private func mapStatus(_ status: Int, data: Data?, error: Error?, suppressUnauthorized: Bool = false, epoch: Int? = nil) -> APIError? {
-        if let e = error as NSError?, e.code == NSURLErrorCancelled { return .cancelled }
-        if let e = error { return .network(e) }
-        if status == 401 {
-            if !suppressUnauthorized, epoch == nil || epoch == authEpoch { onUnauthorized?() }
-            return .unauthorized
-        }
-        if status == 404 { return .notFound }
-        if !(200...299).contains(status) {
-            if let data = data, let eb = try? decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
-                return .server(code, status)
-            }
-            return .http(status, errorSnippet(from: data))
-        }
-        return nil
+        mapAPIError(status, data: data, error: error, handleAuthStatus: true, serverValue: .codeFirst, suppressUnauthorized: suppressUnauthorized, epoch: epoch)
     }
 
     /// 5-31：非标准错误体的原始信息片段（截断 120 字，供 toast/日志用）。
@@ -1719,15 +1763,12 @@ final class BearyAPI {
     }
 
     /// 发码/验码共用的失败映射：不触发 onUnauthorized，只把服务端 message 透传为 .server。
+    /// 骨架见 mapAPIError；本路 .server 第一值取 message 展示文案（唯一调用方 sendCode
+    /// 的调用方直接展示），无 message 时才回落 error 码。
+    /// fallback 沿旧口径未用（旧体亦未引用它，失败文案由 .server／.http snippet 携带），
+    /// 保留签名、不动调用方。
     private func accountActionError(_ status: Int, data: Data?, error: Error?, fallback: String) -> APIError? {
-        if let e = error as NSError?, e.code == NSURLErrorCancelled { return .cancelled }
-        if let e = error { return .network(e) }
-        if (200...299).contains(status) { return nil }
-        if let data = data, let body = try? decoder.decode(ServerErrorBody.self, from: data) {
-            if let message = body.message, !message.isEmpty { return .server(message, nil) }
-            if let code = body.error, !code.isEmpty { return .server(code, status) }
-        }
-        return .http(status, errorSnippet(from: data))
+        mapAPIError(status, data: data, error: error, handleAuthStatus: false, serverValue: .messageFirst)
     }
 
     /// 登出：网页 pmLogout 走 POST /beary/api/logout（beary Worker，清会话并清 cookie），
