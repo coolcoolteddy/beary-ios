@@ -26,6 +26,9 @@ final class BearySnapshotListViewController: UIViewController {
     private let descriptionLabel = UILabel()
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let emptyLabel = UILabel()
+    private let loadingIndicator = UIActivityIndicatorView(style: .medium)
+    private let retryButton = UIButton(type: .system)
+    private var isLoading = false
     private var tableHeightConstraint: NSLayoutConstraint?
 
     /// 量高缓存（快照弹窗卡顿根因，见 updatePreferredContentSize）：
@@ -40,9 +43,11 @@ final class BearySnapshotListViewController: UIViewController {
     /// 行高 64：时间 17＋副行 12＋行距＋上下留白；表最多露 6 行，超出滚动。
     private static let rowHeight: CGFloat = 64
     private static let maxTableHeight: CGFloat = 384
-    /// 空态表高 76：加载态即按此预留，面板打开就不以 0 高亮相；空态/失败回包后
+    /// 空态表高 76：加载态即按此预留，面板打开就不以 0 高亮相；空态回包后
     /// 高度不变，有行时再按行数长（走底 sheet 同一次尺寸动画）。
     private static let emptyTableHeight: CGFloat = 76
+    /// 失败态表高 112：失败文案＋页内重试钮两行叠放，76pt 放不下。
+    private static let failedTableHeight: CGFloat = 112
 
     init(entry: Entry) {
         self.entry = entry
@@ -105,6 +110,21 @@ final class BearySnapshotListViewController: UIViewController {
         emptyLabel.numberOfLines = 0
         view.addSubview(emptyLabel)
 
+        // 加载态：sheet 内加载走小转圈（已定加载态分类，不用三点）。
+        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
+        loadingIndicator.hidesWhenStopped = true
+        view.addSubview(loadingIndicator)
+
+        // 失败态页内重试：复用 loadSnapshots()，不用关掉重进。
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.setTitle("重试", for: .normal)
+        retryButton.titleLabel?.font = BearyDynamicType.buttonFont()
+        retryButton.setTitleColor(BearyColors.orange, for: .normal)
+        retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        retryButton.bearyAddPressFeedback()
+        retryButton.isHidden = true
+        view.addSubview(retryButton)
+
         let tableHeight = tableView.heightAnchor.constraint(equalToConstant: Self.emptyTableHeight)
         tableHeightConstraint = tableHeight
         NSLayoutConstraint.activate([
@@ -133,6 +153,12 @@ final class BearySnapshotListViewController: UIViewController {
             emptyLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
+
+            loadingIndicator.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
+            loadingIndicator.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
+
+            retryButton.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 8),
+            retryButton.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
         ])
         loadSnapshots()
     }
@@ -181,9 +207,15 @@ final class BearySnapshotListViewController: UIViewController {
 
     private func loadSnapshots() {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
+        isLoading = true
+        loadFailed = false
+        loadingIndicator.startAnimating()
+        refreshEmptyState()
         BearyAPI.shared.fetchSnapshots(entryId: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                self.isLoading = false
+                self.loadingIndicator.stopAnimating()
                 switch result {
                 case .success(let snapshots):
                     self.loadFailed = false
@@ -200,21 +232,37 @@ final class BearySnapshotListViewController: UIViewController {
         }
     }
 
+    @objc private func retryTapped() {
+        loadSnapshots()
+    }
+
     private func refreshEmptyState() {
-        if loadFailed {
-            emptyLabel.text = "加载失败，请关闭后重试"
+        if isLoading {
+            emptyLabel.isHidden = true
+            retryButton.isHidden = true
+        } else if loadFailed {
+            emptyLabel.text = "加载失败"
             emptyLabel.isHidden = false
+            retryButton.isHidden = false
         } else if snapshots.isEmpty {
             emptyLabel.text = "暂无快照"
             emptyLabel.isHidden = false
+            retryButton.isHidden = true
         } else {
             emptyLabel.isHidden = true
+            retryButton.isHidden = true
         }
     }
 
     private func updateTableHeight() {
-        // 空态留 76pt 给居中的空提示；有行时按行数算、最多露 6 行。
-        let height = snapshots.isEmpty ? Self.emptyTableHeight : min(CGFloat(snapshots.count) * Self.rowHeight, Self.maxTableHeight)
+        // 空态留 76pt 给居中的空提示；失败态留 112pt 给失败文案＋重试钮；
+        // 有行时按行数算、最多露 6 行。
+        let height: CGFloat
+        if snapshots.isEmpty {
+            height = loadFailed ? Self.failedTableHeight : Self.emptyTableHeight
+        } else {
+            height = min(CGFloat(snapshots.count) * Self.rowHeight, Self.maxTableHeight)
+        }
         if tableHeightConstraint?.constant != height {
             tableHeightConstraint?.constant = height
         }
