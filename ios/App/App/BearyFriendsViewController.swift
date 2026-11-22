@@ -43,9 +43,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     // 且列表非空时显，空列表仍走居中空态文案，不与本条重复）。失败条不占位、
     // 不挤压列表：表顶恒贴顶栏，显隐只淡入淡出，列表 frame 与滚动位置全程
     // 不动，可见行不跳动；不清列表、不丢标题人数。
-    private let refreshFailedBanner = UIView()
-    private let refreshFailedLabel = UILabel()
-    private let refreshFailedRetryButton = UIButton(type: .system)
+    private let refreshFailedBanner = RefreshFailedBanner(retryAccessibilityHint: "重新拉取好友列表，不改变当前列表位置")
     private var tableViewTopToTopBarConstraint: NSLayoutConstraint?
 
     override func viewDidLoad() {
@@ -89,42 +87,13 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
 
         // 已有内容刷新失败条：覆盖在顶栏下方、列表顶部之上（非弹框、非 toast，
         // 失败不消失直至下次成功）；点“重试”只重拉，不改列表与滚动位置。
-        // 覆盖式底色须不透明，否则列表内容会透过半透明条显出来；底色 = bg 上
-        // 叠 12% 语义红，与旧“red 0.12 透在 bg 上”的观感一致（深浅模式各自
-        // 按当前 trait 混合）。
-        refreshFailedBanner.translatesAutoresizingMaskIntoConstraints = false
-        refreshFailedBanner.backgroundColor = UIColor { trait in
-            let base = BearyColors.bg.resolvedColor(with: trait)
-            let tint = BearyColors.red.resolvedColor(with: trait)
-            var baseR: CGFloat = 0, baseG: CGFloat = 0, baseB: CGFloat = 0, baseA: CGFloat = 0
-            var tintR: CGFloat = 0, tintG: CGFloat = 0, tintB: CGFloat = 0, tintA: CGFloat = 0
-            base.getRed(&baseR, green: &baseG, blue: &baseB, alpha: &baseA)
-            tint.getRed(&tintR, green: &tintG, blue: &tintB, alpha: &tintA)
-            let a: CGFloat = 0.12
-            return UIColor(red: tintR * a + baseR * (1 - a),
-                           green: tintG * a + baseG * (1 - a),
-                           blue: tintB * a + baseB * (1 - a),
-                           alpha: 1)
+        // 外观与显隐见 RefreshFailedBanner（四页共用）。
+        refreshFailedBanner.onRetry = { [weak self] in
+            // 只重拉：load() 在途时直接返回、不重复请求；成功才清条，
+            // 失败条继续留着；全程不清 friends、不 scrollToTop。
+            self?.load()
         }
-        refreshFailedBanner.isHidden = true
-        refreshFailedBanner.alpha = 0
         view.addSubview(refreshFailedBanner)
-        refreshFailedLabel.translatesAutoresizingMaskIntoConstraints = false
-        refreshFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        refreshFailedLabel.adjustsFontForContentSizeCategory = true
-        refreshFailedLabel.textColor = BearyColors.ink
-        refreshFailedLabel.text = "未能刷新"
-        refreshFailedBanner.addSubview(refreshFailedLabel)
-        refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
-        refreshFailedRetryButton.setTitle("重试", for: .normal)
-        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
-        refreshFailedRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        refreshFailedRetryButton.setTitleColor(BearyColors.ink, for: .normal)
-        refreshFailedRetryButton.accessibilityLabel = "重试"
-        refreshFailedRetryButton.accessibilityHint = "重新拉取好友列表，不改变当前列表位置"
-        refreshFailedRetryButton.addTarget(self, action: #selector(refreshFailedRetryTapped), for: .touchUpInside)
-        refreshFailedRetryButton.bearyAddPressFeedback()
-        refreshFailedBanner.addSubview(refreshFailedRetryButton)
 
         emptyStateView.translatesAutoresizingMaskIntoConstraints = false
         emptyStateView.isHidden = true
@@ -158,13 +127,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             refreshFailedBanner.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             refreshFailedBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             refreshFailedBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            refreshFailedBanner.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            refreshFailedLabel.leadingAnchor.constraint(equalTo: refreshFailedBanner.leadingAnchor, constant: 16),
-            refreshFailedLabel.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
-            refreshFailedRetryButton.trailingAnchor.constraint(equalTo: refreshFailedBanner.trailingAnchor, constant: -16),
-            refreshFailedRetryButton.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
-            refreshFailedRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            refreshFailedRetryButton.leadingAnchor.constraint(greaterThanOrEqualTo: refreshFailedLabel.trailingAnchor, constant: 8),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -247,12 +209,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     }
 
     @objc private func refreshPulled() {
-        load()
-    }
-
-    @objc private func refreshFailedRetryTapped() {
-        // 只重拉：load() 在途时直接返回、不重复请求；成功才清条，
-        // 失败条继续留着；全程不清 friends、不 scrollToTop。
         load()
     }
 
@@ -397,31 +353,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
 
     private func setRefreshFailedBannerVisible(_ visible: Bool) {
         // 覆盖式：只淡入淡出，不碰表顶约束与 contentOffset，列表不跳动。
-        // 减动效直设终值；收起动画被新显隐打断时 completion 的 finished 为
-        // false，不藏条，防新显的条被旧收起动画的 completion 误藏。
-        if visible {
-            refreshFailedBanner.isHidden = false
-            guard BearyMotion.animated(true) else {
-                refreshFailedBanner.alpha = 1
-                return
-            }
-            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
-                self.refreshFailedBanner.alpha = 1
-            })
-        } else {
-            guard BearyMotion.animated(true) else {
-                refreshFailedBanner.alpha = 0
-                refreshFailedBanner.isHidden = true
-                return
-            }
-            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
-                self.refreshFailedBanner.alpha = 0
-            }, completion: { finished in
-                if finished {
-                    self.refreshFailedBanner.isHidden = true
-                }
-            })
-        }
+        refreshFailedBanner.setVisible(visible)
     }
 
     // MARK: - Table
