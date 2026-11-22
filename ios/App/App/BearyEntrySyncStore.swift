@@ -59,7 +59,7 @@ enum BearyEntrySyncStore {
     static let directoryPrefix = "beary_entry_sync"
 
     static func accountDir(accountId: Int) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(directoryPrefix)_\(accountId)", isDirectory: true)
     }
 
@@ -81,7 +81,7 @@ enum BearyEntrySyncStore {
 
     /// staging 桶：新版本先写这里，校验通过后才换盘成活盘。
     static func stagingDir(accountId: Int) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(directoryPrefix)_\(accountId).staging", isDirectory: true)
     }
 
@@ -835,7 +835,7 @@ enum BearyTrashSyncStore {
     static let directoryPrefix = "beary_trash_sync"
 
     static func accountDir(accountId: Int) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(directoryPrefix)_\(accountId)", isDirectory: true)
     }
 
@@ -852,7 +852,7 @@ enum BearyTrashSyncStore {
 
     /// 同步状态文件（BearySyncStateRecord）：与回收站目录平行的单文件，不进桶目录。
     static func stateFileURL(accountId: Int) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(directoryPrefix)_\(accountId)_state.json")
     }
 

@@ -67,7 +67,7 @@ enum BearyOfflineSaveStore {
     }
 
     static func accountDir(accountId: Int) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(directoryPrefix)_\(accountId)", isDirectory: true)
     }
 

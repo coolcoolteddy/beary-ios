@@ -192,7 +192,7 @@ enum BearyDraftImageStore {
     /// 按捕获账号算目标目录。
     fileprivate static func directory(forAccount accountId: Int?) -> URL? {
         guard let accountId = accountId else { return nil }
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         let dir = base.appendingPathComponent("\(directoryName)_\(accountId)", isDirectory: true)
         if !FileManager.default.fileExists(atPath: dir.path) {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
@@ -825,7 +825,7 @@ enum BearyDraftStore {
     /// 捕获账号版路径：后台写任务专用，目的目录只由入队时捕获的账号决定。
     private static func fileURL(for accountId: Int?) -> URL? {
         guard let accountId = accountId else { return nil }
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         if !FileManager.default.fileExists(atPath: base.path) {
             try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
         }
@@ -834,12 +834,12 @@ enum BearyDraftStore {
 
     /// 旧全局 v3 文件路径（仅迁移源，不再作为读写路径）。
     private static func legacyGlobalFileURL() -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent(fileName)
     }
 
     private static func legacyV2FileURL() -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent(legacyV2FileName)
     }
 
@@ -1422,7 +1422,7 @@ enum BearyDraftStore {
     /// 按账号分桶，与草稿 v3 文件同目录（Application Support）。
     private static func editCheckpointFileURL(entryId: String, forAccount accountId: Int?) -> URL? {
         guard let accountId = accountId, !entryId.isEmpty else { return nil }
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         if !FileManager.default.fileExists(atPath: base.path) {
             try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
         }
