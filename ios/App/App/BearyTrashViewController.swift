@@ -1479,7 +1479,7 @@ private enum TrashText {
         if diff < 7 * 86400, let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
             return relative
         }
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let date = Date(millisecondsSince1970: ms)
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
@@ -1496,7 +1496,7 @@ private enum TrashText {
     /// [24] 小项 6：今天态小时亦不补零，与上条同口径。
     /// G8：今天/昨天判定与显示均走北京日历/时区，不用设备时区。
     static func deletedLabel(ms: Int) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let date = Date(millisecondsSince1970: ms)
         let calendar = BearyBeijingDay.calendar
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")

@@ -3867,7 +3867,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
             return relative
         }
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let date = Date(millisecondsSince1970: ms)
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "zh_CN")
         fmt.dateFormat = "M月d日 H:mm"

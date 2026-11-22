@@ -812,7 +812,7 @@ final class BearyInviteViewController: UIViewController {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy/M/d"
-        let dateText = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
+        let dateText = formatter.string(from: Date(millisecondsSince1970: until))
         messageLabel.text = baseText + "，Plus 至 \(dateText)"
     }
 

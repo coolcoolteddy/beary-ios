@@ -48,7 +48,7 @@ struct BearyEntrySnapshot: Decodable {
     /// 服务端 created_at 是毫秒，相对时间（feedTimeString）不进快照展示。
     var displayDateString: String {
         guard let ms = createdAt else { return "" }
-        return Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(ms) / 1000))
+        return Self.dateFormatter.string(from: Date(millisecondsSince1970: ms))
     }
 
     /// 固定格式走 en_US_POSIX，时区跟设备（与截图 23:42:35 同款本地时间）。

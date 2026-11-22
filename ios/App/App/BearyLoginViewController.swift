@@ -1359,7 +1359,7 @@ final class BearyLoginViewController: UIViewController {
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "zh_CN")
             formatter.dateFormat = "yyyy/M/d HH:mm"
-            let dateText = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(deleteAt) / 1000.0))
+            let dateText = formatter.string(from: Date(millisecondsSince1970: deleteAt))
             message = "距离正式注销还剩：\(leftText)（\(dateText)）。继续登录将取消注销。"
         }
         return message
@@ -1518,7 +1518,7 @@ enum BearyReferralFeedback {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy/M/d"
-        return base + "，Plus 至 " + formatter.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
+        return base + "，Plus 至 " + formatter.string(from: Date(millisecondsSince1970: until))
     }
 }
 

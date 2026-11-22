@@ -569,7 +569,7 @@ final class SessionManager {
         }
         guard let account = target else { return nil }
         if needsCookieInstall {
-            installSessionCookie(token: account.token, expiresDate: account.tokenExpiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) })
+            installSessionCookie(token: account.token, expiresDate: account.tokenExpiresAtMs.map { Date(millisecondsSince1970: $0) })
         }
         let user = MeUser(id: account.userId, email: account.email, displayName: account.displayName, handle: account.handle, avatar: account.avatarURL, coverVer: nil, createdAt: nil, plus: nil, plusUntil: nil, plusFree: nil, isAdmin: nil, inviteCode: nil, referral: nil, serialId: nil)
         self.currentUser = user
@@ -706,7 +706,7 @@ final class SessionManager {
         pendingAccountAddSession = nil
         let cookieValue = currentSessionCookie()?.value
         guard currentUser?.id != pending.user.id || cookieValue != pending.token else { return }
-        installSessionCookie(token: pending.token, expiresDate: pending.tokenExpiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) })
+        installSessionCookie(token: pending.token, expiresDate: pending.tokenExpiresAtMs.map { Date(millisecondsSince1970: $0) })
         sessionGeneration += 1
         api.bumpAuthEpoch()
         api.setAuthAccountId(pending.user.id)
@@ -787,7 +787,7 @@ final class SessionManager {
                     }
                     // 统一提交：共享 cookie 与 currentUser 同一主线程段落
                     // 内一次提交，中间没有后台请求能看到半提交态。
-                    self.installSessionCookie(token: target.token, expiresDate: target.tokenExpiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) })
+                    self.installSessionCookie(token: target.token, expiresDate: target.tokenExpiresAtMs.map { Date(millisecondsSince1970: $0) })
                     self.sessionGeneration += 1
                     self.api.bumpAuthEpoch()
                     self.api.setAuthAccountId(user.id)

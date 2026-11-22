@@ -1515,7 +1515,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     private func sheetDateString(_ entry: Entry) -> String {
         guard let ms = entry.createdAt, ms > 0 else { return "" }
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let date = Date(millisecondsSince1970: ms)
         let currentYear = Calendar.current.component(.year, from: Date())
         let year = Calendar.current.component(.year, from: date)
         return (year == currentYear ? Self.sheetDateFormatter : Self.sheetDateYearFormatter).string(from: date)
@@ -1998,7 +1998,7 @@ private final class StarMapSkyView: UIView {
         self.stars = stars.map { star in
             let dateText: String
             if let ms = star.entry.createdAt, ms > 0 {
-                let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+                let date = Date(millisecondsSince1970: ms)
                 dateText = Self.starDateFormatter.string(from: date)
             } else {
                 dateText = ""

@@ -2367,7 +2367,7 @@ private final class BearyDMMessageCell: UITableViewCell {
     /// 改走绝对时间显示。
     private static func relativeTimeText(ms: Int?) -> String {
         guard let msValue = ms else { return "" }
-        let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
+        let date = Date(millisecondsSince1970: msValue)
         let diff = Date().timeIntervalSince(date)
         if diff < -5 { return BearyText.timeString(ms: msValue) }
         // 相对档位复用带空格共享实现（规范 §12）；共享实现无未来分支，故未来守卫留本地。
