@@ -118,11 +118,8 @@ struct Quote: Codable {
     var diaryTimeZone: TimeZone { BearyBeijingDay.timeZone(tzName: tzName) }
 
     /// 引用有效公开态：公开且未过期；仅好友/私密/过期一律 false（fail-closed）。
-    var isEffectivelyPublic: Bool {
-        guard isPublic == true else { return false }
-        if let until = ephemeralUntil, until <= Int(Date().timeIntervalSince1970 * 1000) { return false }
-        return true
-    }
+    /// 公式唯一来源见 BearyStarMap.isEffectivelyPublic(quote:nowMs:)。
+    var isEffectivelyPublic: Bool { BearyStarMap.isEffectivelyPublic(quote: self) }
 }
 
 /// 全量同步落盘用：Entry 加 Encodable（只补编码能力，不改字段语义；
