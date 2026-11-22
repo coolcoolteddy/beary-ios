@@ -208,22 +208,6 @@ enum BearyPlazaCarouselItem {
 }
 
 enum BearyPlazaCarouselText {
-    /// 标题：服务端标题优先，无标题取正文首行（截 30 字），都没有给中性占位。
-    static func displayTitle(for entry: Entry) -> String {
-        if let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
-            return title
-        }
-        if let content = entry.content {
-            for line in content.components(separatedBy: .newlines) {
-                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    return String(trimmed.prefix(30))
-                }
-            }
-        }
-        return "一篇日记"
-    }
-
     /// 副行：作者名 · 赞数（无作者名时只显赞数）。
     static func metaText(for entry: Entry) -> String {
         var parts: [String] = []
@@ -542,7 +526,7 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
         switch item {
         case .featured(let entry):
             eyebrowLabel.text = "今日推荐"
-            titleLabel.text = BearyPlazaCarouselText.displayTitle(for: entry)
+            titleLabel.text = BearyEntryTitle.displayTitle(for: entry, maxLength: 30, skipEmptyLines: true)
             metaLabel.text = BearyPlazaCarouselText.metaText(for: entry)
             bodyButton.accessibilityLabel = "今日推荐：\(titleLabel.text ?? "")"
         case .historyToday(let payload):

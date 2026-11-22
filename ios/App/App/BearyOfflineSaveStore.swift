@@ -64,20 +64,6 @@ enum BearyOfflineSaveStore {
         return decoder
     }
 
-    /// 展示用标题：标题非空即用标题，否则取正文首行（≤24 字），再无即“无标题日记”。
-    /// 只做列表行标识，不改卡片/详情“空标题不占位”的口径。
-    static func displayTitle(for entry: Entry) -> String {
-        if let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
-            return title
-        }
-        if let content = entry.content?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty {
-            let firstLine = content.components(separatedBy: .newlines).first ?? content
-            let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { return String(trimmed.prefix(24)) }
-        }
-        return "无标题日记"
-    }
-
     static func accountDir(accountId: Int) -> URL? {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         return base.appendingPathComponent("\(directoryPrefix)_\(accountId)", isDirectory: true)

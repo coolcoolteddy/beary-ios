@@ -2539,6 +2539,32 @@ enum BearyText {
     /// iCity：可见性切换无需确认（选择本身即确认，翻回即撤销），旧公开确认框常量已删除。
 }
 
+// MARK: - 日记展示用标题
+
+/// 展示用标题（离线保存／广场轮播共用，2026-11-22 Li 定可复用抽取第 9 项）：
+/// 标题非空即用标题（不截），否则取正文行，再无即“无标题日记”。
+/// 两处调用点原有行为除 fallback 文案外一律保留：
+/// 离线 maxLength 24、只取首行；广场 maxLength 30、跳过空行取首个非空行。
+enum BearyEntryTitle {
+    static func displayTitle(for entry: Entry, maxLength: Int, skipEmptyLines: Bool) -> String {
+        if let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            return title
+        }
+        if skipEmptyLines {
+            guard let content = entry.content else { return "无标题日记" }
+            for line in content.components(separatedBy: .newlines) {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return String(trimmed.prefix(maxLength)) }
+            }
+        } else if let content = entry.content?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty {
+            let firstLine = content.components(separatedBy: .newlines).first ?? content
+            let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return String(trimmed.prefix(maxLength)) }
+        }
+        return "无标题日记"
+    }
+}
+
 /// 第十轮审计 dsh II-7：三句重复短句抽常量（各 4 处），文案本身不动，只收一处定义。
 /// 变基注：第四句“编辑（已超 15 分钟不可编辑）”的四处菜单项已随 main 的编辑永久可改
 /// （15 分钟门控删除）消失，该常量不再收录。
