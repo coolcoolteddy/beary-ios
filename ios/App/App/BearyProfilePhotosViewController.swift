@@ -1535,8 +1535,9 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
         if indexPath.section == photosRetrySectionIndex, photosPageLoadFailed {
             return CGSize(width: collectionView.bounds.width, height: 44)
         }
-        let widthValue = collectionView.bounds.width > 0 ? collectionView.bounds.width : view.bounds.width
-        let side = floor((widthValue - 40 - 16) / 3)
+        // 40 + 16 = 56：本页 sectionInset 左右各 16（合计 32），按布局应扣 48；此处 40 与布局对不上，
+        // 疑似从个人页脚部 20 边距抄来。本支只收公式、不改数值，是否改 48 另定。
+        let side = bearyGridSide(width: collectionView.bounds.width, fallbackWidth: view.bounds.width, horizontalDeduction: 40 + 16)
         return CGSize(width: side, height: side)
     }
 
