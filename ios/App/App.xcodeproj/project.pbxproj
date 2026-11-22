@@ -68,6 +68,7 @@
 		29B8437C3592AC04DEE546F4 /* BearyInputSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DE8B7BB18B944E96F0FB0B5 /* BearyInputSheet.swift */; };
 		23D88D2D590450808C9EF6BE /* BearyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */; };
 		8B953B521BC24EF1807184F7 /* BearyAvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */; };
+		E717A782DC11E3C55F4FE939 /* BearyUserRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9882282D61F0978F87732BFA /* BearyUserRowView.swift */; };
 		5FF297D2E2804166BA8159B5 /* BearyDiaryCardCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */; };
 		F790A08F44209A9273EA0C51 /* BearyLimitedBubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6349DBA5517E5811B7EED69B /* BearyLimitedBubbleView.swift */; };
 		33682D1F43521B7B51E6FF30 /* BearyDiaryPin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */; };
@@ -793,6 +794,7 @@
 		4DE8B7BB18B944E96F0FB0B5 /* BearyInputSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyInputSheet.swift; sourceTree = "<group>"; };
 		4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyStateView.swift; sourceTree = "<group>"; };
 		1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAvatarView.swift; sourceTree = "<group>"; };
+		9882282D61F0978F87732BFA /* BearyUserRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyUserRowView.swift; sourceTree = "<group>"; };
 		BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryCardCell.swift; sourceTree = "<group>"; };
 		6349DBA5517E5811B7EED69B /* BearyLimitedBubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLimitedBubbleView.swift; sourceTree = "<group>"; };
 		10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryPin.swift; sourceTree = "<group>"; };
@@ -1537,6 +1539,7 @@
 				4DE8B7BB18B944E96F0FB0B5 /* BearyInputSheet.swift */,
 				4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */,
 				1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */,
+				9882282D61F0978F87732BFA /* BearyUserRowView.swift */,
 				BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */,
 				6349DBA5517E5811B7EED69B /* BearyLimitedBubbleView.swift */,
 				10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */,
@@ -2941,6 +2944,7 @@
 				29B8437C3592AC04DEE546F4 /* BearyInputSheet.swift in Sources */,
 				23D88D2D590450808C9EF6BE /* BearyStateView.swift in Sources */,
 				8B953B521BC24EF1807184F7 /* BearyAvatarView.swift in Sources */,
+				E717A782DC11E3C55F4FE939 /* BearyUserRowView.swift in Sources */,
 				5FF297D2E2804166BA8159B5 /* BearyDiaryCardCell.swift in Sources */,
 				F790A08F44209A9273EA0C51 /* BearyLimitedBubbleView.swift in Sources */,
 				33682D1F43521B7B51E6FF30 /* BearyDiaryPin.swift in Sources */,

@@ -3120,29 +3120,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.layer.cornerRadius = BearyCorners.single
         row.layer.masksToBounds = true
 
-        let avatarView = BearyAvatarView()
-        avatarView.translatesAutoresizingMaskIntoConstraints = false
-
+        // 用户行走共享 BearyUserRowView（头像 44＋名字＋handle 竖栈＋尾部
+        // chevron 槽位；label 类仍用本页的 BearyRoundedMarkLabel，作参数传入）。
         let nameLabel = BearyRoundedMarkLabel()
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.adjustsFontForContentSizeCategory = true
-        nameLabel.font = BearyDynamicType.cardTitleFont()
-        nameLabel.textColor = BearyColors.ink
-        nameLabel.numberOfLines = 1
         nameLabel.clipsToBounds = true
 
         let handleLabel = BearyRoundedMarkLabel()
-        handleLabel.translatesAutoresizingMaskIntoConstraints = false
-        handleLabel.adjustsFontForContentSizeCategory = true
-        handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        handleLabel.textColor = BearyColors.gray
-        handleLabel.numberOfLines = 1
         handleLabel.clipsToBounds = true
 
         let chevron = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 16))
-        chevron.translatesAutoresizingMaskIntoConstraints = false
         chevron.tintColor = BearyColors.gray
         chevron.contentMode = .scaleAspectFit
+
+        let userRow = BearyUserRowView(nameLabel: nameLabel, handleLabel: handleLabel, trailingView: chevron)
 
         let displayName = userDisplayName(user: user)
         nameLabel.attributedText = highlightedText(displayName, query: query, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink)
@@ -3156,28 +3146,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         // C3：头像加载/占位/重试全走 BearyAvatarView（日记首图仍走
         // BearySearchImageRetry，不动；imageRetryHolders 只剩首图槽位）。
-        avatarView.configure(displayName: displayName, avatarURL: user.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) })
+        userRow.avatarView.configure(displayName: displayName, avatarURL: user.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) })
 
-        row.addSubview(avatarView)
-        row.addSubview(nameLabel)
-        row.addSubview(handleLabel)
-        row.addSubview(chevron)
+        userRow.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(userRow)
         NSLayoutConstraint.activate([
-            avatarView.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
-            // R6-1：底部改为 ≤，行高不再锁死 72pt；大字号下由文字栈撑高，默认仍 72pt。
-            avatarView.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -14),
-            avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
-            avatarView.widthAnchor.constraint(equalToConstant: 44),
-            avatarView.heightAnchor.constraint(equalToConstant: 44),
-            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
-            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
-            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
-            handleLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
-            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
-            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -14),
-            chevron.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            chevron.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
+            userRow.topAnchor.constraint(equalTo: row.topAnchor),
+            userRow.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            userRow.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            userRow.bottomAnchor.constraint(equalTo: row.bottomAnchor),
             chevron.widthAnchor.constraint(equalToConstant: 16),
             chevron.heightAnchor.constraint(equalToConstant: 16),
             // 8-15：用户行最小 44 高约束（现行行高 72，视觉不变，只保热区下限）。

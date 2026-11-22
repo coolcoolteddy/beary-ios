@@ -548,10 +548,9 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
 
 private final class BearyFriendCell: UITableViewCell {
 
-    // C3：头像走统一 BearyAvatarView（44 圆角 22、首字母占位、失败重试内含）。
-    private let avatarView = BearyAvatarView()
-    private let nameLabel = UILabel()
-    private let handleLabel = UILabel()
+    // 用户行走共享 BearyUserRowView（头像 44＋名字＋handle 竖栈＋尾部 ⋯ 钮槽位；
+    // 布局与字号三处共用，⋯ 钮与分隔线仍归本 cell）。
+    private lazy var userRowView: BearyUserRowView = BearyUserRowView(trailingView: moreButton, avatarPin: .centered)
     private let separatorView = UIView()
     private var moreHandler: ((UIButton) -> Void)?
 
@@ -571,42 +570,16 @@ private final class BearyFriendCell: UITableViewCell {
         backgroundColor = BearyColors.bg
         selectionStyle = .none
 
-        avatarView.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.font = BearyDynamicType.cardTitleFont()
-        nameLabel.adjustsFontForContentSizeCategory = true
-        nameLabel.textColor = BearyColors.ink
-        nameLabel.numberOfLines = 1
-        handleLabel.translatesAutoresizingMaskIntoConstraints = false
-        handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        handleLabel.adjustsFontForContentSizeCategory = true
-        handleLabel.textColor = BearyColors.gray
-        handleLabel.numberOfLines = 1
-
+        userRowView.translatesAutoresizingMaskIntoConstraints = false
         separatorView.translatesAutoresizingMaskIntoConstraints = false
         separatorView.backgroundColor = BearyColors.line
-        contentView.addSubview(avatarView)
-        contentView.addSubview(nameLabel)
-        contentView.addSubview(handleLabel)
-        contentView.addSubview(moreButton)
+        contentView.addSubview(userRowView)
         contentView.addSubview(separatorView)
         NSLayoutConstraint.activate([
-            // 行高改文字栈决定：头像垂直居中，上下各留最小 14（行高下限 72 兜底）。
-            avatarView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            avatarView.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 14),
-            avatarView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            avatarView.widthAnchor.constraint(equalToConstant: 44),
-            avatarView.heightAnchor.constraint(equalToConstant: 44),
-            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
-            nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: moreButton.leadingAnchor, constant: -8),
-            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
-            handleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: moreButton.leadingAnchor, constant: -8),
-            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            moreButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            userRowView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            userRowView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            userRowView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            userRowView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             moreButton.widthAnchor.constraint(equalToConstant: 44),
             moreButton.heightAnchor.constraint(equalToConstant: 44),
             // 审计低风险项：行底 1pt 分隔线（与日记行底边同口径）。
@@ -624,25 +597,25 @@ private final class BearyFriendCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        avatarView.reset()
-        handleLabel.text = nil
+        userRowView.avatarView.reset()
+        userRowView.handleLabel.text = nil
         moreHandler = nil
     }
 
     func configure(user: BearyAPI.FriendUser, onMore: @escaping (UIButton) -> Void) {
         moreHandler = onMore
         let displayName = (user.displayName?.isEmpty == false) ? user.displayName! : "beary 用户"
-        nameLabel.text = displayName
+        userRowView.nameLabel.text = displayName
         if let handle = user.handle, !handle.isEmpty {
-            handleLabel.text = "@\(handle)"
-            handleLabel.isHidden = false
+            userRowView.handleLabel.text = "@\(handle)"
+            userRowView.handleLabel.isHidden = false
         } else {
-            handleLabel.text = nil
-            handleLabel.isHidden = true
+            userRowView.handleLabel.text = nil
+            userRowView.handleLabel.isHidden = true
         }
         // C3：头像加载/占位/重试全走 BearyAvatarView（与旧 configure 同口径：
         // 有图加载、无图首字母占位、失败占位＋重试；复用前 reset 已清旧任务）。
-        avatarView.configure(displayName: displayName, avatarURL: user.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) }, ownerID: user.id)
+        userRowView.avatarView.configure(displayName: displayName, avatarURL: user.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) }, ownerID: user.id)
     }
 
     @objc private func moreTapped() {
