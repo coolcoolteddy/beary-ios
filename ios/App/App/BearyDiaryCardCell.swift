@@ -2495,43 +2495,20 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
 
-    /// E3：天气 key → Lottie 资源 key（编辑器选择器同款映射，唯 night 对应 moon）。
-    private static func weatherLottieKey(for weatherKey: String) -> String {
-        weatherKey == "night" ? "moon" : weatherKey
-    }
-
     /// E3：gotoEntry 落点行天气标播 Lottie。仅落点控制器在定位落定后调用；
     /// 其他行从不调用，天气标保持底层 wx 静态图。覆盖层贴在 weatherImageView
     /// 上（编辑器选择器同款 BearyEmoteView + LottieWeather 资源；深浅切换与
     /// 减动效静态帧均由播放器内部口径处理，解析中/失败时回退 wx 静态图）。
     /// 已有同 key 覆盖层时只重播，不重建，避免落点重复调用时从头闪一下。
     func playWeatherLottie() {
-        guard let weatherKey = currentEntry?.weather, !weatherKey.isEmpty, weatherImageView.isHidden == false else { return }
-        if let current = weatherEmoteView, current.emoteKey == Self.weatherLottieKey(for: weatherKey) {
-            current.play()
-            return
-        }
-        stopWeatherLottie()
-        let emoteView = BearyEmoteView(key: Self.weatherLottieKey(for: weatherKey), animated: true, fallbackImage: weatherImageView.image)
-        emoteView.isUserInteractionEnabled = false
-        emoteView.translatesAutoresizingMaskIntoConstraints = false
-        weatherImageView.addSubview(emoteView)
-        NSLayoutConstraint.activate([
-            emoteView.leadingAnchor.constraint(equalTo: weatherImageView.leadingAnchor),
-            emoteView.trailingAnchor.constraint(equalTo: weatherImageView.trailingAnchor),
-            emoteView.topAnchor.constraint(equalTo: weatherImageView.topAnchor),
-            emoteView.bottomAnchor.constraint(equalTo: weatherImageView.bottomAnchor),
-        ])
-        weatherEmoteView = emoteView
+        BearyWeatherLottie.play(weatherKey: currentEntry?.weather, iconView: weatherImageView, overlay: &weatherEmoteView)
     }
 
     /// E3：停播落点天气 Lottie 并摘掉覆盖层，底层 wx 静态图即恢复。
     /// 复用、重配、滑出可视区（播放器离窗自停 + 复用/重配摘层）与新落点
     /// 盖掉旧落点时均走此路，不留错播与空转。
     func stopWeatherLottie() {
-        weatherEmoteView?.stop()
-        weatherEmoteView?.removeFromSuperview()
-        weatherEmoteView = nil
+        BearyWeatherLottie.stop(overlay: &weatherEmoteView)
     }
 
     @objc private func authorTapped() {

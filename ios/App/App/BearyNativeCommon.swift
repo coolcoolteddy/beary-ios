@@ -2914,6 +2914,45 @@ enum BearyText {
     /// iCity：可见性切换无需确认（选择本身即确认，翻回即撤销），旧公开确认框常量已删除。
 }
 
+/// 天气 Lottie 覆盖层播／停（卡片落点行与详情页共用；原两处各写一套）。
+/// 统一行为取详情版：已有覆盖层须仍挂在图标视图上且同 key 才重播；
+/// 图标无底层静态图（fallback 为 nil）时不建覆盖层；无天气 key 或图标
+/// 隐藏时停掉旧层。映射走 BearyText.weatherLottieKey（卡片原私有副本已删）。
+enum BearyWeatherLottie {
+    /// 播：天气 key 非空且图标可见时建／重播覆盖层；否则停旧层。
+    static func play(weatherKey: String?, iconView: UIImageView, overlay: inout BearyEmoteView?) {
+        guard let weatherKey = weatherKey, !weatherKey.isEmpty, iconView.isHidden == false else {
+            stop(overlay: &overlay)
+            return
+        }
+        let lottieKey = BearyText.weatherLottieKey(for: weatherKey)
+        if let existing = overlay, existing.superview === iconView, existing.emoteKey == lottieKey {
+            existing.play()
+            return
+        }
+        stop(overlay: &overlay)
+        guard let fallback = iconView.image else { return }
+        let view = BearyEmoteView(key: lottieKey, animated: true, fallbackImage: fallback)
+        view.isUserInteractionEnabled = false
+        view.translatesAutoresizingMaskIntoConstraints = false
+        iconView.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: iconView.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: iconView.trailingAnchor),
+            view.topAnchor.constraint(equalTo: iconView.topAnchor),
+            view.bottomAnchor.constraint(equalTo: iconView.bottomAnchor),
+        ])
+        overlay = view
+    }
+
+    /// 停：停播并摘掉覆盖层，底层 wx 静态图即恢复。
+    static func stop(overlay: inout BearyEmoteView?) {
+        overlay?.stop()
+        overlay?.removeFromSuperview()
+        overlay = nil
+    }
+}
+
 /// 第十轮审计 dsh II-7：三句重复短句抽常量（各 4 处），文案本身不动，只收一处定义。
 /// 变基注：第四句“编辑（已超 15 分钟不可编辑）”的四处菜单项已随 main 的编辑永久可改
 /// （15 分钟门控删除）消失，该常量不再收录。

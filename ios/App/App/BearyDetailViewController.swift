@@ -1978,33 +1978,11 @@ final class BearyDetailViewController: UIViewController {
 
     /// 天气动态图标：底层静态图作 fallback（卡片落点行 playWeatherLottie 同款）。
     private func playWeatherLottie() {
-        guard let weatherKey = entry.weather, !weatherKey.isEmpty, weatherImageView.isHidden == false else {
-            stopWeatherLottie()
-            return
-        }
-        let lottieKey = BearyText.weatherLottieKey(for: weatherKey)
-        if let existing = weatherEmoteView, existing.superview === weatherImageView, existing.emoteKey == lottieKey {
-            existing.play()
-            return
-        }
-        stopWeatherLottie()
-        guard let fallback = weatherImageView.image else { return }
-        let overlay = BearyEmoteView(key: lottieKey, animated: true, fallbackImage: fallback)
-        overlay.translatesAutoresizingMaskIntoConstraints = false
-        weatherImageView.addSubview(overlay)
-        NSLayoutConstraint.activate([
-            overlay.topAnchor.constraint(equalTo: weatherImageView.topAnchor),
-            overlay.leadingAnchor.constraint(equalTo: weatherImageView.leadingAnchor),
-            overlay.trailingAnchor.constraint(equalTo: weatherImageView.trailingAnchor),
-            overlay.bottomAnchor.constraint(equalTo: weatherImageView.bottomAnchor),
-        ])
-        weatherEmoteView = overlay
+        BearyWeatherLottie.play(weatherKey: entry.weather, iconView: weatherImageView, overlay: &weatherEmoteView)
     }
 
     private func stopWeatherLottie() {
-        weatherEmoteView?.stop()
-        weatherEmoteView?.removeFromSuperview()
-        weatherEmoteView = nil
+        BearyWeatherLottie.stop(overlay: &weatherEmoteView)
     }
 
     /// 天气图标 + 气温标签（renderHeaderMeta 的一部分，审计 4/11 抽出）：
