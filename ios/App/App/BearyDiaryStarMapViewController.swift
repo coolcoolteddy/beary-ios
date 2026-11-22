@@ -252,11 +252,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         if navigationController?.viewControllers.count == 1, presentingViewController != nil {
             // 全屏页左上角统一左箭头：此前是 icon_close 叉叉，现改 icon_back
             // （tint 仍跟随夜空主文字色，见 viewWillAppear）。
-            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 24) {
-                navigationItem.leftBarButtonItem = UIBarButtonItem(image: backImage, style: .plain, target: self, action: #selector(didTapClose))
-            } else {
-                navigationItem.leftBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: self, action: #selector(didTapClose))
-            }
+            navigationItem.leftBarButtonItem = BearyNavigation.backItem(target: self, action: #selector(didTapClose))
         }
         buildLayout()
         // push 路悬浮返回钮：push 进他人主页 modal 导航栈那路，该栈隐藏

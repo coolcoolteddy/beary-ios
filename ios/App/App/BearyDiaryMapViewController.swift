@@ -125,11 +125,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         if navigationController?.viewControllers.count == 1, presentingViewController != nil {
             // 全屏页左上角统一左箭头：此前是文字“关闭”，现改 icon_back
             // （push 进栈时系统自带返回钮，本行只服务新起导航栈的根页）。
-            if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 24) {
-                navigationItem.leftBarButtonItem = UIBarButtonItem(image: backImage, style: .plain, target: self, action: #selector(didTapClose))
-            } else {
-                navigationItem.leftBarButtonItem = UIBarButtonItem(title: "返回", style: .plain, target: self, action: #selector(didTapClose))
-            }
+            navigationItem.leftBarButtonItem = BearyNavigation.backItem(target: self, action: #selector(didTapClose))
         }
         mapView.translatesAutoresizingMaskIntoConstraints = false
         mapView.delegate = self

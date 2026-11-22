@@ -50,6 +50,17 @@ enum BearyDesktop {
     }
 }
 
+/// 导航栏左返回钮（地图／星图两页共用）：有图用 icon_back 图、无图用「返回」文字；
+/// 图标 fallback 口径只定这一处，两页不再各写一份 if/else。
+enum BearyNavigation {
+    static func backItem(target: Any?, action: Selector) -> UIBarButtonItem {
+        if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 24) {
+            return UIBarButtonItem(image: backImage, style: .plain, target: target, action: action)
+        }
+        return UIBarButtonItem(title: "返回", style: .plain, target: target, action: action)
+    }
+}
+
 /// 阴影 token（视觉清单 Grok 项 2）：hairline 用于搜索框、callout；
 /// raised 用于 FAB、新内容条、居中弹层、底 sheet。只改数值一档，
 /// 不新增阴影层；弹层本身的两档数值（#519 视觉不变前提）本支不动。
