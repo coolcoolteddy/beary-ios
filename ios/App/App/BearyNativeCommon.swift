@@ -2655,7 +2655,7 @@ extension BearyAPI {
         request("/beary/api/entries/\(safe)/emote", method: "POST", jsonBody: ["emote": emote], completion: completion)
     }
 
-    /// 图片上传：dataUrl 与 thumb 均为 data:image/jpeg;base64,...；单图 ≤5MB、缩略图 ≤2MB。
+    /// 图片上传：dataUrl 与 thumb 均为 base64 JPEG data URL；单图 ≤5MB、缩略图 ≤2MB。
     /// 成功返回 R2 key（原图与缩略图共用该 key，缩略图另存 key+'_t'）。
     /// 实况：videoDataUrl 非空时才附带（data:video/quicktime;base64,... 的 mov，
     /// App 端已限 ≤10MB），后端把视频存 key+'_live' 并回 live_key；videoDataUrl
@@ -2891,6 +2891,24 @@ enum BearyImagePrep {
         format.scale = 1
         let renderer = UIGraphicsImageRenderer(size: target, format: format)
         return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
+    }
+
+    /// 正方形中心裁剪（像素口径）：边长取方向修正后的像素宽高之小者；
+    /// scale = 1 渲染器按像素画，draw 按方向修正后的像素尺寸画，
+    /// 取代调用方先 normalize 再按 pt 算裁剪框的旧路子。
+    static func squareCropped(_ image: UIImage) -> UIImage? {
+        let px = pixelSize(of: image)
+        let side = min(px.width, px.height)
+        guard side > 0 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format)
+        return renderer.image { _ in
+            image.draw(in: CGRect(x: CGFloat(-(px.width - side) / 2),
+                                   y: CGFloat(-(px.height - side) / 2),
+                                   width: CGFloat(px.width),
+                                   height: CGFloat(px.height)))
+        }
     }
 
     /// 返回 JPEG data 与最终像素宽高：宽高从最终图的 cgImage 像素读，

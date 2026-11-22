@@ -1523,15 +1523,10 @@ class BearyEditProfileViewController: UIViewController {
     // MARK: - 图片压缩（网页 edUploadCover / 头像 256px 口径）
 
     private func dataURLForAvatar(image: UIImage) -> String? {
-        let image = normalizeImage(image: image)
-        let side = min(image.size.width, image.size.height)
-        guard side > 0 else { return nil }
-        let crop = CGRect(x: (image.size.width - side) / 2, y: (image.size.height - side) / 2, width: side, height: side)
-        guard let cropped = cropImage(image: image, rect: crop) else { return nil }
-        let resized = resizeImage(image: cropped, maxDimension: 256)
+        guard let cropped = BearyImagePrep.squareCropped(image) else { return nil }
         for quality in [CGFloat(0.85), CGFloat(0.7), CGFloat(0.5)] {
-            if let data = resized.jpegData(compressionQuality: quality) {
-                let dataURL = "data:image/jpeg;base64," + data.base64EncodedString()
+            if let full = BearyImagePrep.jpegData(cropped, maxSide: 256, quality: quality) {
+                let dataURL = BearyImagePrep.dataURL(full.data)
                 if dataURL.count <= 200000 {
                     return dataURL
                 }
@@ -1541,52 +1536,16 @@ class BearyEditProfileViewController: UIViewController {
     }
 
     private func dataURLForCover(image: UIImage) -> String? {
-        let image = normalizeImage(image: image)
         let tries: [(CGFloat, CGFloat)] = [(1280, 0.8), (1024, 0.72), (880, 0.62)]
         for (maxWidth, quality) in tries {
-            let resized = resizeImage(image: image, maxDimension: maxWidth)
-            if let data = resized.jpegData(compressionQuality: quality) {
-                let dataURL = "data:image/jpeg;base64," + data.base64EncodedString()
+            if let full = BearyImagePrep.jpegData(image, maxSide: maxWidth, quality: quality) {
+                let dataURL = BearyImagePrep.dataURL(full.data)
                 if dataURL.count <= 400000 {
                     return dataURL
                 }
             }
         }
         return nil
-    }
-
-    /// 把带方向信息的照片先画成方向朝上的图，避免 cgImage 裁剪坐标错位。
-    private func normalizeImage(image: UIImage) -> UIImage {
-        if image.imageOrientation == .up {
-            return image
-        }
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = image.scale
-        let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
-        return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: image.size))
-        }
-    }
-
-    private func cropImage(image: UIImage, rect: CGRect) -> UIImage? {
-        guard let cgImage = image.cgImage else { return nil }
-        let scale = image.scale
-        let pixelRect = CGRect(x: rect.origin.x * scale, y: rect.origin.y * scale, width: rect.size.width * scale, height: rect.size.height * scale)
-        guard let cropped = cgImage.cropping(to: pixelRect) else { return nil }
-        return UIImage(cgImage: cropped, scale: scale, orientation: image.imageOrientation)
-    }
-
-    private func resizeImage(image: UIImage, maxDimension: CGFloat) -> UIImage {
-        let longest = max(image.size.width, image.size.height)
-        guard longest > maxDimension else { return image }
-        let ratio = maxDimension / longest
-        let target = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        let renderer = UIGraphicsImageRenderer(size: target, format: format)
-        return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: target))
-        }
     }
 }
 

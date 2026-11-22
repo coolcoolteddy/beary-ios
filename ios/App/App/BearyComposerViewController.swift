@@ -5759,7 +5759,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             let thumbData = BearyImagePrep.thumbData(firstFrame)
             let dataUrl = "data:image/gif;base64,\(data.base64EncodedString())"
-            let thumbDataUrl = thumbData.map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
+            let thumbDataUrl = thumbData.map { BearyImagePrep.dataURL($0) }
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: info.w, height: info.h, thumbDataUrl: thumbDataUrl) { [weak self] result in
@@ -5829,8 +5829,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 return
             }
-            let dataUrl = "data:image/jpeg;base64,\(full.data.base64EncodedString())"
-            let thumbDataUrl = "data:image/jpeg;base64,\(thumbData.base64EncodedString())"
+            let dataUrl = BearyImagePrep.dataURL(full.data)
+            let thumbDataUrl = BearyImagePrep.dataURL(thumbData)
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: full.w, height: full.h, thumbDataUrl: thumbDataUrl) { [weak self] result in
