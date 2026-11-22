@@ -1625,7 +1625,7 @@ final class BearySettingsViewController: UIViewController {
         // 导出按钮置灰但账号行照常可点，导出链中途切号会让 profile 与
         // entries 分属两个账号。导出中点切换行直接提示、不启动切换。
         guard !isExporting else {
-            showToast("正在导出，请稍后再切换账号")
+            showToast(message: "正在导出，请稍后再切换账号")
             return
         }
         if SessionManager.shared.currentUser?.id == accountIdValue {
@@ -1635,7 +1635,7 @@ final class BearySettingsViewController: UIViewController {
         // 不许切号，否则注销成功回调会清当时当前账号（见 confirmDeleteAccount）。
         // 放在同号早退之后：点自己当前行不是切换，不应弹提示。
         guard !isDeleting else {
-            showToast("正在注销，请稍后再切换账号")
+            showToast(message: "正在注销，请稍后再切换账号")
             return
         }
         // 第四轮审计 39：同号移除在途时不许切过去——移除已发出目标号
@@ -1643,13 +1643,13 @@ final class BearySettingsViewController: UIViewController {
         // 的会话提交成功（见 SessionManager.removeAccount 注释）。
         // 不同号的移除不阻塞。
         guard removingAccountId != accountIdValue else {
-            showToast("正在移除该账号，请稍后再切换")
+            showToast(message: "正在移除该账号，请稍后再切换")
             return
         }
         if expiredSwitchUserIds.contains(accountIdValue) {
             // 该号会话已被上次切换预检证实失效：不再发注定 401 的预检，
             // 直走过期重登（与下面 .expired 分支同一入口）。
-            showToast("登录已过期，请重新登录")
+            showToast(message: "登录已过期，请重新登录")
             openLoginForAccountSwitch()
             return
         }
@@ -1680,12 +1680,12 @@ final class BearySettingsViewController: UIViewController {
                 // 不再装成可直接切换），再弹重登页；取消回来时标记仍在。
                 self.expiredSwitchUserIds.insert(accountIdValue)
                 self.refreshAccountSwitchSection()
-                self.showToast("登录已过期，请重新登录")
+                self.showToast(message: "登录已过期，请重新登录")
                 self.openLoginForAccountSwitch()
             case .network:
-                self.showToast("网络不稳定，请稍后再试")
+                self.showToast(message: "网络不稳定，请稍后再试")
             case .failed, .unavailable:
-                self.showToast("切换失败，请稍后再试")
+                self.showToast(message: "切换失败，请稍后再试")
             }
         }
     }
@@ -1746,7 +1746,7 @@ final class BearySettingsViewController: UIViewController {
         // 通过即提交，确认后发出的移除登出会把刚切好的会话撤掉。
         // 不同号的切换不阻塞。
         guard switchingAccountId != accountIdValue else {
-            showToast("正在切换到该账号，请稍后再移除")
+            showToast(message: "正在切换到该账号，请稍后再移除")
             return
         }
         let isCurrent = SessionManager.shared.currentUser?.id == accountIdValue
@@ -1759,7 +1759,7 @@ final class BearySettingsViewController: UIViewController {
                 // 第四轮审计 39：确认前复核——弹窗期间同号切换可能已启动，
                 // 此时发出的移除登出会撤掉刚切好的会话，直接拒绝、不发请求。
                 guard self.switchingAccountId != accountIdValue else {
-                    self.showToast("正在切换到该账号，请稍后再移除")
+                    self.showToast(message: "正在切换到该账号，请稍后再移除")
                     return
                 }
                 self.isRemovingAccount = true
@@ -1781,7 +1781,7 @@ final class BearySettingsViewController: UIViewController {
                             self.onClose?()
                         }
                     case .failed:
-                        self.showToast("退出失败，请重试")
+                        self.showToast(message: "退出失败，请重试")
                     }
                 }
             },
@@ -2030,7 +2030,7 @@ final class BearySettingsViewController: UIViewController {
                         self.onClose?()
                     }
                 case .failure:
-                    self.showToast("退出失败，请重试")
+                    self.showToast(message: "退出失败，请重试")
                 }
             }
         }
@@ -2455,7 +2455,7 @@ final class BearySettingsViewController: UIViewController {
                     // 网页口径：提示后 1.2 秒回首页；原生等价为提示后走 onAccountDeleted（容器清态并关闭本页）。
                     // 审计 P2：1.2 秒窗口内 isDeleting 保持 true，直至 onAccountDeleted 执行后才复位，
                     // 防止窗口内重复点注销。
-                    self.showToast("已提交注销申请，7 天后正式注销")
+                    self.showToast(message: "已提交注销申请，7 天后正式注销")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                         guard let self = self else { return }
                         // 1.2 秒窗口内又切了号：同上，放弃清理，只复位。
@@ -2479,10 +2479,10 @@ final class BearySettingsViewController: UIViewController {
                     }
                     if case .cancelled = error { return }
                     if case .server(let code, _) = error, code == "admin_cannot_delete" {
-                        self.showToast("管理员账号不能注销")
+                        self.showToast(message: "管理员账号不能注销")
                         return
                     }
-                    self.showToast("注销失败，请重试")
+                    self.showToast(message: "注销失败，请重试")
                 }
             }
         }
@@ -2517,7 +2517,7 @@ final class BearySettingsViewController: UIViewController {
         isExporting = false
         exportRowButton.isEnabled = true
         setExportProgress(nil)
-        showToast("账号已切换，导出已取消")
+        showToast(message: "账号已切换，导出已取消")
     }
 
     @objc private func exportButtonTapped() {
@@ -2538,7 +2538,7 @@ final class BearySettingsViewController: UIViewController {
         let startEpoch = BearyAPI.shared.authEpoch
         isExporting = true
         exportRowButton.isEnabled = false
-        showToast("正在导出…")
+        showToast(message: "正在导出…")
         setExportProgress("正在导出…")
         BearyAPI.shared.fetchMeWithToken(token) { [weak self] result in
             guard let self = self else { return }
@@ -2568,7 +2568,7 @@ final class BearySettingsViewController: UIViewController {
         isExporting = false
         exportRowButton.isEnabled = true
         setExportProgress(nil)
-        showToast("导出失败，请重试")
+        showToast(message: "导出失败，请重试")
     }
 
     /// 2026-10-29（P2-13）：导出进度提示——串行四阶段在行副文案上轮换，结束（失败/触顶确认前）复原；
@@ -2631,14 +2631,14 @@ final class BearySettingsViewController: UIViewController {
                 self.isExporting = false
                 self.exportRowButton.isEnabled = true
                 self.setExportProgress(nil)
-                self.showToast("导出失败（登录设备拉取失败），未生成文件")
+                self.showToast(message: "导出失败（登录设备拉取失败），未生成文件")
                 return
             }
             if let failedReason = exportFailedReason {
                 self.isExporting = false
                 self.exportRowButton.isEnabled = true
                 self.setExportProgress(nil)
-                self.showToast("导出失败（\(failedReason)），未生成文件")
+                self.showToast(message: "导出失败（\(failedReason)），未生成文件")
                 return
             }
             // 触顶：分享前先弹明确标注，用户点“继续分享”才拼文件、出分享面板；
@@ -2809,7 +2809,7 @@ final class BearySettingsViewController: UIViewController {
                     self.isExporting = false
                     self.exportRowButton.isEnabled = true
                     self.setExportProgress(nil)
-                    self.showToast("导出失败，请重试")
+                    self.showToast(message: "导出失败，请重试")
                 }
                 return
             }
@@ -2839,7 +2839,7 @@ final class BearySettingsViewController: UIViewController {
                     self.isExporting = false
                     self.exportRowButton.isEnabled = true
                     self.setExportProgress(nil)
-                    self.showToast("导出失败，请重试")
+                    self.showToast(message: "导出失败，请重试")
                 }
                 return
             }
@@ -2864,7 +2864,7 @@ final class BearySettingsViewController: UIViewController {
                 // 不留导出 JSON 在 tmp 里；完成回调在分享面板收起后才跑，活动方已读完文件。
                 activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
                     try? FileManager.default.removeItem(at: fileURL)
-                    if completed { self?.showToast("导出完成") }
+                    if completed { self?.showToast(message: "导出完成") }
                 }
                 self.present(activity, animated: BearyMotion.animated(true))
             }
@@ -3088,15 +3088,6 @@ final class BearySettingsViewController: UIViewController {
         }
         dict["is_private"] = isPrivate
         return dict
-    }
-
-    // MARK: - 轻提示：委托统一 BearyToast。旧 Timer 重置语义由统一
-    // 组件“新 toast 先清旧 toast”承接。设置页是全屏模态，盖住 Chrome，
-    // 落点由组件回落安全区 -32；展示时长由旧 1.6s 统一为 2.0s，
-    // 调用签名与文案、触发时机不变。
-
-    private func showToast(_ text: String) {
-        BearyToast.show(in: view, message: text)
     }
 
     // MARK: - 设置页新增三区（2026-10-26，第二阶段）
@@ -3363,7 +3354,7 @@ final class BearySettingsViewController: UIViewController {
                 }
             } else {
                 sender.isOn = !desired
-                self.showToast("验证未通过，设置未更改")
+                self.showToast(message: "验证未通过，设置未更改")
             }
         }
     }

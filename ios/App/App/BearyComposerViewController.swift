@@ -10408,13 +10408,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 通用
 
-    /// 轻提示：委托统一 BearyToast。编辑器是全屏模态，不在 Chrome
-    /// 子页内，落点由组件回落安全区 -32。
-    /// 调用签名与文案、触发时机不变。
-    private func showToast(message: String) {
-        BearyToast.show(in: view, message: message)
-    }
-
     /// 关编辑器后仍可见的 toast：挂在 presenting 方视图上（网页 toast 在页面层、
     /// 不随编辑器关闭而消失的等价处理），调用方随后走 onCancelled 关闭本页。
     /// 若无 presenting 方（如已被 dismiss），退回本页 toast。落点由组件按

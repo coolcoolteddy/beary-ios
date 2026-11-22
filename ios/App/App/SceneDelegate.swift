@@ -3419,14 +3419,6 @@ final class BearyChromeViewController: UIViewController {
         return bottomSegmented?.topAnchor
     }
 
-    /// 容器级轻提示（A11 未登录“我”页、时间线删除失败等）：委托统一
-    /// BearyToast。落点由组件按当前 chrome 态算（FAB 可见落 FAB 顶之上、
-    /// 仅底栏可见落底栏顶之上、皆无落 -32），此处不再自算可见性；
-    /// 调用签名与文案不变。
-    private func showToast(message: String) {
-        BearyToast.show(in: view, message: message)
-    }
-
     /// 个人主页通用回调接线（我页与他人主页 modal 共用；onOpenEntry/onRequireLogin 各处自接）。
     private func wireProfileVC(_ vc: BearyProfileViewController, modal: Bool) {
         vc.onBack = { [weak self] in

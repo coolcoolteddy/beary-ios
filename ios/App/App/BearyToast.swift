@@ -614,3 +614,22 @@ final class BearyPublishPillView: UIView {
         }
     }
 }
+
+// MARK: - UIViewController 共享轻提示
+
+/// 各页原私有的 showToast 薄包装收敛到此处（2026-11-22）：本体只是包一层
+/// BearyToast.show(in: view, message:)，4 个逐字相同的包装直接删掉，调用点
+/// 不动、走本方法；带 toastOverride 的两页（私信会话列表、通知页）把各自的
+/// override 作可选参数传进来——设了 override 时 toast 改投指定闭包（消息页
+/// 容器转投当前可见页），无 override 时与原来的一行包装行为一致。
+/// showToastAfterClose（编辑器）不在此列：它挂 presenting 方视图，有意不同。
+extension UIViewController {
+
+    func showToast(message: String, toastOverride: ((String) -> Void)? = nil) {
+        if let override = toastOverride {
+            override(message)
+            return
+        }
+        BearyToast.show(in: view, message: message)
+    }
+}
