@@ -47,7 +47,7 @@ final class BearyDMStoreTests: XCTestCase {
             merged = result
             exp.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         return merged
     }
 
@@ -125,7 +125,7 @@ final class BearyDMStoreTests: XCTestCase {
             if case .merged(let merged, let saved) = outcome { first = merged; firstSaved = saved }
             exp1.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertTrue(firstSaved)
         XCTAssertEqual(first.map { $0.id }, [1, 2, 3, 4, 5])
         let exp2 = expectation(description: "persist page 2")
@@ -135,7 +135,7 @@ final class BearyDMStoreTests: XCTestCase {
             if case .merged(let merged, let saved) = outcome { second = merged; secondSaved = saved }
             exp2.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertTrue(secondSaved)
         XCTAssertEqual(second.map { $0.id }, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
         // 磁盘上的库同样是两页合并后的 10 条。
@@ -156,7 +156,7 @@ final class BearyDMStoreTests: XCTestCase {
             if case .merged(_, let saved) = outcome { firstSaved = saved }
             exp1.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertTrue(firstSaved)
         let bytesAfterFirst = try? Data(contentsOf: storeFile(accountId: accountId))
         let mtimeAfterFirst = try? FileManager.default.attributesOfItem(atPath: storeFile(accountId: accountId).path)[.modificationDate] as? Date
@@ -169,7 +169,7 @@ final class BearyDMStoreTests: XCTestCase {
             if case .merged(_, let saved) = outcome { emptySaved = saved }
             expEmpty.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertTrue(emptySaved)
         XCTAssertEqual(try? Data(contentsOf: storeFile(accountId: accountId)), bytesAfterFirst)
         XCTAssertEqual(try? FileManager.default.attributesOfItem(atPath: storeFile(accountId: accountId).path)[.modificationDate] as? Date, mtimeAfterFirst)
@@ -180,7 +180,7 @@ final class BearyDMStoreTests: XCTestCase {
             if case .merged(_, let saved) = outcome { dupSaved = saved }
             expDup.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertTrue(dupSaved)
         XCTAssertEqual(try? Data(contentsOf: storeFile(accountId: accountId)), bytesAfterFirst)
         XCTAssertEqual(try? FileManager.default.attributesOfItem(atPath: storeFile(accountId: accountId).path)[.modificationDate] as? Date, mtimeAfterFirst)
@@ -191,7 +191,7 @@ final class BearyDMStoreTests: XCTestCase {
             if case .merged(_, let saved) = outcome { newSaved = saved }
             expNew.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertTrue(newSaved)
         if case .loaded(let all) = BearyDMStore.loadAll(accountId: accountId) {
             XCTAssertEqual(all["5"]?.messages.map { $0.id }, [1, 2, 3, 4, 5, 6])
@@ -211,7 +211,7 @@ final class BearyDMStoreTests: XCTestCase {
             if case .corrupt(let rows) = outcome { gotCorrupt = true; fresh = rows }
             exp.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertTrue(gotCorrupt)
         // 损坏时只回本次新消息，不写盘。
         XCTAssertEqual(fresh.map { $0.id }, [10])
@@ -234,7 +234,7 @@ final class BearyDMStoreTests: XCTestCase {
             corrupt = value
             exp.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertTrue(corrupt)
         // 异步检查同样登记损坏态：空态判断经 isStoreCorrupt 读到同一结论，
         // 且只留一份损坏备份、原文件一字未动。
@@ -252,7 +252,7 @@ final class BearyDMStoreTests: XCTestCase {
             healthyCorrupt = value
             expHealthy.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertFalse(healthyCorrupt)
         XCTAssertFalse(BearyDMStore.isStoreCorrupt(accountId: healthyId))
         // 无文件（新库）同样不算损坏。
@@ -262,7 +262,7 @@ final class BearyDMStoreTests: XCTestCase {
             missingCorrupt = value
             expMissing.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertFalse(missingCorrupt)
     }
 
@@ -293,7 +293,7 @@ final class BearyDMStoreTests: XCTestCase {
         let exp2 = expectation(description: "save second")
         BearyDMStore.saveMessages(accountId: first, peer: peer(id: 5), messages: [message(id: 10, body: "一号的消息")]) { _, _ in exp1.fulfill() }
         BearyDMStore.saveMessages(accountId: second, peer: peer(id: 6), messages: [message(id: 20, body: "二号的消息")]) { _, _ in exp2.fulfill() }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         // 各号只读到自己的文件。
         if case .loaded(let allFirst) = BearyDMStore.loadAll(accountId: first) {
             XCTAssertEqual(allFirst.keys.sorted(), ["5"])
@@ -334,7 +334,7 @@ final class BearyDMStoreTests: XCTestCase {
             restored = ok
             exp.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertTrue(restored)
         XCTAssertFalse(BearyDMStore.isStoreCorrupt(accountId: accountId))
         if case .loaded(let all) = BearyDMStore.loadAll(accountId: accountId) {
@@ -357,7 +357,7 @@ final class BearyDMStoreTests: XCTestCase {
             discarded = ok
             exp.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertTrue(discarded)
         XCTAssertFalse(FileManager.default.fileExists(atPath: storeFile(accountId: accountId).path))
         XCTAssertFalse(BearyDMStore.isStoreCorrupt(accountId: accountId))
@@ -372,7 +372,7 @@ final class BearyDMStoreTests: XCTestCase {
             discardedAgain = ok
             exp2.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertFalse(discardedAgain)
     }
 
@@ -397,7 +397,7 @@ final class BearyDMStoreTests: XCTestCase {
             exp.fulfill()
         }
         // 审计四轮增量 12：超时 30 秒——#935 教训：CI 冷启动下纯同步用例也跑过 4.5 秒，5 秒太贴边。
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         return result
     }
 
@@ -469,7 +469,7 @@ final class BearyDMStoreTests: XCTestCase {
             XCTAssertFalse(saved)
             corruptRemove.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertEqual(try? Data(contentsOf: pendingFile(accountId: corruptAccount)), Data("坏了".utf8))
         // 正常态：改状态成功回 true，落盘后的状态读回一致。
         let accountId = 9014
@@ -479,7 +479,7 @@ final class BearyDMStoreTests: XCTestCase {
             XCTAssertTrue(saved)
             statusExp.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertEqual(loadPendings(accountId: accountId, peerId: 5).first?.status, .failed)
         // 删行成功回 true，行已不在；再删不存在的行回 true（目标态已达成）。
         let removeExp = expectation(description: "remove returns true")
@@ -487,21 +487,21 @@ final class BearyDMStoreTests: XCTestCase {
             XCTAssertTrue(saved)
             removeExp.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertEqual(loadPendings(accountId: accountId, peerId: 5).count, 0)
         let removeMissingExp = expectation(description: "remove missing returns true")
         BearyDMStore.removePending(localKey: "k1", accountId: accountId) { saved in
             XCTAssertTrue(saved)
             removeMissingExp.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         // 改不存在的行回 false（未落盘）。
         let missingStatusExp = expectation(description: "update missing returns false")
         BearyDMStore.updatePendingStatus(localKey: "k1", status: .failed, accountId: accountId) { saved in
             XCTAssertFalse(saved)
             missingStatusExp.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
     }
 
     func testPendingCorruptBackupURLIsUnique() {
@@ -570,14 +570,14 @@ final class BearyDMStoreTests: XCTestCase {
         BearyDMStore.savePending(.init(localKey: "sk1", peerId: 5, body: "周末的待发", createdAt: 1793000000001, status: .sending), accountId: accountId) { _ in
             pendingExp.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         let exp = expectation(description: "searchMessages")
         var results: [BearyAPI.DMMessage] = []
         BearyDMStore.searchMessages(accountId: accountId, peerId: 5, query: "周末") { found in
             results = found
             exp.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         // 待发最新在前，其次是已落盘的同会话消息；另一会话的不在内。
         XCTAssertEqual(results.map { $0.id }, [nil, 1])
         XCTAssertEqual(results.first?.localKey, "sk1")
@@ -589,7 +589,7 @@ final class BearyDMStoreTests: XCTestCase {
             results2 = found
             exp2.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
         XCTAssertEqual(results2.map { $0.id }, [nil, 1])
         // accountId==nil 回 []。
         let exp3 = expectation(description: "searchMessages nil account")
@@ -597,6 +597,6 @@ final class BearyDMStoreTests: XCTestCase {
             XCTAssertTrue(found.isEmpty)
             exp3.fulfill()
         }
-        waitForExpectations(timeout: 30)
+        waitForTestExpectations()
     }
 }

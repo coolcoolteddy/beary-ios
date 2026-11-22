@@ -239,16 +239,6 @@ final class BearyStarMapTests: XCTestCase {
         try bearyDecoder().decode(Entry.self, from: Data(json.utf8))
     }
 
-    private func ms(year: Int, month: Int, day: Int) -> Int {
-        var comps = DateComponents()
-        comps.year = year
-        comps.month = month
-        comps.day = day
-        comps.hour = 12
-        let date = Calendar.current.date(from: comps)!
-        return Int(date.timeIntervalSince1970 * 1000)
-    }
-
     func testPositionIsDeterministicAndBounded() {
         let a = BearyStarMap.position(forEntryId: "b_star1")
         let b = BearyStarMap.position(forEntryId: "b_star1")
@@ -338,8 +328,8 @@ final class BearyStarMapTests: XCTestCase {
     }
 
     func testSlicingAndDefaultSlice() throws {
-        let oct = try entry("{\"id\":\"b_oct\",\"content\":\"十月篇。\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 10, day: 3))}")
-        let nov = try entry("{\"id\":\"b_nov\",\"content\":\"十一月篇。\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 11, day: 5))}")
+        let oct = try entry("{\"id\":\"b_oct\",\"content\":\"十月篇。\",\"is_public\":true,\"created_at\":\(BearyCoreTestHelpers.ms(year: 2026, month: 10, day: 3))}")
+        let nov = try entry("{\"id\":\"b_nov\",\"content\":\"十一月篇。\",\"is_public\":true,\"created_at\":\(BearyCoreTestHelpers.ms(year: 2026, month: 11, day: 5))}")
         let undated = try entry("{\"id\":\"b_und\",\"content\":\"无日期篇。\",\"is_public\":true}")
         let entries = [oct, nov, undated]
         XCTAssertEqual(BearyStarMap.years(in: entries), [2026])
@@ -351,7 +341,7 @@ final class BearyStarMapTests: XCTestCase {
         // 81 篇（> 阈值 80）默认最新年最新月，不铺全量。
         var many: [Entry] = []
         for i in 0..<81 {
-            many.append(try entry("{\"id\":\"b_many\(i)\",\"content\":\"第\(i)篇。\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 11, day: 5))}"))
+            many.append(try entry("{\"id\":\"b_many\(i)\",\"content\":\"第\(i)篇。\",\"is_public\":true,\"created_at\":\(BearyCoreTestHelpers.ms(year: 2026, month: 11, day: 5))}"))
         }
         XCTAssertEqual(BearyStarMap.defaultSlice(for: many), .month(year: 2026, month: 11))
     }
@@ -359,8 +349,8 @@ final class BearyStarMapTests: XCTestCase {
     // MARK: - r17 C5：日记版本指纹 + 建图内存缓存
 
     func testDiaryVersionStableAcrossReorderAndSensitiveToEdits() throws {
-        let a = try entry("{\"id\":\"b_v1\",\"title\":\"甲\",\"content\":\"湖边桂花开了。\",\"mood\":\"happy\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 11, day: 5))}")
-        let b = try entry("{\"id\":\"b_v2\",\"title\":\"乙\",\"content\":\"桂花香满路。\",\"mood\":\"cry\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 11, day: 4))}")
+        let a = try entry("{\"id\":\"b_v1\",\"title\":\"甲\",\"content\":\"湖边桂花开了。\",\"mood\":\"happy\",\"is_public\":true,\"created_at\":\(BearyCoreTestHelpers.ms(year: 2026, month: 11, day: 5))}")
+        let b = try entry("{\"id\":\"b_v2\",\"title\":\"乙\",\"content\":\"桂花香满路。\",\"mood\":\"cry\",\"is_public\":true,\"created_at\":\(BearyCoreTestHelpers.ms(year: 2026, month: 11, day: 4))}")
         let base = BearyStarMap.diaryVersion(entries: [a, b], viewerIsAuthor: true)
         // 同一集合换顺序，指纹不变（fetch 顺序不触发重建）。
         XCTAssertEqual(BearyStarMap.diaryVersion(entries: [b, a], viewerIsAuthor: true), base)
@@ -494,11 +484,6 @@ final class BearyPastSelfTests: XCTestCase {
         return cal
     }
 
-    private func ms(year: Int, month: Int, day: Int) -> Int {
-        let date = calendar.date(from: DateComponents(year: year, month: month, day: day, hour: 12))!
-        return Int(date.timeIntervalSince1970 * 1000)
-    }
-
     private func message(id: String, chain: String, createdMs: Int, deliverOn: String, revokedMs: Int? = nil) -> PastSelfMessage {
         PastSelfMessage(id: id, originEntryId: chain, chainId: chain, authorId: 1, body: "留话 \(id)",
                         createdAtMs: createdMs, deliverOn: deliverOn, revokedAtMs: revokedMs,
@@ -506,13 +491,13 @@ final class BearyPastSelfTests: XCTestCase {
     }
 
     func testNextYearNormalAndLeapDay() {
-        XCTAssertEqual(PastSelfLogic.nextYearDateString(fromMs: ms(year: 2025, month: 10, day: 30), calendar: calendar), "2026-10-30")
+        XCTAssertEqual(PastSelfLogic.nextYearDateString(fromMs: BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar), calendar: calendar), "2026-10-30")
         // 2 月 29 日不跳 3 月 1 日、不丢推送，退到 2 月 28 日。
-        XCTAssertEqual(PastSelfLogic.nextYearDateString(fromMs: ms(year: 2024, month: 2, day: 29), calendar: calendar), "2025-02-28")
+        XCTAssertEqual(PastSelfLogic.nextYearDateString(fromMs: BearyCoreTestHelpers.ms(year: 2024, month: 2, day: 29, calendar: calendar), calendar: calendar), "2025-02-28")
     }
 
     func testThreadStateTransitions() {
-        let first = message(id: "m1", chain: "b_1", createdMs: ms(year: 2025, month: 10, day: 30), deliverOn: "2026-10-30")
+        let first = message(id: "m1", chain: "b_1", createdMs: BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar), deliverOn: "2026-10-30")
         // 未到送达日：等待态（那年今日卡内「已留话 · 明年见」，不进送达卡）。
         if case .waiting(let waiting) = PastSelfLogic.threadState([first], chainId: "b_1", today: "2026-10-29") {
             XCTAssertEqual(waiting.id, "m1")
@@ -526,7 +511,7 @@ final class BearyPastSelfTests: XCTestCase {
             XCTFail("expected due after deliver day")
         }
         // 再回一句后：最新行等明年，此前有已送达行 → 已回态（不再出「再回一句」）。
-        let second = message(id: "m2", chain: "b_1", createdMs: ms(year: 2026, month: 10, day: 30), deliverOn: "2027-10-30")
+        let second = message(id: "m2", chain: "b_1", createdMs: BearyCoreTestHelpers.ms(year: 2026, month: 10, day: 30, calendar: calendar), deliverOn: "2027-10-30")
         if case .answered(let waiting, let chain) = PastSelfLogic.threadState([first, second], chainId: "b_1", today: "2026-11-05") {
             XCTAssertEqual(waiting.id, "m2")
             XCTAssertEqual(chain.count, 2)
@@ -534,7 +519,7 @@ final class BearyPastSelfTests: XCTestCase {
             XCTFail("expected answered after reply")
         }
         // 撤回行不计入链。
-        let revoked = message(id: "m3", chain: "b_1", createdMs: ms(year: 2026, month: 10, day: 31), deliverOn: "2027-10-31", revokedMs: 1)
+        let revoked = message(id: "m3", chain: "b_1", createdMs: BearyCoreTestHelpers.ms(year: 2026, month: 10, day: 31, calendar: calendar), deliverOn: "2027-10-31", revokedMs: 1)
         XCTAssertEqual(PastSelfLogic.liveChainMessages([first, second, revoked], chainId: "b_1").map { $0.id }, ["m1", "m2"])
     }
 
@@ -559,7 +544,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 99, defaults: suite)
-        let created = ms(year: 2025, month: 10, day: 30)
+        let created = BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar)
         let first = store.add(originEntryId: "b_9", body: "第一句", createdAtMs: created, calendar: calendar)
         XCTAssertNotNil(first)
         XCTAssertEqual(first?.deliverOn, "2026-10-30")
@@ -579,7 +564,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 98, defaults: suite)
-        let created = ms(year: 2025, month: 10, day: 30)
+        let created = BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar)
         let local = store.add(originEntryId: "b_7", body: "待同步句", createdAtMs: created, calendar: calendar)!
         XCTAssertTrue(store.revoke(messageId: local.id, nowMs: created, today: "2026-01-01"))
         // 服务端回包仍是未撤回旧态时，本地撤回标记不被冲掉。
@@ -597,7 +582,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 93, defaults: suite)
-        let created = ms(year: 2025, month: 10, day: 30)
+        let created = BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar)
         let local = store.add(originEntryId: "b_7", body: "待同步句", createdAtMs: created, calendar: calendar)!
         XCTAssertTrue(store.revoke(messageId: local.id, nowMs: created, today: "2026-01-01"))
         // 列表回包先到：服务端行插进来，临时行保留。
@@ -620,7 +605,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 92, defaults: suite)
-        let created = ms(year: 2025, month: 10, day: 30)
+        let created = BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar)
         let local = store.add(originEntryId: "b_7", body: "待同步句", createdAtMs: created, calendar: calendar)!
         var serverRow = message(id: "ps_s3", chain: "b_7", createdMs: created, deliverOn: "2026-10-30", revokedMs: created)
         serverRow.authorId = 92
@@ -639,7 +624,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 91, defaults: suite)
-        let created = ms(year: 2025, month: 10, day: 30)
+        let created = BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar)
         XCTAssertEqual(store.unsyncedCount, 0)
         let local = store.add(originEntryId: "b_6", body: "待同步句", createdAtMs: created, calendar: calendar)!
         XCTAssertEqual(store.unsyncedCount, 1)
@@ -660,7 +645,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 91, defaults: suite)
-        let created = ms(year: 2025, month: 10, day: 30)
+        let created = BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar)
         let local = store.add(originEntryId: "b_7", body: "待同步句", createdAtMs: created, calendar: calendar)!
         XCTAssertTrue(store.revoke(messageId: local.id, nowMs: created, today: "2026-01-01"))
         let serverRow = PastSelfMessage(id: "srv_1", originEntryId: "b_7", chainId: "b_7", authorId: 91, body: "待同步句",
@@ -681,7 +666,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 97, defaults: suite)
-        let created = ms(year: 2025, month: 10, day: 30)
+        let created = BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar)
         let first = store.add(originEntryId: "b_6", body: "别丢我", createdAtMs: created, calendar: calendar)!
         let mainKey = "beary.pastSelf.v1.97"
         // 模拟损坏：主 key 写进解不出的字节。
@@ -708,7 +693,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 94, defaults: suite)
-        let created = ms(year: 2025, month: 10, day: 30)
+        let created = BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar)
         if case .empty = store.loadOutcome() {} else {
             XCTFail("空库应判为 empty")
         }
@@ -727,7 +712,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 91, defaults: suite)
-        let base = ms(year: 2020, month: 1, day: 1)
+        let base = BearyCoreTestHelpers.ms(year: 2020, month: 1, day: 1, calendar: calendar)
         var local: [PastSelfMessage] = []
         for chain in 0..<50 {
             for j in 0..<2 {
@@ -767,7 +752,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 90, defaults: suite)
-        let base = ms(year: 2020, month: 1, day: 1)
+        let base = BearyCoreTestHelpers.ms(year: 2020, month: 1, day: 1, calendar: calendar)
         var rows: [PastSelfMessage] = []
         var idx = 0
         func delivered(id: String, chain: String, localOnly: Bool) -> PastSelfMessage {
@@ -787,7 +772,7 @@ final class BearyPastSelfTests: XCTestCase {
         XCTAssertEqual(rows.count, 201)
         suite.set(try JSONEncoder().encode(rows), forKey: "beary.pastSelf.v1.90")
         let added = store.add(originEntryId: "b_new", body: "新一句",
-                              createdAtMs: ms(year: 2026, month: 1, day: 1), calendar: calendar)
+                              createdAtMs: BearyCoreTestHelpers.ms(year: 2026, month: 1, day: 1, calendar: calendar), calendar: calendar)
         XCTAssertNotNil(added)
         let ids = store.loadAll().map { $0.id }
         XCTAssertEqual(ids.count, 200)
@@ -806,7 +791,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 96, defaults: suite)
-        let created = ms(year: 2025, month: 10, day: 30)
+        let created = BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar)
         let first = store.add(originEntryId: "b_4", body: "第一句", createdAtMs: created, calendar: calendar)!
         // 首写无旧数据，备份 key 还是空的。
         XCTAssertNil(suite.data(forKey: "beary.pastSelf.v1.96.bak"))
@@ -849,7 +834,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 90, defaults: suite)
-        let created = ms(year: 2025, month: 10, day: 30)
+        let created = BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar)
         let first = store.add(originEntryId: "b_7", body: "第一句", createdAtMs: created, calendar: calendar)!
         let reqId = first.clientRequestId
         XCTAssertNotNil(reqId)
@@ -887,7 +872,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 90, defaults: suite)
-        let created = ms(year: 2025, month: 10, day: 30)
+        let created = BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar)
         let local = store.add(originEntryId: "b_7", body: "待同步句", createdAtMs: created, calendar: calendar)!
         XCTAssertTrue(store.revoke(messageId: local.id, nowMs: created, today: "2026-01-01"))
         let serverRow = PastSelfMessage(id: "42", originEntryId: "b_7", chainId: "b_7", authorId: 90, body: "待同步句",
@@ -909,7 +894,7 @@ final class BearyPastSelfTests: XCTestCase {
         let suite = UserDefaults(suiteName: "beary.pastself.tests")!
         suite.removePersistentDomain(forName: "beary.pastself.tests")
         let store = PastSelfStore(userId: 90, defaults: suite)
-        let created = ms(year: 2025, month: 10, day: 30)
+        let created = BearyCoreTestHelpers.ms(year: 2025, month: 10, day: 30, calendar: calendar)
         let local = store.add(originEntryId: "b_7", body: "甲", createdAtMs: created, calendar: calendar)!
         let serverRow = PastSelfMessage(id: "43", originEntryId: "b_7", chainId: "b_7", authorId: 90, body: "乙",
                                         createdAtMs: created, deliverOn: "2026-10-30", revokedAtMs: nil,
