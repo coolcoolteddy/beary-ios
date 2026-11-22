@@ -5223,6 +5223,12 @@ class BearyProfileViewController: UIViewController {
         return "\(month) 月 \(day) 日"
     }
 
+    private func pastSelfYearWord(for yyyyMMdd: String) -> String {
+        // 等待态年份口径（第 25 轮 45）：目标年与当年比较，跨年后自动变“今年”。
+        guard let year = Int(yyyyMMdd.prefix(4)) else { return "明年" }
+        return year <= Calendar.current.component(.year, from: Date()) ? "今年" : "明年"
+    }
+
     private func pastSelfRefreshLayout() {
         if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
         // 01：留话区 / 那年今日卡住在脚部容器内，只重算表头会让旧脚部
@@ -5314,7 +5320,7 @@ class BearyProfileViewController: UIViewController {
             }
         case .waiting(let message):
             pastSelfWaitingSection.isHidden = false
-            pastSelfWaitingStatusLabel.text = "已留话 · 明年 \(pastSelfDisplayMonthDay(message.deliverOn))见"
+            pastSelfWaitingStatusLabel.text = "已留话 · \(pastSelfYearWord(for: message.deliverOn)) \(pastSelfDisplayMonthDay(message.deliverOn))见"
             pastSelfWaitingBodyLabel.text = message.body
             // 等待态按 localOnly 区分：仅本设备行显「仅保存在本设备，等待同步」，
             // 已同步行只留原句（原句即已同步态，不另加字样）；网络/5xx 创建
@@ -5334,7 +5340,7 @@ class BearyProfileViewController: UIViewController {
             pastSelfDueNoteLabel.text = "对话已送达，见上方「去年的对话」"
         case .answered(let waiting, _):
             pastSelfDueNoteLabel.isHidden = false
-            pastSelfDueNoteLabel.text = "已回一句 · 明年 \(pastSelfDisplayMonthDay(waiting.deliverOn))再见，见上方「去年的对话」"
+            pastSelfDueNoteLabel.text = "已回一句 · \(pastSelfYearWord(for: waiting.deliverOn)) \(pastSelfDisplayMonthDay(waiting.deliverOn))再见，见上方「去年的对话」"
         }
         pastSelfRefreshLayout()
     }
@@ -5769,7 +5775,7 @@ class BearyProfileViewController: UIViewController {
         // 下方动作：未回过 → 「再回一句」；已回过 → 明年见提示，不再出按钮。
         if isAnswered, let waiting = waiting {
             let answeredNote = pastSelfMetaLabel()
-            answeredNote.text = "已回一句 · 明年 \(pastSelfDisplayMonthDay(waiting.deliverOn))再见"
+            answeredNote.text = "已回一句 · \(pastSelfYearWord(for: waiting.deliverOn)) \(pastSelfDisplayMonthDay(waiting.deliverOn))再见"
             section.addArrangedSubview(answeredNote)
         } else if pastSelfReplyingChainId == chainId {
             // 09：按 chainId 复用输入框——服务端回包重建各节时不再新建
