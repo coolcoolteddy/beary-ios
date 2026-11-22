@@ -145,9 +145,18 @@ enum BearyIconMotion {
         })
     }
 
-    /// 无限旋转（网页 .spin 1s / .official-spin .9s 由调用方传 duration；
-    /// 减动效不转，见网页 prefers-reduced-motion 下 .spin{animation:none}）。
-    static func startSpin(on view: UIView, duration: TimeInterval, key: String) {
+    /// 转圈时长三档（数值对照 beary.html，调用方一律走常量、不写裸数字）：
+    /// 通用 1.0s＝网页 `.spin`（bspin 1s）；官方 0.9s＝网页 `.official-spin`
+    /// （仅发布钮与搜索框）；图片环 0.8s＝网页 `.imgbox::after`（imgspin .8s）。
+    static let spinDuration: TimeInterval = 1.0
+    static let officialSpinDuration: TimeInterval = 0.9
+    static let ringSpinDuration: TimeInterval = 0.8
+
+    /// 无限旋转（减动效不转，见网页 prefers-reduced-motion 下 .spin{animation:none}）。
+    /// duration 默认通用档 spinDuration（网页 `.spin` 1s）；发布钮与搜索框
+    /// 传 officialSpinDuration（网页 `.official-spin` .9s）；图片加载环
+    /// 传 ringSpinDuration（网页 `.imgbox::after` .8s）。
+    static func startSpin(on view: UIView, duration: TimeInterval = spinDuration, key: String) {
         if UIAccessibility.isReduceMotionEnabled { return }
         view.layer.removeAnimation(forKey: key)
         let spin = CABasicAnimation(keyPath: "transform.rotation.z")

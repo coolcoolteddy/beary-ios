@@ -133,14 +133,11 @@ final class BearyWebRingSpinnerView: UIView {
         }
     }
 
+    /// 与 BearyIconMotion.startSpin 同款本体：复用同一份旋转动画（图片环档 0.8s，
+    /// 网页 `.imgbox::after` imgspin .8s，本就要快一档，不并入通用档），
+    /// 不再各写一份 CABasicAnimation。
     private func addSpinAnimation() {
-        layer.removeAnimation(forKey: "web-ring-spin")
-        let anim = CABasicAnimation(keyPath: "transform.rotation.z")
-        anim.fromValue = 0
-        anim.toValue = Double.pi * 2
-        anim.duration = 0.8
-        anim.repeatCount = .infinity
-        layer.add(anim, forKey: "web-ring-spin")
+        BearyIconMotion.startSpin(on: self, duration: BearyIconMotion.ringSpinDuration, key: "web-ring-spin")
     }
 
     func stopSpinning() {

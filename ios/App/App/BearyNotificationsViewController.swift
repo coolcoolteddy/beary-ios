@@ -2807,7 +2807,7 @@ final class BearyNotificationsViewController: UIViewController {
         readAllButton.layoutIfNeeded()
         if state == .marking {
             if let buttonImageView = readAllButton.imageView {
-                BearyIconMotion.startSpin(on: buttonImageView, duration: 1.0, key: "bearyReadAllSpin")
+                BearyIconMotion.startSpin(on: buttonImageView, duration: BearyIconMotion.spinDuration, key: "bearyReadAllSpin")
             }
         }
     }
