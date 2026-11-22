@@ -380,6 +380,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         inlineRetryButton.isHidden = true
         if fetchInterrupted, let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
             // 中断续拉走共用入口的 resume（从游标续翻，合并已收页，不从头重拉）。
+            fetchSilentRetried = false
+            fetchLastResumePage = fetchResumePage
+            fetchLoadEpoch = BearyAPI.shared.authEpoch
+            fetchLoadViewerId = SessionManager.shared.currentUser?.id
             loadGeneration += 1
             let generation = loadGeneration
             BearySharedEntryLoader.shared.loadResuming(
@@ -394,6 +398,10 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         } else if fetchCapped, let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
             // 触顶续拉走共用入口的 resume（从第 10 页末尾游标续拉新一批，
             // page 从 1 重新计、最多再 10 页；已收页保留，不从头重拉）。
+            fetchSilentRetried = false
+            fetchLastResumePage = 1
+            fetchLoadEpoch = BearyAPI.shared.authEpoch
+            fetchLoadViewerId = SessionManager.shared.currentUser?.id
             loadGeneration += 1
             let generation = loadGeneration
             BearySharedEntryLoader.shared.loadResuming(
@@ -429,6 +437,25 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 不能把截断后的 500 篇当总数报；为 true 时状态行旁留“加载更多”入口供按需续拉。
     private var fetchCapped: Bool = false
 
+    /// 失败静默自动重试一次（2026-11-22 Li 定，盲盒 poolSilentRetried 同款）：
+    /// 每批首次取数失败先静默重拉同一页，再失败才落失败态；每批（全量／
+    /// 中断续拉／触顶续拉）各一次。取消（会话已变，退出／切号／401 结算的
+    /// nil 回包）不重试；离线在页内无法区分——加载器收到页失败即丢弃错误
+    /// （BearyEntrySync.fetchNetworkPage 的 case .failure），页内只见
+    /// nil／部分结果，离线与 5xx 到页内无差别，故不单独设门，只凭“一次”封顶
+    /// （API 层 GET 网络错已先重试过一次，见 BearyAPI.request）。
+    private var fetchSilentRetried = false
+
+    /// 静默重试的重发锚点：本次请求实际用的 resumePage（中断续拉即
+    /// fetchResumePage，触顶续拉为 1；全量取数无意义）。中途失败时改用刚落袋
+    /// 的 fetchResumePage（失败页页码），见 trySilentRetry。
+    private var fetchLastResumePage: Int = 1
+
+    /// 本次取数发起时的会话快照：重试前重比，任一变了说明首发与重试之间
+    /// 已退出／切号／401——加载器会把旧回包按失败结算（nil），属取消，不重发。
+    private var fetchLoadEpoch: Int = 0
+    private var fetchLoadViewerId: Int?
+
     /// 开发者模式变化：强制态切换直接置态渲染；清除后走一次正常重拉。
     @objc private func handleDevModeChanged(_ note: Notification) {
         let kind = (note.userInfo?["kind"] as? String) ?? ""
@@ -461,13 +488,18 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         tableView.reloadData()
     }
 
-    private func fetchAllEntries() {
+    private func fetchAllEntries(resetSilentRetry: Bool = true) {
         // 开发者模式强制态（仅内存）：不发请求，按强制态渲染。
         if BearyDevPreviewState.forcedMap != .none {
             applyDevForcedMap()
             return
         }
         loadGeneration += 1
+        // 新一批取数开始：静默重试额度归零（静默重发本身调本方法时传 false，
+        // 不把刚用掉的额度清回去）；同时快照会话供重试前重比。
+        if resetSilentRetry { fetchSilentRetried = false }
+        fetchLoadEpoch = BearyAPI.shared.authEpoch
+        fetchLoadViewerId = SessionManager.shared.currentUser?.id
         // 扫荡 130：新一轮取数开始即记下当前视野——整批解析完成时只有
         // 用户没动过地图才整体调整（见 applyGeocodedGroups）。
         if !didInitialGeocode {
@@ -499,6 +531,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private func applySharedLoad(_ load: BearySharedEntryLoader.SharedEntryLoad?) {
         isLoadingEntries = false
         guard let load = load else {
+            // 失败静默自动重试一次：首败重拉同一批（游标／页码不动），
+            // 再败才落失败态；已重试过或会话已变时不重试。
+            if trySilentRetry(isPartial: false) { return }
             if allEntries.isEmpty {
                 inlineRetryButton.isHidden = true
                 showFailureState()
@@ -518,6 +553,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         fetchResumeBeforeId = load.resumeBeforeId
         fetchResumePage = load.resumePage
         if load.isPartial {
+            // 中途失败同样先静默重拉失败页一次（已收页保留、游标即失败页），
+            // 再败才按既有口径成表／保旧表＋留重试入口。
+            if trySilentRetry(isPartial: true) { return }
             fetchInterrupted = true
             if allEntries.isEmpty {
                 // 无旧数据、中途断了：部分页成表，不丢已收页；展示集是部分
@@ -552,6 +590,44 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         inlineRetryButton.setTitle(fetchCapped ? "加载更多" : "重试", for: .normal)
         allEntries = fetchCollected
         regroupAndGeocode()
+    }
+
+    /// 失败静默自动重试一次（2026-11-22 Li 定，盲盒 poolSilentRetried 同款）：
+    /// 每批首次取数失败（nil 整批失败／isPartial 中途失败）先静默重拉同一页，
+    /// 再失败才落失败态，点按重试入口保留。返回 true 表示已重发、调用方
+    /// 不再应用本次回包。
+    /// 重发口径：有游标时从当前游标续拉失败页——中途失败用刚落袋的
+    /// fetchResumePage（失败页页码），首页面失败用本次请求的
+    /// fetchLastResumePage；已收页（fetchCollected）原样带上，不丢已收页、
+    /// 不改游标、不改三路续拉逻辑；无游标时重新全量（静默重发不重置额度）。
+    /// 不重试：已重试过一次；会话已变（退出／切号／401 结算的 nil，发起时
+    /// 的代次／账号与现值对不上）。被取消的旧回包已由代次门控丢弃，不会走到这里。
+    /// 离线：加载器丢弃页错误，页内无法区分离线与 5xx，不单独设门；
+    /// API 层 GET 网络错已先重试过一次，重试总次数仍封顶在一次。
+    private func trySilentRetry(isPartial: Bool) -> Bool {
+        guard !fetchSilentRetried else { return false }
+        guard fetchLoadEpoch == BearyAPI.shared.authEpoch,
+              fetchLoadViewerId == SessionManager.shared.currentUser?.id else { return false }
+        fetchSilentRetried = true
+        if let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
+            loadGeneration += 1
+            let generation = loadGeneration
+            BearySharedEntryLoader.shared.loadResuming(
+                scope: entriesScope, resumeBefore: before, resumeBeforeId: beforeId,
+                resumePage: isPartial ? fetchResumePage : fetchLastResumePage,
+                existing: fetchCollected
+            ) { [weak self] load in
+                DispatchQueue.main.async {
+                    guard let self = self, generation == self.loadGeneration else { return }
+                    self.applySharedLoad(load)
+                }
+            }
+        } else {
+            fetchAllEntries(resetSilentRetry: false)
+        }
+        // 重发在途时无内容仍亮骨架，不露假空态（有内容时旧列表即占位）。
+        if groups.isEmpty { isLoadingEntries = true }
+        return true
     }
 
     /// C4 详情往返只传变化：编辑/可见性变化按 id 原地更新，不重拉网络。
