@@ -95,12 +95,19 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private let statusLabel = StarMapStatusRetryLabel()
     private let sheetCard = UIView()
     private let sheetStack = UIStackView()
-    /// 审计三轮第 2 项：连线列表虚拟化——只建可见行，初始封顶＋加载更多。
+    /// 审计三轮第 2 项：连线列表虚拟化——只建可见行，初始封顶＋滑到底自动续出。
     /// 关联度 = 共享原因数（越多关系越强），同数按 id 排定、展示顺序稳定。
     private var edgeListEdges: [StarMapEdge] = []
     private var edgeListShownCount = 0
     private let edgeListInitialCount = 30
     private let edgeListPageStep = 50
+    /// 连线列表脚部：复用广场同款共享脚部 BearyLoadMoreFooterView，不另写一套。
+    /// 底卡是半透明夜空底，脚部自带的不透明 bg 会露一块实色底，改透明融入底卡。
+    private let edgeListLoadMoreFooterView: BearyLoadMoreFooterView = {
+        let footer = BearyLoadMoreFooterView()
+        footer.backgroundColor = .clear
+        return footer
+    }()
     private let edgeListMaxHeight: CGFloat = 352
     private var edgeListTableHeight: NSLayoutConstraint?
     private lazy var edgeListTableView: UITableView = {
@@ -1392,7 +1399,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         overlapEntryIds = nil
         skyView.setSelected(starId: nil, edgeId: nil)
         // 审计三轮第 2 项：列表改 UITableView 复用——只建可见行；按关联度
-        // （共享原因数）降序先展示少量，其余点“加载更多”按需续出。
+        // （共享原因数）降序先展示少量，其余滑到底自动续出。
         // 本支不动显隐（显隐是第 1 项的范围）。
         edgeListEdges = sortedListedEdges()
         edgeListShownCount = min(edgeListInitialCount, edgeListEdges.count)
@@ -1416,6 +1423,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private func rebuildEdgeListContent() {
         sheetStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if edgeListEdges.isEmpty {
+            edgeListTableView.tableFooterView = nil
             sheetStack.addArrangedSubview(sheetTitleLabel("暂无连线"))
             sheetStack.addArrangedSubview(sheetBodyLabel("当前筛选下没有连线。"))
         } else {
@@ -1447,27 +1455,27 @@ final class BearyDiaryStarMapViewController: UIViewController {
         rebuildEdgeListContent()
     }
 
-    /// 连线列表“加载更多”脚部：还有未展示的行才留入口，全部展示后撤掉。
+    /// 连线列表脚部：复用广场同款共享脚部 BearyLoadMoreFooterView，不另写一套。
+    /// 还有未展示的行时亮 3 个跳动圆点（滑到底自动续出）；全部展示后显示
+    /// “没有更多了”，不再报“还剩 N 条”。本地续出是同步的，没有网络等待，
+    /// 不进 failed；脚部自带的 failed＋onRetry 仍接上，万一进失败态点按重试续出。
     private func updateEdgeListFooter() {
-        guard edgeListShownCount < edgeListEdges.count else {
-            edgeListTableView.tableFooterView = nil
-            return
-        }
-        let remaining = edgeListEdges.count - edgeListShownCount
-        let button = UIButton(type: .custom)
-        button.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 15))
-        button.titleLabel?.adjustsFontForContentSizeCategory = true
-        button.setTitleColor(BearyColors.deepOrangeText, for: .normal)
-        button.setTitle("加载更多（还剩 \(remaining) 条）", for: .normal)
-        button.addTarget(self, action: #selector(didTapEdgeListLoadMore), for: .touchUpInside)
-        let footer = UIView(frame: CGRect(x: 0, y: 0, width: edgeListTableView.bounds.width, height: 44))
-        footer.addSubview(button)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            button.centerXAnchor.constraint(equalTo: footer.centerXAnchor),
-            button.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
-        ])
-        edgeListTableView.tableFooterView = footer
+        let state: BearyLoadMoreFooterView.State = edgeListShownCount < edgeListEdges.count ? .loading : .end
+        edgeListLoadMoreFooterView.setState(state)
+        edgeListLoadMoreFooterView.onRetry = { [weak self] in self?.loadMoreEdgeListRows() }
+        let width = edgeListTableView.bounds.width > 0 ? edgeListTableView.bounds.width : view.bounds.width
+        edgeListLoadMoreFooterView.frame = CGRect(x: 0, y: 0, width: width, height: BearyLoadMoreFooterView.height)
+        edgeListTableView.tableFooterView = edgeListLoadMoreFooterView
+    }
+
+    /// 连线列表自动续出：再展示一页（步长 edgeListPageStep），广场同款
+    /// 滑到底自动加载；本地续出是同步的，直接改条数重刷。
+    private func loadMoreEdgeListRows() {
+        guard edgeListShownCount < edgeListEdges.count else { return }
+        edgeListShownCount = min(edgeListEdges.count, edgeListShownCount + edgeListPageStep)
+        edgeListTableView.reloadData()
+        updateEdgeListFooter()
+        updateEdgeListTableHeight()
     }
 
     /// 表格按内容高伸缩，封顶 edgeListMaxHeight，超出部分在表内滚动。
@@ -1475,13 +1483,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
         edgeListTableView.layoutIfNeeded()
         edgeListTableHeight?.constant = min(edgeListTableView.contentSize.height, edgeListMaxHeight)
         view.layoutIfNeeded()
-    }
-
-    @objc private func didTapEdgeListLoadMore() {
-        edgeListShownCount = min(edgeListEdges.count, edgeListShownCount + edgeListPageStep)
-        edgeListTableView.reloadData()
-        updateEdgeListFooter()
-        updateEdgeListTableHeight()
     }
 
     private func edgeEntryName(_ entry: Entry?) -> String {
@@ -1829,6 +1830,17 @@ extension BearyDiaryStarMapViewController: UITableViewDataSource, UITableViewDel
         // 按 id 在当前模型里重查：列表打开后模型可能已变，旧边不在了就不跳。
         guard let current = model.edges.first(where: { $0.id == edge.id }) else { return }
         didTapEdge(current)
+    }
+
+    /// 连线列表滑到底自动续出：广场 scrollViewDidScroll 同款，滑到离底部
+    /// 一屏时拉下一页（本地续出是同步的，loadMoreEdgeListRows 直接改条数重刷）。
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === edgeListTableView else { return }
+        guard edgeListShownCount < edgeListEdges.count else { return }
+        let remaining = edgeListTableView.contentSize.height - (scrollView.contentOffset.y + scrollView.bounds.height - scrollView.adjustedContentInset.bottom)
+        if remaining <= scrollView.bounds.height {
+            loadMoreEdgeListRows()
+        }
     }
 }
 
