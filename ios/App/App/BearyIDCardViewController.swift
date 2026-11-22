@@ -159,7 +159,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
             grabber.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
         ])
         formStack.addArrangedSubview(grabberWrap)
-        formStack.addArrangedSubview(spacer(8))
+        formStack.addArrangedSubview(BearyOnboardingFactory.spacer(8))
         // 标题＋说明。
         let titleLabel = UILabel()
         titleLabel.numberOfLines = 0
@@ -175,7 +175,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         descLabel.textColor = BearyOnboardingPalette.muted
         descLabel.text = "这些信息会出现在你的 ID 卡背面"
         formStack.addArrangedSubview(descLabel)
-        formStack.addArrangedSubview(spacer(6))
+        formStack.addArrangedSubview(BearyOnboardingFactory.spacer(6))
         // 昵称（占位「必填」，不做必填；空着点生成回退默认名 Teddy）。
         formStack.addArrangedSubview(makeFieldLabel("昵称"))
         configureTextFieldContainer(nicknameContainer)
@@ -254,9 +254,13 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         ])
         refreshCityButton()
         formStack.addArrangedSubview(cityContainer)
-        formStack.addArrangedSubview(spacer(6))
+        formStack.addArrangedSubview(BearyOnboardingFactory.spacer(6))
         // 生成＋跳过。
-        let generateButton = makeSheetBlackButton(title: "生成 ID 卡")
+        let generateButton = BearyOnboardingFactory.makeBlackButton(title: "生成 ID 卡") { [weak self] button in
+            guard let self = self else { return }
+            button.addTarget(self, action: #selector(sheetButtonTouchDown(_:)), for: .touchDown)
+            button.addTarget(self, action: #selector(sheetButtonTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        }
         generateButton.addTarget(self, action: #selector(generateTapped), for: .touchUpInside)
         formStack.addArrangedSubview(generateButton)
         let skipButton = UIButton(type: .system)
@@ -267,7 +271,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         skipButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         skipButton.addTarget(self, action: #selector(skipFormTapped), for: .touchUpInside)
         formStack.addArrangedSubview(skipButton)
-        formStack.addArrangedSubview(spacer(20))
+        formStack.addArrangedSubview(BearyOnboardingFactory.spacer(20))
     }
 
     private func makeFieldLabel(_ text: String) -> UILabel {
@@ -285,27 +289,6 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         container.layer.borderWidth = 1
         container.layer.cornerRadius = 12
         container.heightAnchor.constraint(equalToConstant: 50).isActive = true
-    }
-
-    private func spacer(_ height: CGFloat) -> UIView {
-        let view = UIView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        view.heightAnchor.constraint(equalToConstant: height).isActive = true
-        return view
-    }
-
-    private func makeSheetBlackButton(title: String) -> UIButton {
-        let button = UIButton(type: .custom)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.backgroundColor = BearyOnboardingPalette.ink
-        button.setTitleColor(.white, for: .normal)
-        button.titleLabel?.font = BearyDynamicType.buttonFont()
-        button.setTitle(title, for: .normal)
-        button.layer.cornerRadius = 12
-        button.heightAnchor.constraint(equalToConstant: 52).isActive = true
-        button.addTarget(self, action: #selector(sheetButtonTouchDown(_:)), for: .touchDown)
-        button.addTarget(self, action: #selector(sheetButtonTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
-        return button
     }
 
     @objc private func sheetButtonTouchDown(_ sender: UIButton) {
