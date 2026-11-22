@@ -42,6 +42,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     ///（照片墙 #729 同款口径：失败不 reload 已有行，保内容与滚动位置）。
     /// 401 不进此态（走登录门）。
     private var trashLoadMoreFailed = false
+    /// 翻页失败静默自动重试一次（2026-11-22 Li 定；盲盒 poolSilentRetried 同款口径）：
+    /// 每轮翻页首次失败先静默重拉同一页（游标/页码不动），再失败才亮尾部重试节；
+    /// 新一轮翻页开始时清掉（滚动触发与点按重试同路），每轮各一次。
+    private var trashLoadMoreSilentRetried = false
     private var trashSilentRefreshing = false
     /// 静默刷新代次守卫（全量同步 trash 腿同款口径，见 BearyEntrySync）：
     /// 刷新开始时记下回收站写盘代际，终态提交前比对——期间发生过任何
@@ -199,6 +203,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashFirstLoadFailed = false
         trashLoginEmpty = false
         trashLoadMoreFailed = false
+        trashLoadMoreSilentRetried = false
         trashLoading = false
         trashLoadingMore = false
         trashSilentRefreshing = false
@@ -727,7 +732,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         }
         // 新一轮翻页开始即撤旧重试节（滚动触发与点按触发同路）；
         // 本轮若再失败，失败分支会重新立节，不丢重试入口。
+        // 静默重试旗同轮清掉：每轮翻页各有一次静默重试机会。
         trashLoadMoreFailed = false
+        trashLoadMoreSilentRetried = false
         loadMoreRetryWrap.isHidden = true
         trashLoadingMore = true
         moreSpinner.isHidden = false
@@ -737,17 +744,27 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 401 也不弹登录。
         let requestAccountId = SessionManager.shared.currentUser?.id
         let requestAuthEpoch = BearyAPI.shared.authEpoch
-        BearyAPI.shared.fetchTrash(before: "\(lastDeletedAt)", beforeId: lastItem.entryIdentifier) { [weak self] result in
+        fetchTrashLoadMorePage(before: "\(lastDeletedAt)", beforeId: lastItem.entryIdentifier, requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch)
+    }
+
+    /// 翻页单页请求（loadMoreIfNeeded 与静默重试共用）：游标即入参，
+    /// 重试不改页码、不改游标；静默重试时加载态与转圈保持在途，
+    /// 滚动守卫（trashLoadingMore）继续拦重复触发。
+    private func fetchTrashLoadMorePage(before: String, beforeId: String, requestAccountId: Int?, requestAuthEpoch: Int) {
+        BearyAPI.shared.fetchTrash(before: before, beforeId: beforeId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.trashLoadingMore = false
-                self.moreSpinner.stopSpinning()
-                self.moreSpinner.isHidden = true
                 if self.isStaleTrashRequest(requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch) {
+                    self.trashLoadingMore = false
+                    self.moreSpinner.stopSpinning()
+                    self.moreSpinner.isHidden = true
                     return
                 }
                 switch result {
                 case .success(let list):
+                    self.trashLoadingMore = false
+                    self.moreSpinner.stopSpinning()
+                    self.moreSpinner.isHidden = true
                     var seenIdentifiers: Set<String> = []
                     for existing in self.trashItems {
                         seenIdentifiers.insert(existing.entryIdentifier)
@@ -768,6 +785,16 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     self.loadMoreRetryWrap.isHidden = true
                     self.renderStateViews()
                 case .failure(let error):
+                    // 失败静默自动重试一次（2026-11-22 Li 定）：每轮首次瞬时失败
+                    // 先静默重拉同一页，加载态与转圈保持；再失败才落失败分支。
+                    if self.isTransientTrashLoadMoreError(error), self.trashLoadMoreSilentRetried == false {
+                        self.trashLoadMoreSilentRetried = true
+                        self.fetchTrashLoadMorePage(before: before, beforeId: beforeId, requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch)
+                        return
+                    }
+                    self.trashLoadingMore = false
+                    self.moreSpinner.stopSpinning()
+                    self.moreSpinner.isHidden = true
                     if case .unauthorized = error {
                         self.notifyTrashLoginOnce()
                     } else {
@@ -780,6 +807,24 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     }
                 }
             }
+        }
+    }
+
+    /// 静默重试只认瞬时失败：取消、离线、鉴权失败、4xx/业务码/解码/
+    /// 未找到都是确定性失败，重拉同一请求也不会成，直接走现有失败分支；
+    /// 瞬时网络错与 5xx 才值得再拉一次。
+    private func isTransientTrashLoadMoreError(_ error: APIError) -> Bool {
+        switch error {
+        case .cancelled, .unauthorized, .authFailure, .decoding, .notFound, .server:
+            return false
+        case .http(let status, _):
+            return status >= 500
+        case .network(let underlying):
+            if let urlError = underlying as? URLError,
+               urlError.code == .notConnectedToInternet || urlError.code == .cancelled {
+                return false
+            }
+            return true
         }
     }
 
