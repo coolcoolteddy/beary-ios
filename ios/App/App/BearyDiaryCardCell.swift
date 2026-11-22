@@ -1617,7 +1617,7 @@ class BearyDiaryCardCell: UITableViewCell {
         recipientLabel.text = nil
         // 首页皇冠带网页 drop-shadow（0 1px 1px 黑 30%），个人主页无阴影。
         if cardMode == .feed {
-            crownView.layer.shadowColor = UIColor.black.cgColor
+            crownView.layer.shadowColor = BearySheetChrome.shadowColor
             crownView.layer.shadowOpacity = 0.30
             crownView.layer.shadowOffset = CGSize(width: 0, height: 1)
             crownView.layer.shadowRadius = 1

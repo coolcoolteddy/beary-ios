@@ -55,13 +55,13 @@ enum BearyDesktop {
 /// 不新增阴影层；弹层本身的两档数值（#519 视觉不变前提）本支不动。
 enum BearyShadow {
     static func applyHairline(to layer: CALayer) {
-        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowColor = BearySheetChrome.shadowColor
         layer.shadowOpacity = 0.08
         layer.shadowRadius = 4
         layer.shadowOffset = CGSize(width: 0, height: 1)
     }
     static func applyRaised(to layer: CALayer) {
-        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowColor = BearySheetChrome.shadowColor
         layer.shadowOpacity = 0.12
         layer.shadowRadius = 8
         layer.shadowOffset = CGSize(width: 0, height: 2)
@@ -69,7 +69,7 @@ enum BearyShadow {
     /// 聚焦阴影（2026-11-07 微明度定版：聚焦态不再画蓝边，改走本档外阴影，
     /// 比 raised 强一档；与 applyRaised／applyHairline 同形）。
     static func applyFocused(to layer: CALayer) {
-        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowColor = BearySheetChrome.shadowColor
         layer.shadowOpacity = 0.16
         layer.shadowRadius = 12
         layer.shadowOffset = CGSize(width: 0, height: 4)
