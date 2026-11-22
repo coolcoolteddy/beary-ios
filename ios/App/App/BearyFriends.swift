@@ -52,6 +52,10 @@ enum BearyFriends {
     /// 更新那一个人的卡片，不全量重验；无 id 的旧广播仍走全量重验。
     static let friendsChangedUserIdKey = "userId"
 
+    /// 取关在途去重：同一用户的取关请求在途时再次确认直接丢弃（私信删除
+    /// deletingConversationPeerIds 同款口径）；请求结束（成功或失败）后移除。
+    private static var unfollowingUserIds: Set<Int> = []
+
     /// 取关二次确认 sheet（仅弹框，不发请求）：确认回调由调用方接乐观更新＋请求。
     /// 文案与 confirmUnfollow 同款（同一 builder，不另起一套 copy）。
     static func confirmUnfollowAlert(from vc: UIViewController, displayName: String, mutual: Bool, onConfirmed: @escaping () -> Void) {
@@ -64,8 +68,11 @@ enum BearyFriends {
     /// 单向取关只断自己的关注流。叉叉/遮罩/下滑关闭与点“取消”同义（不发请求）。
     static func confirmUnfollow(from vc: UIViewController, displayName: String, userId: Int, mutual: Bool, onRemoved: @escaping () -> Void) {
         presentUnfollowSheet(from: vc, displayName: displayName, mutual: mutual) {
+            guard !unfollowingUserIds.contains(userId) else { return }
+            unfollowingUserIds.insert(userId)
             BearyAPI.shared.unfollowFriend(userId: userId) { result in
                 DispatchQueue.main.async {
+                    unfollowingUserIds.remove(userId)
                     switch result {
                     case .success:
                         clearDiaryCachesAndNotify(userId: userId)
