@@ -17,6 +17,7 @@
 		E62E1D3165F7930CF044FD16 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 471835DB5BDE5F7ECC34A331 /* AppIcon.icon */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		147711CB4F24122B8270E75F /* BearyCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5402B22C53F47BC0E5260A35 /* BearyCoreTests.swift */; };
+		EE8168E1B5225DD7E3877F3B /* BearySyncTestHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BFB373405BA6CF231670C3B /* BearySyncTestHelpers.swift */; };
 		49F9088AA0BEE72A92CEA33D /* BearyBeijingDay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D645AE2AFF2E373B5E32D6E /* BearyBeijingDay.swift */; };
 		649D01DBF721A0947AC482C9 /* BearyEntrySyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BF9342D327334807DB97719 /* BearyEntrySyncStore.swift */; };
 		795C7BD6D93C4EC68432E2AE /* BearyOfflineSaveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94440397152AAFA9C0C7F4AD /* BearyOfflineSaveStore.swift */; };
@@ -767,6 +768,7 @@
 		A8E41C2F9B574D01A2C3E5F7 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		AC443416658B407AACC3B8BA /* BearyCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BearyCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5402B22C53F47BC0E5260A35 /* BearyCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCoreTests.swift; sourceTree = "<group>"; };
+		8BFB373405BA6CF231670C3B /* BearySyncTestHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySyncTestHelpers.swift; sourceTree = "<group>"; };
 		59B3786A24FEFF632E1621F3 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = WebKit.framework; sourceTree = SDKROOT; };
 		1184567EDCC8BB2976BDBED4 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = XCTest.framework; sourceTree = SDKROOT; };
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
@@ -2259,6 +2261,7 @@
 				FB7E26C7A8336188526E5B68 /* BearyEntrySyncStoreTests.swift */,
 				24FB6114923FB97684CD71B9 /* BearyOfflineSaveStoreTests.swift */,
 				BA281F841D514C3290442AC0 /* BearyEntrySyncIncrementalTests.swift */,
+				8BFB373405BA6CF231670C3B /* BearySyncTestHelpers.swift */,
 				A83E6C48AC4E4610A94C9ECE /* BearyDMStoreTests.swift */,
 				D3B34CCAE829BE72D994771D /* BearyI18nCatalogTests.swift */,
 			);
@@ -3103,6 +3106,7 @@
 				E211F459514BCCDD34C42802 /* BearyOfflineSaveStoreTests.swift in Sources */,
 				DED94DD2E4AA4932A3525D41 /* BearySyncProgress.swift in Sources */,
 				E4161BD942F941B698D09A76 /* BearyEntrySyncIncrementalTests.swift in Sources */,
+				EE8168E1B5225DD7E3877F3B /* BearySyncTestHelpers.swift in Sources */,
 				161AB80B45864055BCEEFC20 /* BearyStarMap.swift in Sources */,
 				B7A9CA4664DC4C658EC38714 /* BearyJSON.swift in Sources */,
 				A8BEBC6E5F94AF59F6C14DDC /* BearyAPI.swift in Sources */,
