@@ -221,6 +221,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var sheetBottom: NSLayoutConstraint?
     private var emptyBottom: NSLayoutConstraint?
     private var failureBottom: NSLayoutConstraint?
+    /// 夜巡布局：列表列（日期入口／年／月／筛选行、状态行、底卡、空态、失败态）
+    /// iPad 宽 ≥821 时收 600 居中，星图画布保持满宽不动；Feed 同款
+    /// BearyDesktop.isWide 开关（viewDidLayoutSubviews 切换，状态不变不开关）。
+    private let listColumnGuide = UILayoutGuide()
+    private var listColumnCapConstraint: NSLayoutConstraint?
     /// P1-4：加载态独占时的内容底锚（与扫荡 C 的三选一底部约束同款，
     /// 同一时刻只激活一个；其余三态恢复时由 applyModelToSky 关掉）。
     /// 第十轮 #20：加载期夜空先行，底锚改锚 skyView 底（原 loadingView 已删），
@@ -330,6 +335,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         navigationController?.navigationBar.tintColor = previousNavBarTintColor
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 夜巡布局：600 上限只在 iPad 且宽 ≥821 时激活，iPhone 横屏仍走全宽
+        //（与 Feed 同口径）；状态不变不开关，避免布局循环。
+        let wantColCap = BearyDesktop.isWide(view.bounds.width)
+        if listColumnCapConstraint?.isActive != wantColCap {
+            listColumnCapConstraint?.isActive = wantColCap
+        }
     }
 
     @objc private func didTapClose() {
@@ -551,7 +566,22 @@ final class BearyDiaryStarMapViewController: UIViewController {
         failureView.addSubview(retryButton)
         contentView.addSubview(failureView)
 
+        contentView.addLayoutGuide(listColumnGuide)
+        // 夜巡布局：列表列宽——窄屏跟内容宽 −32（即左右各 16，与改前一致），
+        // 宽屏时 600 上限（见 viewDidLayoutSubviews 的 isWide 开关）居中；
+        // 星图画布仍锚 contentView 全宽，不动。
+        let listColumnFullWidth = listColumnGuide.widthAnchor.constraint(equalTo: contentView.widthAnchor, constant: -32)
+        listColumnFullWidth.priority = .defaultHigh
+        let listColumnCap = listColumnGuide.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        listColumnCapConstraint = listColumnCap
         NSLayoutConstraint.activate([
+            listColumnGuide.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            listColumnGuide.topAnchor.constraint(equalTo: contentView.topAnchor),
+            listColumnGuide.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            listColumnGuide.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 16),
+            listColumnGuide.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
+            listColumnFullWidth,
+            listColumnCap,
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             // 横向安全区：scrollView 左右锚 safeArea 而非 view 边缘。内容各行
             // 仍保留距 content 边缘 16 的现有间距（即 safeArea 内再缩 16），
@@ -567,48 +597,48 @@ final class BearyDiaryStarMapViewController: UIViewController {
             contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
 
             dateEntryButton.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
-            dateEntryButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            dateEntryButton.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
             legendButton.centerYAnchor.constraint(equalTo: dateEntryButton.centerYAnchor),
-            legendButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            legendButton.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
 
-            sliceCalendarIcon.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            sliceCalendarIcon.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
             sliceCalendarIcon.centerYAnchor.constraint(equalTo: yearScrollView.centerYAnchor),
             sliceCalendarIcon.widthAnchor.constraint(equalToConstant: 20),
             sliceCalendarIcon.heightAnchor.constraint(equalToConstant: 20),
 
             yearScrollView.leadingAnchor.constraint(equalTo: sliceCalendarIcon.trailingAnchor, constant: 8),
-            yearScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            yearScrollView.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
 
-            monthScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            monthScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            monthScrollView.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
+            monthScrollView.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
 
-            filterScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            filterScrollView.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
             filterScrollView.trailingAnchor.constraint(equalTo: edgeListButton.leadingAnchor, constant: -8),
             filterScrollView.heightAnchor.constraint(equalToConstant: 44),
 
             // P2-11：「查看连线」入口贴在筛选行右侧，与筛选行同高居中。
             edgeListButton.centerYAnchor.constraint(equalTo: filterScrollView.centerYAnchor),
-            edgeListButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            edgeListButton.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
 
             skyView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
             skyView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             skyView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
             statusLabel.topAnchor.constraint(equalTo: skyView.bottomAnchor, constant: 10),
-            statusLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            statusLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            statusLabel.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
+            statusLabel.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
 
             sheetCard.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 10),
-            sheetCard.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            sheetCard.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            sheetCard.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
+            sheetCard.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
             sheetStack.topAnchor.constraint(equalTo: sheetCard.topAnchor, constant: 12),
             sheetStack.leadingAnchor.constraint(equalTo: sheetCard.leadingAnchor, constant: 14),
             sheetStack.trailingAnchor.constraint(equalTo: sheetCard.trailingAnchor, constant: -14),
             sheetStack.bottomAnchor.constraint(equalTo: sheetCard.bottomAnchor, constant: -12),
 
             emptyView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
-            emptyView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            emptyView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            emptyView.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
+            emptyView.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
             emptyView.heightAnchor.constraint(equalToConstant: 340),
             emptyIcon.topAnchor.constraint(equalTo: emptyView.topAnchor, constant: 96),
             emptyIcon.centerXAnchor.constraint(equalTo: emptyView.centerXAnchor),
@@ -622,8 +652,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
             emptySubLabel.trailingAnchor.constraint(equalTo: emptyView.trailingAnchor, constant: -24),
 
             failureView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
-            failureView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            failureView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            failureView.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
+            failureView.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
             failureView.heightAnchor.constraint(equalToConstant: 200),
             failureLabel.centerXAnchor.constraint(equalTo: failureView.centerXAnchor),
             failureLabel.centerYAnchor.constraint(equalTo: failureView.centerYAnchor, constant: -20),
