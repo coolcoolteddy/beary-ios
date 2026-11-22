@@ -284,29 +284,14 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     /// 隐藏变可见时只淡入徽标本身（alpha 0→1、0.18s，不动 transform／
     /// 布局、不重建节点）；同值不赋值不重播；减动效或未进窗口时直设终值。
     private func setStatusTextFaded(_ text: String) {
-        guard statusLabel.text != text else { return }
-        statusLabel.text = text
-        guard !UIAccessibility.isReduceMotionEnabled, statusLabel.window != nil else {
-            statusLabel.alpha = 1
-            return
-        }
-        statusLabel.alpha = 0
-        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            self.statusLabel.alpha = 1
-        })
+        BearyLabelFade.setText(text, on: statusLabel, duration: BearyMotion.localStateDuration)
     }
 
     private func showStatusBadgeFaded() {
         let wasHidden = statusBadge.isHidden
         statusBadge.isHidden = false
-        guard wasHidden, !UIAccessibility.isReduceMotionEnabled, statusBadge.window != nil else {
-            statusBadge.alpha = 1
-            return
-        }
-        statusBadge.alpha = 0
-        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            self.statusBadge.alpha = 1
-        })
+        guard wasHidden else { statusBadge.alpha = 1; return }
+        BearyLabelFade.fadeIn(statusBadge, duration: BearyMotion.localStateDuration)
     }
 
     override func viewDidLoad() {

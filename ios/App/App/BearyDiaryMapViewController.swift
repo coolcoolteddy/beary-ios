@@ -341,16 +341,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 隐藏变可见时只淡入视图本身。地图大头针为 MapKit 渲染元素，
     /// 不走本口径（见 PR 说明）。
     private func setStatusTextFaded(_ text: String) {
-        guard statusLabel.text != text else { return }
-        statusLabel.text = text
-        guard !UIAccessibility.isReduceMotionEnabled, statusLabel.window != nil else {
-            statusLabel.alpha = 1
-            return
-        }
-        statusLabel.alpha = 0
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            self.statusLabel.alpha = 1
-        })
+        BearyLabelFade.setText(text, on: statusLabel, duration: BearyMotion.normal)
     }
 
     // 失败页显隐走 BearyStateView 自身的 isHidden 淡入淡出（0.2s、减动效直显），

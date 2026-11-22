@@ -108,6 +108,30 @@ enum BearyMotion {
     static let cardCurve = UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1))
 }
 
+/// 116 数据填入动效共享版（Label 文字淡入）：换文字时同值不重播 →
+/// 减动效／未进窗口直设终值 → 否则 alpha 0 再淡入到 1；纯显隐淡入
+/// （无换文字）走同一形状，见 fadeIn。
+enum BearyLabelFade {
+    /// 换文字并淡入：同值不赋值不重播。
+    static func setText(_ text: String?, on label: UILabel, duration: TimeInterval) {
+        guard label.text != text else { return }
+        label.text = text
+        fadeIn(label, duration: duration)
+    }
+
+    /// 纯显隐淡入变体（无换文字）：已可见时不重播，只直设 alpha。
+    static func fadeIn(_ view: UIView, duration: TimeInterval) {
+        guard !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            view.alpha = 1
+            return
+        }
+        view.alpha = 0
+        UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            view.alpha = 1
+        })
+    }
+}
+
 /// 新卡片入场统一配置（审计 r16 第 10 项，Li 定版 2026-11-06，规范 §6）：
 /// 首屏／筛子切换 60ms 步进、8pt 上移；分页追加 30ms 步进、8pt 上移；
 /// motion.normal 0.26s、封顶 0.24s、可交互。广场（BearyFeedViewController.

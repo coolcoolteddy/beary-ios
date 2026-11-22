@@ -4065,16 +4065,7 @@ class BearyProfileViewController: UIViewController {
     /// 不重播；减动效或未进窗口时直设终值。顶栏／sticky 名字为镜像同步，
     /// 不走本函数（sticky 名有自己的滚动淡入逻辑，重复动画会冲突）。
     private func setLabelTextFaded(_ label: UILabel, _ text: String?) {
-        guard label.text != text else { return }
-        label.text = text
-        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
-            label.alpha = 1
-            return
-        }
-        label.alpha = 0
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            label.alpha = 1
-        })
+        BearyLabelFade.setText(text, on: label, duration: BearyMotion.normal)
     }
 
     /// 116 数据填入动效（容器版）：分区首次出现时只淡入容器本身（alpha，
