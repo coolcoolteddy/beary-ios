@@ -98,7 +98,7 @@ final class BearyOfflineSaveManager {
                 return
             }
             let keys = entry.images ?? []
-            let title = BearyOfflineSaveStore.displayTitle(for: entry)
+            let title = BearyEntryTitle.displayTitle(for: entry, maxLength: 24, skipEmptyLines: false)
             // 先记 pending：中途退出/崩溃后残留，下次保存凭它续传未下载的图片。
             let pending = BearyOfflineSaveRecord(
                 entryId: entryId, title: title, createdAtMs: entry.createdAt,
@@ -160,7 +160,7 @@ final class BearyOfflineSaveManager {
         let previous = BearyOfflineSaveStore.record(accountId: accountId, entryId: entryId)
         let record = BearyOfflineSaveRecord(
             entryId: entryId,
-            title: BearyOfflineSaveStore.displayTitle(for: entry),
+            title: BearyEntryTitle.displayTitle(for: entry, maxLength: 24, skipEmptyLines: false),
             createdAtMs: entry.createdAt,
             savedAt: previous?.savedAt ?? Date().timeIntervalSince1970,
             imageCount: keys.count,
