@@ -8,6 +8,9 @@ import UIKit
 // 校验且无生日/城市字段，本流程不调 profile 接口）。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
+// ID 卡三张 sheet 共用的抓手灰（表单／城市选择器／ID 卡各一处，同值）。
+private let bearyIDCardGrabberGray = UIColor(red: 217.0 / 255.0, green: 217.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
+
 // MARK: - Form sheet
 
 enum BearyIDCardFormSheet {
@@ -148,7 +151,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         let grabberWrap = UIView()
         let grabber = UIView()
         grabber.translatesAutoresizingMaskIntoConstraints = false
-        grabber.backgroundColor = UIColor(red: 217.0 / 255.0, green: 217.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
+        grabber.backgroundColor = bearyIDCardGrabberGray
         grabber.layer.cornerRadius = 2.5
         grabberWrap.addSubview(grabber)
         NSLayoutConstraint.activate([
@@ -422,7 +425,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         // 抓手。
         let grabber = UIView()
         grabber.translatesAutoresizingMaskIntoConstraints = false
-        grabber.backgroundColor = UIColor(red: 217.0 / 255.0, green: 217.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
+        grabber.backgroundColor = bearyIDCardGrabberGray
         grabber.layer.cornerRadius = 2.5
         pickerContainer.addSubview(grabber)
         NSLayoutConstraint.activate([
@@ -758,7 +761,7 @@ final class BearyIDCardSheetViewController: UIViewController {
         let grabberWrap = UIView()
         let grabber = UIView()
         grabber.translatesAutoresizingMaskIntoConstraints = false
-        grabber.backgroundColor = UIColor(red: 217.0 / 255.0, green: 217.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
+        grabber.backgroundColor = bearyIDCardGrabberGray
         grabber.layer.cornerRadius = 2.5
         grabberWrap.addSubview(grabber)
         NSLayoutConstraint.activate([
@@ -795,7 +798,7 @@ final class BearyIDCardSheetViewController: UIViewController {
         plusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         plusRow.addArrangedSubview(plusSpacer)
         plusSwitch.translatesAutoresizingMaskIntoConstraints = false
-        plusSwitch.onTintColor = UIColor(red: 52.0 / 255.0, green: 199.0 / 255.0, blue: 89.0 / 255.0, alpha: 1)
+        plusSwitch.onTintColor = BearyOnboardingPalette.switchGreen
         plusSwitch.isOn = false
         plusSwitch.addTarget(self, action: #selector(plusSwitchChanged(_:)), for: .valueChanged)
         plusRow.addArrangedSubview(plusSwitch)

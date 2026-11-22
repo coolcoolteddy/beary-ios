@@ -12,6 +12,8 @@ import UserNotifications
 // 衬线只走展示性大标题（withDesign(.serif)，New York＋宋体），其余系统字体。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
+// 引导页专属固定浅色 token：14 色全部写死浅色值，不引 BearyColors 动态色
+// （引导页现行 0 处深色处理；以后要深色再另定）。
 enum BearyOnboardingPalette {
     static let pageBackground = UIColor(red: 244.0 / 255.0, green: 244.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
     static let cardBackground = UIColor.white

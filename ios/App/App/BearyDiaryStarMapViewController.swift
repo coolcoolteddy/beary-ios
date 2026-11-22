@@ -58,7 +58,7 @@ enum BearyStarMapNight {
     static let selectedText = UIColor(white: 0.1, alpha: 1)
     /// [24] 小项 7：星图色精确值 #FFB333（255 / 179 / 51）。
     static let selected = UIColor(red: 255 / 255.0, green: 179 / 255.0, blue: 51 / 255.0, alpha: 1)
-    static let star = UIColor(red: 255 / 255.0, green: 179 / 255.0, blue: 51 / 255.0, alpha: 1)
+    static let star = selected
     static let edge = UIColor(red: 0.36, green: 0.48, blue: 0.71, alpha: 0.65)
     static let dust = UIColor(white: 0.25, alpha: 0.5)
     static let sheetBackground = UIColor(white: 1, alpha: 0.08)
