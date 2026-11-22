@@ -207,7 +207,7 @@ final class BearyLocalNotifications: NSObject {
         )
         center.add(request) { error in
             if let error = error {
-                NSLog("[BearyLocalNotifications] test fire failed kind=%@ error=%@", kind.rawValue, error.localizedDescription)
+                BearyLog.debug(tag: "BearyLocalNotifications", "test fire failed kind=%@ error=%@", kind.rawValue, error.localizedDescription)
             }
         }
     }
@@ -304,7 +304,7 @@ final class BearyLocalNotifications: NSObject {
         case .loaded(let loaded):
             messages = loaded
         case .corrupt:
-            NSLog("[BearyLocalNotifications] past-self store corrupt; keeping scheduled notifications")
+            BearyLog.debug(tag: "BearyLocalNotifications", message: "past-self store corrupt; keeping scheduled notifications")
             return
         }
         var desired: [DesiredRequest] = []
@@ -427,7 +427,7 @@ final class BearyLocalNotifications: NSObject {
                     center.add(request) { error in
                         if let error = error {
                             Self.lastScheduleError = "\(item.identifier): \(error.localizedDescription)"
-                            NSLog("[BearyLocalNotifications] schedule failed id=%@ error=%@", item.identifier, error.localizedDescription)
+                            BearyLog.debug(tag: "BearyLocalNotifications", "schedule failed id=%@ error=%@", item.identifier, error.localizedDescription)
                         }
                     }
                 }
@@ -503,7 +503,7 @@ extension BearyLocalNotifications: UNUserNotificationCenterDelegate {
         // 账号校验：排程时的账号与当前账号不一致时不路由
         // （切号后点旧通知不得进新账号内容）。
         guard SessionManager.shared.currentUser?.id == accountId else {
-            NSLog("[BearyLocalNotifications] notification tap ignored: account mismatch")
+            BearyLog.debug(tag: "BearyLocalNotifications", message: "notification tap ignored: account mismatch")
             return
         }
         let target: NotificationTarget? = {

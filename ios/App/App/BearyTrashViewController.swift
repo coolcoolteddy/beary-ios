@@ -677,7 +677,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         BearyEntrySync.shared.runDiskWrite(accountId: accountId) {
                             // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                             let ok = BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
-                            if !ok { NSLog("[BearyEntrySync] trash saveAll failed account=%d", accountId) }
+                            if !ok { BearyLog.debug(tag: "BearyEntrySync", "trash saveAll failed account=%d", accountId) }
                         }
                         // 增量更新：无变化时各行原地不动（见 updateListRowsIncrementally）。
                         self.trashItems = deduped
@@ -1291,7 +1291,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         BearyEntrySync.shared.runDiskWrite(accountId: uid) {
                             // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                             let ok = BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
-                            if !ok { NSLog("[BearyEntrySync] trash removeItem failed account=%d entry=%@", uid, identifier) }
+                            if !ok { BearyLog.debug(tag: "BearyEntrySync", "trash removeItem failed account=%d entry=%@", uid, identifier) }
                         }
                     }
                     self.onRestored?(trashValue)
@@ -1369,7 +1369,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                             BearyEntrySync.shared.runDiskWrite(accountId: uid) {
                                 // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                                 let ok = BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
-                                if !ok { NSLog("[BearyEntrySync] trash removeItem failed account=%d entry=%@", uid, identifier) }
+                                if !ok { BearyLog.debug(tag: "BearyEntrySync", "trash removeItem failed account=%d entry=%@", uid, identifier) }
                             }
                         }
                         self.onPurged?(trashValue)
