@@ -41,7 +41,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     private let mapView = MKMapView()
     private let statusLabel = UILabel()
-    private let inlineRetryButton = BearyHit44Button(type: .system)
+    private let loadMoreFooterView = BearyLoadMoreFooterView()
     private let statusStackView = UIStackView()
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     // 失败态走 BearyStateView（居中承载，标题＋常规描边重试钮，动作复用 didTapRetry；
@@ -145,24 +145,14 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         // 留空时行高不塌，回包后计数行出现不顶列表。
         statusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 16).isActive = true
         statusLabel.text = ""
-        // 状态行旁的就近重试：只在已有内容刷新失败 / 仅有暂存部分结果时出现，
-        // 平时隐藏；UIStackView 会自动收起隐藏的 arranged 子视图，状态行恢复满宽。
-        // 字体与失败页重试钮同档，不引入新样式值；不改 statusLabel 自身的约束数值。
-        inlineRetryButton.translatesAutoresizingMaskIntoConstraints = false
-        inlineRetryButton.setTitle("重试", for: .normal)
-        inlineRetryButton.setTitleColor(BearyColors.ink, for: .normal)
-        inlineRetryButton.titleLabel?.font = BearyDynamicType.smallActionFont()
-        inlineRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        inlineRetryButton.addTarget(self, action: #selector(didTapInlineRetry), for: .touchUpInside)
-        inlineRetryButton.isHidden = true
-        inlineRetryButton.setContentHuggingPriority(.required, for: .horizontal)
-        inlineRetryButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 状态行旁不再挂“加载更多／重试”按钮（已由列表底部脚部取代，广场／
+        // 时间线同款 BearyLoadMoreFooterView）：状态行只剩 statusLabel，
+        // UIStackView 单个子视图即满宽，约束数值不动。
         statusStackView.translatesAutoresizingMaskIntoConstraints = false
         statusStackView.axis = .horizontal
         statusStackView.alignment = .center
         statusStackView.spacing = 8
         statusStackView.addArrangedSubview(statusLabel)
-        statusStackView.addArrangedSubview(inlineRetryButton)
         view.addSubview(statusStackView)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
@@ -311,8 +301,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         selectedEntryDisplayLines.removeAll()
         didInitialGeocode = false
         failureStateView.isHidden = true
-        inlineRetryButton.isHidden = true
+        fetchFailedWithData = false
         isLoadingEntries = true
+        updateMapFooter()
         statusLabel.text = ""
         tableView.reloadData()
     }
@@ -361,25 +352,28 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     @objc private func didTapRetry() {
         failureStateView.isHidden = true
-        inlineRetryButton.isHidden = true
         fetchAllEntries()
     }
 
-    /// 状态行旁的就近重试：复用 fetchAllEntries（与失败页重试同一入口），
-    /// 只重拉数据，不动地图视角（不调 setRegion/showAnnotations、不重置
-    /// didInitialGeocode）、不动列表偏移、不清地理编码缓存与已选组，
-    /// 因此重试前后视角与列表位置自然保留。
+    /// 续拉入口（脚部重试与滑到底自动续拉共用，原状态行旁重试按钮
+    /// 的三路逻辑一字不动）：只重拉数据，不动地图视角（不调
+    /// setRegion/showAnnotations、不重置 didInitialGeocode）、不动列表偏移、
+    /// 不清地理编码缓存与已选组，因此重试前后视角与列表位置自然保留。
     /// 分页中断并解（#784）：中断且续拉游标还在时从游标续拉，已收页
     /// 与去重集保留、成功后整批成表，不从头重拉、不丢已收页；无游标
     /// 时（首页面失败）仍从头重拉。
     /// 触顶续拉（审计新一轮 03）：触顶且游标还在时从第 10 页末尾游标续拉
-    /// 新一批（page 从 1 重新计、最多再 10 页），已收页与去重集保留、
+    /// 新一批（page 从 1 重新计、最多再 10 页），已收页保留、
     /// 成功后整批成表；失败时走失败分支保留已加载内容（fetchInterrupted
-    /// 优先于 fetchCapped，下次点按即从中断处续拉）。
-    @objc private func didTapInlineRetry() {
-        inlineRetryButton.isHidden = true
+    /// 优先于 fetchCapped，下次重试即从中断处续拉）。
+    /// 续拉在途置 isLoadingMore，脚部亮三点；回包由 applySharedLoad 的
+    /// defer 清旗并切脚部态。
+    private func loadMoreEntries() {
         if fetchInterrupted, let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
             // 中断续拉走共用入口的 resume（从游标续翻，合并已收页，不从头重拉）。
+            isLoadingMore = true
+            fetchFailedWithData = false
+            updateMapFooter()
             loadGeneration += 1
             let generation = loadGeneration
             BearySharedEntryLoader.shared.loadResuming(
@@ -394,6 +388,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         } else if fetchCapped, let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
             // 触顶续拉走共用入口的 resume（从第 10 页末尾游标续拉新一批，
             // page 从 1 重新计、最多再 10 页；已收页保留，不从头重拉）。
+            isLoadingMore = true
+            fetchFailedWithData = false
+            updateMapFooter()
             loadGeneration += 1
             let generation = loadGeneration
             BearySharedEntryLoader.shared.loadResuming(
@@ -426,8 +423,15 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private var fetchInterrupted: Bool = false
     /// 是否触及分页上限（审计新一轮 03，星图同款口径；C3 与星图统一口径）：
     /// 本批 10 页已满、末页仍满页，后面可能还有——状态行须明示部分数据，
-    /// 不能把截断后的 500 篇当总数报；为 true 时状态行旁留“加载更多”入口供按需续拉。
+    /// 不能把截断后的 500 篇当总数报；为 true 时滑到底自动续拉（脚部亮三点）。
     private var fetchCapped: Bool = false
+    /// 续拉在途：滑到底自动续拉／脚部重试触发的 loadResuming 正在跑；脚部亮三点。
+    private var isLoadingMore = false
+    /// 有内容时取数失败（首页面失败保旧表、或中断部分回包）：脚部亮 failed＋重试，
+    /// 自动续拉暂停；无数据失败仍走居中失败页，不亮脚部。
+    private var fetchFailedWithData = false
+    /// 脚部签名：态＋宽，不变不重建 tableFooterView（时间线 updateFooter 同款）。
+    private var lastMapFooterSignature: String?
 
     /// 开发者模式变化：强制态切换直接置态渲染；清除后走一次正常重拉。
     @objc private func handleDevModeChanged(_ note: Notification) {
@@ -480,8 +484,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         fetchResumePage = 1
         fetchInterrupted = false
         fetchCapped = false
-        inlineRetryButton.setTitle("重试", for: .normal)
-        inlineRetryButton.isHidden = true
+        isLoadingMore = false
+        fetchFailedWithData = false
+        if allEntries.isEmpty { updateMapFooter() }
         // C3：全量取数走共用入口（内存 → 完整存档 → 网络，在途共用）；
         // 本页只消费结果（成表/部分成表/失败态），分页与截断口径归加载器。
         let generation = loadGeneration
@@ -497,10 +502,14 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 完整 → 整批成表；部分 → 按有无旧数据成表或保旧表 + 续拉游标；
     /// nil（首页面失败）→ 无数据走失败页、有数据保旧表。
     private func applySharedLoad(_ load: BearySharedEntryLoader.SharedEntryLoad?) {
+        // 续拉收尾（全部退出分支共用）：清在途旗、按最新取数态切脚部。
+        defer {
+            isLoadingMore = false
+            updateMapFooter()
+        }
         isLoadingEntries = false
         guard let load = load else {
             if allEntries.isEmpty {
-                inlineRetryButton.isHidden = true
                 showFailureState()
                 setStatusTextFaded("日记加载失败")
                 // 骨架已清旗，列表须重刷回“还没有带位置的日记”行（失败页在上层，
@@ -508,8 +517,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 tableView.reloadData()
             } else {
                 fetchInterrupted = fetchResumeBefore != nil
+                fetchFailedWithData = true
                 setStatusTextFaded("网络失败，显示已加载的日记")
-                inlineRetryButton.isHidden = false
             }
             return
         }
@@ -528,30 +537,55 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 allEntries = fetchCollected
                 regroupAndGeocode()
                 if groups.isEmpty {
-                    inlineRetryButton.isHidden = true
                     showFailureState()
                     setStatusTextFaded("日记加载失败")
                 } else {
+                    fetchFailedWithData = true
                     setStatusTextFaded("仅展示已加载的部分，点按重试")
-                    inlineRetryButton.isHidden = false
                 }
             } else {
                 // 已有数据时网络失败不清空地图：保留已加载聚合，状态行明示；
-                // 有内容时同样给状态行旁就近重试，列表与视角位置不动。
+                // 失败态亮脚部重试，列表与视角位置不动。
+                fetchFailedWithData = true
                 setStatusTextFaded("网络失败，显示已加载的日记")
-                inlineRetryButton.isHidden = false
             }
             return
         }
         failureStateView.isHidden = true
         fetchInterrupted = false
+        fetchFailedWithData = false
         fetchCapped = load.isCapped
-        // 触顶时状态行旁留“加载更多”入口（审计新一轮 03）：有续拉游标才显，
-        // 无游标（末页满页却无 createdAt/id）不留入口。
-        inlineRetryButton.isHidden = !(fetchCapped && fetchResumeBefore != nil)
-        inlineRetryButton.setTitle(fetchCapped ? "加载更多" : "重试", for: .normal)
+        // 触顶时不留行旁入口（审计新一轮 03 的入口已由脚部取代）：有续拉游标
+        // 时滑到底自动续拉，无游标（末页满页却无 createdAt/id）则到头。
         allEntries = fetchCollected
         regroupAndGeocode()
+    }
+
+    /// 列表底部脚部（广场／时间线同款 BearyLoadMoreFooterView，不另写一套）：
+    /// 续拉在途亮 3 个跳动点；有内容取数失败亮 failed＋重试（点按走
+    /// loadMoreEntries）；完整取完且有内容亮“没有更多了”；首屏骨架期、
+    /// 触顶待拉（滑到底才拉，拉起才亮点）、无数据时不挂脚部。
+    private func updateMapFooter() {
+        let state: BearyLoadMoreFooterView.State = {
+            if isLoadingEntries, groups.isEmpty { return .hidden }
+            if isLoadingMore { return .loading }
+            if fetchFailedWithData { return .failed }
+            if fetchCapped { return .hidden }
+            if !allEntries.isEmpty { return .end }
+            return .hidden
+        }()
+        loadMoreFooterView.setState(state)
+        loadMoreFooterView.onRetry = { [weak self] in self?.loadMoreEntries() }
+        let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
+        let signature = "\(state)-\(Int(width))"
+        if signature == lastMapFooterSignature, tableView.tableFooterView != nil { return }
+        lastMapFooterSignature = signature
+        guard state != .hidden else {
+            tableView.tableFooterView = nil
+            return
+        }
+        loadMoreFooterView.frame = CGRect(x: 0, y: 0, width: width, height: BearyLoadMoreFooterView.height)
+        tableView.tableFooterView = loadMoreFooterView
     }
 
     /// C4 详情往返只传变化：编辑/可见性变化按 id 原地更新，不重拉网络。
@@ -1363,6 +1397,19 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         cell.contentConfiguration = config
         cell.accessoryType = .disclosureIndicator
         return cell
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        // 广场同款：滑到离底部一屏时自动续拉下一批（脚部亮三点）；
+        // 加载中／失败／无游标时守卫拦住，失败态只走脚部重试。
+        guard !isLoadingMore, !isLoadingEntries, !fetchFailedWithData,
+              fetchResumeBefore != nil, (fetchCapped || fetchInterrupted),
+              !allEntries.isEmpty else { return }
+        let remaining = tableView.contentSize.height - (scrollView.contentOffset.y + tableView.bounds.height - tableView.adjustedContentInset.bottom)
+        if remaining <= tableView.bounds.height {
+            loadMoreEntries()
+        }
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
