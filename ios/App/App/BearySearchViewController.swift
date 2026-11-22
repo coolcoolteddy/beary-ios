@@ -271,9 +271,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         return nil
     }
-    // 图片失败重试槽位（日记首图）：随行重建而丢弃，见文件末尾
-    // BearySearchImageRetry；clearResultRows 时连同行一起清空。
-    private var imageRetryHolders: [BearySearchImageRetry] = []
     /// 扫 bug 第 9 项：三组分区头（增量追加的落点锚点）。renderResults
     /// 全量建行时同步登记，clearResultRows 时同步清零；appendResultRows
     /// 靠它们找“本组末尾”（头之后、下个分区头之前），本组此前无行时
@@ -2430,7 +2427,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 审计三轮 06：内容签名与行映射同步清空。
         entryRowContentSignatures = [:]
         userRowContentSignatures = [:]
-        imageRetryHolders = []
         // 88 包 M13：尾行不属于结果区；成功重渲末尾尾行由 updateSearchFooter 按翻页态重算。
         setSearchFooter(failed: false)
     }
@@ -2649,9 +2645,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// （行内高亮文案随 query 走，必须重建），见 renderResults 分支。
     /// 注意：follow 相关映射表（followButtonsByUserId 等）不在此重建——
     /// 复用行的按钮本身即最新乐观态，在途跟随动作的完成回调仍按旧表找钮；
-    /// 摘除行的残留表项随下次换关键词全量重建清掉。imageRetryHolders 同理：
-    /// 旧槽位全留（已摘除行的槽位指向离线视图、点按不到，随下次全量重建清掉），
-    /// 新行建行时追加。
+    /// 摘除行的残留表项随下次换关键词全量重建清掉。首图重试态（目标图／URL）
+    /// 存在重试钮自身上，随行摘除而丢弃，无另建的 holder 表。
     private func syncResultRowsReuse(mineEntries: [Entry], publicEntries: [Entry], users: [SearchUser], query: String) {
         let oldEntryRows = entryRowById
         let oldUserRows = userRowByKey
@@ -3154,8 +3149,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         } else {
             handleLabel.isHidden = true
         }
-        // C3：头像加载/占位/重试全走 BearyAvatarView（日记首图仍走
-        // BearySearchImageRetry，不动；imageRetryHolders 只剩首图槽位）。
+        // C3：头像加载/占位/重试全走 BearyAvatarView；日记首图走共享
+        // bearyFeedLoadImage（BearyFeedRetryButton），见 makeEntryRow。
         avatarView.configure(displayName: displayName, avatarURL: user.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) })
 
         row.addSubview(avatarView)
@@ -3311,13 +3306,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             thumb.clipsToBounds = true
             thumb.layer.cornerRadius = 12
             thumb.layer.masksToBounds = true
-            let thumbRetryButton = UIButton(type: .custom)
+            // 搜索首图重试走共享 bearyFeedLoadImage（BearyFeedRetryButton 型）：
+            // 视觉一字不动——仍是 24pt icon_refresh、ink 色、无底色、无圆角、
+            // 44×44 居中压图；不用共享 bearyFeedRetryButton() 工厂（它带 bg 底色
+            // 与 gray 色，44 框下会盖住缩略图）。
+            let thumbRetryButton = BearyFeedRetryButton(type: .custom)
             thumbRetryButton.translatesAutoresizingMaskIntoConstraints = false
             thumbRetryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 24), for: .normal)
             thumbRetryButton.tintColor = BearyColors.ink
             thumbRetryButton.isHidden = true
             thumbRetryButton.accessibilityLabel = "重试"
             thumbRetryButton.accessibilityHint = "重新加载图片"
+            thumbRetryButton.addTarget(self, action: #selector(thumbRetryTapped(_:)), for: .touchUpInside)
+            thumbRetryButton.bearyAddPressFeedback()
             let thumbWrap = UIView()
             thumbWrap.translatesAutoresizingMaskIntoConstraints = false
             thumbWrap.addSubview(thumb)
@@ -3332,9 +3333,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 thumbRetryButton.widthAnchor.constraint(equalToConstant: 44),
                 thumbRetryButton.heightAnchor.constraint(equalToConstant: 44),
             ])
-            let thumbRetry = BearySearchImageRetry(imageView: thumb, retryButton: thumbRetryButton, imageURL: url)
-            imageRetryHolders.append(thumbRetry)
-            thumbRetry.load()
+            // blurUp: true 与 #2183 改走 BlurUp 后的 load() 同口径；重试由
+            // bearyFeedPerformRetry（forceRetry）接管，代次守卫不再需要
+            // （见文件末尾注释）。
+            bearyFeedLoadImage(into: thumb, url: url, retryButton: thumbRetryButton, blurUp: true)
             thumbWrapView = thumbWrap
             bodyRow.addArrangedSubview(thumbWrap)
         }
@@ -3454,6 +3456,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         entryButtons.append(row)
         rowEntryIds.append(entryId)
         return row
+    }
+
+    /// 首图重试（卡片 cell feedRetryTapped 同款）：共享入口接管重载与显隐。
+    @objc private func thumbRetryTapped(_ sender: BearyFeedRetryButton) {
+        bearyFeedPerformRetry(sender)
     }
 
     /// 私密 pill：网页 .tl-pill.priv——12 semibold 蓝字、蓝 13% 底、圆角 11、
@@ -4075,48 +4082,17 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
 // MARK: - 图片失败重试槽位（日记首图用；用户头像已改走 BearyAvatarView）
 //
-// 形态（用户定）：纯图标，不带文字按钮——icon_refresh 20pt，消息页头像重试（#224 误用 icon_restore 已回退）
-// 同款；按钮无背景无描边，图标色取动态 BearyColors.ink，故深浅切换无需重刷。
-// 状态口径：加载中与成功态沿用现有行为（空白图 / 落图，重试图标隐藏）；
-// 仅失败态亮重试图标，点它重新走 load()（先藏图标回到加载态），成功后图标消失。
-// 代际守卫（消息页 avatarLoadGeneration 同款）：每次 load() 代际 +1，失败回调
-// 凭捕获的代际与当前代际比对，不一致一律丢弃——行重建（本页每次渲染整体重建
-// 结果区，旧行连同 holder 一起被 clearResultRows 丢弃）、换图、重试后，
-// 旧回调均不得亮新行的重试图标。bearySetImage 自身另有目标 URL 比对与取消旧
-// 任务，是第二重守卫；.cancelled 不算失败（bearySetImage 已过滤，不进 onFailure）。
-// 无图槽位（头像为 null、日记无图）不建本槽位、不亮图标；私密组有图时亦建槽位（sweep32-6）。
-
-private final class BearySearchImageRetry: NSObject {
-
-    private let imageView: UIImageView
-    private let retryButton: UIButton
-    private let imageURL: URL
-    private var generation: Int = 0
-
-    init(imageView: UIImageView, retryButton: UIButton, imageURL: URL) {
-        self.imageView = imageView
-        self.retryButton = retryButton
-        self.imageURL = imageURL
-        super.init()
-        retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
-        retryButton.bearyAddPressFeedback()
-    }
-
-    func load() {
-        generation += 1
-        let capturedGeneration = generation
-        retryButton.isHidden = true
-        imageView.bearySetImage(url: imageURL, placeholder: nil) { [weak self] _ in
-            guard let self = self else { return }
-            guard capturedGeneration == self.generation else { return }
-            self.retryButton.isHidden = false
-        }
-    }
-
-    @objc private func retryTapped() {
-        load()
-    }
-}
+// 首图加载与重试已走共享 bearyFeedLoadImage／bearyFeedPerformRetry
+// （BearyDiaryCardCell.swift 的 BearyFeedRetryButton），本页不再自带
+// BearySearchImageRetry 小类与 imageRetryHolders 表；重试态（目标图／URL／
+// BlurUp 标志）存在重试钮自身上，随行摘除而丢弃。形态（用户定）不变：
+// 纯图标 icon_refresh 24pt，无背景无描边，ink 色，44×44 居中压图；
+// 仅失败态亮重试图标，点它重新加载，成功后图标消失。
+// 代次守卫不需要：load 只在建行与点重试时调，两次调用严格串行（重试钮只在
+// 失败后才可见、在途时不可点）；bearySetImage／bearySetImageWithBlurUp 自身
+// 已有同 URL 守卫（在途重配直接返回）、换图取消旧任务、取消回调不进 onFailure、
+// 回包按当前 URL 比对丢弃——旧类的 generation 挡不住任何共享层已挡住的情况。
+// blurUp: true 与 #2183（图片去转圈）改走 BlurUp 后的 load() 同口径。
 
 // MARK: - 圆角 mark label（网页 mark 圆角 3 的原生等价）
 //
