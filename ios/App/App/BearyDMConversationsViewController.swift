@@ -89,6 +89,10 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var pullEngageTranslation: CGFloat?
     private var needsReloadAfterUserChange = false
     private var loadFailed = false
+    /// 首拉／刷新失败自动重试一次（约 1 秒后静默重拉）：失败即约一次，
+    /// 成功或手动重拉即清零；定时器只持 weak self，页面已走不发请求。
+    private var conversationsAutoRetryWorkItem: DispatchWorkItem?
+    private var conversationsAutoRetryUsed = false
     // 第 7 轮属实项 6：已有内容时刷新失败的非阻断提示条。只在
     // loadFailed && !conversations.isEmpty 时显（空列表仍走居中空态文案，
     // 不与本条重复）。失败条不占位、不挤压列表：表顶恒贴顶栏，显隐只淡入
@@ -241,6 +245,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     deinit {
         relativeTimeTimer?.invalidate()
         pollTimer?.invalidate()
+        conversationsAutoRetryWorkItem?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -680,13 +685,18 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         }
     }
 
-    private func load() {
+    private func load(isAutoRetry: Bool = false) {
         guard SessionManager.shared.isLoggedIn else {
             endCustomPullRefresh()
             onRequireLogin?()
             return
         }
         guard !loading else { return }
+        // 手动重拉开启新一轮：本次失败仍可自动重试一次；自动重试本身不重置，
+        // 否则它的失败会再约一次、无限续杯。
+        if !isAutoRetry {
+            conversationsAutoRetryUsed = false
+        }
         loading = true
         loadFailed = false
         // 第十轮 #20：首次无数据才出骨架行（下拉刷新自带转圈时不叠加）；
@@ -750,6 +760,10 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                         self.loadFailed = false
                         self.finishConversationsLoad(anchor: anchor, previousSignature: previousSignature)
                         self.endConversationsRefresh()
+                        // 成功即清零：待发的自动重试取消，本轮不再补发。
+                        self.conversationsAutoRetryWorkItem?.cancel()
+                        self.conversationsAutoRetryWorkItem = nil
+                        self.conversationsAutoRetryUsed = false
                     }
                 case .failure:
                     // 服务端失败：本地 BearyDMStore 会话先显（仅本地有消息的对方），
@@ -776,6 +790,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                         self.loadFailed = true
                         self.finishConversationsLoad(anchor: anchor, previousSignature: previousSignature)
                         self.endConversationsRefresh()
+                        self.scheduleConversationsAutoRetryOnce()
                     }
                 }
             }
@@ -818,6 +833,23 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         let maxY = max(minY, tableView.contentSize.height - tableView.bounds.height + tableView.contentInset.bottom)
         let y = min(max(rect.minY - anchor.offsetFromTop, minY), maxY)
         tableView.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+    }
+
+    /// 加载失败自动重试一次：约 1 秒后静默重拉 load()，不另出加载态
+    /// （首拉已落定，骨架不再出；有旧内容时失败条留着、后台悄悄重拉）。
+    /// 只约一次——成功或手动重拉清零后才可再约；触发时 load() 自带
+    /// !loading 门，在途请求不重复发；页面已走（weak self 为空）不发请求。
+    private func scheduleConversationsAutoRetryOnce() {
+        guard !conversationsAutoRetryUsed else { return }
+        conversationsAutoRetryUsed = true
+        conversationsAutoRetryWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self, SessionManager.shared.isLoggedIn else { return }
+            self.conversationsAutoRetryWorkItem = nil
+            self.load(isAutoRetry: true)
+        }
+        conversationsAutoRetryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: workItem)
     }
 
     /// 刷新态收尾（第 18 轮 #18）：只在本地合并完成后调——清 loading、

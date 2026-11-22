@@ -157,6 +157,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private let olderLoadingLabel = UILabel()
     private var olderLoadFailed = false
     private var hasMoreOlder = false
+    /// 翻旧失败自动重试一次（约 1 秒后静默重拉）：失败即约一次，
+    /// 成功或手动翻旧／滚动到顶重拉即清零；定时器只持 weak self。
+    private var olderAutoRetryWorkItem: DispatchWorkItem?
+    private var olderAutoRetryUsed = false
     private var loadFailed = false
     private var sessionClosed = false
     private var didMarkRead = false
@@ -744,6 +748,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         relativeTimeTimer?.invalidate()
         pollTimer?.invalidate()
         networkMonitor?.cancel()
+        olderAutoRetryWorkItem?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -1817,14 +1822,41 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 回包时取的视口值在异步写盘窗口内可能已过期（用户继续滚动），
     /// 不再用它覆盖位置；锚点消息已不在新表里时才按写盘完成时刻的视口
     /// 平移插入高度。
-    private func loadOlder() {
+    /// 翻旧失败自动重试一次：约 1 秒后静默重拉 loadOlder()，浮标不切加载转圈
+    /// （失败态留着、用户基本看不到加载态；成功浮标自收起、失败浮标仍在）。
+    /// 只约一次——成功或手动翻旧清零后才可再约；触发时 loadOlder() 自带
+    /// !olderLoading／!latestLoading／hasMoreOlder 门，在途不重复发；
+    /// 页面已走（weak self 为空）不发请求。
+    private func scheduleOlderAutoRetryOnce() {
+        guard !olderAutoRetryUsed else { return }
+        olderAutoRetryUsed = true
+        olderAutoRetryWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self, SessionManager.shared.isLoggedIn else { return }
+            self.olderAutoRetryWorkItem = nil
+            self.loadOlder(isAutoRetry: true)
+        }
+        olderAutoRetryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: workItem)
+    }
+
+    private func loadOlder(isAutoRetry: Bool = false) {
         // 数据互斥仍保留单向旧口径：最新页在途时翻旧不并发（等下次滚动再触发），
         // 避免两路回包交错改表；反向（翻旧在途时下拉刷新）不再静默吞，见 loadLatest 的排队。
         guard let userId = peer.id, !olderLoading, !latestLoading, hasMoreOlder,
               let oldestId = messages.first?.id else { return }
         guard ensureIdentityCurrent() else { return }
+        // 手动翻旧（点按浮标／滚动到顶）开启新一轮：本次失败仍可自动重试一次；
+        // 自动重试本身不重置，否则它的失败会再约一次、无限续杯。
+        if !isAutoRetry {
+            olderAutoRetryUsed = false
+        }
         olderLoading = true
-        setOlderLoadingState(loading: true, failed: false)
+        // 自动重试是静默的：浮标保持“加载失败，点按重试”，不切加载转圈；
+        // 成功浮标自收起、失败浮标仍在，用户基本看不到加载态。
+        if !isAutoRetry {
+            setOlderLoadingState(loading: true, failed: false)
+        }
         // 请求时捕获账号 + 代次：回包时任一不匹配即丢弃（见 isRequestCurrent）。
         let requestAccountId = SessionManager.shared.currentUser?.id
         let requestEpoch = BearyAPI.shared.authEpoch
@@ -1886,6 +1918,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         // 此处 reloadData＋layout 已完成，方可放行。
                         self.olderLoading = false
                         self.setOlderLoadingState(loading: false, failed: false)
+                        // 翻旧成功即清零：待发的自动重试取消，本轮不再补发。
+                        self.olderAutoRetryWorkItem?.cancel()
+                        self.olderAutoRetryWorkItem = nil
+                        self.olderAutoRetryUsed = false
                         let delta = self.tableView.contentSize.height - freshOldHeight
                         if let anchorId = freshAnchorMessageId,
                            let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
@@ -1940,6 +1976,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.olderLoading = false
                     self.setOlderLoadingState(loading: false, failed: true)
                     BearyToast.show(in: self.view, message: "加载更早消息失败，滚动可重试")
+                    self.scheduleOlderAutoRetryOnce()
                     // 翻旧失败也不吞排队的刷新：用户要的是最新页，照常跑。
                     if self.refreshQueued {
                         self.refreshQueued = false
