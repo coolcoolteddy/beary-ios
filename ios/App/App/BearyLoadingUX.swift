@@ -439,6 +439,22 @@ final class BearyNotificationSkeletonCell: UITableViewCell {
     }
 }
 
+/// 加载更多预取阈值：滚动距底多少即预取下一页（消息容器与通知页共用）。
+/// 900 与网页哨兵 IntersectionObserver rootMargin 900px 一致（通知页 C-G6）。
+/// 脚部三页（Feed／Profile／Timeline）不是这口径：它们距底一屏高（bounds.height）
+/// 触发，另有 willDisplay 兜底；不要把两处混成一个常量。
+enum BearyLoadMorePrefetch {
+    /// 距底预取阈值（pt）。
+    static let threshold: CGFloat = 900
+
+    /// 距底判定：视口底边距内容底不足 threshold 即近底；contentSize 高为 0 时不触发。
+    static func isNearBottom(_ scrollView: UIScrollView, threshold: CGFloat = threshold) -> Bool {
+        let contentHeight = scrollView.contentSize.height
+        guard contentHeight > 0 else { return false }
+        return scrollView.contentOffset.y + scrollView.bounds.height >= contentHeight - threshold
+    }
+}
+
 // MARK: - 加载更多脚部
 
 /// 信息流底部脚部：加载中 3 个跳动小圆点；到底显示“没有更多了”；
