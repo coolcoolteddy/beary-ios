@@ -9,7 +9,7 @@ import UIKit
 /// 已知局限：判定只读本机日文件；发布后单篇落盘是异步拉取（upsertPublished），
 /// 落盘完成即重算提醒；删除当天的唯一一篇后，
 /// 本机日文件要等同步才清，提醒可能少弹一次。回前台刷新是兜底。
-final class BearyLocalNotifications {
+final class BearyLocalNotifications: NSObject {
     static let shared = BearyLocalNotifications()
 
     enum Kind: String, CaseIterable {
@@ -92,6 +92,7 @@ final class BearyLocalNotifications {
     }
 
     private init() {
+        super.init()
         // 切号时按新号重算（SceneDelegate onUserChanged 在 id 真变时广播）。
         NotificationCenter.default.addObserver(forName: .bearyUserDidChange, object: nil, queue: .main) { [weak self] _ in
             self?.refreshAll(force: true)
@@ -262,9 +263,9 @@ final class BearyLocalNotifications {
         var identifier: String
         var fireDate: Date
         var body: String
+        var kind: Kind
         /// 点按落点（第 25 轮 60）：kind＋账号＋目标 id／日期。
         var userInfo: [String: Any]
-        var kind: Kind
     }
 
     /// 第 25 轮 60：通知点按落点。
