@@ -145,7 +145,7 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         view.addSubview(compressedButton)
 
         footnoteLabel.text = model.oversizeCount > 0 ? "其中 \(model.oversizeCount) 张原图超过 5MB，改用压缩上传" : nil
-        footnoteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        footnoteLabel.font = BearyDynamicType.captionFont()
         footnoteLabel.adjustsFontForContentSizeCategory = true
         footnoteLabel.textColor = BearyColors.gray
         footnoteLabel.numberOfLines = 0
@@ -191,7 +191,7 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         button.addSubview(titleLabel)
         let subtitleLabel = UILabel()
         subtitleLabel.text = subtitle
-        subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        subtitleLabel.font = BearyDynamicType.captionFont()
         subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false

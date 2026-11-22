@@ -288,7 +288,7 @@ private final class BearyToastView: UIView {
             let button = UIButton(type: .system)
             button.translatesAutoresizingMaskIntoConstraints = false
             button.setTitle(actionTitle, for: .normal)
-            button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+            button.titleLabel?.font = BearyDynamicType.buttonCompactFont()
             button.titleLabel?.adjustsFontForContentSizeCategory = true
             button.setTitleColor(BearyColors.ink, for: .normal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)

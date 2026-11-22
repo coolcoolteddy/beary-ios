@@ -940,7 +940,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("编辑资料", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        buttonValue.titleLabel?.font = BearyDynamicType.buttonRegularFont()
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.setImage(BearyIconImages.image(named: "icon_edit", pointSize: 14), for: .normal)
         buttonValue.tintColor = BearyColors.ink
@@ -1238,7 +1238,7 @@ class BearyProfileViewController: UIViewController {
     private let wallTitleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
+        labelValue.font = BearyDynamicType.sectionTitleFont()
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.text = "小熊回应"
@@ -1264,7 +1264,8 @@ class BearyProfileViewController: UIViewController {
     private let wallTotalLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 12)
+        labelValue.font = BearyDynamicType.captionFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         return labelValue
     }()
@@ -1292,7 +1293,8 @@ class BearyProfileViewController: UIViewController {
     private let signatureLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 15)
+        labelValue.font = BearyDynamicType.smallBodyFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.numberOfLines = 0
         return labelValue
@@ -1363,7 +1365,8 @@ class BearyProfileViewController: UIViewController {
         stackValue.isUserInteractionEnabled = false
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        labelValue.font = BearyDynamicType.sectionTitleFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.text = "进入年度回顾"
         let chevronView = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 14))
@@ -1464,7 +1467,8 @@ class BearyProfileViewController: UIViewController {
     private let pastSelfComposeHintLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 12)
+        labelValue.font = BearyDynamicType.captionFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 0
         return labelValue
@@ -1536,7 +1540,8 @@ class BearyProfileViewController: UIViewController {
     private let pastSelfSyncPendingLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.font = BearyDynamicType.secondaryFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 0
         labelValue.isHidden = true
@@ -1583,7 +1588,8 @@ class BearyProfileViewController: UIViewController {
     private let pastSelfDueNoteLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.font = BearyDynamicType.secondaryFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 0
         labelValue.isHidden = true
@@ -1659,7 +1665,7 @@ class BearyProfileViewController: UIViewController {
     private lazy var modulesRetryLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        labelValue.font = BearyDynamicType.secondaryFont()
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 0
@@ -1697,7 +1703,8 @@ class BearyProfileViewController: UIViewController {
     private let yearSummaryLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 15)
+        labelValue.font = BearyDynamicType.smallBodyFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         return labelValue
     }()
@@ -1755,7 +1762,8 @@ class BearyProfileViewController: UIViewController {
     private let mapEntryLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 15)
+        lb.font = BearyDynamicType.smallBodyFont()
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
         lb.text = "日记地图"
         return lb
@@ -1806,7 +1814,8 @@ class BearyProfileViewController: UIViewController {
     private let starEntryLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 15)
+        lb.font = BearyDynamicType.smallBodyFont()
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
         lb.text = "日记星图"
         return lb
@@ -1960,7 +1969,8 @@ class BearyProfileViewController: UIViewController {
     private let stickyHeaderNameLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 17, weight: .bold)
+        labelValue.font = BearyDynamicType.pageTitleFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         // header 用户名去发光（Li 2026-10-31）：发光阴影整删，不恢复；
         // 视觉清单第 6 项：字色固定 ink（动态色，跟随主题底色），不再按
         // 封面亮度取色（推翻 #508）；不另加底色块。
@@ -2168,7 +2178,7 @@ class BearyProfileViewController: UIViewController {
         // P2-4：同点赞钮修法——显式宽 = content 10 + 图宽 + titleEdge 6 + 实测标题宽 + content 10。
         // R8：宽改下限（默认尺寸不变），大字号时可生长。
         let tabImageWidth = buttonValue.image(for: .normal)?.size.width ?? 16
-        let tabTitleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))]).width)
+        let tabTitleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: BearyDynamicType.sectionTitleFont()]).width)
         buttonValue.widthAnchor.constraint(greaterThanOrEqualToConstant: 10 + tabImageWidth + 6 + tabTitleWidth + 10).isActive = true
         return buttonValue
     }
@@ -3350,7 +3360,8 @@ class BearyProfileViewController: UIViewController {
     private func makeStatTextLabel(text: String) -> UILabel {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.font = BearyDynamicType.secondaryFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.text = text
         return labelValue
@@ -5163,7 +5174,8 @@ class BearyProfileViewController: UIViewController {
                     rowButton.translatesAutoresizingMaskIntoConstraints = false
                     rowButton.setTitle(personalTitle(entry: entry), for: .normal)
                     rowButton.setTitleColor(BearyColors.ink, for: .normal)
-                    rowButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+                    rowButton.titleLabel?.font = BearyDynamicType.buttonRegularFont()
+                    rowButton.titleLabel?.adjustsFontForContentSizeCategory = true
                     rowButton.titleLabel?.numberOfLines = 1
                     rowButton.contentHorizontalAlignment = .leading
                     rowButton.accessibilityIdentifier = entryId
@@ -5713,7 +5725,8 @@ class BearyProfileViewController: UIViewController {
     private func pastSelfMetaLabel() -> UILabel {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 12)
+        labelValue.font = BearyDynamicType.captionFont()
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 0
         return labelValue
@@ -5749,7 +5762,8 @@ class BearyProfileViewController: UIViewController {
             deletedRow.addArrangedSubview(trashView)
             let deletedLabel = UILabel()
             deletedLabel.translatesAutoresizingMaskIntoConstraints = false
-            deletedLabel.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+            deletedLabel.font = BearyDynamicType.sectionTitleFont()
+            deletedLabel.adjustsFontForContentSizeCategory = true
             deletedLabel.textColor = BearyColors.ink
             deletedLabel.text = "原篇已删除"
             deletedRow.addArrangedSubview(deletedLabel)
@@ -7803,7 +7817,7 @@ class BearyProfileViewController: UIViewController {
         container.backgroundColor = BearyColors.bg
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+        titleLabel.font = BearyDynamicType.titleBoldFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = "照片"
@@ -7811,7 +7825,7 @@ class BearyProfileViewController: UIViewController {
         moreButton.translatesAutoresizingMaskIntoConstraints = false
         moreButton.setTitle("更多", for: .normal)
         moreButton.setTitleColor(BearyColors.gray, for: .normal)
-        moreButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        moreButton.titleLabel?.font = BearyDynamicType.buttonRegularFont()
         moreButton.titleLabel?.adjustsFontForContentSizeCategory = true
         moreButton.setImage(BearyIconImages.image(named: "icon_chevron_right", pointSize: 14), for: .normal)
         moreButton.tintColor = BearyColors.gray
@@ -7842,7 +7856,7 @@ class BearyProfileViewController: UIViewController {
                 photoButton.imageView?.clipsToBounds = true
                 photoButton.tag = photoIndex
                 // 第三轮第 7 项：失败格文案字号（成功格标题恒为空，不受影响）。
-                photoButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+                photoButton.titleLabel?.font = BearyDynamicType.buttonSmallFont()
                 photoButton.titleLabel?.adjustsFontForContentSizeCategory = true
                 photoButton.setTitleColor(BearyColors.gray, for: .normal)
                 photoButton.addTarget(self, action: #selector(photosWallButtonTapped(_:)), for: .touchUpInside)
@@ -8072,7 +8086,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         graphicView.translatesAutoresizingMaskIntoConstraints = false
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        titleLabel.font = BearyDynamicType.smallBodyFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
@@ -8093,7 +8107,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         if !subtitleText.isEmpty {
             let subtitleLabel = UILabel()
             subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-            subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            subtitleLabel.font = BearyDynamicType.secondaryFont()
             subtitleLabel.adjustsFontForContentSizeCategory = true
             subtitleLabel.textColor = BearyColors.gray
             subtitleLabel.textAlignment = .center
@@ -8131,7 +8145,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         let container = UIView()
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        label.font = BearyDynamicType.smallBodyFont()
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.textAlignment = .center
@@ -8156,7 +8170,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         iconView.contentMode = .scaleAspectFit
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        titleLabel.font = BearyDynamicType.smallBodyFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
@@ -8165,7 +8179,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
         retryButton.setTitleColor(BearyColors.ink, for: .normal)
-        retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        retryButton.titleLabel?.font = BearyDynamicType.buttonRegularFont()
         retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         retryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 15), for: .normal)
         retryButton.tintColor = BearyColors.ink
@@ -8192,7 +8206,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         if !(profileNotFound && profile == nil) {
             let subtitleLabel = UILabel()
             subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-            subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            subtitleLabel.font = BearyDynamicType.secondaryFont()
             subtitleLabel.adjustsFontForContentSizeCategory = true
             subtitleLabel.textColor = BearyColors.gray
             subtitleLabel.textAlignment = .center
@@ -9581,7 +9595,7 @@ final class BearyProfileEmptyPlaceholderCell: UITableViewCell {
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        label.font = BearyDynamicType.smallBodyFont()
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         label.textAlignment = .center
@@ -9591,7 +9605,7 @@ final class BearyProfileEmptyPlaceholderCell: UITableViewCell {
     private let subtitleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.font = BearyDynamicType.secondaryFont()
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.textAlignment = .center

@@ -46,7 +46,7 @@ private final class BlindBoxPoolRowView: UIView {
         mainLabel.numberOfLines = 2
 
         subLabel.translatesAutoresizingMaskIntoConstraints = false
-        subLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        subLabel.font = BearyDynamicType.captionFont()
         subLabel.adjustsFontForContentSizeCategory = true
         subLabel.textColor = BearyColors.gray
         subLabel.numberOfLines = 0
@@ -474,7 +474,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         openButton.bearyAddPressFeedback()
 
         openHintLabel.translatesAutoresizingMaskIntoConstraints = false
-        openHintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        openHintLabel.font = BearyDynamicType.captionFont()
         openHintLabel.adjustsFontForContentSizeCategory = true
         openHintLabel.textColor = BearyColors.gray
         openHintLabel.numberOfLines = 0
@@ -567,7 +567,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         receivedTitleLabel.numberOfLines = 0
 
         receivedDateLabel.translatesAutoresizingMaskIntoConstraints = false
-        receivedDateLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        receivedDateLabel.font = BearyDynamicType.captionFont()
         receivedDateLabel.adjustsFontForContentSizeCategory = true
         receivedDateLabel.textColor = BearyColors.gray
 

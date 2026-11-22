@@ -570,7 +570,7 @@ final class BearyLoadMoreFooterView: UIView {
         endLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(endLabel)
         retryButton.setTitle("加载失败，重试", for: .normal)
-        retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        retryButton.titleLabel?.font = BearyDynamicType.buttonRegularFont()
         retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         retryButton.setTitleColor(BearyColors.gray, for: .normal)
         retryButton.translatesAutoresizingMaskIntoConstraints = false

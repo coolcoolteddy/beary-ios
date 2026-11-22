@@ -199,7 +199,7 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.setTitle("保存", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         // 按钮普查：裸 15pt 粗体改 scaledFont，跟随系统字号（顶行 44 高，最大档不裁剪）。
-        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
+        buttonValue.titleLabel?.font = BearyDynamicType.smallActionFont()
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.addTarget(self, action: #selector(saveButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()

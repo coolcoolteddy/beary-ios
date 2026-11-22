@@ -691,7 +691,7 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         textView.translatesAutoresizingMaskIntoConstraints = false
-        textView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        textView.font = BearyDynamicType.smallBodyFont()
         textView.adjustsFontForContentSizeCategory = true
         textView.textColor = BearyColors.ink
         textView.backgroundColor = BearyColors.surface2
@@ -704,7 +704,7 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
         // 不再随 500 字无限撑高、把调用方容器顶穿。
         addSubview(textView)
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        placeholderLabel.font = BearyDynamicType.smallBodyFont()
         placeholderLabel.adjustsFontForContentSizeCategory = true
         placeholderLabel.textColor = BearyColors.gray
         placeholderLabel.text = placeholder

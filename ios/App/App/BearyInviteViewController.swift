@@ -339,14 +339,14 @@ final class BearyInviteViewController: UIViewController {
         bindField.addTarget(self, action: #selector(bindTextChanged), for: .editingChanged)
 
         bindHintLabel.translatesAutoresizingMaskIntoConstraints = false
-        bindHintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        bindHintLabel.font = BearyDynamicType.secondaryFont()
         bindHintLabel.adjustsFontForContentSizeCategory = true
         bindHintLabel.textColor = BearyColors.gray
         bindHintLabel.numberOfLines = 0
         bindHintLabel.isHidden = true
 
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        messageLabel.font = BearyDynamicType.secondaryFont()
         messageLabel.adjustsFontForContentSizeCategory = true
         messageLabel.textColor = BearyColors.surface3ErrorText
         messageLabel.numberOfLines = 0

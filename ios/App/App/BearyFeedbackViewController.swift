@@ -416,7 +416,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.pageTitleFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
@@ -595,7 +595,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         attachClearButton.setTitle("清除", for: .normal)
         attachClearButton.setTitleColor(BearyColors.gray, for: .normal)
         // 按钮普查：裸 15pt 改 scaledFont，跟随系统字号（与左钮同行高 44）。
-        attachClearButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        attachClearButton.titleLabel?.font = BearyDynamicType.smallBodyFont()
         attachClearButton.titleLabel?.adjustsFontForContentSizeCategory = true
         attachClearButton.accessibilityLabel = "清除已选附件"
         attachClearButton.addTarget(self, action: #selector(clearAttachmentsTapped), for: .touchUpInside)

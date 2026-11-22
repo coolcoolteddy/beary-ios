@@ -62,11 +62,11 @@ private final class WishRowView: UIView {
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.numberOfLines = 0
-        detailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        detailLabel.font = BearyDynamicType.secondaryFont()
         detailLabel.adjustsFontForContentSizeCategory = true
         detailLabel.textColor = BearyColors.gray
         detailLabel.numberOfLines = 3
-        metaLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        metaLabel.font = BearyDynamicType.captionFont()
         metaLabel.adjustsFontForContentSizeCategory = true
         metaLabel.textColor = BearyColors.gray
         metaLabel.numberOfLines = 0
@@ -77,7 +77,7 @@ private final class WishRowView: UIView {
         netLabel.adjustsFontForContentSizeCategory = true
         netLabel.textColor = BearyColors.gray
         // 任务 9：已完成静态结果行——与作者时间同档的 12 灰字弱信息行，只读不点。
-        doneResultLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        doneResultLabel.font = BearyDynamicType.captionFont()
         doneResultLabel.adjustsFontForContentSizeCategory = true
         doneResultLabel.textColor = BearyColors.gray
         doneResultLabel.numberOfLines = 0
@@ -364,7 +364,7 @@ private final class WishRowView: UIView {
     /// 计数段不写死前景色，跟随按钮 titleColor（选中态 applyVoteSelected 改色后仍生效）；
     /// 无障碍读作「赞成 N 票」/「反对 N 票」，计数随 configure 实时更新。
     private func setVoteTitle(_ button: BearyButton, name: String, count: Int) {
-        let nameFont = button.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        let nameFont = button.titleLabel?.font ?? BearyDynamicType.buttonCompactFont()
         let title = NSMutableAttributedString(string: name, attributes: [.font: nameFont])
         // 第 25 轮 5：票数为 0 时不拼数字及其前导空格，只显示操作名；
         // 读屏标签仍保留票数（「赞成 0 票」照常可读）。
@@ -402,7 +402,7 @@ final class BearyWishWallViewController: UIViewController {
     private let wishStaleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        labelValue.font = BearyDynamicType.secondaryFont()
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
@@ -1222,7 +1222,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         titleField.rightViewMode = .always
         titleField.addTarget(self, action: #selector(titleChanged), for: .editingChanged)
         detailView.translatesAutoresizingMaskIntoConstraints = false
-        detailView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        detailView.font = BearyDynamicType.smallBodyFont()
         detailView.adjustsFontForContentSizeCategory = true
         detailView.textColor = BearyColors.ink
         // 审计视觉 04：详情框去 1pt 墨色边框，走 surface2 底＋12 圆角；聚焦走聚焦阴影（见 refreshDetailBorder）。
@@ -1232,7 +1232,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         detailView.delegate = self
         detailPlaceholder.translatesAutoresizingMaskIntoConstraints = false
         detailPlaceholder.text = "补充说明（可选）"
-        detailPlaceholder.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        detailPlaceholder.font = BearyDynamicType.smallBodyFont()
         detailPlaceholder.adjustsFontForContentSizeCategory = true
         detailPlaceholder.textColor = BearyColors.gray
         detailView.addSubview(detailPlaceholder)
@@ -1247,7 +1247,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         titleCountLabel.text = "0/100"
         detailCountLabel.text = "0/2000"
         fieldErrorLabel.translatesAutoresizingMaskIntoConstraints = false
-        fieldErrorLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        fieldErrorLabel.font = BearyDynamicType.secondaryFont()
         fieldErrorLabel.adjustsFontForContentSizeCategory = true
         fieldErrorLabel.textColor = BearyColors.destructiveText
         fieldErrorLabel.numberOfLines = 0

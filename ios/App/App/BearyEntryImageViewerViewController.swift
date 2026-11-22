@@ -98,7 +98,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         buttonValue.setTitleColor(.white, for: .normal)
         // B5：入口未就绪时只置灰文案（背景不动），与 isEnabled 门同口径。
         buttonValue.setTitleColor(UIColor(white: 1, alpha: 0.45), for: .disabled)
-        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        buttonValue.titleLabel?.font = BearyDynamicType.buttonCompactFont()
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.backgroundColor = UIColor(white: 1, alpha: 0.16)
         buttonValue.layer.cornerRadius = BearyCorners.single
@@ -288,7 +288,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         view.addSubview(loadingSpinner)
         retryButton.setTitle("图片加载失败，重试", for: .normal)
         retryButton.setTitleColor(.white, for: .normal)
-        retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        retryButton.titleLabel?.font = BearyDynamicType.buttonRegularFont()
         retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         // 失败重试现为真实 UIButton：VoiceOver 双击即触发 .touchUpInside，
         // 不再只靠 .button 读法（纯 UILabel 时双击走 accessibilityActivate，
@@ -314,7 +314,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         loadMoreSpinner.translatesAutoresizingMaskIntoConstraints = false
         loadMoreSpinner.color = .white
         loadMoreLabel.translatesAutoresizingMaskIntoConstraints = false
-        loadMoreLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        loadMoreLabel.font = BearyDynamicType.secondaryFont()
         loadMoreLabel.adjustsFontForContentSizeCategory = true
         loadMoreLabel.textColor = UIColor(white: 1, alpha: 0.75)
         loadMoreStack.translatesAutoresizingMaskIntoConstraints = false

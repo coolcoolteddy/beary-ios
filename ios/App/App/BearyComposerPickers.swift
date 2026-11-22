@@ -244,7 +244,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
         notifyCheckButton.bearyAddPressFeedback()
         notifyLabel.text = "通知对方"
-        notifyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        notifyLabel.font = BearyDynamicType.secondaryFont()
         notifyLabel.adjustsFontForContentSizeCategory = true
         notifyLabel.textColor = BearyColors.ink
         notifyRow.addArrangedSubview(notifyCheckButton)
@@ -254,7 +254,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         rowsStack.axis = .vertical
         rowsStack.spacing = 0
         resultsLabel.text = "搜索结果"
-        resultsLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        resultsLabel.font = BearyDynamicType.captionFont()
         resultsLabel.adjustsFontForContentSizeCategory = true
         resultsLabel.textColor = BearyColors.gray
         resultsLabelWrap.isHidden = true
@@ -278,7 +278,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateSubtitle.numberOfLines = 0
         stateRetryButton.setTitle("重试", for: .normal)
         stateRetryButton.setTitleColor(BearyColors.ink, for: .normal)
-        stateRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        stateRetryButton.titleLabel?.font = BearyDynamicType.smallBodyFont()
         stateRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         stateRetryButton.isHidden = true
         stateRetryButton.addTarget(self, action: #selector(didTapStateRetry), for: .touchUpInside)

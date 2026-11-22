@@ -658,7 +658,7 @@ final class BearyYearReviewViewController: UIViewController {
     private let yearLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+        label.font = BearyDynamicType.titleBoldFont()
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         return label
@@ -808,7 +808,7 @@ final class BearyYearReviewViewController: UIViewController {
     private func makeYearReviewFootnote() -> UILabel {
         let footnote = UILabel()
         footnote.numberOfLines = 0
-        footnote.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        footnote.font = BearyDynamicType.captionFont()
         footnote.adjustsFontForContentSizeCategory = true
         footnote.textColor = BearyColors.gray
         footnote.text = "词汇指纹只按当年正文统计，不展示正文。"
@@ -883,7 +883,7 @@ final class BearyYearReviewViewController: UIViewController {
             dynamicStack.addArrangedSubview(bearyMakeWordprintScopeBadge())
             let emptyLabel = UILabel()
             emptyLabel.numberOfLines = 0
-            emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+            emptyLabel.font = BearyDynamicType.smallBodyFont()
             emptyLabel.adjustsFontForContentSizeCategory = true
             emptyLabel.textColor = BearyColors.gray
             emptyLabel.text = "这一年还没有日记"
@@ -913,7 +913,7 @@ final class BearyYearReviewViewController: UIViewController {
         }
         let summaryLabel = UILabel()
         summaryLabel.numberOfLines = 0
-        summaryLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        summaryLabel.font = BearyDynamicType.smallBodyFont()
         summaryLabel.adjustsFontForContentSizeCategory = true
         summaryLabel.textColor = BearyColors.ink
         summaryLabel.text = aggregate.summaryText
@@ -935,7 +935,7 @@ final class BearyYearReviewViewController: UIViewController {
         let distribution = aggregate.moodDistribution
         if let maxCount = distribution.first?.count, maxCount > 0 {
             let moodTitle = UILabel()
-            moodTitle.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
+            moodTitle.font = BearyDynamicType.sectionTitleFont()
             moodTitle.adjustsFontForContentSizeCategory = true
             moodTitle.textColor = BearyColors.ink
             moodTitle.text = "心情分布"
@@ -946,7 +946,7 @@ final class BearyYearReviewViewController: UIViewController {
                 row.spacing = 8
                 row.alignment = .center
                 let nameLabel = UILabel()
-                nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+                nameLabel.font = BearyDynamicType.secondaryFont()
                 nameLabel.adjustsFontForContentSizeCategory = true
                 nameLabel.textColor = BearyColors.ink
                 nameLabel.text = BearyText.moodNames[item.key] ?? item.key
@@ -1139,7 +1139,7 @@ final class BearyProfilePersonalModulesCard: UIView {
         clipsToBounds = true
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
+        titleLabel.font = BearyDynamicType.sectionTitleFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = title
@@ -1193,7 +1193,7 @@ final class BearyProfilePersonalModulesCard: UIView {
     static func entryTitleLabel() -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+        label.font = BearyDynamicType.titleBoldFont()
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         label.numberOfLines = 0

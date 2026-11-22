@@ -5671,7 +5671,8 @@ final class BearyPrivatePlaceholderViewController: UIViewController {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.text = "该日记已设为私密"
-        label.font = UIFont.systemFont(ofSize: 15)
+        label.font = BearyDynamicType.smallBodyFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.textAlignment = .center
         view.addSubview(closeButton)

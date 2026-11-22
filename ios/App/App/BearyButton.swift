@@ -77,19 +77,19 @@ enum BearyButtonStyle: Equatable {
     var titleFont: UIFont {
         switch self {
         case .primaryPill:
-            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+            return BearyDynamicType.buttonFont()
         case .secondaryOutline(let size):
             if size == .compact {
-                return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+                return BearyDynamicType.buttonCompactFont()
             }
-            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+            return BearyDynamicType.buttonFont()
         case .destructiveOutline(let size):
             if size == .compact {
-                return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+                return BearyDynamicType.buttonCompactFont()
             }
-            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+            return BearyDynamicType.buttonFont()
         case .iconCircleClose:
-            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+            return BearyDynamicType.smallBodyFont()
         }
     }
 }

@@ -87,7 +87,7 @@ final class BearyPlusPageViewController: UIViewController {
     private let subLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        labelValue.font = BearyDynamicType.secondaryFont()
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
@@ -247,7 +247,7 @@ final class BearyPlusPageViewController: UIViewController {
         row.addSubview(check)
         let titleLabelValue = UILabel()
         titleLabelValue.translatesAutoresizingMaskIntoConstraints = false
-        titleLabelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+        titleLabelValue.font = BearyDynamicType.titleBoldFont()
         titleLabelValue.adjustsFontForContentSizeCategory = true
         titleLabelValue.textColor = BearyColors.ink
         titleLabelValue.numberOfLines = 0
@@ -255,7 +255,7 @@ final class BearyPlusPageViewController: UIViewController {
         row.addSubview(titleLabelValue)
         let descLabel = UILabel()
         descLabel.translatesAutoresizingMaskIntoConstraints = false
-        descLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        descLabel.font = BearyDynamicType.secondaryFont()
         descLabel.adjustsFontForContentSizeCategory = true
         descLabel.textColor = BearyColors.gray
         descLabel.numberOfLines = 0
@@ -301,7 +301,7 @@ final class BearyPlusPageViewController: UIViewController {
         sectionWrap.translatesAutoresizingMaskIntoConstraints = false
         let sectionLabel = UILabel()
         sectionLabel.translatesAutoresizingMaskIntoConstraints = false
-        sectionLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        sectionLabel.font = BearyDynamicType.secondaryFont()
         sectionLabel.adjustsFontForContentSizeCategory = true
         sectionLabel.textColor = BearyColors.gray
         sectionLabel.text = "权益"
@@ -333,7 +333,7 @@ final class BearyPlusPageViewController: UIViewController {
         row.addSubview(topLine)
         let titleLabelValue = UILabel()
         titleLabelValue.translatesAutoresizingMaskIntoConstraints = false
-        titleLabelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+        titleLabelValue.font = BearyDynamicType.titleBoldFont()
         titleLabelValue.adjustsFontForContentSizeCategory = true
         titleLabelValue.textColor = BearyColors.ink
         titleLabelValue.numberOfLines = 0
@@ -341,7 +341,7 @@ final class BearyPlusPageViewController: UIViewController {
         row.addSubview(titleLabelValue)
         let descLabel = UILabel()
         descLabel.translatesAutoresizingMaskIntoConstraints = false
-        descLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        descLabel.font = BearyDynamicType.secondaryFont()
         descLabel.adjustsFontForContentSizeCategory = true
         descLabel.textColor = BearyColors.gray
         descLabel.numberOfLines = 0
@@ -495,7 +495,7 @@ final class BearyPlusPageViewController: UIViewController {
         headerWrap.translatesAutoresizingMaskIntoConstraints = false
         let headerLabel = UILabel()
         headerLabel.translatesAutoresizingMaskIntoConstraints = false
-        headerLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        headerLabel.font = BearyDynamicType.secondaryFont()
         headerLabel.adjustsFontForContentSizeCategory = true
         headerLabel.textColor = BearyColors.gray
         headerLabel.text = "来源明细"
@@ -559,14 +559,14 @@ final class BearyPlusPageViewController: UIViewController {
                 for grant in grants {
                     let nameLabel = UILabel()
                     nameLabel.translatesAutoresizingMaskIntoConstraints = false
-                    nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+                    nameLabel.font = BearyDynamicType.smallBodyFont()
                     nameLabel.adjustsFontForContentSizeCategory = true
                     nameLabel.textColor = BearyColors.ink
                     nameLabel.numberOfLines = 0
                     nameLabel.text = BearyAccountText.grantSourceName(grant.source)
                     let detailLabel = UILabel()
                     detailLabel.translatesAutoresizingMaskIntoConstraints = false
-                    detailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+                    detailLabel.font = BearyDynamicType.secondaryFont()
                     detailLabel.adjustsFontForContentSizeCategory = true
                     detailLabel.textColor = BearyColors.gray
                     detailLabel.numberOfLines = 0
@@ -587,7 +587,7 @@ final class BearyPlusPageViewController: UIViewController {
     private func grantsStatusContent(title: String, detail: String) -> UIView {
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        titleLabel.font = BearyDynamicType.smallBodyFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.numberOfLines = 0

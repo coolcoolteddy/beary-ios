@@ -237,7 +237,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         headerRow.spacing = 8
         titleLabel.text = "回收站"
         // 扫查组：此前裸 16 粗体，标题不跟随大字号（栈行高自适应）。
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        titleLabel.font = BearyDynamicType.titleBoldFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         closeButton.isHidden = false
@@ -326,7 +326,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         loadMoreRetryWrap.isHidden = true
         loadMoreRetryButton.setTitle("加载失败 · 重试", for: .normal)
         loadMoreRetryButton.setTitleColor(BearyColors.ink, for: .normal)
-        loadMoreRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        loadMoreRetryButton.titleLabel?.font = BearyDynamicType.smallBodyFont()
         loadMoreRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         loadMoreRetryButton.accessibilityLabel = "加载失败，点按重试加载更多"
         loadMoreRetryButton.addTarget(self, action: #selector(retryLoadMoreTapped), for: .touchUpInside)
@@ -342,14 +342,14 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         let loginTitleLabel = UILabel()
         loginTitleLabel.text = "请先登录"
         // 扫查组：此前裸 15pt，未登录空态标题不跟随大字号。
-        loginTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        loginTitleLabel.font = BearyDynamicType.smallBodyFont()
         loginTitleLabel.adjustsFontForContentSizeCategory = true
         loginTitleLabel.textColor = BearyColors.ink
         loginTitleLabel.textAlignment = .center
         loginButton.setTitle("去登录", for: .normal)
         loginButton.setTitleColor(BearyColors.ink, for: .normal)
         // 扫查组：此前裸 14pt；本钮无固定高，走 scaledFont 全跟随。
-        loginButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        loginButton.titleLabel?.font = BearyDynamicType.buttonRegularFont()
         loginButton.titleLabel?.adjustsFontForContentSizeCategory = true
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
         loginButton.bearyAddPressFeedback()
@@ -966,7 +966,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
 
         let metaLabel = UILabel()
         metaLabel.numberOfLines = 0
-        metaLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        metaLabel.font = BearyDynamicType.secondaryFont()
         metaLabel.adjustsFontForContentSizeCategory = true
         metaLabel.textColor = BearyColors.gray
         metaLabel.tag = Self.trashMetaLabelTag

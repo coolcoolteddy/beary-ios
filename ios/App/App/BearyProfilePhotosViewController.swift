@@ -220,7 +220,7 @@ final class BearyProfilePhotosViewController: UIViewController {
     private let emptyLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        labelValue.font = BearyDynamicType.smallBodyFont()
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
@@ -238,7 +238,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("重试", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        buttonValue.titleLabel?.font = BearyDynamicType.smallBodyFont()
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.accessibilityLabel = "照片没加载出来，点按重试"
         buttonValue.isHidden = true
@@ -299,7 +299,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
         labelValue.backgroundColor = BearyColors.bg
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        labelValue.font = BearyDynamicType.secondaryFont()
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
@@ -982,7 +982,7 @@ final class BearyProfilePhotosViewController: UIViewController {
             chip.translatesAutoresizingMaskIntoConstraints = false
             chip.setTitle(section.title, for: .normal)
             chip.setTitleColor(BearyColors.ink, for: .normal)
-            chip.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+            chip.titleLabel?.font = BearyDynamicType.buttonSmallFont()
             chip.titleLabel?.adjustsFontForContentSizeCategory = true
             chip.backgroundColor = BearyColors.surface2
             chip.layer.cornerRadius = 14
@@ -1610,7 +1610,7 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
     private let failedLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        labelValue.font = BearyDynamicType.captionFont()
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
@@ -1792,7 +1792,7 @@ final class BearyProfilePhotosLoadMoreFooterCell: UICollectionViewCell {
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("更多照片加载失败 · 重试", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        buttonValue.titleLabel?.font = BearyDynamicType.smallBodyFont()
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.accessibilityLabel = "更多照片加载失败，点按重试"
         buttonValue.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)

@@ -100,7 +100,7 @@ final class BearyQuoteCardView: UIView {
     private let sourceButton: BearyHit44Button = {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        btn.titleLabel?.font = BearyDynamicType.captionFont()
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.titleLabel?.lineBreakMode = .byTruncatingTail
         btn.setTitleColor(BearyColors.gray, for: .normal)
@@ -116,7 +116,7 @@ final class BearyQuoteCardView: UIView {
     private let goneLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 0
@@ -639,11 +639,11 @@ final class BearyQuoteCardView: UIView {
         }
         if let detail = detail, !detail.isEmpty {
             let combined = NSMutableAttributedString(string: message, attributes: [
-                .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13)),
+                .font: BearyDynamicType.secondaryFont(),
                 .foregroundColor: BearyColors.gray,
             ])
             combined.append(NSAttributedString(string: "\n" + detail, attributes: [
-                .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12)),
+                .font: BearyDynamicType.captionFont(),
                 .foregroundColor: BearyColors.gray,
             ]))
             goneLabel.attributedText = combined

@@ -117,7 +117,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         refreshFailedBanner.addSubview(refreshFailedLabel)
         refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
         refreshFailedRetryButton.setTitle("重试", for: .normal)
-        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.buttonCompactFont()
         refreshFailedRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         refreshFailedRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         refreshFailedRetryButton.accessibilityLabel = "重试"
@@ -578,7 +578,7 @@ private final class BearyFriendCell: UITableViewCell {
         nameLabel.textColor = BearyColors.ink
         nameLabel.numberOfLines = 1
         handleLabel.translatesAutoresizingMaskIntoConstraints = false
-        handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        handleLabel.font = BearyDynamicType.secondaryFont()
         handleLabel.adjustsFontForContentSizeCategory = true
         handleLabel.textColor = BearyColors.gray
         handleLabel.numberOfLines = 1

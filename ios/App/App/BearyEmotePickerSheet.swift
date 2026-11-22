@@ -413,7 +413,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         // 列数（4 列）与排列顺序不动；字号档变化时 traitCollectionDidChange 刷布局重算。
         let key = emoteKeys(forSection: indexPath.section)[indexPath.item]
         let name = BearyText.moodNames[key] ?? key
-        let nameFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
+        let nameFont = BearyDynamicType.tinyCaptionFont()
         let nameWidth = max(width - 4, 0)
         let nameHeight = (name as NSString).boundingRect(
             with: CGSize(width: nameWidth, height: CGFloat.greatestFiniteMagnitude),
@@ -614,7 +614,7 @@ final class BearyEmotePickerSheetCell: UICollectionViewCell {
             emoteView = next
         }
         // 审计 D-13：名称跟系统字号（原 11pt 固定），与 sizeForItemAt 量取用同一缩放字。
-        nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
+        nameLabel.font = BearyDynamicType.tinyCaptionFont()
         nameLabel.adjustsFontForContentSizeCategory = true
         nameLabel.textColor = BearyColors.gray
         nameLabel.text = name

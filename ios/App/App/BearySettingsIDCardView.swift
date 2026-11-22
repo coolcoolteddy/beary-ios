@@ -232,7 +232,7 @@ final class BearySettingsIDCardView: UIView {
             }
             let titleLabel = UILabel()
             titleLabel.translatesAutoresizingMaskIntoConstraints = false
-            titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            titleLabel.font = BearyDynamicType.secondaryFont()
             titleLabel.adjustsFontForContentSizeCategory = true
             titleLabel.textColor = BearyColors.gray
             titleLabel.text = row.title

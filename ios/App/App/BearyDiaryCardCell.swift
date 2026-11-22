@@ -808,7 +808,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private let locationLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
@@ -927,7 +927,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private let timeLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
@@ -949,7 +949,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private let weatherWrapLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.isHidden = true
         return lb
@@ -959,7 +959,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private let weatherTempLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
@@ -974,7 +974,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private let weatherNameLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
@@ -1003,7 +1003,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private let moodLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
@@ -1075,7 +1075,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private lazy var foldButton: UIButton = {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        btn.titleLabel?.font = BearyDynamicType.buttonRegularFont()
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.setTitleColor(BearyColors.gray, for: .normal)
         btn.tintColor = BearyColors.gray
@@ -1097,7 +1097,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private lazy var nineGridButton: UIButton = {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        btn.titleLabel?.font = BearyDynamicType.buttonSmallFont()
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.setTitle("九宫格", for: .normal)
         btn.setTitleColor(BearyColors.ink, for: .normal)
@@ -1274,7 +1274,8 @@ class BearyDiaryCardCell: UITableViewCell {
     private lazy var guestLoginPromptButton: UIButton = {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        btn.titleLabel?.font = BearyDynamicType.smallBodyFont()
+        btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.setTitle("登录后可点赞、回应、收藏 ›", for: .normal)
         btn.setTitleColor(BearyColors.gray, for: .normal)
         btn.setTitleColor(BearyColors.gray, for: .highlighted)
@@ -1612,7 +1613,7 @@ class BearyDiaryCardCell: UITableViewCell {
         contentView.backgroundColor = BearyColors.bg
         // @ 行字号各保各的：首页 12 粗体、个人主页 13 常规；文案由 configure 按 mentionedName 写“@名”。
         // 113：底数不动，只加 scaledFont + adjusts（#322/#324 时间线 @ 行同款做法）。
-        recipientLabel.font = cardMode == .feed ? BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12)) : BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        recipientLabel.font = cardMode == .feed ? BearyDynamicType.smallBoldFont() : BearyDynamicType.secondaryFont()
         recipientLabel.adjustsFontForContentSizeCategory = true
         recipientLabel.text = nil
         // 首页皇冠带网页 drop-shadow（0 1px 1px 黑 30%），个人主页无阴影。
@@ -3472,7 +3473,7 @@ class BearyDiaryCardCell: UITableViewCell {
             setLikeTitle(nil, width: imageWidth)
         } else {
             let titleText = "\(countValue)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.buttonCompactFont()]).width)
             setLikeTitle(titleText, width: imageWidth + 6 + titleWidth)
         }
         // 2026-10-29 100 包反馈第 6 项：卡片脚三钮未点亮统一为同一灰
@@ -3500,7 +3501,7 @@ class BearyDiaryCardCell: UITableViewCell {
             setLikeTitle(nil, width: imageWidth)
         } else {
             let titleText = "\(count)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.buttonCompactFont()]).width)
             setLikeTitle(titleText, width: imageWidth + 6 + titleWidth)
         }
         likeButton.tintColor = liked ? BearyColors.likeRed : BearyColors.gray

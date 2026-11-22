@@ -396,7 +396,8 @@ extension BearyTagPickerViewController: UITableViewDataSource, UITableViewDelega
         cell.textLabel?.textColor = BearyColors.ink
         if let count = item.count {
             cell.detailTextLabel?.text = "\(count) 篇"
-            cell.detailTextLabel?.font = UIFont.systemFont(ofSize: 13)
+            cell.detailTextLabel?.font = BearyDynamicType.secondaryFont()
+            cell.detailTextLabel?.adjustsFontForContentSizeCategory = true
             cell.detailTextLabel?.textColor = BearyColors.gray
         } else {
             cell.detailTextLabel?.text = nil

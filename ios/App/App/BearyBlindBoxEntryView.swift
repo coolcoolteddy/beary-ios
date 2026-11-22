@@ -80,7 +80,7 @@ final class BearyBlindBoxEntryView: UIView {
         countLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        subtitleLabel.font = BearyDynamicType.captionFont()
         subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.numberOfLines = 0
