@@ -1240,7 +1240,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // 审计登录杂项：无标题篇底卡只显日期，不再拼出“ · M月d日”前导空标题。
         let title = sheetEntryTitle(entry)
         let date = sheetDateString(entry)
-        button.setTitle(title.isEmpty ? date : "\(title) · \(date)", for: .normal)
+        if title.isEmpty {
+            button.setTitle(date, for: .normal)
+        } else {
+            // 标题走转换器、日期拼在后面：标题部分先渲染（记号变附件格），
+            // 再拼 " · 日期" 纯文本；读屏标签保持原纯文本。
+            let buttonFont = button.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+            let titleAttributed = NSMutableAttributedString(attributedString: sheetEntryTitleAttributed(entry, font: buttonFont))
+            titleAttributed.append(NSAttributedString(string: " · \(date)", attributes: [.font: buttonFont, .foregroundColor: BearyStarMapNight.primaryText]))
+            button.setAttributedTitle(titleAttributed, for: .normal)
+        }
         button.accessibilityLabel = "打开日记：\(title)"
         button.addTarget(self, action: #selector(didTapSheetEntry(_:)), for: .touchUpInside)
         // id 经 tag 无法传字符串：用 accessibilityIdentifier 搭载，点按时再查表。
@@ -1286,7 +1295,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
         sheetStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         // 审计登录杂项：无标题篇底卡标题只显日期（与行按钮同口径）。
         let starTitle = sheetEntryTitle(entry)
-        sheetStack.addArrangedSubview(sheetTitleLabel(starTitle.isEmpty ? sheetDateString(entry) : starTitle))
+        let starTitleLabel = sheetTitleLabel(starTitle.isEmpty ? sheetDateString(entry) : starTitle)
+        if !starTitle.isEmpty {
+            starTitleLabel.attributedText = sheetEntryTitleAttributed(entry, font: starTitleLabel.font)
+        }
+        sheetStack.addArrangedSubview(starTitleLabel)
         var meta = sheetDateString(entry)
         if let moodKey = entry.mood, !moodKey.isEmpty {
             meta += " · 心情 \(BearyText.moodNames[moodKey] ?? moodKey)"
@@ -1494,6 +1507,21 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let body = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !body.isEmpty { return String(body.prefix(24)) }
         return ""  // 109：无标题又无正文不再显“日记”占位
+    }
+
+    /// 底卡标题的 attributed 版：标题优先全量渲染，空标题取正文前 24 字——
+    /// 先全文渲染再截断，记号已是单个附件格，不会被切一半。
+    private func sheetEntryTitleAttributed(_ entry: Entry, font: UIFont) -> NSAttributedString {
+        let title = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty {
+            return BearyText.inlineAttributedText(from: title, font: font, color: BearyStarMapNight.primaryText, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
+        }
+        let body = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return NSAttributedString(string: "") }
+        let rendered = BearyText.inlineAttributedText(from: body, font: font, color: BearyStarMapNight.primaryText, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
+        guard rendered.string.count > 24 else { return rendered }
+        let prefixLength = rendered.string.prefix(24).utf16.count
+        return rendered.attributedSubstring(from: NSRange(location: 0, length: prefixLength))
     }
 
     /// 审计 17 轮第 20 项：底卡日期共用两个格式化器——sheetDateString 每行
