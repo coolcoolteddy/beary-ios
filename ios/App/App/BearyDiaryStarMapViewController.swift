@@ -185,6 +185,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var fetchResumeBeforeId: String?
     private var fetchResumePage: Int = 1
     private var fetchInterrupted: Bool = false
+    /// 失败静默自动重试一次（2026-11-22 Li 定，盲盒 poolSilentRetried 同款口径）：
+    /// 每批首次失败先静默重拉同一页，再失败才落失败态；每批（首批新拉／中断续拉）
+    /// 各一次。重试不改游标、不改页码、不推代次，加载态保持、不闪失败视图。
+    private var fetchSilentRetried = false
+    /// 发起本轮请求时的会话代次与账号：取消／退出／401 属于确定性失败不重试——
+    /// 加载器把这类失败同样以 nil 送回，凭这两个值识别：会话已变时直接落失败态。
+    /// 离线在加载器层无 error 透传，本层无法区分，只以“仅一次”为界（盲盒同款
+    /// 亦无条件重试一次）。
+    private var fetchRequestEpoch = 0
+    private var fetchRequestViewerId: Int?
     /// r17-m3：从详情回到原处的专用记忆——进入详情的星／线 ID、滚动位置、
     /// 打开那篇的展示快照（标题／正文／可见性）。只读返回时恢复选中态与
     /// 展开位置；快照变了（删篇／翻私密／改内容）才给底卡一次 0.18 秒淡变。
@@ -350,6 +360,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         if fetchInterrupted, let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
             loadGeneration += 1
             let generation = loadGeneration
+            fetchSilentRetried = false
+            fetchRequestEpoch = BearyAPI.shared.authEpoch
+            fetchRequestViewerId = SessionManager.shared.currentUser?.id
             BearySharedEntryLoader.shared.loadResuming(
                 scope: entriesScope, resumeBefore: before, resumeBeforeId: beforeId,
                 resumePage: fetchResumePage, existing: fetchCollected
@@ -1638,6 +1651,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         fetchResumeBeforeId = nil
         fetchResumePage = 1
         fetchInterrupted = false
+        fetchSilentRetried = false
+        fetchRequestEpoch = BearyAPI.shared.authEpoch
+        fetchRequestViewerId = SessionManager.shared.currentUser?.id
         // 审计登录杂项：无已有数据时先出加载态（此前首帧直接走空态“这里还没有星星”，
         // 回包后星星突然出现）；有数据时不遮旧星图。
         if allEntries.isEmpty {
@@ -1660,6 +1676,12 @@ final class BearyDiaryStarMapViewController: UIViewController {
     /// nil（首页面失败）→ 无数据走失败页、有数据保旧图 + 弱提示。
     private func applySharedLoad(_ load: BearySharedEntryLoader.SharedEntryLoad?) {
         guard let load = load else {
+            // 失败静默自动重试一次（2026-11-22 Li 定）：本批首次失败（首页面失败）
+            // 先静默重拉同一页，加载态保持、不亮失败视图；再失败才走既有失败处理。
+            if shouldRetryFetchSilently() {
+                retryFetchSilently()
+                return
+            }
             // 审计二轮 #1：失败同样废弃本轮后台建模——fetchAllEntries
             // 启动时 recompute 已发出的建模任务尚未回包时，失败不推
             // 代次会让它的守卫仍通过、回包后调 applyModelToSky 把
@@ -1690,6 +1712,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // 后才出空态（applyModelToSky 的在途门控此时已失效）。
         isFetching = false
         if load.isPartial {
+            // 失败静默自动重试一次（2026-11-22 Li 定）：本批首次翻页失败先静默重拉
+            // 同一页——fetchCollected 与续拉游标已在上方更新为失败页的值，重发即同一页；
+            // 再失败才记中断、亮点按重试。
+            if shouldRetryFetchSilently() {
+                retryFetchSilently()
+                return
+            }
             fetchInterrupted = true
             // 展示集被替换（暂存提升）时才清截断标记；保旧图时展示集仍是
             // 旧的截断集，标记不动。
@@ -1724,6 +1753,41 @@ final class BearyDiaryStarMapViewController: UIViewController {
         fetchPartialNote = false
         allEntries = fetchCollected
         recompute()
+    }
+
+    /// 本批是否可静默重试一次：未重试过、且会话未变（退出／切号／401 后不重试）。
+    private func shouldRetryFetchSilently() -> Bool {
+        guard !fetchSilentRetried else { return false }
+        guard fetchRequestEpoch == BearyAPI.shared.authEpoch,
+              SessionManager.shared.currentUser?.id == fetchRequestViewerId else { return false }
+        return true
+    }
+
+    /// 静默重发本轮在途请求（盲盒 poolSilentRetried 同款口径）：有续拉游标时
+    /// 走 loadResuming（同游标、同页码、同已收页）——新拉首页面失败时游标为空，
+    /// 走 load 从头重拉即同一页；续拉失败与翻页中断失败时游标即失败页游标。
+    /// 代次不推，同批回包守卫照常生效；新回包仍走 applySharedLoad 结算。
+    private func retryFetchSilently() {
+        fetchSilentRetried = true
+        let generation = loadGeneration
+        if let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
+            BearySharedEntryLoader.shared.loadResuming(
+                scope: entriesScope, resumeBefore: before, resumeBeforeId: beforeId,
+                resumePage: fetchResumePage, existing: fetchCollected
+            ) { [weak self] load in
+                DispatchQueue.main.async {
+                    guard let self = self, generation == self.loadGeneration else { return }
+                    self.applySharedLoad(load)
+                }
+            }
+        } else {
+            BearySharedEntryLoader.shared.load(scope: entriesScope) { [weak self] load in
+                DispatchQueue.main.async {
+                    guard let self = self, generation == self.loadGeneration else { return }
+                    self.applySharedLoad(load)
+                }
+            }
+        }
     }
 
     /// 加载态统一收起（成功 / 失败回包终态各调一次）：占位星 0.26s
