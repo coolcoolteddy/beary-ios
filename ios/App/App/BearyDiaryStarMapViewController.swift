@@ -466,7 +466,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         contentView.addSubview(skyView)
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        statusLabel.font = BearyDynamicType.secondaryFont()
         statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.textColor = BearyStarMapNight.secondaryText
         statusLabel.numberOfLines = 0
@@ -1222,7 +1222,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     private func sheetBodyLabel(_ text: String) -> UILabel {
         let label = UILabel()
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.font = BearyDynamicType.secondaryFont()
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyStarMapNight.bodyText
         label.numberOfLines = 0
@@ -1234,7 +1234,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let button = UIButton(type: .custom)
         button.contentHorizontalAlignment = .left
         button.titleLabel?.numberOfLines = 2
-        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        button.titleLabel?.font = BearyDynamicType.buttonRegularFont()
         button.titleLabel?.adjustsFontForContentSizeCategory = true
         button.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
         // 审计登录杂项：无标题篇底卡只显日期，不再拼出“ · M月d日”前导空标题。

@@ -404,7 +404,7 @@ final class BearyCalendarCardView: UIView {
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         // 审计-时间线：日历卡标题跟随 Dynamic Type（格内数字仍按 8-3 例外不缩放，不动）。
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        titleLabel.font = BearyDynamicType.titleBoldFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         // 第 7 轮属实项 1：标题独占一行，极端字号下换行不断字、不裁字。
@@ -414,7 +414,7 @@ final class BearyCalendarCardView: UIView {
         toggleButton.translatesAutoresizingMaskIntoConstraints = false
         toggleButton.backgroundColor = BearyColors.surface2
         toggleButton.layer.cornerRadius = BearyCorners.single
-        toggleButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
+        toggleButton.titleLabel?.font = BearyDynamicType.smallBoldFont()
         toggleButton.titleLabel?.adjustsFontForContentSizeCategory = true
         toggleButton.setTitleColor(BearyColors.ink, for: .normal)
         // 第 7 轮属实项 1：切换钮按内容撑宽、不被相邻钮挤压（宽度下限见约束处）。
@@ -430,7 +430,7 @@ final class BearyCalendarCardView: UIView {
         todayButton.translatesAutoresizingMaskIntoConstraints = false
         todayButton.backgroundColor = BearyColors.surface2
         todayButton.layer.cornerRadius = BearyCorners.single
-        todayButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
+        todayButton.titleLabel?.font = BearyDynamicType.smallBoldFont()
         todayButton.titleLabel?.adjustsFontForContentSizeCategory = true
         todayButton.setTitleColor(BearyColors.ink, for: .normal)
         todayButton.setTitle("今", for: .normal)
@@ -543,7 +543,7 @@ final class BearyCalendarCardView: UIView {
         // R15-L1：失败行挂在网格下方（卡内最后一行），默认隐藏、不占位；
         // 显隐只由 setLoadFailed 改，render 的格子签名不管它。
         calendarFailedLabel.translatesAutoresizingMaskIntoConstraints = false
-        calendarFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        calendarFailedLabel.font = BearyDynamicType.secondaryFont()
         calendarFailedLabel.adjustsFontForContentSizeCategory = true
         calendarFailedLabel.textColor = BearyColors.gray
         calendarFailedLabel.text = "日历加载失败"
@@ -825,7 +825,8 @@ final class BearyTimelineCell: UITableViewCell {
     private let ephemeralLabel: UILabel = {
         let l = UILabel()
         l.translatesAutoresizingMaskIntoConstraints = false
-        l.font = UIFont.systemFont(ofSize: 12)
+        l.font = BearyDynamicType.captionFont()
+        l.adjustsFontForContentSizeCategory = true
         l.textColor = BearyColors.gray
         l.isHidden = true
         return l
@@ -896,7 +897,7 @@ final class BearyTimelineCell: UITableViewCell {
     private let timelineLocationLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
@@ -930,7 +931,7 @@ final class BearyTimelineCell: UITableViewCell {
     private lazy var nineGridButton: UIButton = {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        btn.titleLabel?.font = BearyDynamicType.buttonSmallFont()
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.setTitle("九宫格", for: .normal)
         btn.setTitleColor(BearyColors.ink, for: .normal)
@@ -1038,7 +1039,7 @@ final class BearyTimelineCell: UITableViewCell {
         ])
 
         // 8-3：meta 时间（正文类）走 scaledFont + adjusts。
-        timeLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        timeLabel.font = BearyDynamicType.secondaryFont()
         timeLabel.adjustsFontForContentSizeCategory = true
         timeLabel.textColor = BearyColors.gray
         timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -1054,7 +1055,7 @@ final class BearyTimelineCell: UITableViewCell {
         ])
 
         // 8-3：天气/心情（正文类）走 scaledFont + adjusts。
-        weatherLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        weatherLabel.font = BearyDynamicType.secondaryFont()
         weatherLabel.adjustsFontForContentSizeCategory = true
         weatherLabel.textColor = BearyColors.gray
         // 2026-10-28 Li 定：天气/心情文字一律单行（多行换行会把两字词挤成竖排，
@@ -1062,7 +1063,7 @@ final class BearyTimelineCell: UITableViewCell {
         weatherLabel.numberOfLines = 1
         weatherLabel.lineBreakMode = .byTruncatingTail
         weatherLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        moodLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        moodLabel.font = BearyDynamicType.secondaryFont()
         moodLabel.adjustsFontForContentSizeCategory = true
         moodLabel.textColor = BearyColors.gray
         moodLabel.numberOfLines = 1
@@ -1070,7 +1071,7 @@ final class BearyTimelineCell: UITableViewCell {
         moodLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         // 112 视觉扫查：同行时间/天气/心情均已走 scaledFont（见上方 8-3），@ 行此前独漏；
         // 默认档仍为 12 粗体，仅跟随系统字号，170 上限与单行截断口径不动。
-        recipientLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
+        recipientLabel.font = BearyDynamicType.smallBoldFont()
         recipientLabel.adjustsFontForContentSizeCategory = true
         recipientLabel.textColor = BearyColors.ink
         // B-G12 (web .tl-to): max-width 170 + single-line ellipsis, never wrap.
@@ -1132,7 +1133,7 @@ final class BearyTimelineCell: UITableViewCell {
         // 2026-10-29 编辑态口径：可点按的“编辑”二字（12pt 灰字按钮，
         // BearyHit44Button 扩后热区 44；点按即进编辑器，与旧图标编辑钮同一回调）。
         editTextButton.translatesAutoresizingMaskIntoConstraints = false
-        editTextButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        editTextButton.titleLabel?.font = BearyDynamicType.captionFont()
         editTextButton.setTitle("编辑", for: .normal)
         editTextButton.setTitleColor(BearyColors.gray, for: .normal)
         editTextButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
@@ -2066,7 +2067,7 @@ final class BearyTimelineCell: UITableViewCell {
         if let text = text {
             let label = UILabel()
             label.isAccessibilityElement = false
-            label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            label.font = BearyDynamicType.secondaryFont()
             label.adjustsFontForContentSizeCategory = true
             label.textColor = highlighted ? BearyColors.likeRed : BearyColors.gray
             label.text = text
@@ -2654,7 +2655,7 @@ class BearyTimelineViewController: UIViewController {
         refreshFailedBanner.addSubview(refreshFailedLabel)
         refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
         refreshFailedRetryButton.setTitle("重试", for: .normal)
-        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.buttonCompactFont()
         refreshFailedRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         refreshFailedRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         refreshFailedRetryButton.accessibilityLabel = "重试"
@@ -2821,7 +2822,7 @@ class BearyTimelineViewController: UIViewController {
         // 布局时标题区实得少 6pt、档位名被压成“…”；#810 的右补 6 无效
         // （content insets 在固有宽与布局宽里同时出现、互相抵消）。
         // 按当前标题实算所需宽度并显式约束；档位变化与字号变化时重算。
-        let font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        let font = BearyDynamicType.buttonRegularFont()
         let titleWidth = (timelineVisFilter.title as NSString).size(withAttributes: [.font: font]).width
         let imageWidth = visFilterButton.image(for: .normal)?.size.width ?? 0
         let insets = visFilterButton.contentEdgeInsets
@@ -4292,7 +4293,7 @@ class BearyTimelineViewController: UIViewController {
         }
         visFilterButton.imageView?.contentMode = .scaleAspectFit
         visFilterButton.tintColor = BearyColors.ink
-        visFilterButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        visFilterButton.titleLabel?.font = BearyDynamicType.buttonRegularFont()
         visFilterButton.titleLabel?.adjustsFontForContentSizeCategory = true
         visFilterButton.setTitleColor(BearyColors.ink, for: .normal)
         visFilterButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
@@ -7763,7 +7764,7 @@ final class BearyVisFilterSheetViewController: UIViewController {
             titleLabel.textColor = BearyColors.ink
             titleLabel.text = filter.title
             countLabel.translatesAutoresizingMaskIntoConstraints = false
-            countLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            countLabel.font = BearyDynamicType.secondaryFont()
             countLabel.adjustsFontForContentSizeCategory = true
             countLabel.textColor = BearyColors.gray
             countLabel.text = count.map { "\($0) 篇" }

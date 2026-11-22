@@ -161,7 +161,7 @@ final class BearyAppLockManager {
 
         let status = UILabel()
         status.translatesAutoresizingMaskIntoConstraints = false
-        status.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        status.font = BearyDynamicType.secondaryFont()
         status.adjustsFontForContentSizeCategory = true
         status.textColor = BearyColors.gray
         status.textAlignment = .center

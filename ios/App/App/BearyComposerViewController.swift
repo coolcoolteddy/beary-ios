@@ -977,7 +977,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         BearyText.inlinePlainText(from: headlineField.attributedText).trimmingCharacters(in: .whitespacesAndNewlines)
     }
     private var headlineFont: UIFont {
-        BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        BearyDynamicType.pageTitleFont()
     }
     /// 任务2：空标题视觉分量轻一点——占位文案与已填标题同字号、
     /// 但只走常规字重（已填标题仍 17 bold）；字号档变化时同款跟随。
@@ -987,7 +987,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 正文动态字号（标题 headlineFont 同款口径）：正文、占位、输入属性、
     /// 回填属性统一走这里，不再各写固定 16pt。
     private var bodyFont: UIFont {
-        BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        BearyDynamicType.diaryBodyFont()
     }
     /// 正文仅表情放大倍数：参考图实测放大后约 2.2 倍，取 2 倍。
     private static let emojiOnlyFontScale: CGFloat = 2
@@ -1350,7 +1350,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 第 20 轮 A6：待确认条字号档变化时重取 scaled 字号并同步 sheet 高
             //（label 自带 adjustsFontForContentSizeCategory 自动跟档，此处补字体
             // 重算与布局同步）。
-            pendingUploadBarLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+            pendingUploadBarLabel.font = BearyDynamicType.smallBodyFont()
             updatePreferredContentSize()
         }
         // 动态字号变化时标题字号跟随（原 UITextField 靠
@@ -1746,7 +1746,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         titleLabel.text = isEditMode ? "编辑日记" : "新日记"
         // 审计-编辑器详情：顶栏标题走 Dynamic Type（正文标题输入框此前已
         // 走 scaledFont，此处补顶栏标题一处；窄屏压缩优先级 749 不动）。
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.pageTitleFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         // v6-2：标题靠左对齐、紧贴叉叉右侧 8pt，不再居中（v3 左右钮之间居中口径已推翻，不实施）。
@@ -2337,7 +2337,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
         notifyCheckButton.bearyAddPressFeedback()
         notifyLabel.text = "通知对方"
-        notifyLabel.font = UIFont.systemFont(ofSize: 13)
+        notifyLabel.font = BearyDynamicType.secondaryFont()
+        notifyLabel.adjustsFontForContentSizeCategory = true
         notifyLabel.textColor = BearyColors.ink
         notifyGroup.axis = .horizontal
         notifyGroup.spacing = 6
@@ -2553,7 +2554,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteDeletedRow.isLayoutMarginsRelativeArrangement = true
         quoteDeletedRow.layoutMargins = UIEdgeInsets(top: 16, left: 2, bottom: 14, right: 2)
         quoteDeletedLabel.text = "引用的日记已删除"
-        quoteDeletedLabel.font = UIFont.systemFont(ofSize: 13)
+        quoteDeletedLabel.font = BearyDynamicType.secondaryFont()
+        quoteDeletedLabel.adjustsFontForContentSizeCategory = true
         quoteDeletedLabel.textColor = BearyColors.gray
         quoteDeletedRemoveButton.setTitle("移除", for: .normal)
         quoteDeletedRemoveButton.setTitleColor(BearyColors.ink, for: .normal)
@@ -2574,7 +2576,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteUnavailableRow.isLayoutMarginsRelativeArrangement = true
         quoteUnavailableRow.layoutMargins = UIEdgeInsets(top: 16, left: 2, bottom: 14, right: 2)
         quoteUnavailableLabel.text = "引用的日记暂时看不到"
-        quoteUnavailableLabel.font = UIFont.systemFont(ofSize: 13)
+        quoteUnavailableLabel.font = BearyDynamicType.secondaryFont()
+        quoteUnavailableLabel.adjustsFontForContentSizeCategory = true
         quoteUnavailableLabel.textColor = BearyColors.gray
         quoteUnavailableRemoveButton.setTitle("移除", for: .normal)
         quoteUnavailableRemoveButton.setTitleColor(BearyColors.ink, for: .normal)
@@ -2594,7 +2597,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteFetchFailedRow.isLayoutMarginsRelativeArrangement = true
         quoteFetchFailedRow.layoutMargins = UIEdgeInsets(top: 16, left: 2, bottom: 14, right: 2)
         quoteFetchFailedLabel.text = "引用的日记加载失败"
-        quoteFetchFailedLabel.font = UIFont.systemFont(ofSize: 13)
+        quoteFetchFailedLabel.font = BearyDynamicType.secondaryFont()
+        quoteFetchFailedLabel.adjustsFontForContentSizeCategory = true
         quoteFetchFailedLabel.textColor = BearyColors.gray
         quoteFetchFailedRetryButton.setTitle("重试", for: .normal)
         quoteFetchFailedRetryButton.setTitleColor(BearyColors.ink, for: .normal)
@@ -2806,7 +2810,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshQuoteTabs()
         quotePanelSpinner.translatesAutoresizingMaskIntoConstraints = false
         quotePanelLoadingLabel.translatesAutoresizingMaskIntoConstraints = false
-        quotePanelLoadingLabel.font = UIFont.systemFont(ofSize: 13)
+        quotePanelLoadingLabel.font = BearyDynamicType.secondaryFont()
+        quotePanelLoadingLabel.adjustsFontForContentSizeCategory = true
         quotePanelLoadingLabel.textColor = BearyColors.gray
         quotePanelLoadingLabel.textAlignment = .center
         quotePanelLoadingLabel.numberOfLines = 0
@@ -2814,7 +2819,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelLoadingLabel.isHidden = true
         quotePanelEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
         // 第一轮 11：裸 15pt 改 scaledFont，跟随系统字号（重试钮同口径）。
-        quotePanelEmptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        quotePanelEmptyLabel.font = BearyDynamicType.smallBodyFont()
         quotePanelEmptyLabel.adjustsFontForContentSizeCategory = true
         quotePanelEmptyLabel.textColor = BearyColors.gray
         quotePanelEmptyLabel.textAlignment = .center
@@ -2825,7 +2830,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelRetryButton.setTitle("加载失败，重试", for: .normal)
         quotePanelRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         // 按钮普查：裸 15pt 改 scaledFont，跟随系统字号。
-        quotePanelRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        quotePanelRetryButton.titleLabel?.font = BearyDynamicType.smallBodyFont()
         quotePanelRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         quotePanelRetryButton.isHidden = true
         quotePanelRetryButton.addTarget(self, action: #selector(didTapQuotePanelRetry), for: .touchUpInside)
@@ -3400,7 +3405,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 lockedButton.backgroundColor = BearyColors.bg
                 let lockedLabel = UILabel()
                 lockedLabel.translatesAutoresizingMaskIntoConstraints = false
-                lockedLabel.font = UIFont.systemFont(ofSize: 15)
+                lockedLabel.font = BearyDynamicType.smallBodyFont()
+                lockedLabel.adjustsFontForContentSizeCategory = true
                 lockedLabel.textColor = BearyColors.gray
                 lockedLabel.text = entry.isFriendsOnly ? "该日记仅好友可见" : "该日记已设为私密"
                 let lockedSeparator = UIView()
@@ -3488,7 +3494,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             let dateLabel = UILabel()
             dateLabel.translatesAutoresizingMaskIntoConstraints = false
             // 第一轮 11：裸 13pt 改 scaledFont，跟随系统字号。
-            dateLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            dateLabel.font = BearyDynamicType.secondaryFont()
             dateLabel.adjustsFontForContentSizeCategory = true
             dateLabel.textColor = BearyColors.gray
             dateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -3929,7 +3935,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 第 20 轮 A10：统一 0.18s 单段按压反馈（bearyAddPressFeedback）。
         pendingUploadBar.bearyAddPressFeedback()
         pendingUploadBar.translatesAutoresizingMaskIntoConstraints = false
-        pendingUploadBarLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        pendingUploadBarLabel.font = BearyDynamicType.smallBodyFont()
         // 第 20 轮 A6：字号档变化时自动跟随（字体重算见 traitCollectionDidChange）。
         pendingUploadBarLabel.adjustsFontForContentSizeCategory = true
         pendingUploadBarLabel.textColor = BearyColors.ink
@@ -4078,7 +4084,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusRetryButton.setTitle("重试", for: .normal)
         draftStatusRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         // P2-12：重试钮 13 semibold 跟随系统字号（原字号为默认基准）。
-        draftStatusRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        draftStatusRetryButton.titleLabel?.font = BearyDynamicType.buttonSmallFont()
         draftStatusRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         draftStatusRetryButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
         draftStatusRetryButton.accessibilityLabel = "重试保存草稿"
@@ -4409,7 +4415,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 天气 chip：与旧 chip 行同款 pill 样式（圆角 999、surface2 底、
         // 内边距 7/12/7/12、13 号字），移到底部元信息行后仅作展示，
         // 不再点按、不再开天气框。
-        weatherChipButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        weatherChipButton.titleLabel?.font = BearyDynamicType.secondaryFont()
+        weatherChipButton.titleLabel?.adjustsFontForContentSizeCategory = true
         weatherChipButton.titleLabel?.numberOfLines = 1
         weatherChipButton.titleLabel?.lineBreakMode = .byTruncatingTail
         weatherChipButton.titleLabel?.adjustsFontSizeToFitWidth = false
@@ -4739,11 +4746,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageUndoBar.layer.cornerRadius = 12
         imageUndoBar.layer.masksToBounds = true
         imageUndoLabel.text = "图片已删除"
-        imageUndoLabel.font = UIFont.systemFont(ofSize: 13)
+        imageUndoLabel.font = BearyDynamicType.secondaryFont()
+        imageUndoLabel.adjustsFontForContentSizeCategory = true
         imageUndoLabel.textColor = BearyColors.ink
         imageUndoButton.setTitle("撤销", for: .normal)
         imageUndoButton.setTitleColor(BearyColors.ink, for: .normal)
-        imageUndoButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        imageUndoButton.titleLabel?.font = BearyDynamicType.buttonSmallFont()
+        imageUndoButton.titleLabel?.adjustsFontForContentSizeCategory = true
         imageUndoButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
         imageUndoButton.addTarget(self, action: #selector(didTapUndoRemovedImage), for: .touchUpInside)
         imageUndoButton.bearyAddPressFeedback()
@@ -10584,7 +10593,7 @@ private final class BearyQuoteStatusPillView: UIView {
         super.init(frame: frame)
         label.translatesAutoresizingMaskIntoConstraints = false
         // 第一轮 11：裸 12pt 改 scaledFont，跟随系统字号。
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        label.font = BearyDynamicType.captionFont()
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 1
         addSubview(label)

@@ -94,7 +94,8 @@ final class BearyTagEntriesViewController: UIViewController {
         view.addSubview(loadingIndicator)
 
         stateLabel.translatesAutoresizingMaskIntoConstraints = false
-        stateLabel.font = UIFont.systemFont(ofSize: 15)
+        stateLabel.font = BearyDynamicType.smallBodyFont()
+        stateLabel.adjustsFontForContentSizeCategory = true
         stateLabel.textColor = BearyColors.gray
         stateLabel.textAlignment = .center
         stateLabel.numberOfLines = 0

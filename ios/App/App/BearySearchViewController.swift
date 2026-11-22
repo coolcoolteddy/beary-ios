@@ -2139,7 +2139,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         wrap.translatesAutoresizingMaskIntoConstraints = false
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.font = BearyDynamicType.secondaryFont()
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.numberOfLines = 0
@@ -2205,7 +2205,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         wrap.translatesAutoresizingMaskIntoConstraints = false
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.font = BearyDynamicType.secondaryFont()
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.numberOfLines = 0
@@ -2256,7 +2256,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         wrap.translatesAutoresizingMaskIntoConstraints = false
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.font = BearyDynamicType.secondaryFont()
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.numberOfLines = 0
@@ -3134,7 +3134,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let handleLabel = BearyRoundedMarkLabel()
         handleLabel.translatesAutoresizingMaskIntoConstraints = false
         handleLabel.adjustsFontForContentSizeCategory = true
-        handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        handleLabel.font = BearyDynamicType.secondaryFont()
         handleLabel.textColor = BearyColors.gray
         handleLabel.numberOfLines = 1
         handleLabel.clipsToBounds = true
@@ -3148,7 +3148,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         nameLabel.attributedText = highlightedText(displayName, query: query, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink)
         if let handle = user.handle, !handle.isEmpty {
             let handleText = NSMutableAttributedString(string: "@")
-            handleText.append(highlightedText(handle, query: query, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13)), color: BearyColors.gray))
+            handleText.append(highlightedText(handle, query: query, font: BearyDynamicType.secondaryFont(), color: BearyColors.gray))
             handleLabel.attributedText = handleText
             handleLabel.isHidden = false
         } else {
@@ -3193,7 +3193,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             // 审计：关注钮视觉高约 28 不变，热区用 Hit44 扩到 44。
             let followButton = BearyHit44Button(type: .system)
             followButton.translatesAutoresizingMaskIntoConstraints = false
-            followButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+            followButton.titleLabel?.font = BearyDynamicType.buttonSmallFont()
             followButton.titleLabel?.adjustsFontForContentSizeCategory = true
             followButton.setTitleColor(BearyColors.ink, for: .normal)
             followButton.tintColor = BearyColors.ink
@@ -3246,7 +3246,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
         let dateLabel = UILabel()
         dateLabel.translatesAutoresizingMaskIntoConstraints = false
-        dateLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        dateLabel.font = BearyDynamicType.secondaryFont()
         dateLabel.adjustsFontForContentSizeCategory = true
         dateLabel.textColor = BearyColors.gray
         if let created = entry.createdAt {
@@ -3354,18 +3354,18 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             let authorLabel = BearyRoundedMarkLabel()
             authorLabel.translatesAutoresizingMaskIntoConstraints = false
             authorLabel.adjustsFontForContentSizeCategory = true
-            authorLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 14))
+            authorLabel.font = BearyDynamicType.sectionTitleFont()
             authorLabel.textColor = BearyColors.ink
             authorLabel.numberOfLines = 1
             authorLabel.clipsToBounds = true
             authorLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            authorLabel.attributedText = highlightedText(entry.authorName ?? "", query: query, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 14)), color: BearyColors.ink)
+            authorLabel.attributedText = highlightedText(entry.authorName ?? "", query: query, font: BearyDynamicType.sectionTitleFont(), color: BearyColors.ink)
             metaStack.addArrangedSubview(authorLabel)
             metaStack.addArrangedSubview(dateLabel)
             if let authorId = entry.authorId, let myUserId = SessionManager.shared.currentUser?.id, authorId == myUserId {
                 let mineLabel = UILabel()
                 mineLabel.translatesAutoresizingMaskIntoConstraints = false
-                mineLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+                mineLabel.font = BearyDynamicType.secondaryFont()
                 mineLabel.adjustsFontForContentSizeCategory = true
                 mineLabel.textColor = BearyColors.gray
                 mineLabel.text = "· 我的"
@@ -3378,7 +3378,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if BearyReportedStore.isReported(entryId: entryId) {
             let reportedLabel = UILabel()
             reportedLabel.translatesAutoresizingMaskIntoConstraints = false
-            reportedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            reportedLabel.font = BearyDynamicType.secondaryFont()
             reportedLabel.adjustsFontForContentSizeCategory = true
             reportedLabel.textColor = BearyColors.gray
             reportedLabel.text = "已举报"
@@ -3690,7 +3690,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             }
             return
         }
-        let font = button.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        let font = button.titleLabel?.font ?? BearyDynamicType.buttonSmallFont()
         let height = max(28, ceil(font.lineHeight) + button.contentEdgeInsets.top + button.contentEdgeInsets.bottom)
         if let constraint = followButtonSkeletonHeightConstraints[userId],
            constraint.firstItem as? UIButton == button {
@@ -3908,7 +3908,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 字号档变了重算（与个人页 followButtonMeasuredCategory 同款）。
     private func applyFollowButtonFixedWidth(_ button: UIButton) {
         guard let userId = followButtonUserIds[button] else { return }
-        let font = button.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        let font = button.titleLabel?.font ?? BearyDynamicType.buttonSmallFont()
         var maxWidth: CGFloat = 0
         let states: [(imageName: String?, title: String)] = [
             ("icon_user_plus", "关注"),

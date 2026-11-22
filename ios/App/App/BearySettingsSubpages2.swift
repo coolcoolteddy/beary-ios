@@ -71,7 +71,7 @@ func bearySettingsNavContent(title: String, detail: String?) -> UIStackView {
     if let detail = detail {
         let detailLabel = UILabel()
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        detailLabel.font = BearyDynamicType.secondaryFont()
         detailLabel.adjustsFontForContentSizeCategory = true
         detailLabel.textColor = BearyColors.gray
         detailLabel.numberOfLines = 0
@@ -101,7 +101,7 @@ func bearySettingsSwitchContent(title: String, detail: String?, isOn: Bool, targ
     if let detail = detail {
         let detailLabel = UILabel()
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        detailLabel.font = BearyDynamicType.captionFont()
         detailLabel.adjustsFontForContentSizeCategory = true
         detailLabel.textColor = BearyColors.gray
         detailLabel.numberOfLines = 0
@@ -582,7 +582,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
         dmTitle.text = "谁可以私信我"
         let dmSubtitle = UILabel()
         dmSubtitle.translatesAutoresizingMaskIntoConstraints = false
-        dmSubtitle.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        dmSubtitle.font = BearyDynamicType.captionFont()
         dmSubtitle.adjustsFontForContentSizeCategory = true
         dmSubtitle.textColor = BearyColors.gray
         dmSubtitle.numberOfLines = 0

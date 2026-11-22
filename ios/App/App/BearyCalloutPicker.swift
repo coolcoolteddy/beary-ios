@@ -106,7 +106,7 @@ final class BearyBubbleMenuView: UIView {
             iconView.contentMode = .scaleAspectFit
             iconView.tintColor = BearyColors.ink
             titleLabel.translatesAutoresizingMaskIntoConstraints = false
-            titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+            titleLabel.font = BearyDynamicType.smallBodyFont()
             titleLabel.adjustsFontForContentSizeCategory = true
             titleLabel.textColor = BearyColors.ink
             titleLabel.backgroundColor = .clear

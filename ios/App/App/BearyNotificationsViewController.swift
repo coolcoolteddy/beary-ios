@@ -357,7 +357,7 @@ final class BearyNotificationsViewController: UIViewController {
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
         button.setTitle("全部已读", for: .normal)
-        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        button.titleLabel?.font = BearyDynamicType.buttonCompactFont()
         button.titleLabel?.adjustsFontForContentSizeCategory = true
         button.setTitleColor(BearyColors.gray, for: .normal)
         button.tintColor = BearyColors.gray
@@ -365,7 +365,7 @@ final class BearyNotificationsViewController: UIViewController {
         button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
         button.addTarget(self, action: #selector(readAllTapped), for: .touchUpInside)
         button.bearyAddPressFeedback()
-        let titleWidth = ceil(("全部已读" as NSString).size(withAttributes: [NSAttributedString.Key.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
+        let titleWidth = ceil(("全部已读" as NSString).size(withAttributes: [NSAttributedString.Key.font: BearyDynamicType.buttonCompactFont()]).width)
         let width = button.widthAnchor.constraint(equalToConstant: 6 + (button.currentImage?.size.width ?? 14) + 4 + titleWidth + 6)
         width.isActive = true
         readAllButtonWidthConstraint = width
@@ -482,7 +482,7 @@ final class BearyNotificationsViewController: UIViewController {
     private lazy var stateTitleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        label.font = BearyDynamicType.smallBodyFont()
         label.textColor = BearyColors.ink
         label.textAlignment = .center
         label.adjustsFontForContentSizeCategory = true
@@ -492,7 +492,7 @@ final class BearyNotificationsViewController: UIViewController {
     private lazy var stateSubtitleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.font = BearyDynamicType.secondaryFont()
         label.textColor = BearyColors.gray
         label.textAlignment = .center
         label.numberOfLines = 0
@@ -509,7 +509,7 @@ final class BearyNotificationsViewController: UIViewController {
     private lazy var stateButton: BearyButton = {
         let button = BearyButton(style: .secondaryOutline(.regular))
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        button.titleLabel?.font = BearyDynamicType.buttonRegularFont()
         button.titleLabel?.adjustsFontForContentSizeCategory = true
         button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
@@ -2829,7 +2829,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// 每次改标题后调用（“全部已读”↔“处理中…”两态字宽不同）。
     private func updateReadAllButtonWidth() {
         let titleText = readAllButton.currentTitle ?? ""
-        let font = readAllButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        let font = readAllButton.titleLabel?.font ?? BearyDynamicType.buttonCompactFont()
         let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
         let imageWidth = readAllButton.currentImage?.size.width ?? 14
         let width = readAllButton.contentEdgeInsets.left + imageWidth + readAllButton.titleEdgeInsets.left + titleWidth + readAllButton.titleEdgeInsets.right + readAllButton.contentEdgeInsets.right
@@ -2845,7 +2845,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// stateButton 同款宽度修法（失败态赋值标题/图标后调用；首次调用时创建约束）。
     private func updateStateButtonWidth() {
         let titleText = stateButton.currentTitle ?? ""
-        let font = stateButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        let font = stateButton.titleLabel?.font ?? BearyDynamicType.buttonRegularFont()
         let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
         let imageWidth = stateButton.currentImage?.size.width ?? 0
         let width = stateButton.contentEdgeInsets.left + imageWidth + stateButton.titleEdgeInsets.left + titleWidth + stateButton.titleEdgeInsets.right + stateButton.contentEdgeInsets.right
@@ -3407,7 +3407,7 @@ final class BearyLetterViewController: UIViewController {
         titleLabel.accessibilityTraits = .header
 
         metaLabel.translatesAutoresizingMaskIntoConstraints = false
-        metaLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        metaLabel.font = BearyDynamicType.secondaryFont()
         metaLabel.adjustsFontForContentSizeCategory = true
         metaLabel.textColor = BearyColors.gray
         metaLabel.textAlignment = .center
@@ -3415,7 +3415,7 @@ final class BearyLetterViewController: UIViewController {
         metaLabel.text = metaText()
 
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
-        bodyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        bodyLabel.font = BearyDynamicType.diaryBodyFont()
         bodyLabel.adjustsFontForContentSizeCategory = true
         bodyLabel.textColor = BearyColors.ink
         bodyLabel.numberOfLines = 0
@@ -3428,13 +3428,13 @@ final class BearyLetterViewController: UIViewController {
         quoteBar.translatesAutoresizingMaskIntoConstraints = false
         quoteBar.backgroundColor = BearyColors.gray
         quoteTextLabel.translatesAutoresizingMaskIntoConstraints = false
-        quoteTextLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        quoteTextLabel.font = BearyDynamicType.diaryBodyFont()
         quoteTextLabel.adjustsFontForContentSizeCategory = true
         quoteTextLabel.textColor = BearyColors.ink
         quoteTextLabel.numberOfLines = 0
         quoteTextLabel.lineBreakMode = .byCharWrapping
         quoteMetaLabel.translatesAutoresizingMaskIntoConstraints = false
-        quoteMetaLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        quoteMetaLabel.font = BearyDynamicType.secondaryFont()
         quoteMetaLabel.adjustsFontForContentSizeCategory = true
         quoteMetaLabel.textColor = BearyColors.gray
         quoteMetaLabel.numberOfLines = 0
@@ -3444,7 +3444,7 @@ final class BearyLetterViewController: UIViewController {
         if let quote = pendingQuote {
             pendingQuote = nil
             quotePlainText = quote.text
-            quoteTextLabel.attributedText = Self.moodLineHeightText(quote.text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: traitCollection.userInterfaceStyle == .dark)
+            quoteTextLabel.attributedText = Self.moodLineHeightText(quote.text, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, multiple: 1.75, dark: traitCollection.userInterfaceStyle == .dark)
             quoteMetaLabel.text = quote.meta
             quoteWrap.isHidden = false
         } else {
@@ -3593,9 +3593,9 @@ final class BearyLetterViewController: UIViewController {
     /// 正文／引用富文本重建（深浅切换与字号档变化时调用）。
     private func rebuildAttributedTexts() {
         let dark = traitCollection.userInterfaceStyle == .dark
-        bodyLabel.attributedText = Self.moodLineHeightText(bodyText, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.9, dark: dark)
+        bodyLabel.attributedText = Self.moodLineHeightText(bodyText, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, multiple: 1.9, dark: dark)
         if let quoteText = quotePlainText, !quoteWrap.isHidden {
-            quoteTextLabel.attributedText = Self.moodLineHeightText(quoteText, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: dark)
+            quoteTextLabel.attributedText = Self.moodLineHeightText(quoteText, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, multiple: 1.75, dark: dark)
         }
     }
 
@@ -3620,7 +3620,7 @@ final class BearyLetterViewController: UIViewController {
     func fillQuote(text: String, meta: String) {
         let isNewQuote = quoteWrap.isHidden
         quotePlainText = text
-        quoteTextLabel.attributedText = Self.moodLineHeightText(text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: traitCollection.userInterfaceStyle == .dark)
+        quoteTextLabel.attributedText = Self.moodLineHeightText(text, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, multiple: 1.75, dark: traitCollection.userInterfaceStyle == .dark)
         quoteMetaLabel.text = meta
         quoteWrap.isHidden = false
         applyRowSpacing()
@@ -3671,7 +3671,7 @@ final class BearyAvatarStackView: UIView {
     /// 名字行高：11pt 名字缩放后的实际行高，向上取整防截断；大字号下随字体
     /// 长大，不再固定 14（审计第 10 项：固定 14 在大字号下会纵向截断名字）。
     static var nameHeight: CGFloat {
-        ceil(BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11)).lineHeight)
+        ceil(BearyDynamicType.tinyCaptionFont().lineHeight)
     }
     /// 展开高：头像 42 ＋ 4 间隙 ＋ 名字实际行高。
     static var expandedHeight: CGFloat {
@@ -3782,7 +3782,7 @@ final class BearyAvatarStackView: UIView {
     private func makeNameLabel(text: String) -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
+        label.font = BearyDynamicType.tinyCaptionFont()
         label.textColor = BearyColors.gray
         label.adjustsFontForContentSizeCategory = true
         label.textAlignment = .center
@@ -3810,7 +3810,7 @@ final class BearyAvatarStackView: UIView {
         let displayName = name.isEmpty ? "beary 用户" : name
         let fallbackLabel = UILabel()
         fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
-        fallbackLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        fallbackLabel.font = BearyDynamicType.smallActionFont()
         fallbackLabel.textColor = BearyColors.gray
         fallbackLabel.adjustsFontForContentSizeCategory = true
         fallbackLabel.textAlignment = .center
@@ -3911,7 +3911,7 @@ class BearyNotificationCell: UITableViewCell {
     private let avatarFallbackLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        label.font = BearyDynamicType.smallActionFont()
         label.textColor = BearyColors.gray
         label.adjustsFontForContentSizeCategory = true
         label.textAlignment = .center
@@ -3971,7 +3971,7 @@ class BearyNotificationCell: UITableViewCell {
         // 标题只由 configureFollowCard 按已确认态写（加载态画中性占位）。
         let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        button.titleLabel?.font = BearyDynamicType.buttonCompactFont()
         button.titleLabel?.adjustsFontForContentSizeCategory = true
         button.setTitleColor(BearyColors.bg, for: .normal)
         button.backgroundColor = BearyColors.ink
@@ -4056,7 +4056,7 @@ class BearyNotificationCell: UITableViewCell {
     private let excerptLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        label.font = BearyDynamicType.captionFont()
         label.textColor = BearyColors.gray
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 1
@@ -4066,7 +4066,7 @@ class BearyNotificationCell: UITableViewCell {
     private let timeLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.font = BearyDynamicType.secondaryFont()
         label.textColor = BearyColors.gray
         label.adjustsFontForContentSizeCategory = true
         label.setContentHuggingPriority(.required, for: .horizontal)
@@ -4447,7 +4447,7 @@ class BearyNotificationCell: UITableViewCell {
             // 标题顶对齐圆圈顶：16 粗标题字形顶比 label 框顶低 ascender-capHeight
             //（默认字号约 4pt），标题栈顶改锚头像顶再上移该量，字形顶即落到头像顶；
             // 按当前字号实算，大字号下仍对齐。时间在标题行内跟首行基线，不用另动。
-            let titleFont = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+            let titleFont = BearyDynamicType.titleBoldFont()
             bodyStackTopToAvatarConstraint?.constant = -(titleFont.ascender - titleFont.capHeight)
             bodyStackTopToContentConstraint?.isActive = false
             bodyStackTopToAvatarConstraint?.isActive = true
@@ -4484,7 +4484,7 @@ class BearyNotificationCell: UITableViewCell {
         avatarFallbackLabel.isHidden = true
         kindBadgeView.isHidden = true
         nestedLineView.isHidden = true
-        titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
+        titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(title, font: BearyDynamicType.titleBoldFont(), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         excerptLabel.attributedText = BearyNotificationCell.moodLineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: mergedList ? 12 : 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         lastTimeMs = timeMs
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
@@ -4646,7 +4646,7 @@ class BearyNotificationCell: UITableViewCell {
             }
             avatarFallbackLabel.isHidden = true
             kindBadgeView.isHidden = true
-            titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
+            titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(titleText, font: BearyDynamicType.titleBoldFont(), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         } else {
             // 互动行：42 圆头像（无图回退首字母 15/700 灰）+ 右下角 19 号类型角标。
             avatarImageView.backgroundColor = BearyColors.line
@@ -4691,7 +4691,7 @@ class BearyNotificationCell: UITableViewCell {
             title.append(NSAttributedString(
                 string: actorName,
                 attributes: [
-                    .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)),
+                    .font: BearyDynamicType.titleBoldFont(),
                     .foregroundColor: BearyColors.ink,
                 ]
             ))
@@ -4794,7 +4794,7 @@ class BearyNotificationCell: UITableViewCell {
         title.append(NSAttributedString(
             string: namesText,
             attributes: [
-                .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)),
+                .font: BearyDynamicType.titleBoldFont(),
                 .foregroundColor: BearyColors.ink,
             ]
         ))
@@ -4809,7 +4809,7 @@ class BearyNotificationCell: UITableViewCell {
         // 聚合行《标题》（2026-11-18 Li 定，后端已补 e.title）：代表条有标题时动词后加《标题》，
         // 无标题（null/空/旧缓存）保持现行动词文案不变。
         if let entryTitle = representative.entryTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !entryTitle.isEmpty {
-            let titleFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+            let titleFont = BearyDynamicType.diaryBodyFont()
             let titleAttrs: [NSAttributedString.Key: Any] = [.font: titleFont, .foregroundColor: BearyColors.ink]
             title.append(NSAttributedString(string: "《", attributes: titleAttrs))
             title.append(BearyText.inlineAttributedText(from: BearyText.stripTrailingPartialInlineToken(entryTitle), font: titleFont, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: nil))
@@ -4881,7 +4881,7 @@ class BearyNotificationCell: UITableViewCell {
         followActionsHeightConstraint?.isActive = false
         // 第十三轮第 7 项：定宽（按“回关”量取，与“关注”同宽），每次重配都按当前字号重算，
         // 加载态无文案占位与有文案态同宽，态变不顶布局、不闪没。
-        let titleFont = followBackButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        let titleFont = followBackButton.titleLabel?.font ?? BearyDynamicType.buttonCompactFont()
         let placeholderWidth = ceil(("回关" as NSString).size(withAttributes: [.font: titleFont]).width)
             + followBackButton.contentEdgeInsets.left + followBackButton.contentEdgeInsets.right
         if let constraint = followBackButtonWidthConstraint {
@@ -5168,7 +5168,7 @@ class BearyNotificationTrailingCell: UITableViewCell {
     private let retryLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.font = BearyDynamicType.secondaryFont()
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.textAlignment = .center
@@ -5450,7 +5450,7 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         topBar.addSubview(backButton)
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.pageTitleFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = card.title

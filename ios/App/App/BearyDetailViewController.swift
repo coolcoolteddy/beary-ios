@@ -173,7 +173,7 @@ final class BearyDetailViewController: UIViewController {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
         // 113：底数 12 粗体不动，只加 scaledFont + adjusts（#322/#324 同款做法）。
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
+        lb.font = BearyDynamicType.smallBoldFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
         lb.numberOfLines = 1
@@ -229,7 +229,7 @@ final class BearyDetailViewController: UIViewController {
     private let timeLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
@@ -249,7 +249,7 @@ final class BearyDetailViewController: UIViewController {
     private let weatherWrapLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.isHidden = true
         return lb
@@ -261,7 +261,7 @@ final class BearyDetailViewController: UIViewController {
     private let weatherTempLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
@@ -275,7 +275,7 @@ final class BearyDetailViewController: UIViewController {
     private let weatherNameLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
@@ -297,7 +297,7 @@ final class BearyDetailViewController: UIViewController {
     private let moodLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
@@ -450,7 +450,7 @@ final class BearyDetailViewController: UIViewController {
     private lazy var nineGridButton: UIButton = {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        btn.titleLabel?.font = BearyDynamicType.buttonSmallFont()
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.setTitle("九宫格", for: .normal)
         btn.setTitleColor(BearyColors.ink, for: .normal)
@@ -530,7 +530,7 @@ final class BearyDetailViewController: UIViewController {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
         // 扫查组：此前裸 13pt，大字号下位置行不跟随；单行截断，栈高自适应。
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.font = BearyDynamicType.secondaryFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
@@ -2805,7 +2805,7 @@ final class BearyDetailViewController: UIViewController {
             setLikeTitle(nil, width: imageWidth)
         } else {
             let titleText = "\(likeCount)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.buttonCompactFont()]).width)
             setLikeTitle(titleText, width: imageWidth + 6 + titleWidth)
         }
         likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)

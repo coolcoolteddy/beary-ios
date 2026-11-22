@@ -91,7 +91,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         topBar.addSubview(backButton)
         self.backButton = backButton
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.pageTitleFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = "私信"
@@ -146,7 +146,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         refreshFailedBanner.addSubview(refreshFailedLabel)
         refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
         refreshFailedRetryButton.setTitle("重试", for: .normal)
-        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.buttonCompactFont()
         refreshFailedRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         refreshFailedRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         refreshFailedRetryButton.accessibilityLabel = "重试"
@@ -956,12 +956,12 @@ final class BearyDMConversationCell: UITableViewCell {
         nameLabel.textColor = BearyColors.ink
         nameLabel.numberOfLines = 1
         snippetLabel.translatesAutoresizingMaskIntoConstraints = false
-        snippetLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        snippetLabel.font = BearyDynamicType.captionFont()
         snippetLabel.adjustsFontForContentSizeCategory = true
         snippetLabel.textColor = BearyColors.gray
         snippetLabel.numberOfLines = 1
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
-        timeLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        timeLabel.font = BearyDynamicType.captionFont()
         timeLabel.adjustsFontForContentSizeCategory = true
         timeLabel.textColor = BearyColors.gray
         unreadBadge.translatesAutoresizingMaskIntoConstraints = false

@@ -169,7 +169,7 @@ final class BearyMessagesViewController: UIViewController {
         staleBanner.isHidden = true
         view.addSubview(staleBanner)
         staleLabel.translatesAutoresizingMaskIntoConstraints = false
-        staleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        staleLabel.font = BearyDynamicType.secondaryFont()
         staleLabel.adjustsFontForContentSizeCategory = true
         staleLabel.textColor = BearyColors.gray
         staleLabel.text = "未读数可能已过期"

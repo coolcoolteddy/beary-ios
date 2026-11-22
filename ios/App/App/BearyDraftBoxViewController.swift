@@ -489,7 +489,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         // 抓手热区仍压在最上层（居中 120 宽）。
         sheetView.bringSubviewToFront(grabHitView)
 
-        subLabel.font = UIFont.systemFont(ofSize: 12)
+        subLabel.font = BearyDynamicType.captionFont()
+        subLabel.adjustsFontForContentSizeCategory = true
         subLabel.textColor = BearyColors.gray
         subLabel.textAlignment = .center
         subLabel.numberOfLines = 0
@@ -530,13 +531,13 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         undoBar.layer.masksToBounds = true
         undoBar.translatesAutoresizingMaskIntoConstraints = false
         undoLabel.text = "草稿已删除"
-        undoLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        undoLabel.font = BearyDynamicType.secondaryFont()
         undoLabel.adjustsFontForContentSizeCategory = true
         undoLabel.textColor = BearyColors.ink
         undoLabel.translatesAutoresizingMaskIntoConstraints = false
         undoButton.setTitle("撤销", for: .normal)
         undoButton.setTitleColor(BearyColors.ink, for: .normal)
-        undoButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        undoButton.titleLabel?.font = BearyDynamicType.buttonCompactFont()
         undoButton.titleLabel?.adjustsFontForContentSizeCategory = true
         undoButton.translatesAutoresizingMaskIntoConstraints = false
         undoButton.addTarget(self, action: #selector(undoDeleteTapped), for: .touchUpInside)
@@ -579,7 +580,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         contentStack.addArrangedSubview(listWrap)
 
         hintLabel.text = "点任意一份，接着上次的地方继续写"
-        hintLabel.font = UIFont.systemFont(ofSize: 12)
+        hintLabel.font = BearyDynamicType.captionFont()
+        hintLabel.adjustsFontForContentSizeCategory = true
         hintLabel.textColor = BearyColors.gray
         hintLabel.textAlignment = .center
         hintLabel.numberOfLines = 0
@@ -1123,7 +1125,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         if let current = currentDraftId, current == draftValue.draftId {
             let writingLabel = UILabel()
             writingLabel.text = "正在写"
-            writingLabel.font = UIFont.systemFont(ofSize: 12)
+            writingLabel.font = BearyDynamicType.captionFont()
+            writingLabel.adjustsFontForContentSizeCategory = true
             writingLabel.textColor = BearyColors.gray
             writingLabel.translatesAutoresizingMaskIntoConstraints = false
             metaFlow.addSubview(writingLabel)

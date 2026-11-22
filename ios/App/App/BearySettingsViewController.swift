@@ -704,7 +704,7 @@ final class BearySettingsViewController: UIViewController {
         // P1-7：两行式行的标题多行、辅助文案走动态字体（工厂标题已接入口，
         // 直建的 detail 在此接入口，不在工厂外重复缩放已缩放过的字）。
         titleLabelValue.numberOfLines = 0
-        detailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        detailLabel.font = BearyDynamicType.captionFont()
         detailLabel.adjustsFontForContentSizeCategory = true
         detailLabel.textColor = BearyColors.gray
         detailLabel.numberOfLines = 0
@@ -1020,7 +1020,7 @@ final class BearySettingsViewController: UIViewController {
         closeButton.addTarget(self, action: #selector(closeButtonTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.pageTitleFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
@@ -1903,7 +1903,7 @@ final class BearySettingsViewController: UIViewController {
         let logoutFootnote = UILabel()
         logoutFootnote.translatesAutoresizingMaskIntoConstraints = false
         // P1-7：账号操作组脚注辅助文案走动态字体（已是 0 行）。
-        logoutFootnote.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        logoutFootnote.font = BearyDynamicType.secondaryFont()
         logoutFootnote.adjustsFontForContentSizeCategory = true
         logoutFootnote.textColor = BearyColors.gray
         logoutFootnote.numberOfLines = 0
@@ -1938,7 +1938,7 @@ final class BearySettingsViewController: UIViewController {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         // P1-7：页底版本脚注辅助文案走动态字体 + 多行（默认 1 行会截断大字号）。
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.font = BearyDynamicType.secondaryFont()
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 0
         label.textColor = BearyColors.gray
@@ -3487,7 +3487,7 @@ final class BearySettingsViewController: UIViewController {
         dataFeedbackWrap.addArrangedSubview(group.card)
         // 第二批体验检查第 6 项：离线保存独立组（与反馈组并列，不混进反馈组标题下）。
         // 行尾只显本账号占用（篇数 · 字节），逐篇状态与清除在子页里。
-        offlineSaveDetailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        offlineSaveDetailLabel.font = BearyDynamicType.secondaryFont()
         offlineSaveDetailLabel.adjustsFontForContentSizeCategory = true
         offlineSaveDetailLabel.textColor = BearyColors.gray
         offlineSaveDetailLabel.numberOfLines = 0
@@ -3679,14 +3679,14 @@ final class BearyLegalTextViewController: UIViewController {
         // 扫查组：此前裸 15pt，隐私/条款长文本不跟随系统字号（本页顶栏已
         // 在 #343 跟随，只剩正文漏网）；UITextView 配 scaledFont + adjusts
         // 后档位变化自动重算字号，滚动区高度自适应，无固定高可撑破。
-        textView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        textView.font = BearyDynamicType.smallBodyFont()
         textView.adjustsFontForContentSizeCategory = true
         textView.textColor = BearyColors.ink
         textView.backgroundColor = BearyColors.bg
         textView.text = pageText
         textView.textContainerInset = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         versionLabel.translatesAutoresizingMaskIntoConstraints = false
-        versionLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        versionLabel.font = BearyDynamicType.secondaryFont()
         versionLabel.adjustsFontForContentSizeCategory = true
         versionLabel.textColor = BearyColors.gray
         versionLabel.numberOfLines = 0
@@ -3898,7 +3898,7 @@ private final class BearyDataStatusViewController: UIViewController {
 
         let footnoteLabel = UILabel()
         footnoteLabel.translatesAutoresizingMaskIntoConstraints = false
-        footnoteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        footnoteLabel.font = BearyDynamicType.captionFont()
         footnoteLabel.adjustsFontForContentSizeCategory = true
         footnoteLabel.textColor = BearyColors.gray
         footnoteLabel.numberOfLines = 0
@@ -5157,7 +5157,7 @@ private final class BearyBlockedUserCell: UITableViewCell {
         nameLabel.textColor = BearyColors.ink
         nameLabel.numberOfLines = 1
         handleLabel.translatesAutoresizingMaskIntoConstraints = false
-        handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        handleLabel.font = BearyDynamicType.secondaryFont()
         handleLabel.adjustsFontForContentSizeCategory = true
         handleLabel.textColor = BearyColors.gray
         handleLabel.numberOfLines = 1

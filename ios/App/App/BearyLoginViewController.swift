@@ -334,7 +334,7 @@ final class BearyLoginViewController: UIViewController {
         dividerLeft.translatesAutoresizingMaskIntoConstraints = false
         let dividerLabel = UILabel()
         dividerLabel.text = "或"
-        dividerLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        dividerLabel.font = BearyDynamicType.secondaryFont()
         dividerLabel.adjustsFontForContentSizeCategory = true
         dividerLabel.textColor = BearyColors.gray
         dividerLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -374,7 +374,7 @@ final class BearyLoginViewController: UIViewController {
         inviteDisclosureRow.translatesAutoresizingMaskIntoConstraints = false
         inviteDisclosureLabel.translatesAutoresizingMaskIntoConstraints = false
         inviteDisclosureLabel.text = "有邀请码？"
-        inviteDisclosureLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        inviteDisclosureLabel.font = BearyDynamicType.smallBodyFont()
         inviteDisclosureLabel.adjustsFontForContentSizeCategory = true
         inviteDisclosureLabel.textColor = BearyColors.gray
         inviteDisclosureChevron.translatesAutoresizingMaskIntoConstraints = false
@@ -418,7 +418,7 @@ final class BearyLoginViewController: UIViewController {
         sendButton.bearyAddPressFeedback()
 
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        messageLabel.font = BearyDynamicType.secondaryFont()
         messageLabel.adjustsFontForContentSizeCategory = true
         messageLabel.textColor = Self.loginErrorRed
         messageLabel.numberOfLines = 0
@@ -429,7 +429,7 @@ final class BearyLoginViewController: UIViewController {
         // 颜色由 showMessage 按文案定（发码成功绿、字段错红）。
         for label in [emailErrorLabel, codeStatusLabel, inviteErrorLabel] {
             label.translatesAutoresizingMaskIntoConstraints = false
-            label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            label.font = BearyDynamicType.secondaryFont()
             label.adjustsFontForContentSizeCategory = true
             label.numberOfLines = 0
             label.isHidden = true
@@ -738,7 +738,7 @@ final class BearyLoginViewController: UIViewController {
         legalLabel.textContainerInset = UIEdgeInsets.zero
         legalLabel.textContainer.lineFragmentPadding = 0
         legalLabel.textAlignment = .center
-        legalLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        legalLabel.font = BearyDynamicType.secondaryFont()
         legalLabel.adjustsFontForContentSizeCategory = true
         legalLabel.textColor = BearyColors.gray
         legalLabel.linkTextAttributes = [
@@ -747,7 +747,7 @@ final class BearyLoginViewController: UIViewController {
         ]
         let fullText = "继续即代表你同意《隐私政策》和《用户协议》"
         let attributed = NSMutableAttributedString(string: fullText, attributes: [
-            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13)),
+            .font: BearyDynamicType.secondaryFont(),
             .foregroundColor: BearyColors.gray,
         ])
         let paragraph = NSMutableParagraphStyle()

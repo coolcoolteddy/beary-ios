@@ -476,7 +476,7 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
         titleLabel.lineBreakMode = .byTruncatingTail
 
         metaLabel.translatesAutoresizingMaskIntoConstraints = false
-        metaLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        metaLabel.font = BearyDynamicType.captionFont()
         metaLabel.adjustsFontForContentSizeCategory = true
         metaLabel.textColor = BearyColors.gray
         metaLabel.numberOfLines = 1
@@ -781,7 +781,7 @@ final class BearyHistoryTodayRowCell: UITableViewCell {
         eventLabel.numberOfLines = 0
 
         commentLabel.translatesAutoresizingMaskIntoConstraints = false
-        commentLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        commentLabel.font = BearyDynamicType.secondaryFont()
         commentLabel.adjustsFontForContentSizeCategory = true
         commentLabel.textColor = BearyColors.gray
         commentLabel.numberOfLines = 0

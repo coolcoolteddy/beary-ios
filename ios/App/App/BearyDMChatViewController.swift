@@ -210,7 +210,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         topBar.addSubview(closeButton)
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.pageTitleFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = (peer.displayName?.isEmpty == false) ? peer.displayName! : "beary 用户"
@@ -265,7 +265,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         topLine.backgroundColor = BearyColors.line
         inputBar.addSubview(topLine)
         inputTextView.translatesAutoresizingMaskIntoConstraints = false
-        inputTextView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        inputTextView.font = BearyDynamicType.smallBodyFont()
         inputTextView.adjustsFontForContentSizeCategory = true
         inputTextView.textColor = BearyColors.ink
         inputTextView.backgroundColor = BearyColors.surface2
@@ -277,7 +277,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         inputBar.addSubview(inputTextView)
         // 审计：输入框占位（空输入时显，见 updateInputChrome）。
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        placeholderLabel.font = BearyDynamicType.smallBodyFont()
         placeholderLabel.adjustsFontForContentSizeCategory = true
         placeholderLabel.textColor = BearyColors.gray
         placeholderLabel.text = "输入消息"
@@ -289,7 +289,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         ])
         sendButton.translatesAutoresizingMaskIntoConstraints = false
         sendButton.setTitle("发送", for: .normal)
-        sendButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        sendButton.titleLabel?.font = BearyDynamicType.buttonCompactFont()
         sendButton.titleLabel?.adjustsFontForContentSizeCategory = true
         sendButton.setTitleColor(BearyColors.bg, for: .normal)
         sendButton.backgroundColor = BearyColors.ink
@@ -373,7 +373,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         permBannerView.isHidden = true
         view.addSubview(permBannerView)
         permBannerLabel.translatesAutoresizingMaskIntoConstraints = false
-        permBannerLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        permBannerLabel.font = BearyDynamicType.secondaryFont()
         permBannerLabel.adjustsFontForContentSizeCategory = true
         permBannerLabel.numberOfLines = 0
         permBannerLabel.textColor = BearyColors.gray
@@ -510,12 +510,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         searchIconView.contentMode = .scaleAspectFit
         searchFieldBox.addSubview(searchIconView)
         searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        searchField.font = BearyDynamicType.smallBodyFont()
         searchField.adjustsFontForContentSizeCategory = true
         searchField.textColor = BearyColors.ink
         searchField.attributedPlaceholder = NSAttributedString(string: "搜索聊天记录", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15)),
+            .font: BearyDynamicType.smallBodyFont(),
         ])
         searchField.returnKeyType = .search
         searchField.autocorrectionType = .no
@@ -525,14 +525,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         searchFieldBox.addSubview(searchField)
         searchCancelButton.translatesAutoresizingMaskIntoConstraints = false
         searchCancelButton.setTitle("取消", for: .normal)
-        searchCancelButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        searchCancelButton.titleLabel?.font = BearyDynamicType.smallBodyFont()
         searchCancelButton.titleLabel?.adjustsFontForContentSizeCategory = true
         searchCancelButton.setTitleColor(BearyColors.ink, for: .normal)
         searchCancelButton.addTarget(self, action: #selector(searchCancelTapped), for: .touchUpInside)
         searchCancelButton.bearyAddPressFeedback()
         searchContainer.addSubview(searchCancelButton)
         searchHintLabel.translatesAutoresizingMaskIntoConstraints = false
-        searchHintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        searchHintLabel.font = BearyDynamicType.captionFont()
         searchHintLabel.adjustsFontForContentSizeCategory = true
         searchHintLabel.textColor = BearyColors.gray
         searchHintLabel.text = "仅搜索本设备已有的消息"
@@ -1064,7 +1064,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private func updateInputTextViewHeight() {
         let width = inputTextView.bounds.width
         guard width > 0 else { return }
-        let font = inputTextView.font ?? UIFont.systemFont(ofSize: 15)
+        let font = inputTextView.font ?? BearyDynamicType.smallBodyFont()
         let insets = inputTextView.textContainerInset.top + inputTextView.textContainerInset.bottom
         let minHeight = max(36, font.lineHeight + insets)
         let maxHeight = font.lineHeight * 5 + insets
@@ -2265,7 +2265,7 @@ private final class BearyDMMessageCell: UITableViewCell {
             bubble.clipsToBounds = true
             bubble.backgroundColor = isMine ? BearyColors.ink : BearyColors.surface2
             textLabel.translatesAutoresizingMaskIntoConstraints = false
-            textLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+            textLabel.font = BearyDynamicType.smallBodyFont()
             textLabel.adjustsFontForContentSizeCategory = true
             textLabel.textColor = isMine ? BearyColors.bg : BearyColors.ink
             textLabel.numberOfLines = 0
@@ -2437,13 +2437,13 @@ private final class BearyDMChatSearchResultCell: UITableViewCell {
         selectionStyle = .default
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        titleLabel.font = BearyDynamicType.secondaryFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.gray
         contentView.addSubview(titleLabel)
 
         snippetLabel.translatesAutoresizingMaskIntoConstraints = false
-        snippetLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        snippetLabel.font = BearyDynamicType.smallBodyFont()
         snippetLabel.adjustsFontForContentSizeCategory = true
         snippetLabel.textColor = BearyColors.ink
         snippetLabel.numberOfLines = 2

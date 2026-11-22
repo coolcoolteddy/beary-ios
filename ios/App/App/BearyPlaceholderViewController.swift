@@ -30,7 +30,7 @@ final class BearyPlaceholderViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         let titleLabel = UILabel()
         titleLabel.text = titleText
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.pageTitleFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center

@@ -165,7 +165,8 @@ final class BearyLocationPickerViewController: UIViewController {
         currentPinView.contentMode = .scaleAspectFit
         currentCard.addSubview(currentPinView)
         currentNameLabel.translatesAutoresizingMaskIntoConstraints = false
-        currentNameLabel.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        currentNameLabel.font = BearyDynamicType.titleBoldFont()
+        currentNameLabel.adjustsFontForContentSizeCategory = true
         currentNameLabel.textColor = BearyColors.ink
         currentNameLabel.numberOfLines = 1
         currentNameLabel.lineBreakMode = .byTruncatingTail
@@ -577,7 +578,8 @@ extension BearyLocationPickerViewController: UITableViewDataSource, UITableViewD
             cell.detailTextLabel?.text = subline
             cell.accessibilityLabel = (item.name ?? "") + (subline == nil ? "" : "，" + subline!)
         }
-        cell.textLabel?.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        cell.textLabel?.font = BearyDynamicType.titleBoldFont()
+        cell.textLabel?.adjustsFontForContentSizeCategory = true
         cell.textLabel?.textColor = BearyColors.ink
         cell.textLabel?.numberOfLines = 1
         cell.textLabel?.lineBreakMode = .byTruncatingTail

@@ -263,7 +263,7 @@ class BearyFeedViewController: UIViewController {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.setTitle("有新内容", for: .normal)
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        btn.titleLabel?.font = BearyDynamicType.buttonSmallFont()
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.setTitleColor(BearyColors.bg, for: .normal)
         // 网页 #newPill 口径：左侧 15pt 上箭头（beary-arrow-up 官方路径渲染），与标题 gap 6。
@@ -290,7 +290,7 @@ class BearyFeedViewController: UIViewController {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.setTitle("回到刚才的位置", for: .normal)
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        btn.titleLabel?.font = BearyDynamicType.buttonSmallFont()
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.setTitleColor(BearyColors.bg, for: .normal)
         // 下箭头（与“有新内容”的上箭头同款官方路径渲染），与标题 gap 6。
@@ -609,7 +609,7 @@ class BearyFeedViewController: UIViewController {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "还没有公开的日记"
         feedEmptyTitleLabel = titleLabel
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        titleLabel.font = BearyDynamicType.smallBodyFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
@@ -617,7 +617,7 @@ class BearyFeedViewController: UIViewController {
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.text = "写一篇并公开试试"
         feedEmptySubtitleLabel = subtitleLabel
-        subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        subtitleLabel.font = BearyDynamicType.secondaryFont()
         subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.textAlignment = .center
@@ -693,7 +693,7 @@ class BearyFeedViewController: UIViewController {
         refreshFailedBanner.addSubview(refreshFailedLabel)
         refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
         refreshFailedRetryButton.setTitle("重试", for: .normal)
-        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.buttonCompactFont()
         refreshFailedRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         refreshFailedRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         refreshFailedRetryButton.accessibilityLabel = "重试"
@@ -3463,7 +3463,7 @@ class BearyFeedErrorCell: UITableViewCell {
         lb.translatesAutoresizingMaskIntoConstraints = false
         // W3：与详情/编辑器同句式——整句“加载失败，重试”（按钮仍为“重试”动作）。
         lb.text = "加载失败，重试"
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        lb.font = BearyDynamicType.smallBodyFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
         lb.textAlignment = .center
@@ -3475,7 +3475,7 @@ class BearyFeedErrorCell: UITableViewCell {
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 15), for: .normal)
         btn.setTitle("重试", for: .normal)
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        btn.titleLabel?.font = BearyDynamicType.buttonRegularFont()
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)

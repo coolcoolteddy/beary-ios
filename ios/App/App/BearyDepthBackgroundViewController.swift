@@ -85,7 +85,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
 
     private lazy var plusFooterLabel: UILabel = {
         let labelValue = UILabel()
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        labelValue.font = BearyDynamicType.secondaryFont()
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center

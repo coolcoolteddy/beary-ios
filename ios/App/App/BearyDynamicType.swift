@@ -161,4 +161,23 @@ extension BearyDynamicType {
     static func liveBadgeFont() -> UIFont {
         scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .bold))
     }
+
+    /// 语义：粗体标题（页内标题／模块标题／通知标题）。定版值：16 bold，scaled。
+    /// 本批新立：16 bold 此前无角色，标题类 14 处迁入；头像首字母、计数、
+    /// 按钮标题、capped 固定容器各留原写法（见核对 NOTES）。
+    static func titleBoldFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+    }
+
+    /// 语义：小号粗体文本（@ 行人名、12pt 粗体小按钮）。定版值：12 bold，scaled。
+    /// 本批新立：12 bold 此前无角色；头像首字母 1 处留原写法。
+    static func smallBoldFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 12, weight: .bold))
+    }
+
+    /// 语义：微型辅助字（表情名、头像下小名）。定版值：11 regular，scaled。
+    /// 本批新立：11 regular 此前无角色；固定构图页 1 处留原写法。
+    static func tinyCaptionFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 11))
+    }
 }

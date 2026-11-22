@@ -124,7 +124,8 @@ final class BearyWordprintView: UIView {
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        label.font = BearyDynamicType.sectionTitleFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         label.text = "词汇指纹"
         return label
@@ -133,7 +134,8 @@ final class BearyWordprintView: UIView {
     private let yearLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 13)
+        label.font = BearyDynamicType.secondaryFont()
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         return label
     }()
