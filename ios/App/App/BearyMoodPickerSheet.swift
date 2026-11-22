@@ -38,6 +38,16 @@ enum BearyMoodPickerSheet {
         return sheet
     }
 }
+// MARK: - 选择器网格格宽（心情／表情两张表共用）
+// 四列宽计算抽出来：列数／左右边距／列间距作参数，最小宽默认 44。
+// 行高与底边距各留自己的：Mood 行高走 cellHeight(forWidth:)（恒 72）、
+// sectionInset.bottom 20；Emote 行高按名称实测高、sectionInset.bottom 14。
+enum BearyPickerGrid {
+    static func itemWidth(for availableWidth: CGFloat, columns: CGFloat, sideInset: CGFloat, interitemSpacing: CGFloat, minimumWidth: CGFloat = 44) -> CGFloat {
+        let totalSpacing = sideInset * 2 + interitemSpacing * (columns - 1)
+        return max(minimumWidth, (availableWidth - totalSpacing) / columns)
+    }
+}
 
 final class BearyMoodPickerSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, BearyBottomSheetVoiceOver {
 
@@ -103,8 +113,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         // “自定义”组格数 = 库图数＋1（首格 ＋ 添加格）。
         let itemCount = selectedGroup.keys.count + 1
         let columns: CGFloat = 4
-        let totalSpacing: CGFloat = 18 * 2 + 6 * (columns - 1)
-        let itemWidth = max(44, (width - totalSpacing) / columns)
+        let itemWidth = BearyPickerGrid.itemWidth(for: width, columns: columns, sideInset: 18, interitemSpacing: 6)
         let rows = ceil(CGFloat(itemCount) / columns)
         guard rows > 0 else { return 0 }
         return 4 + rows * cellHeight(forWidth: itemWidth) + (rows - 1) * 10 + 20
@@ -325,8 +334,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     }
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
-        let totalSpacing: CGFloat = 18 * 2 + 6 * 3
-        let width = max(44, (collectionView.bounds.width - totalSpacing) / 4)
+        let width = BearyPickerGrid.itemWidth(for: collectionView.bounds.width, columns: 4, sideInset: 18, interitemSpacing: 6)
         return CGSize(width: width, height: cellHeight(forWidth: width))
     }
 

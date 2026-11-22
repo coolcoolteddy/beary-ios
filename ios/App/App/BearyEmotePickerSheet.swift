@@ -405,8 +405,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     }
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
-        let totalSpacing: CGFloat = 18 * 2 + 6 * 3
-        let width = max(44, (collectionView.bounds.width - totalSpacing) / 4)
+        let width = BearyPickerGrid.itemWidth(for: collectionView.bounds.width, columns: 4, sideInset: 18, interitemSpacing: 6)
         // 审计 D-13：行高按实际文字高度计——名称用与 cell 一致的缩放 11pt 字、
         // 格宽减左右各 2 内边距量取，允许多行；默认字号下 46 + 4 + 单行高 + 8
         // 仍为 72，与原固定高一致；放大后名称换行，行高随之长高，不裁字。
