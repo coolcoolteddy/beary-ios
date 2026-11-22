@@ -109,6 +109,24 @@ func bearyStripWidth(forImageSize size: CGSize, height: CGFloat) -> CGFloat {
     let raw = height * size.width / size.height
     return round(max(height * 0.55, min(height * 2.22, raw)))
 }
+/// 图片条槽宽 dims 版（与 CGSize 版同口径）：高按宽高比定宽，
+/// 0.55–2.22 倍高夹取；无 dims／尺寸无效时回落 280 默认宽。
+/// 卡片／详情／预热／时间线四处原私有同款合于此。
+func bearyStripWidth(forKey key: String, dims: [String: [Int]]?, height: CGFloat) -> CGFloat {
+    if let dims = dims, let d = dims[key], d.count >= 2, d[0] > 0, d[1] > 0 {
+        let raw = height * CGFloat(d[0]) / CGFloat(d[1])
+        let low = height * 0.55
+        let high = height * 2.22
+        return round(max(low, min(high, raw)))
+    }
+    return 280
+}
+
+/// 图片条高：卡片／详情／时间线主图条与骨架图片块共用。
+enum BearyImageStrip {
+    static let height: CGFloat = 216
+}
+
 
 /// 经 bearySetImage 的 onFailure 钩子加载：失败（取消除外，复用取消不算失败）时亮重试图标。
 /// blurUp=true 时走模糊到清晰（32px 小图占位 → 原图 1.04→1 缩放淡入），
@@ -1622,7 +1640,7 @@ class BearyDiaryCardCell: UITableViewCell {
             imageSlotWidthConstraints.append(widthConstraint)
             NSLayoutConstraint.activate([
                 widthConstraint,
-                slot.heightAnchor.constraint(equalToConstant: 216),
+                slot.heightAnchor.constraint(equalToConstant: BearyImageStrip.height),
             ])
             let retry = bearyFeedRetryButton(target: self, action: #selector(feedRetryTapped(_:)))
             slot.addSubview(retry)
@@ -2288,17 +2306,6 @@ class BearyDiaryCardCell: UITableViewCell {
         return "beary 用户"
     }
 
-    /// F5：216 高按宽高比定宽（网页 stripW 同口径：0.55–2.22 倍高夹取，无尺寸老图默认 280）。
-    private func stripWidth(forKey key: String, dims: [String: [Int]]?, height: CGFloat) -> CGFloat {
-        if let dims = dims, let d = dims[key], d.count >= 2, d[0] > 0, d[1] > 0 {
-            let raw = height * CGFloat(d[0]) / CGFloat(d[1])
-            let low = height * 0.55
-            let high = height * 2.22
-            return round(max(low, min(high, raw)))
-        }
-        return 280
-    }
-
     /// 图到后按实测尺寸纠槽宽（见 bearyStripWidth 注释：imgDims 恒 nil，
     /// 初宽恒 280，竖图会被 aspectFill 裁掉近半）。只改宽约束 constant，
     /// 高 216 与行高一字不动，不触发行高重算、不跳动；差值 ≤0.5pt 不动，
@@ -2308,7 +2315,7 @@ class BearyDiaryCardCell: UITableViewCell {
         guard imageIndex >= 0, imageIndex < currentImageKeys.count,
               currentImageKeys[imageIndex] == imageKey,
               imageIndex < imageSlotWidthConstraints.count else { return }
-        let target = bearyStripWidth(forImageSize: image.size, height: 216)
+        let target = bearyStripWidth(forImageSize: image.size, height: BearyImageStrip.height)
         let constraint = imageSlotWidthConstraints[imageIndex]
         guard abs(target - constraint.constant) > 0.5 else { return }
         constraint.constant = target
@@ -2851,14 +2858,14 @@ class BearyDiaryCardCell: UITableViewCell {
             return
         }
         imagesScrollView.isHidden = false
-        imageHeightConstraint?.constant = 216
+        imageHeightConstraint?.constant = BearyImageStrip.height
         for (imageIndex, imageKey) in keys.enumerated() {
             // 详情侧同款守卫：槽位池、重试钮池、宽约束池须同下标，任一池短了都跳过该图、不下标越界。
             guard imageIndex < imageSlots.count, imageIndex < imageSlotRetryButtons.count,
                   imageIndex < imageSlotWidthConstraints.count else { continue }
             let slot = imageSlots[imageIndex]
             slot.tag = imageIndex
-            let strip = stripWidth(forKey: imageKey, dims: dims, height: 216)
+            let strip = bearyStripWidth(forKey: imageKey, dims: dims, height: BearyImageStrip.height)
             // 卡片糊修复：216 条直接走全尺寸图——缩略图长边只有 480px，
             // 3× 机上宽图条要 1438px，缩略图拉大 3 倍必糊；全尺寸 1600px 够用。
             // 图到后按实测尺寸纠宽（imgDims 恒 nil，初宽恒 280 会裁竖图）；
@@ -4932,7 +4939,7 @@ extension BearyDiaryCardCell {
         height += textHeight
         if hasEphemeral { height += 40 }                                // 气泡上下内边距 20 + 20
         if overflow { height += 6 + 20 + 14 } else { height += 14 }      // 折叠钮行 / 正文→下行
-        if hasImages { height += 216 + 12 }                              // 图片条 + 间距
+        if hasImages { height += BearyImageStrip.height + 12 }                              // 图片条 + 间距
         if imageKeys.count > 3 { height += 32 + 12 }                     // 九宫格入口 + 间距
         if hasQuote { height += 72 + 12 }                                // 引用卡（近似）+ 间距
         if hasLocation { height += 18 + 14 }                             // 位置行 + 间距

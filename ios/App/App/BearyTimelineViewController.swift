@@ -1095,7 +1095,7 @@ final class BearyTimelineCell: UITableViewCell {
             thumbsStack.leadingAnchor.constraint(equalTo: thumbsScrollView.leadingAnchor),
             thumbsStack.trailingAnchor.constraint(equalTo: thumbsScrollView.trailingAnchor),
             thumbsStack.bottomAnchor.constraint(equalTo: thumbsScrollView.bottomAnchor),
-            thumbsStack.heightAnchor.constraint(equalToConstant: 216),
+            thumbsStack.heightAnchor.constraint(equalToConstant: BearyImageStrip.height),
         ])
 
         footStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1202,7 +1202,7 @@ final class BearyTimelineCell: UITableViewCell {
             timelineLocationIconView.heightAnchor.constraint(equalToConstant: 13),
         ])
         // 无图时把图片条高度约束压到 0（只靠 hidden 不够：显式高度约束仍会撑开 stack）。
-        thumbsHeightConstraint = thumbsScrollView.heightAnchor.constraint(equalToConstant: 216)
+        thumbsHeightConstraint = thumbsScrollView.heightAnchor.constraint(equalToConstant: BearyImageStrip.height)
         thumbsHeightConstraint?.isActive = true
         installImageStripPinch()
     }
@@ -1436,18 +1436,6 @@ final class BearyTimelineCell: UITableViewCell {
             guard let self = self, let resolved = resolved, self.currentEntry?.id == entryId else { return }
             self.timelineLocationLabel.text = resolved
         }
-    }
-
-    /// 主图条定宽：广场卡 stripWidth 同口径（网页 stripW）——0.55–2.22 倍高夹取，
-    /// 无尺寸老图默认 280。仅时间线主图条用；引用卡 74 小图不走此路。
-    private func timelineStripWidth(forKey key: String, dims: [String: [Int]]?, height: CGFloat) -> CGFloat {
-        if let dims = dims, let d = dims[key], d.count >= 2, d[0] > 0, d[1] > 0 {
-            let raw = height * CGFloat(d[0]) / CGFloat(d[1])
-            let low = height * 0.55
-            let high = height * 2.22
-            return round(max(low, min(high, raw)))
-        }
-        return 280
     }
 
     /// 图片条捏合拼图（#429 卡片/详情同款口径，时间线 cell 此前根本没有捏合，
@@ -1788,7 +1776,7 @@ final class BearyTimelineCell: UITableViewCell {
         let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "", title: entry.title ?? "") == false }
         resetImageStripPinch()
         thumbsScrollView.isHidden = imageKeys.isEmpty
-        thumbsHeightConstraint?.constant = imageKeys.isEmpty ? 0 : 216
+        thumbsHeightConstraint?.constant = imageKeys.isEmpty ? 0 : BearyImageStrip.height
         cardStackReference?.setCustomSpacing(imageKeys.isEmpty ? 0 : 12, after: thumbsScrollView)
         for (thumbIndex, key) in imageKeys.enumerated() {
             let imageView = UIImageView()
@@ -1804,11 +1792,11 @@ final class BearyTimelineCell: UITableViewCell {
             imageView.tag = thumbIndex
             imageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(didTapThumb(_:))))
             thumbsStack.addArrangedSubview(imageView)
-            // 216 图片条：宽按原图宽高比定（广场 stripWidth 同口径），高固定 216。
-            let strip = timelineStripWidth(forKey: key, dims: entry.imgDims, height: 216)
+            // 216 图片条：宽按原图宽高比定（广场 bearyStripWidth 同口径），高固定 216。
+            let strip = bearyStripWidth(forKey: key, dims: entry.imgDims, height: BearyImageStrip.height)
             NSLayoutConstraint.activate([
                 imageView.widthAnchor.constraint(equalToConstant: strip),
-                imageView.heightAnchor.constraint(equalToConstant: 216),
+                imageView.heightAnchor.constraint(equalToConstant: BearyImageStrip.height),
             ])
             thumbImageViews.append(imageView)
             // 审计 P2-14：主图条补广场同款失败重试钮（居中 28pt 圆盘，失败时亮；
@@ -6967,7 +6955,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         if hasTitle { height += 20 + 6 }                              // 标题行 + 间距
         height += textHeight
         height += 14   // 正文→下行
-        if hasImages { height += 216 + 12 }                           // 图片条 + 间距
+        if hasImages { height += BearyImageStrip.height + 12 }                           // 图片条 + 间距
         if imageKeys.count > 3 { height += 32 + 12 }                  // 九宫格入口 + 间距
         if hasQuote { height += 72 + 12 }                             // 引用卡（近似）+ 间距
         if hasLocation { height += 18 + 14 }                          // 位置行 + 间距
@@ -7198,7 +7186,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
                     }
                     // 卡片糊同款：首图预热与时间线条同口径的全尺寸图。
                     if let firstKey = entry.images?.first, let imageURL = BearyImageURLs.imageURL(key: firstKey, thumb: false) {
-                        // 112：预取与卡片展示同宽下采样（卡片 stripWidth 同公式，
+                        // 112：预取与卡片展示同宽下采样（卡片 bearyStripWidth 同公式，
                         // 见 BearyTimelinePrefetchStrip）——旧口径不带宽度时内存键
                         // 与展示键不一致，预取只暖磁盘、展示仍需解码一遍
                         //（灯箱 111 同款问题）。
@@ -7274,11 +7262,11 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
 }
 
 /// 112：时间线 willDisplay 预取的卡片首图下采样宽度（pt）——与卡片
-/// BearyDiaryCardCell.stripWidth(forKey:dims:height:216) 同公式：
+/// bearyStripWidth(forKey:dims:height:) 同公式：
 /// 216 × 宽高比，夹在 216×0.55…216×2.22，无 dims 时 280；调用方再 × scale。
 enum BearyTimelinePrefetchStrip {
     static func width(for entry: Entry) -> CGFloat {
-        let height: CGFloat = 216
+        let height: CGFloat = BearyImageStrip.height
         if let dims = entry.imgDims, let firstKey = entry.images?.first,
            let d = dims[firstKey], d.count >= 2, d[0] > 0, d[1] > 0 {
             let raw = height * CGFloat(d[0]) / CGFloat(d[1])

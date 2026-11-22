@@ -1592,7 +1592,7 @@ struct BearyImagePrefetchBudget {
 /// “已预热”；本进程内同一 URL 不重复排队靠 pending + warmed 两集合
 /// 共同保证（warmed 的“已见过”以未过期为准）。
 /// 卡片键对齐：预热传卡片同款下采样宽度（strip × scale，见
-/// cardStripWidth，与 BearyDiaryCardCell.stripWidth 同口径），使预热
+/// bearyStripWidth(forKey:dims:height:) 同口径），使预热
 /// 解码图与卡片显示走同一内存键，不再全尺寸解码后仍命中不了。
 final class BearyImagePrefetcher {
     static let shared = BearyImagePrefetcher()
@@ -1697,20 +1697,6 @@ final class BearyImagePrefetcher {
         return budget
     }
 
-    /// 卡片图片条同款定宽（BearyDiaryCardCell.stripWidth 同口径，卡片
-    /// 显示逻辑本身不动）：216 高按宽高比定宽，0.55–2.22 倍高夹取，
-    /// 无尺寸老图默认 280。预热用 strip × scale 作下采样宽度，使
-    /// memoryKey 与卡片显示的键一字相同；卡片键若改口径，这里须同改。
-    private func cardStripWidth(forKey key: String, dims: [String: [Int]]?, height: CGFloat) -> CGFloat {
-        if let dims = dims, let d = dims[key], d.count >= 2, d[0] > 0, d[1] > 0 {
-            let raw = height * CGFloat(d[0]) / CGFloat(d[1])
-            let low = height * 0.55
-            let high = height * 2.22
-            return round(max(low, min(high, raw)))
-        }
-        return 280
-    }
-
     /// entries 为当前列表全量顺序；lastVisibleIndex 为最后可见行下标
     ///（无可见行时传 -1，即从头预热）；viewerId 为当前登录用户 id，
     ///游客传 nil（此时只预热公开篇）。
@@ -1762,7 +1748,7 @@ final class BearyImagePrefetcher {
                 let seen = isWarmed(warmedKey) || pending.contains(warmedKey)
                 lock.unlock()
                 if seen { continue }
-                let strip = cardStripWidth(forKey: key, dims: entry.imgDims, height: 216)
+                let strip = bearyStripWidth(forKey: key, dims: entry.imgDims, height: BearyImageStrip.height)
                 items.append((url: url, downsampleToWidth: strip * UIScreen.main.scale, warmedKey: warmedKey))
             }
         }

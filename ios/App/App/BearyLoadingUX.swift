@@ -29,7 +29,7 @@ final class BearySkeletonCardView: UIView {
         didSet {
             guard showsImage != oldValue else { return }
             imageBlock.isHidden = !showsImage
-            imageHeightConstraint?.constant = showsImage ? 216 : 0
+            imageHeightConstraint?.constant = showsImage ? BearyImageStrip.height : 0
         }
     }
 
@@ -68,7 +68,7 @@ final class BearySkeletonCardView: UIView {
         // 扫光动画无任何路径会被移除；关时若骨架仍在显示需恢复扫光
         //（与 BearyWebRingSpinnerView 同口径）。
         NotificationCenter.default.addObserver(self, selector: #selector(reduceMotionChanged), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
-        let imageHeight = imageBlock.heightAnchor.constraint(equalToConstant: 216)
+        let imageHeight = imageBlock.heightAnchor.constraint(equalToConstant: BearyImageStrip.height)
         imageHeightConstraint = imageHeight
         NSLayoutConstraint.activate([
             avatar.topAnchor.constraint(equalTo: topAnchor, constant: 16),

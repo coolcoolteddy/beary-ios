@@ -1340,7 +1340,7 @@ final class BearyDetailViewController: UIViewController {
             imageSlotWidthConstraints.append(widthConstraint)
             NSLayoutConstraint.activate([
                 widthConstraint,
-                slot.heightAnchor.constraint(equalToConstant: 216),
+                slot.heightAnchor.constraint(equalToConstant: BearyImageStrip.height),
             ])
             let retry = bearyFeedRetryButton(target: self, action: #selector(detailImageRetryTapped(_:)))
             slot.addSubview(retry)
@@ -2317,7 +2317,7 @@ final class BearyDetailViewController: UIViewController {
             for (slotIndex, imageKey) in newImageKeys.enumerated() {
                 guard slotIndex < imageSlots.count, slotIndex < imageSlotWidthConstraints.count else { continue }
                 if imageDimsChanged {
-                    imageSlotWidthConstraints[slotIndex].constant = stripWidth(forKey: imageKey, dims: merged.imgDims, height: 216)
+                    imageSlotWidthConstraints[slotIndex].constant = bearyStripWidth(forKey: imageKey, dims: merged.imgDims, height: BearyImageStrip.height)
                 }
                 if liveMapChanged {
                     setLiveOverlay(index: slotIndex, staticKey: imageKey, liveKey: merged.liveVideos?[imageKey])
@@ -2920,7 +2920,7 @@ final class BearyDetailViewController: UIViewController {
             return
         }
         imagesScrollView.isHidden = false
-        imageHeightConstraint?.constant = 216
+        imageHeightConstraint?.constant = BearyImageStrip.height
         for (imageIndex, imageKey) in keys.enumerated() {
             // 详情闪退加固：槽位池、重试钮池、宽约束池须同下标，任一池短了都跳过该图、
             // 不下标越界（正常路径三池同为 9，守卫只防池化异常，不改渲染）。
@@ -2928,7 +2928,7 @@ final class BearyDetailViewController: UIViewController {
                   imageIndex < imageSlotWidthConstraints.count else { continue }
             let slot = imageSlots[imageIndex]
             slot.tag = imageIndex
-            let strip = stripWidth(forKey: imageKey, dims: entry.imgDims, height: 216)
+            let strip = bearyStripWidth(forKey: imageKey, dims: entry.imgDims, height: BearyImageStrip.height)
             // 卡片糊同款：详情条也是 216 高，直接走全尺寸图（缩略图 480px 在 3× 机上要拉大到 1438px）。
             // 图到后按实测尺寸纠宽（imgDims 恒 nil，初宽恒 280 会裁竖图）；
             // 缓存已命中时加载层直接返回不回调，同步按现图纠一次。
@@ -2996,18 +2996,6 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
-    /// 首页 stripWidth 同款：216 高按宽高比定宽，0.55–2.22 倍高夹取，
-    /// 无尺寸老图默认 280。
-    private func stripWidth(forKey key: String, dims: [String: [Int]]?, height: CGFloat) -> CGFloat {
-        if let dims = dims, let d = dims[key], d.count >= 2, d[0] > 0, d[1] > 0 {
-            let raw = height * CGFloat(d[0]) / CGFloat(d[1])
-            let low = height * 0.55
-            let high = height * 2.22
-            return round(max(low, min(high, raw)))
-        }
-        return 280
-    }
-
     /// 图到后按实测尺寸纠槽宽（卡片同款，见 bearyStripWidth 注释：
     /// imgDims 恒 nil，初宽恒 280，竖图会被 aspectFill 裁掉近半）。
     /// 只改宽约束 constant，高 216 与行高一字不动，不跳动；差值 ≤0.5pt
@@ -3016,7 +3004,7 @@ final class BearyDetailViewController: UIViewController {
         guard imageIndex >= 0, imageIndex < imageKeys.count,
               imageKeys[imageIndex] == imageKey,
               imageIndex < imageSlotWidthConstraints.count else { return }
-        let target = bearyStripWidth(forImageSize: image.size, height: 216)
+        let target = bearyStripWidth(forImageSize: image.size, height: BearyImageStrip.height)
         let constraint = imageSlotWidthConstraints[imageIndex]
         guard abs(target - constraint.constant) > 0.5 else { return }
         constraint.constant = target
