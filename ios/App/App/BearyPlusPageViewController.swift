@@ -387,7 +387,7 @@ final class BearyPlusPageViewController: UIViewController {
         let rowButton = UIButton(type: .custom)
         rowButton.translatesAutoresizingMaskIntoConstraints = false
         rowButton.addTarget(self, action: #selector(grantsButtonTapped), for: .touchUpInside)
-        rowButton.bearyAddPressHaptic()
+        rowButton.bearyAddPressFeedback()
         rowButton.accessibilityLabel = "来源明细"
         let topLine = hairline()
         rowButton.addSubview(topLine)
