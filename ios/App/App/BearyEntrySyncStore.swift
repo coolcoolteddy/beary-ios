@@ -58,20 +58,6 @@ enum BearySyncStateStore {
 enum BearyEntrySyncStore {
     static let directoryPrefix = "beary_entry_sync"
 
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        // 与 BearyAPI 解码端配对：解码用 convertFromSnakeCase，编码用 convertToSnakeCase，
-        // 落盘 JSON 与服务端字段口径一致，往返不丢字段。
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        return encoder
-    }
-
-    private static func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return decoder
-    }
-
     static func accountDir(accountId: Int) -> URL? {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         return base.appendingPathComponent("\(directoryPrefix)_\(accountId)", isDirectory: true)
@@ -125,7 +111,7 @@ enum BearyEntrySyncStore {
         guard let dir = directory else { return nil }
         let url = dir.appendingPathComponent("\(dayKey).json")
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? makeDecoder().decode([Entry].self, from: data)
+        return try? BearyJSON.decoder.decode([Entry].self, from: data)
     }
 
     /// 读某日落盘：命中返回数组（含空数组文件），缺失/损坏返回 nil（调用方走网络）。
@@ -278,7 +264,7 @@ enum BearyEntrySyncStore {
     /// 标记只在发布成功后由 commitFullSync / finishDiaryRun 统一写）。
     private static func saveDayToDirectory(dayKey: String, entries: [Entry], directory: URL?) -> Bool {
         guard let dir = directory else { return false }
-        guard let data = try? makeEncoder().encode(entries) else { return false }
+        guard let data = try? BearyJSON.encoder.encode(entries) else { return false }
         let url = dir.appendingPathComponent("\(dayKey).json")
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -846,18 +832,6 @@ enum BearyEntrySyncStore {
 enum BearyTrashSyncStore {
     static let directoryPrefix = "beary_trash_sync"
 
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        return encoder
-    }
-
-    private static func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return decoder
-    }
-
     static func accountDir(accountId: Int) -> URL? {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         return base.appendingPathComponent("\(directoryPrefix)_\(accountId)", isDirectory: true)
@@ -882,7 +856,7 @@ enum BearyTrashSyncStore {
 
     private static func loadAllFile(url: URL?) -> [TrashItem]? {
         guard let url = url, let data = try? Data(contentsOf: url) else { return nil }
-        return try? makeDecoder().decode([TrashItem].self, from: data)
+        return try? BearyJSON.decoder.decode([TrashItem].self, from: data)
     }
 
     /// 读整桶：命中返回数组（含空数组），缺失/损坏返回 nil（调用方走网络）。
@@ -957,7 +931,7 @@ enum BearyTrashSyncStore {
     private static func writeTrashFile(accountId: Int, items: [TrashItem], noteWrite: Bool) -> Bool {
         if noteWrite { noteTrashWrite() }
         guard let url = fileURL(accountId: accountId),
-              let data = try? makeEncoder().encode(items) else { return false }
+              let data = try? BearyJSON.encoder.encode(items) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
@@ -977,7 +951,7 @@ enum BearyTrashSyncStore {
     /// 中间写仍走直接写盘；提交/进桶/清桶走这里（与原来 saveAll 同款）。
     private static func publishTrashFileAtomically(accountId: Int, items: [TrashItem]) -> Bool {
         guard let url = fileURL(accountId: accountId),
-              let data = try? makeEncoder().encode(items) else { return false }
+              let data = try? BearyJSON.encoder.encode(items) else { return false }
         let dir = url.deletingLastPathComponent()
         let tmpURL = dir.appendingPathComponent("trash.json.tmp.\(UUID().uuidString)")
         do {
@@ -989,7 +963,7 @@ enum BearyTrashSyncStore {
         }
         // 写盘校验：回读 tmp 解码成功才发布。
         guard let checkData = try? Data(contentsOf: tmpURL),
-              (try? makeDecoder().decode([TrashItem].self, from: checkData)) != nil else {
+              (try? BearyJSON.decoder.decode([TrashItem].self, from: checkData)) != nil else {
             try? FileManager.default.removeItem(at: tmpURL)
             return false
         }

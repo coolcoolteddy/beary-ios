@@ -717,9 +717,7 @@ final class BearyAPI {
 
     init(session: URLSession? = nil) {
         self.session = session ?? Self.makeDedicatedSession()
-        let d = JSONDecoder()
-        d.keyDecodingStrategy = .convertFromSnakeCase
-        self.decoder = d
+        self.decoder = BearyJSON.decoder
     }
 
     /// PastSelf 专用的 plain 解码器（不带 convertFromSnakeCase）。
