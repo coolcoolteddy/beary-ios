@@ -3,7 +3,7 @@ import Foundation
 // ===== 原生导航协调器（第一阶段；批一改原生路由）=====
 // Route 是全 App 统一的页面地址；协调器不再持有网页视图、不执行任何 JS、不加载任何地址，
 // 只把路由交给容器 handler（批一：tab → 原生页切换，单篇 → 原生详情，编辑器 → 原生编辑器）。
-// webURL 保留：它是纯值地址构造（测试断言在用），批一不再有任何调用点加载它。
+// webURL 是纯值地址构造：分享拼链的生产调用点与测试断言共用。
 // 例外：.editor 的 webURL 为 nil——网页无 /beary/editor 路由（见 webURL 分支注释）。
 
 enum BearyRoute: Equatable {
@@ -61,7 +61,7 @@ enum BearyRoute: Equatable {
         return nil
     }
 
-    /// 路由对应的网页地址（纯值构造，测试断言在用；批一不再有任何调用点加载它）。
+    /// 路由对应的网页地址（纯值构造；分享拼链的生产调用点与测试断言共用）。
     var webURL: URL? {
         switch self {
         case .home: return URL(string: "https://teddyhn.com/beary")
