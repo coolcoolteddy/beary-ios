@@ -2354,6 +2354,12 @@ enum BearyLocalizedDate {
 }
 
 enum BearyText {
+    /// 邀请码格式：8 位大写字母或数字；邀请面板与登录页共用同一口径，
+    /// 格式一改只改此处（此前两处逐字重复，一端改漏即一端放行、一端拦截）。
+    static func isValidInviteCode(_ code: String) -> Bool {
+        return code.range(of: "^[A-Z0-9]{8}$", options: .regularExpression) != nil
+    }
+
     /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
     /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
     /// 2026-11-21 日期完全本地化：formatter 跟 App 语言（见 BearyLocalizedDate），

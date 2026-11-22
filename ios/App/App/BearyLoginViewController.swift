@@ -924,11 +924,6 @@ final class BearyLoginViewController: UIViewController {
         return (inviteField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
     }
 
-    /// 审计 P2：邀请码格式两端统一——8 位大写字母或数字，与邀请面板同口径。
-    private func isValidInviteCode(_ code: String) -> Bool {
-        return code.range(of: "^[A-Z0-9]{8}$", options: .regularExpression) != nil
-    }
-
     /// 设备信号：网页 lgDeviceSignals 口径 {g, w, h, d}，原生只带能取到的字段：
     /// w/h 为屏幕逻辑尺寸（与网页 screen.width/height 同为 CSS 点单位），
     /// d 为像素比；g 是 WebGL GPU 字符串，原生无对应采集口径，不编造、不带。
@@ -1250,7 +1245,7 @@ final class BearyLoginViewController: UIViewController {
         }
         // 审计 P2：邀请码先行格式校验，不合规行内提示且不发请求。
         let inviteCode = normalizedInviteCode()
-        guard inviteCode.isEmpty || isValidInviteCode(inviteCode) else {
+        guard inviteCode.isEmpty || BearyText.isValidInviteCode(inviteCode) else {
             // 第 25 轮 21-26（项25）：格式错时自动展开并聚焦邀请码。
             expandInviteField()
             showMessage("邀请码格式不正确，应为 8 位字母或数字", errorField: .invite)

@@ -78,10 +78,6 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
     private var pendingBindMessage: String?
     private var pendingBindMessageOK = false
 
-    /// 审计 P2：邀请码格式两端统一——8 位大写字母或数字，与登录页同口径。
-    private func isValidInviteCode(_ code: String) -> Bool {
-        return code.range(of: "^[A-Z0-9]{8}$", options: .regularExpression) != nil
-    }
     private var isLoading = false
     /// 第六轮 04：邀请码跨账号回填——每次 load() 发起时 +1 的请求代次。
     /// 切号（.bearyUserDidChange）时再 +1 作废在途回包；回包先比代次，
@@ -775,7 +771,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
         // 审计登录杂项：启用条件改 isValidInviteCode（此前只看非空，输满 8 位
         // 含 - / 空格时按钮呈可点态、点按才拦截）。
         let code = (bindField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        let enabled = isValidInviteCode(code) && !isBinding
+        let enabled = BearyText.isValidInviteCode(code) && !isBinding
         bindButton.isEnabled = enabled
         bindButton.alpha = enabled ? 1 : 0.35
         // M14：绑定进行态用“绑定中…”文案，不再只有 alpha 变化。
@@ -840,7 +836,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
             return
         }
         // 审计 P2：邀请码先行格式校验，不合规行内提示且不发请求。
-        guard isValidInviteCode(code) else {
+        guard BearyText.isValidInviteCode(code) else {
             showMessage("邀请码格式不正确，应为 8 位字母或数字")
             return
         }
