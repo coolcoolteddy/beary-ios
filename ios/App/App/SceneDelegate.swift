@@ -3568,7 +3568,7 @@ final class BearyChromeViewController: UIViewController {
         } else {
             coverUrl = nil
         }
-        let vc = BearyEditProfileViewController(displayName: user?.displayName, handle: user?.handle, avatarUrl: user?.avatar, coverUrl: coverUrl, userId: user?.id, signature: profileVC?.currentSignature, birthdayYear: user?.birthdayYear, birthdayMonth: user?.birthdayMonth, birthdayDay: user?.birthdayDay)
+        let vc = BearyEditProfileViewController(displayName: user?.displayName, handle: user?.handle, avatarUrl: user?.avatar, coverUrl: coverUrl, userId: user?.id, signature: profileVC?.currentSignature, birthdayYear: user?.birthdayYear, birthdayMonth: user?.birthdayMonth, birthdayDay: user?.birthdayDay, country: user?.country, region: user?.region, city: user?.city)
         vc.modalPresentationStyle = .fullScreen
         vc.onSaved = { [weak self, weak vc] in
             vc?.dismiss(animated: BearyMotion.animated(true)) {

@@ -42,6 +42,11 @@ private struct BearyProfileUpdateResponse: Decodable {
     var birthdayMonth: Int?
     var birthdayDay: Int?
     var birthdayKeyPresent: Bool = false
+    /// 服务端回包是否原样带回 country / region / city（生日诚实口径同款）。
+    var country: String?
+    var region: String?
+    var city: String?
+    var cityKeyPresent: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case ok
@@ -49,6 +54,9 @@ private struct BearyProfileUpdateResponse: Decodable {
         case birthdayYear
         case birthdayMonth
         case birthdayDay
+        case country
+        case region
+        case city
     }
 
     init(from decoder: Decoder) throws {
@@ -60,6 +68,10 @@ private struct BearyProfileUpdateResponse: Decodable {
         birthdayYear = try container.decodeIfPresent(Int.self, forKey: .birthdayYear)
         birthdayMonth = try container.decodeIfPresent(Int.self, forKey: .birthdayMonth)
         birthdayDay = try container.decodeIfPresent(Int.self, forKey: .birthdayDay)
+        cityKeyPresent = container.contains(.country) || container.contains(.region) || container.contains(.city)
+        country = try container.decodeIfPresent(String.self, forKey: .country)
+        region = try container.decodeIfPresent(String.self, forKey: .region)
+        city = try container.decodeIfPresent(String.self, forKey: .city)
     }
 }
 
@@ -79,7 +91,7 @@ class BearyEditProfileViewController: UIViewController {
     private let initialAvatarUrl: String?
     private let initialCoverUrl: String?
 
-    init(displayName: String?, handle: String?, avatarUrl: String?, coverUrl: String?, userId: Int? = nil, signature: String? = nil, birthdayYear: Int? = nil, birthdayMonth: Int? = nil, birthdayDay: Int? = nil) {
+    init(displayName: String?, handle: String?, avatarUrl: String?, coverUrl: String?, userId: Int? = nil, signature: String? = nil, birthdayYear: Int? = nil, birthdayMonth: Int? = nil, birthdayDay: Int? = nil, country: String? = nil, region: String? = nil, city: String? = nil) {
         self.initialDisplayName = displayName
         self.initialHandle = handle
         self.initialAvatarUrl = avatarUrl
@@ -91,6 +103,9 @@ class BearyEditProfileViewController: UIViewController {
         self.initialBirthdayYear = birthdayYear
         self.initialBirthdayMonth = birthdayMonth
         self.initialBirthdayDay = birthdayDay
+        self.initialCountry = country
+        self.initialRegion = region
+        self.initialCity = city
         self.committedDisplayName = displayName
         super.init(nibName: nil, bundle: nil)
     }
@@ -152,6 +167,10 @@ class BearyEditProfileViewController: UIViewController {
         let birthdayMonth: Int?
         let birthdayDay: Int?
         let birthdayChanged: Bool
+        let cityCountry: String?
+        let cityRegion: String?
+        let cityCity: String?
+        let cityChanged: Bool
     }
     private var savingSnapshot: SaveSnapshot?
     /// 成功后提交的基线：initialDisplayName 是 let，成功后改名仍需新的
@@ -175,6 +194,16 @@ class BearyEditProfileViewController: UIViewController {
     private var birthdayDay: Int?
     private var birthdayLoaded = false
     private var birthdayEdited = false
+    /// 城市初值（入口带服务端值；缺失时 viewDidLoad 读本地卡数据兜底，见下）。
+    private var initialCountry: String?
+    private var initialRegion: String?
+    private var initialCity: String?
+    /// 城市当前值与是否已确认初值（生日 initialBirthdayYear / birthdayLoaded 同款口径）。
+    private var cityCountry: String?
+    private var cityRegion: String?
+    private var cityCity: String?
+    private var cityLoaded = false
+    private var cityEdited = false
     private var signatureEdited = false
     private var signatureFetchStarted = false
     /// G3：handle POST 成功后立即记下的已提交 handle（initialHandle 是 let，不可改；
@@ -418,6 +447,47 @@ class BearyEditProfileViewController: UIViewController {
         return picker
     }()
 
+    /// 城市行（P1：编辑资料页补城市行）：与生日行同款 58 标签 + 16 字
+    /// 输入外观；按钮只读，点按弹内嵌三级级联选择器（引导表单同款
+    /// 国家→地区→市，面包屑可回退，选到市即收起并填值）。
+    /// 城市行不配图标（表单行统一只有文字标签，不自绘、不补新图标）。
+    private lazy var cityButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.contentHorizontalAlignment = .left
+        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 20)
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        // 三级全名长时缩字不截尾（引导表单同款「中国 · 内蒙古自治区 · 锡林郭勒盟」）。
+        buttonValue.titleLabel?.adjustsFontSizeToFitWidth = true
+        buttonValue.titleLabel?.minimumScaleFactor = 0.7
+        buttonValue.addTarget(self, action: #selector(cityButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        buttonValue.accessibilityLabel = "城市"
+        return buttonValue
+    }()
+
+    private let cityChevron: UIImageView = {
+        let imageViewValue = UIImageView(image: UIImage(systemName: "chevron.right"))
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.tintColor = BearyColors.gray
+        imageViewValue.contentMode = .scaleAspectFit
+        // chevron 不接手势：整行点按都落到按钮上。
+        imageViewValue.isUserInteractionEnabled = false
+        return imageViewValue
+    }()
+
+    /// 城市级联选择器（引导表单 pickerContainer 同款，内嵌在本页，不新开文件）：
+    /// 全屏覆盖层，平时隐藏；标题＋面包屑＋列表（最高 46vh，可滚动）。
+    /// 样式走本页现有 token（BearyColors / BearyDynamicType），不用 BearyOnboardingPalette。
+    private var cityPickerLevel = 0 // 0 国家 / 1 地区 / 2 城市
+    private var cityPickerShowing = false
+    private let cityPickerContainer = UIView()
+    private let cityPickerTitleLabel = UILabel()
+    private let cityPickerCrumbLabel = UILabel()
+    private let cityPickerTableView = UITableView(frame: .zero, style: .plain)
+    private var cityPickerTableHeightConstraint: NSLayoutConstraint?
+
     /// F15：网页 ed-subnote 口径——12 灰、仅「修改后 7 天内不能更改」一行；
     /// 旧三规则合并长提示取消（格式规则改由占位文案 + 保存校验承担）。
     private let hintLabel: UILabel = {
@@ -554,6 +624,27 @@ class BearyEditProfileViewController: UIViewController {
         }
         birthdayField.text = birthdayFieldText(year: birthdayYear, month: birthdayMonth, day: birthdayDay)
         syncBirthdayPickerDate()
+        // 城市初值：入口带服务端值优先；没有时读本地卡数据兜底（未同步的迁移值）；
+        // 两者皆无时初值未知（cityLoaded=false），空着不发，防误删。
+        // 选择器是引导表单同款三级级联（国家→地区→市），见 buildCityPicker。
+        if let country = initialCountry, let region = initialRegion, let city = initialCity {
+            cityCountry = country
+            cityRegion = region
+            cityCity = city
+            cityLoaded = true
+        } else if let id = fetchedUserId ?? SessionManager.shared.currentUser?.id,
+                  let local = BearyIDCardStore.load(userId: id),
+                  let country = local.country, let region = local.region, let city = local.city {
+            initialCountry = country
+            initialRegion = region
+            initialCity = city
+            cityCountry = country
+            cityRegion = region
+            cityCity = city
+            cityLoaded = true
+        }
+        refreshCityButton()
+        buildCityPicker()
         if fetchedUserId != nil {
             // 已确认的 ID：链接行首屏即定稿（@handle 优先、否则 /u/id），
             // 签名缺失时立即按已知 ID 补查。
@@ -584,6 +675,7 @@ class BearyEditProfileViewController: UIViewController {
                     strongSelf.updateLinkRow()
                     strongSelf.fetchInitialSignature()
                     strongSelf.fillBirthdayInitialFromMe(user)
+                    strongSelf.fillCityInitialFromMe(user)
                     if thenCopy {
                         if !strongSelf.effectiveHandle.isEmpty || strongSelf.fetchedUserId != nil {
                             strongSelf.copyLinkButtonTapped()
@@ -710,6 +802,43 @@ class BearyEditProfileViewController: UIViewController {
         syncBirthdayPickerDate()
     }
 
+    /// 城市改动判定（三级成组比较）：已拉到初值时与初值比；未拉到初值时
+    /// 只有选满三级才算改动——空输入不发，避免把未知的旧城市误删成空
+    ///（生日 birthdayHasChange 同款口径）。
+    private var cityHasChange: Bool {
+        if cityLoaded {
+            return cityCountry != initialCountry || cityRegion != initialRegion || cityCity != initialCity
+        }
+        return cityCountry != nil && cityRegion != nil && cityCity != nil
+    }
+
+    /// 城市行显示文案：三级全选时「国家 · 地区 · 城市」，否则「请选择」
+    ///（BearyIDCardData.cityFieldText 同款）。
+    private func refreshCityButton() {
+        if let country = cityCountry, let region = cityRegion, let city = cityCity {
+            cityButton.setTitle("\(country) · \(region) · \(city)", for: .normal)
+            cityButton.setTitleColor(BearyColors.ink, for: .normal)
+        } else {
+            cityButton.setTitle("请选择", for: .normal)
+            cityButton.setTitleColor(BearyColors.gray, for: .normal)
+        }
+    }
+
+    /// 城市初值补填（生日初值同款口径）：入口没带、本地也没有时，用 /me 回来的
+    /// 服务端值补初值；用户已动手改过时不覆盖。
+    private func fillCityInitialFromMe(_ user: MeUser?) {
+        guard !cityLoaded, !cityEdited else { return }
+        guard let country = user?.country, let region = user?.region, let city = user?.city else { return }
+        initialCountry = country
+        initialRegion = region
+        initialCity = city
+        cityCountry = country
+        cityRegion = region
+        cityCity = city
+        cityLoaded = true
+        refreshCityButton()
+    }
+
     @objc private func birthdayPickerChanged(_ sender: UIDatePicker) {
         let components = Calendar.current.dateComponents([.year, .month, .day], from: sender.date)
         birthdayYear = components.year
@@ -730,6 +859,170 @@ class BearyEditProfileViewController: UIViewController {
         birthdayEdited = true
         birthdayField.text = ""
         birthdayField.resignFirstResponder()
+    }
+
+    // MARK: - 城市级联选择器（引导表单同款，内嵌在本页）
+
+    private func buildCityPicker() {
+        cityPickerContainer.translatesAutoresizingMaskIntoConstraints = false
+        cityPickerContainer.backgroundColor = BearyColors.bg
+        cityPickerContainer.isHidden = true
+        view.addSubview(cityPickerContainer)
+        NSLayoutConstraint.activate([
+            cityPickerContainer.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            cityPickerContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            cityPickerContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            cityPickerContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        // 抓手。
+        let grabber = UIView()
+        grabber.translatesAutoresizingMaskIntoConstraints = false
+        grabber.backgroundColor = BearyColors.line
+        grabber.layer.cornerRadius = 2.5
+        cityPickerContainer.addSubview(grabber)
+        NSLayoutConstraint.activate([
+            grabber.widthAnchor.constraint(equalToConstant: 40),
+            grabber.heightAnchor.constraint(equalToConstant: 5),
+            grabber.centerXAnchor.constraint(equalTo: cityPickerContainer.centerXAnchor),
+            grabber.topAnchor.constraint(equalTo: cityPickerContainer.topAnchor, constant: 10),
+        ])
+        // 返回。
+        let backButton = UIButton(type: .system)
+        backButton.translatesAutoresizingMaskIntoConstraints = false
+        backButton.setImage(UIImage(systemName: "chevron.left"), for: .normal)
+        backButton.tintColor = BearyColors.ink
+        backButton.addTarget(self, action: #selector(cityPickerBackTapped), for: .touchUpInside)
+        backButton.accessibilityLabel = "返回"
+        cityPickerContainer.addSubview(backButton)
+        NSLayoutConstraint.activate([
+            backButton.leadingAnchor.constraint(equalTo: cityPickerContainer.leadingAnchor, constant: 8),
+            backButton.topAnchor.constraint(equalTo: cityPickerContainer.topAnchor, constant: 22),
+            backButton.widthAnchor.constraint(equalToConstant: 44),
+            backButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        // 标题＋面包屑。
+        cityPickerTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        cityPickerTitleLabel.font = BearyDynamicType.pageTitleFont()
+        cityPickerTitleLabel.textColor = BearyColors.ink
+        cityPickerTitleLabel.textAlignment = .center
+        cityPickerContainer.addSubview(cityPickerTitleLabel)
+        cityPickerCrumbLabel.translatesAutoresizingMaskIntoConstraints = false
+        cityPickerCrumbLabel.font = BearyDynamicType.secondaryFont()
+        cityPickerCrumbLabel.textColor = BearyColors.gray
+        cityPickerCrumbLabel.textAlignment = .center
+        cityPickerContainer.addSubview(cityPickerCrumbLabel)
+        NSLayoutConstraint.activate([
+            cityPickerTitleLabel.topAnchor.constraint(equalTo: cityPickerContainer.topAnchor, constant: 28),
+            cityPickerTitleLabel.centerXAnchor.constraint(equalTo: cityPickerContainer.centerXAnchor),
+            cityPickerCrumbLabel.topAnchor.constraint(equalTo: cityPickerTitleLabel.bottomAnchor, constant: 4),
+            cityPickerCrumbLabel.centerXAnchor.constraint(equalTo: cityPickerContainer.centerXAnchor),
+            cityPickerCrumbLabel.leadingAnchor.constraint(greaterThanOrEqualTo: cityPickerContainer.leadingAnchor, constant: 60),
+            cityPickerCrumbLabel.trailingAnchor.constraint(equalTo: cityPickerContainer.trailingAnchor, constant: -60),
+        ])
+        // 列表（最高 46vh，可滚动）。
+        cityPickerTableView.translatesAutoresizingMaskIntoConstraints = false
+        cityPickerTableView.dataSource = self
+        cityPickerTableView.delegate = self
+        cityPickerTableView.rowHeight = 50
+        cityPickerTableView.separatorColor = BearyColors.line
+        cityPickerTableView.separatorInset = .zero
+        cityPickerTableView.showsVerticalScrollIndicator = false
+        cityPickerTableView.backgroundColor = BearyColors.bg
+        cityPickerTableView.register(UITableViewCell.self, forCellReuseIdentifier: "BearyEditProfileCityPickerCell")
+        cityPickerContainer.addSubview(cityPickerTableView)
+        let tableHeight = NSLayoutConstraint(item: cityPickerTableView, attribute: .height, relatedBy: .equal, toItem: nil, attribute: .notAnAttribute, multiplier: 1, constant: 200)
+        cityPickerTableHeightConstraint = tableHeight
+        NSLayoutConstraint.activate([
+            cityPickerTableView.topAnchor.constraint(equalTo: cityPickerCrumbLabel.bottomAnchor, constant: 16),
+            cityPickerTableView.leadingAnchor.constraint(equalTo: cityPickerContainer.leadingAnchor, constant: 24),
+            cityPickerTableView.trailingAnchor.constraint(equalTo: cityPickerContainer.trailingAnchor, constant: -24),
+            cityPickerTableView.bottomAnchor.constraint(lessThanOrEqualTo: cityPickerContainer.bottomAnchor, constant: -20),
+            tableHeight,
+        ])
+    }
+
+    @objc private func cityButtonTapped() {
+        // 冻结期纵深防御：按钮已禁用，万一经其他路径触发仍直接拦住。
+        guard !isSaving else { return }
+        view.endEditing(true)
+        cityPickerLevel = 0
+        showCityPicker(true)
+    }
+
+    @objc private func cityPickerBackTapped() {
+        if cityPickerLevel == 0 {
+            showCityPicker(false)
+        } else {
+            cityPickerLevel -= 1
+            refreshCityPicker()
+        }
+    }
+
+    private func showCityPicker(_ show: Bool) {
+        cityPickerShowing = show
+        if show {
+            refreshCityPicker()
+            cityPickerContainer.isHidden = false
+            cityPickerContainer.alpha = 0
+            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0) {
+                self.cityPickerContainer.alpha = 1
+            }
+        } else {
+            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0, animations: {
+                self.cityPickerContainer.alpha = 0
+            }, completion: { _ in
+                self.cityPickerContainer.isHidden = true
+                self.cityPickerContainer.alpha = 1
+            })
+        }
+    }
+
+    private func cityPickerRows() -> [String] {
+        switch cityPickerLevel {
+        case 0:
+            return BearyCityData.countries.map { $0.name }
+        case 1:
+            guard let countryName = cityCountry else { return [] }
+            guard let country = BearyCityData.countries.first(where: { $0.name == countryName }) else { return [] }
+            return country.regions.map { $0.name }
+        default:
+            guard let countryName = cityCountry, let regionName = cityRegion else { return [] }
+            guard let country = BearyCityData.countries.first(where: { $0.name == countryName }) else { return [] }
+            guard let region = country.regions.first(where: { $0.name == regionName }) else { return [] }
+            return region.cities
+        }
+    }
+
+    private func cityPickerCurrentSelection() -> String? {
+        switch cityPickerLevel {
+        case 0: return cityCountry
+        case 1: return cityRegion
+        default: return cityCity
+        }
+    }
+
+    private func refreshCityPicker() {
+        switch cityPickerLevel {
+        case 0:
+            cityPickerTitleLabel.text = "选择国家"
+            cityPickerCrumbLabel.text = ""
+        case 1:
+            cityPickerTitleLabel.text = "选择地区"
+            cityPickerCrumbLabel.text = cityCountry ?? ""
+        default:
+            cityPickerTitleLabel.text = "选择城市"
+            if let country = cityCountry, let region = cityRegion {
+                cityPickerCrumbLabel.text = "\(country) · \(region)"
+            } else {
+                cityPickerCrumbLabel.text = ""
+            }
+        }
+        let rows = cityPickerRows()
+        let maxListHeight = UIScreen.main.bounds.height * 0.46
+        let listHeight = min(CGFloat(rows.count) * 50, maxListHeight)
+        cityPickerTableHeightConstraint?.constant = max(listHeight, 50)
+        cityPickerTableView.reloadData()
+        cityPickerTableView.setContentOffset(.zero, animated: false)
     }
 
     /// 批 D 签名改动判定（trim 后比较）：已拉到初值时与初值比；未拉到初值时
@@ -864,6 +1157,28 @@ class BearyEditProfileViewController: UIViewController {
         birthdayRow.axis = .horizontal
         birthdayRow.spacing = 14
         birthdayRow.alignment = .center
+        // 城市行（P1：编辑资料页补城市行）：位置在生日行下方、用户名行上方；
+        // 与名字/用户名行同款 58 标签 + 按钮结构（按钮只读，点按弹三级级联选择器）。
+        let cityRowContent = UIView()
+        cityRowContent.translatesAutoresizingMaskIntoConstraints = false
+        cityRowContent.addSubview(cityButton)
+        cityRowContent.addSubview(cityChevron)
+        NSLayoutConstraint.activate([
+            cityButton.leadingAnchor.constraint(equalTo: cityRowContent.leadingAnchor),
+            cityButton.trailingAnchor.constraint(equalTo: cityRowContent.trailingAnchor),
+            cityButton.topAnchor.constraint(equalTo: cityRowContent.topAnchor),
+            cityButton.bottomAnchor.constraint(equalTo: cityRowContent.bottomAnchor),
+            cityChevron.trailingAnchor.constraint(equalTo: cityRowContent.trailingAnchor),
+            cityChevron.centerYAnchor.constraint(equalTo: cityRowContent.centerYAnchor),
+            cityChevron.widthAnchor.constraint(equalToConstant: 14),
+            cityChevron.heightAnchor.constraint(equalToConstant: 14),
+            cityButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+        ])
+        let cityRow = UIStackView(arrangedSubviews: [makeFormLabel("城市"), cityRowContent])
+        cityRow.translatesAutoresizingMaskIntoConstraints = false
+        cityRow.axis = .horizontal
+        cityRow.spacing = 14
+        cityRow.alignment = .center
         // F15：提示行与标签同宽占位（网页 ed-subnote 左 90 = 页边 18 + 标签 58 + 间隙 14；
         // 本页内容列左 20，故占位取 58 + 间隙 14，与标签结构对齐）。
         let hintSpacer = UIView()
@@ -900,6 +1215,8 @@ class BearyEditProfileViewController: UIViewController {
         formStack.addArrangedSubview(makeFormRowWrap(signatureRow))
         formStack.addArrangedSubview(makeFormSeparator())
         formStack.addArrangedSubview(makeFormRowWrap(birthdayRow))
+        formStack.addArrangedSubview(makeFormSeparator())
+        formStack.addArrangedSubview(makeFormRowWrap(cityRow))
         formStack.addArrangedSubview(makeFormSeparator())
         formStack.addArrangedSubview(makeFormRowWrap(handleRow))
         formStack.addArrangedSubview(hintWrap)
@@ -1028,6 +1345,9 @@ class BearyEditProfileViewController: UIViewController {
         if birthdayHasChange {
             return true
         }
+        if cityHasChange {
+            return true
+        }
         return false
     }
 
@@ -1042,6 +1362,12 @@ class BearyEditProfileViewController: UIViewController {
     /// 已有弹层时不再叠弹（返回 false 拦截本次退出）。
     @discardableResult
     func requestExit(interactive: Bool) -> Bool {
+        // 城市选择器打开时：先收起选择器，不触发退出判断（关闭钮被选择器盖住，
+        // 边缘右滑到这里时同样先收选择器）。
+        if cityPickerShowing {
+            showCityPicker(false)
+            return false
+        }
         if isSaving {
             if presentedViewController == nil {
                 presentSimpleAlert(message: "正在保存，请稍候")
@@ -1412,7 +1738,11 @@ class BearyEditProfileViewController: UIViewController {
             birthdayYear: birthdayYear,
             birthdayMonth: birthdayMonth,
             birthdayDay: birthdayDay,
-            birthdayChanged: birthdayHasChange)
+            birthdayChanged: birthdayHasChange,
+            cityCountry: cityCountry,
+            cityRegion: cityRegion,
+            cityCity: cityCity,
+            cityChanged: cityHasChange)
         savingSnapshot = snapshot
         isSaving = true
         updateSaveButtonState()
@@ -1451,6 +1781,7 @@ class BearyEditProfileViewController: UIViewController {
         nameField.isEnabled = !isSaving
         signatureField.isEnabled = !isSaving
         birthdayField.isEnabled = !isSaving
+        cityButton.isEnabled = !isSaving
         handleField.isEnabled = !isSaving
         avatarTapButton.isEnabled = !isSaving
         coverTapButton.isEnabled = !isSaving
@@ -1496,6 +1827,16 @@ class BearyEditProfileViewController: UIViewController {
                 body["birthday_month"] = NSNull()
                 body["birthday_day"] = NSNull()
             }
+        }
+        // 城市（P1：编辑资料页补城市行）：国家/地区/市成组发；只在有改动时发，
+        // 未改动不发，避免无意义写。本页不提供清空入口，故不发三 null。
+        if snapshot.cityChanged,
+           let country = snapshot.cityCountry,
+           let region = snapshot.cityRegion,
+           let city = snapshot.cityCity {
+            body["country"] = country
+            body["region"] = region
+            body["city"] = city
         }
         if snapshot.coverChanged {
             // 5-15 死分支标注：coverRemoved 当前不可达——移除入口已删
@@ -1572,6 +1913,20 @@ class BearyEditProfileViewController: UIViewController {
             } else {
                 birthdayConfirmed = !snapshot.birthdayChanged
             }
+            let cityConfirmed: Bool
+            if snapshot.cityChanged, let response = profileResponse {
+                if !response.cityKeyPresent {
+                    // P1 回退（P4 生日回退同款）：老服务端 PUT 回包不 echo 城市字段；
+                    // HTTP 2xx 即成功，用本次发送的快照值更新初值与本地卡
+                    //（与 echo 收到时同一更新路径）。有 echo 时仍以 echo 为准：
+                    // echo 与快照不一致时保持未确认。
+                    cityConfirmed = true
+                } else {
+                    cityConfirmed = response.country == snapshot.cityCountry && response.region == snapshot.cityRegion && response.city == snapshot.cityCity
+                }
+            } else {
+                cityConfirmed = !snapshot.cityChanged
+            }
             committedDisplayName = snapshot.displayName
             if snapshot.signatureChanged && signatureConfirmed {
                 initialSignature = snapshot.signatureValue
@@ -1590,6 +1945,21 @@ class BearyEditProfileViewController: UIViewController {
                     local.birthdayYear = snapshot.birthdayYear
                     local.birthdayMonth = snapshot.birthdayMonth
                     local.birthdayDay = snapshot.birthdayDay
+                    BearyIDCardStore.save(local, userId: id)
+                }
+            }
+            if snapshot.cityChanged && cityConfirmed {
+                initialCountry = snapshot.cityCountry
+                initialRegion = snapshot.cityRegion
+                initialCity = snapshot.cityCity
+                cityLoaded = true
+                cityEdited = false
+                // 本地卡数据同步成服务端值（ID 卡显示同一份）。
+                if let id = fetchedUserId ?? SessionManager.shared.currentUser?.id,
+                   var local = BearyIDCardStore.load(userId: id) {
+                    local.country = snapshot.cityCountry
+                    local.region = snapshot.cityRegion
+                    local.city = snapshot.cityCity
                     BearyIDCardStore.save(local, userId: id)
                 }
             }
@@ -1622,6 +1992,12 @@ class BearyEditProfileViewController: UIViewController {
                 // 生日无公开读口可核对（不进公开资料）：只提示不确认落库，
                 // 输入框原样保留，可直接重试（签名 verifySignatureAfterSave 同款诚实口径）。
                 BearyToast.show(in: view, message: "资料已提交，生日尚未同步，请稍后再试")
+                return
+            }
+            if snapshot.cityChanged && !cityConfirmed {
+                // 只提示不确认落库，输入原样保留，可直接重试
+                //（生日未确认分支同款诚实口径）。
+                BearyToast.show(in: view, message: "资料已提交，城市尚未同步，请稍后再试")
                 return
             }
             onSaved?()
@@ -2028,5 +2404,72 @@ extension BearyEditProfileViewController: UITextFieldDelegate {
             textField.resignFirstResponder()
         }
         return true
+    }
+}
+
+// MARK: - 城市级联选择器列表（引导表单同款：当前级打勾、未到末级带右箭头）
+
+extension BearyEditProfileViewController: UITableViewDataSource, UITableViewDelegate {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return cityPickerRows().count
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "BearyEditProfileCityPickerCell", for: indexPath)
+        let rows = cityPickerRows()
+        guard indexPath.row < rows.count else { return cell }
+        let name = rows[indexPath.row]
+        cell.textLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        cell.textLabel?.textColor = BearyColors.ink
+        cell.textLabel?.text = name
+        cell.backgroundColor = BearyColors.bg
+        cell.selectionStyle = .none
+        let isCurrent = cityPickerCurrentSelection() == name
+        if isCurrent {
+            let checkImage = UIImageView(image: UIImage(systemName: "checkmark"))
+            checkImage.tintColor = BearyColors.orange
+            checkImage.contentMode = .scaleAspectFit
+            checkImage.translatesAutoresizingMaskIntoConstraints = false
+            checkImage.widthAnchor.constraint(equalToConstant: 18).isActive = true
+            checkImage.heightAnchor.constraint(equalToConstant: 18).isActive = true
+            cell.accessoryView = checkImage
+        } else if cityPickerLevel < 2 {
+            let chevronImage = UIImageView(image: UIImage(systemName: "chevron.right"))
+            chevronImage.tintColor = BearyColors.gray
+            chevronImage.contentMode = .scaleAspectFit
+            chevronImage.translatesAutoresizingMaskIntoConstraints = false
+            chevronImage.widthAnchor.constraint(equalToConstant: 14).isActive = true
+            chevronImage.heightAnchor.constraint(equalToConstant: 14).isActive = true
+            cell.accessoryView = chevronImage
+        } else {
+            cell.accessoryView = nil
+        }
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        let rows = cityPickerRows()
+        guard indexPath.row < rows.count else { return }
+        let name = rows[indexPath.row]
+        switch cityPickerLevel {
+        case 0:
+            cityCountry = name
+            cityRegion = nil
+            cityCity = nil
+            cityEdited = true
+            cityPickerLevel = 1
+            refreshCityPicker()
+        case 1:
+            cityRegion = name
+            cityCity = nil
+            cityEdited = true
+            cityPickerLevel = 2
+            refreshCityPicker()
+        default:
+            cityCity = name
+            cityEdited = true
+            refreshCityButton()
+            showCityPicker(false)
+        }
     }
 }
