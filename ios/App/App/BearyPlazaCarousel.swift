@@ -353,10 +353,10 @@ enum BearyPlazaCarouselText {
 
 final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UIScrollViewDelegate {
 
-    // 卡高 76 → 112：历史卡现为 5 行（日期行＋3 条事件速览＋第一句小熊评论），
-    // 76 放不下；精选／盲盒卡内部结构不动，文字栈仍居中，只是卡变高了。
-    static let cardHeight: CGFloat = 112
-    static let preferredHeight: CGFloat = 136
+    // 卡高保持 76（Li 2026-11-23 定：轮播不加高）：历史卡收成 4 行
+    // （日期行＋2 条事件速览＋第一句小熊评论），76 排得下；精选／盲盒卡不动。
+    static let cardHeight: CGFloat = 76
+    static let preferredHeight: CGFloat = 100
 
     /// 自动换页间隔（方案定 3–5 秒，取中间 4 秒）。
     private static let autoAdvanceInterval: TimeInterval = 4
@@ -654,10 +654,10 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
             if let payload = payload {
                 // 日期行：公历＋农历（农历缺省只显公历）。
                 eyebrowLabel.text = BearyPlazaCarouselText.historyDateLine(for: payload)
-                // 3 条事件速览：前 3 条各一行；副行是第一句小熊评论（没有不显示）。
-                titleLabel.numberOfLines = 3
+                // 2 条事件速览：前 2 条各一行；副行是第一句小熊评论（没有不显示）。
+                titleLabel.numberOfLines = 2
                 titleLabel.font = BearyDynamicType.smallBodyFont()
-                let previewEvents = payload.displayEvents.prefix(3)
+                let previewEvents = payload.displayEvents.prefix(2)
                 let previewText = previewEvents.map { $0.text }.joined(separator: "\n")
                 titleLabel.text = previewText.isEmpty ? payload.dateLabel : previewText
                 let firstComment: String? = previewEvents.first.flatMap { $0.comment }
