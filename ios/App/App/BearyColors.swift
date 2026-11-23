@@ -77,7 +77,7 @@ enum BearyColors {
     static var limitedExpiredDash: UIColor { UIColor(red: 85.0/255.0, green: 85.0/255.0, blue: 79.0/255.0, alpha: 1) }
     /// 限时倒计时文字色（预览值）：充裕 #8e8e8a、到期 #6d6d68；临近／紧急与虚线同色。
     static var limitedCalmCountdown: UIColor { UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 138.0/255.0, alpha: 1) }
-    static var limitedExpiredCountdown: UIColor { UIColor(red: 109.0/255.0, green: 109.0/255.0, blue: 104.0/255.0, alpha: 1) }
+    static var limitedExpiredCountdown: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 142.0/255.0, alpha: 1) : UIColor(red: 109.0/255.0, green: 109.0/255.0, blue: 104.0/255.0, alpha: 1) } }
     /// 限时气泡底（预览值）：深 #1d1d1f／浅 #f4f4f2。
     static var limitedBubbleBg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 29.0/255.0, green: 29.0/255.0, blue: 31.0/255.0, alpha: 1) : UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 242.0/255.0, alpha: 1) } }
 
