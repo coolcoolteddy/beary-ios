@@ -223,6 +223,13 @@ enum BearyIDCardSync {
            let month = local?.birthdayMonth, let day = local?.birthdayDay {
             uploadBirthday(month: month, day: day, year: local?.birthdayYear)
         }
+        // P3：服务端只有月日（无年份）、本地有年份 → 也上传一次年份（与本地月日成组发，
+        // 服务端全套校验通过才写；失败静默，下次 /me 再试）。
+        if let birthday = serverBirthday, birthday.year == nil,
+           let year = local?.birthdayYear,
+           let month = local?.birthdayMonth, let day = local?.birthdayDay {
+            uploadBirthday(month: month, day: day, year: year)
+        }
         if serverCity == nil,
            let country = local?.country, let region = local?.region, let city = local?.city {
             uploadCity(country: country, region: region, city: city)
