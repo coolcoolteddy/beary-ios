@@ -693,6 +693,13 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 只在 pinRow 与 recipientRow 都藏时激活（见 updateDiaryStackSpacing）；
     /// 有行在作者行之上时停用、改走头行顶约束。
     private var authorRowTopConstraint: NSLayoutConstraint?
+    /// 展示审计 G4-10：标题顶对齐约束：entryTitleLabel.top == avatarContainer.top
+    /// （标题移到作者行上方后，头像顶改钉最上方文本行——标题在头行栈内且可见时
+    /// 钉标题顶，否则钉作者行顶；见 updateDiaryStackSpacing）。
+    private var titleTopConstraint: NSLayoutConstraint?
+    /// 标题行零高约束：标题藏时用 required 把它压到 0 高（#1443 同款：隐藏行
+    /// 仍占约 12pt 高会把作者行往下顶，顶掉外部钉顶约束）。
+    private var titleZeroHeightConstraint: NSLayoutConstraint?
     /// 置顶行／@ 行零高约束：对应行藏时用 required 把它压到 0 高（只在对应行藏时激活，见 updateDiaryStackSpacing）。
     /// 132 真机实测（详情同款）：隐藏行仍占约 12pt 高，栈内链把作者行往下顶，#1443 的
     /// 钉顶约束被栈内部约束顶掉；零高约束钉死它。
@@ -1294,7 +1301,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 头行栈（2026-11-05 日记布局统一：头像 + 昵称行独占一行，标题/正文不再侵入）：
     /// 只放置顶行、写给行、作者行；左缘贴头像右缘（间距 12），右缩进 16。
     private lazy var headerStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [pinRow, recipientRow, titleStack])
+        let st = UIStackView(arrangedSubviews: [pinRow, recipientRow, entryTitleLabel, titleStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
@@ -1304,12 +1311,13 @@ class BearyDiaryCardCell: UITableViewCell {
         return st
     }()
 
-    /// 正文栈（2026-11-05 日记布局统一）：标题、折叠正文、图片条、引用卡、
-    /// 位置行、操作行、游客提示条、回应行一律全宽——左缘与内容左缘齐平（16），
-    /// 不再缩进到昵称位置；顶缘取头像底与头行底较大者 + 间距（见 setupConstraints）。
+    /// 正文栈（2026-11-05 日记布局统一）：折叠正文、图片条、引用卡、位置行、
+    /// 操作行、游客提示条、回应行一律全宽——左缘与内容左缘齐平（16），不再缩进
+    /// 到昵称位置；顶缘取头像底与头行底较大者 + 间距（见 setupConstraints）。
+    /// 标题已移到头行栈作者行上方（展示审计 G4-10），不在此栈。
     private lazy var bodyStack: BearyPassThroughStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = BearyPassThroughStackView(arrangedSubviews: [entryTitleLabel, contentLabel, foldButton, imagesScrollView, nineGridWrapView, quoteView, locationStack, tagsScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = BearyPassThroughStackView(arrangedSubviews: [contentLabel, foldButton, imagesScrollView, nineGridWrapView, quoteView, locationStack, tagsScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
         // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
         st.passThroughRoot = emoteFlowView
         st.translatesAutoresizingMaskIntoConstraints = false
@@ -1692,6 +1700,10 @@ class BearyDiaryCardCell: UITableViewCell {
         // 作者行顶对齐约束：初始不激活，只在两行都藏时启用（见 updateDiaryStackSpacing）。
         // 建在此处：titleStack 与 avatarContainer 此时已同属 contentView 层级。
         authorRowTopConstraint = titleStack.topAnchor.constraint(equalTo: avatarContainer.topAnchor)
+        // 展示审计 G4-10：标题顶对齐约束（标题在头行栈内且可见时钉标题顶）与
+        // 标题零高约束（标题藏时压 0 高，#1443 同款），初始均不激活。
+        titleTopConstraint = entryTitleLabel.topAnchor.constraint(equalTo: avatarContainer.topAnchor)
+        titleZeroHeightConstraint = entryTitleLabel.heightAnchor.constraint(equalToConstant: 0)
         // 两行零高约束：初始不激活，只在对应行藏时启用（见 updateDiaryStackSpacing）。
         pinRowZeroHeightConstraint = pinRow.heightAnchor.constraint(equalToConstant: 0)
         recipientRowZeroHeightConstraint = recipientRow.heightAnchor.constraint(equalToConstant: 0)
@@ -2285,17 +2297,25 @@ class BearyDiaryCardCell: UITableViewCell {
         // 栈内链把作者行往下顶，外部钉顶约束被栈内部约束顶掉。本次三处一致钉死：
         // 两行都藏时头行顶约束保持激活（16／首卡 30，不再停用）＋ 两行 required
         // 零高压零 ＋ 作者行钉顶保留；有行在作者行之上时恢复顶约束、保持顶对齐不动。
+        // 展示审计 G4-10：标题移到作者行上方后，头像顶对齐改钉“最上方文本行”——
+        // 标题在头行栈内且可见时钉标题顶，否则钉作者行顶（原行为）；有行在作者行
+        // 之上（置顶／@ 行显）时两钉顶约束均停用、头像改走 pinOffset 下移（原行为）。
+        // 标题藏时零高压 0（#1443 同款），标题在气泡内时不归头行栈管。
+        let titleInHeader = !entryTitleLabel.isHidden && !limitedBubbleActive
         if pinRow.isHidden && recipientRow.isHidden {
             headerStackTopConstraint?.isActive = true
             headerStackTopConstraint?.constant = cardMode == .feed ? 16 : (profileFirstRow ? 30 : 16)
-            authorRowTopConstraint?.isActive = true
+            titleTopConstraint?.isActive = titleInHeader
+            authorRowTopConstraint?.isActive = !titleInHeader
         } else {
+            titleTopConstraint?.isActive = false
             authorRowTopConstraint?.isActive = false
             headerStackTopConstraint?.isActive = true
             headerStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 16 : 17) : (profileFirstRow ? 30 : 16)
         }
         pinRowZeroHeightConstraint?.isActive = pinRow.isHidden
         recipientRowZeroHeightConstraint?.isActive = recipientRow.isHidden
+        titleZeroHeightConstraint?.isActive = entryTitleLabel.isHidden
         // 110：头像顶与头行顶同值（个人页首卡 30、其余 16；首页恒 16）——
         // 有行在作者行之上时头像顶与作者行顶对齐；两行都藏时作者行改为与
         // 头像顶对齐（见上），头像顶不动。
@@ -2305,6 +2325,11 @@ class BearyDiaryCardCell: UITableViewCell {
         avatarTopConstraint?.constant = (cardMode == .feed ? 16 : (profileFirstRow ? 30 : 16)) + pinOffset
         headerStack.setCustomSpacing(pinRow.isHidden ? 0 : 10, after: pinRow)
         headerStack.setCustomSpacing(recipientRow.isHidden ? 0 : 4, after: recipientRow)
+        // 展示审计 G4-10：标题→作者行 6（标题在头行栈内时才设，气泡态下标题
+        // 不在头行栈内；标题藏时置 0）。
+        if entryTitleLabel.superview == headerStack {
+            headerStack.setCustomSpacing(titleInHeader ? 6 : 0, after: entryTitleLabel)
+        }
         // 正文紧贴用户名下方：头行→正文栈间距取规范标题→正文档 6（原 16 有标题／
         // 14 无标题，见规范 §3；该槽位改动须走规范同步）。限时卡取 12：
         // 气泡尖尖高出气泡顶 7.5pt，6pt 间距会被头像底缘压住，12pt 才留足空隙。
@@ -2314,13 +2339,12 @@ class BearyDiaryCardCell: UITableViewCell {
         bodyStackTopFromAvatarConstraint?.isActive = false
         bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
         bodyStackTopPinConstraint?.constant = headerBodyGap
-        // 标题贴着正文走：标题→正文 6（ChatGPT 间距跟进，#904 为 4）；标题隐藏时其后间距置 0，正文直接贴头行间距。
+        // 展示审计 G4-10：标题已移出正文栈（标题→作者行 6 走头行栈，见上）；
         // 限时态下标题／正文在气泡内栈里，该间距走气泡内栈（固定 6），正文栈只认气泡后间距。
         // 正文→下行 14（折叠隐藏时）／6（折叠钮显时，正文→展开全文仍为 6），不动。
         if limitedBubbleActive {
             bodyStack.setCustomSpacing(foldButton.isHidden ? 14 : 6, after: limitedBubbleView)
         } else {
-            bodyStack.setCustomSpacing(entryTitleLabel.isHidden ? 0 : 6, after: entryTitleLabel)
             bodyStack.setCustomSpacing(foldButton.isHidden ? 14 : 6, after: contentLabel)
         }
         bodyStack.setCustomSpacing(14, after: foldButton)
@@ -3655,11 +3679,12 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// 标题／正文移进气泡内文字栈（幂等）：气泡是正文栈首个 arrangedSubview，
-    /// 标题→正文 6 走气泡内栈间距；移出时按原顺序插回正文栈首两位。
+    /// 标题→正文 6 走气泡内栈间距；标题取自头行栈（展示审计 G4-10），正文取自
+    /// 正文栈；移出时标题插回头行栈作者行上方、正文插回正文栈首位。
     private func moveTextIntoLimitedBubble() {
         guard !limitedBubbleActive else { return }
         limitedBubbleActive = true
-        bodyStack.removeArrangedSubview(entryTitleLabel)
+        headerStack.removeArrangedSubview(entryTitleLabel)
         entryTitleLabel.removeFromSuperview()
         bodyStack.removeArrangedSubview(contentLabel)
         contentLabel.removeFromSuperview()
@@ -3680,8 +3705,11 @@ class BearyDiaryCardCell: UITableViewCell {
         contentLabel.removeFromSuperview()
         bodyStack.removeArrangedSubview(limitedBubbleView)
         limitedBubbleView.removeFromSuperview()
-        bodyStack.insertArrangedSubview(contentLabel, at: 1)
-        bodyStack.insertArrangedSubview(entryTitleLabel, at: 0)
+        bodyStack.insertArrangedSubview(contentLabel, at: 0)
+        // 展示审计 G4-10：标题回头行栈作者行上方（标题→作者行 6 与零高约束
+        // 由 updateDiaryStackSpacing 重算）。
+        let titleIndex = headerStack.arrangedSubviews.firstIndex(of: titleStack) ?? headerStack.arrangedSubviews.count
+        headerStack.insertArrangedSubview(entryTitleLabel, at: titleIndex)
     }
 
     /// 限时卡正文字号（预览口径）：短句 19pt、长文 16.5pt；非限时 16pt。

@@ -118,18 +118,27 @@ final class BearyDetailViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentColumnView = UIView()
     /// 批 B 头行栈：首页卡片 headerStack 同款（spacing 0 + setCustomSpacing 对照表，
-    /// 见 updateDiaryStackSpacing；@ 行藏时作者行改钉头像顶、头行顶约束保持激活，
+    /// 见 updateDiaryStackSpacing；@ 行藏时最上方文本行改钉头像顶、头行顶约束保持激活，
     /// @ 行显时顶距 17 走头行顶约束）。
-    /// 只放 @ 行、作者行、限时行；标题/正文一律在下方的 bodyStack 全宽排布。
+    /// 只放 @ 行、标题、作者行、限时行；正文一律在下方的 bodyStack 全宽排布
+    /// （展示审计 G4-10：标题移到作者行上方）。
     private let headerStack = UIStackView()
-    /// 批 B 正文栈：标题、正文、图片条、引用卡、位置行、操作行、游客提示条、
+    /// 批 B 正文栈：正文、图片条、引用卡、位置行、操作行、游客提示条、
     /// 回应行一律全宽（左右与内容列齐平），不再缩进到昵称位置。
+    /// 标题已移到头行栈作者行上方（展示审计 G4-10），不在此栈。
     private let bodyStack = BearyPassThroughStackView()
     private var headerStackTopConstraint: NSLayoutConstraint?
     /// 作者行顶对齐约束：authorRow.top == avatarButton.top（用户名顶部与头像顶部平行）。
     /// 只在 recipientRow 藏时激活（见 updateDiaryStackSpacing）；
     /// @ 行显时停用、改走头行顶约束。
     private var authorRowTopConstraint: NSLayoutConstraint?
+    /// 展示审计 G4-10：标题顶对齐约束：titleLabel.top == avatarButton.top
+    /// （标题移到作者行上方后，头像顶改钉最上方文本行——标题在头行栈内且可见时
+    /// 钉标题顶，否则钉作者行顶；见 updateDiaryStackSpacing）。
+    private var titleTopConstraint: NSLayoutConstraint?
+    /// 标题行零高约束：标题藏时用 required 把它压到 0 高（卡片 #1443 同款：
+    /// 隐藏行仍占约 12pt 高会把作者行往下顶，顶掉外部钉顶约束）。
+    private var titleZeroHeightConstraint: NSLayoutConstraint?
     /// 正文栈顶：取头像底与头行底两者较大者 + 6（紧贴用户名下方，取规范标题→正文档 6；
     /// 原 16 有标题／14 无标题，见规范 §3；该槽位改动须走规范同步）；正文全宽，
     /// 头像底约束保留（正文必须 clearance 头像底）。
@@ -1056,6 +1065,11 @@ final class BearyDetailViewController: UIViewController {
         // 作者行顶对齐约束：初始不激活，只在 @ 行藏时启用（见 updateDiaryStackSpacing）。
         // 建在此处：authorRow 已入栈、avatarButton 已入内容列，两端已同属内容列层级。
         authorRowTopConstraint = authorRow.topAnchor.constraint(equalTo: avatarButton.topAnchor)
+        // 展示审计 G4-10：标题移到作者行上方（标题→作者行 6，见 updateDiaryStackSpacing）；
+        // 标题顶对齐与零高约束初始不激活，随显隐在 updateDiaryStackSpacing 里切换。
+        headerStack.insertArrangedSubview(titleLabel, at: 1)
+        titleTopConstraint = titleLabel.topAnchor.constraint(equalTo: avatarButton.topAnchor)
+        titleZeroHeightConstraint = titleLabel.heightAnchor.constraint(equalToConstant: 0)
 
         nameButton.titleLabel?.font = BearyDynamicType.cardTitleFont()
         nameButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -1141,7 +1155,6 @@ final class BearyDetailViewController: UIViewController {
     }
 
     private func buildBody() {
-        bodyStack.addArrangedSubview(titleLabel)
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byCharWrapping
@@ -1330,9 +1343,9 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 首页 updateDiaryStackSpacing 同款对照表（详情无折叠钮，故正文后恒取 14）：
-    /// @→作者 4、作者→限时 4；头行→正文栈 6（紧贴用户名下方，取规范标题→正文档 6；
+    /// @→标题 4、标题→作者 6、作者→限时 4；头行→正文栈 6（紧贴用户名下方，取规范标题→正文档 6；
     /// 原 16 有标题／14 无标题，该槽位改动须走规范同步），由正文栈顶
-    /// 两条 required ≥ 约束定（见 buildLayout／buildCardHeader）；标题→正文 6（标题隐藏时 0）、
+    /// 两条 required ≥ 约束定（见 buildLayout／buildCardHeader）；
     /// 正文→图片 14、图片→引用 12、引用→定位 12、定位→操作行 14、操作行→回应行 12；
     /// 批 E 位置行插在引用卡与操作行之间（无位置时整组隐藏、不留空行）；
     /// 头行顶：@ 行藏时作者行钉头像顶（头行顶约束保持激活、16）、@ 行显时 17。
@@ -1352,6 +1365,11 @@ final class BearyDetailViewController: UIViewController {
         // （见 buildLayout），此处不再留它；正文顶仍由两条 required ≥ 定在
         // max(头像底，头行底) + 6，行为不变。
         // 行内名字墨顶比行顶低数 pt 是字体 leading＋皇冠容器基线（与卡片同款几何），不在本次范围。
+        // 展示审计 G4-10：标题移到作者行上方后，头像顶对齐改钉“最上方文本行”——
+        // 标题在头行栈内且可见时钉标题顶，否则钉作者行顶（原行为）；@ 行显时两钉顶
+        // 约束均停用、改走头行顶约束（原行为）。标题藏时零高压 0（卡片 #1443 同款），
+        // 标题在气泡内时不归头行栈管。
+        let titleInHeader = !titleLabel.isHidden && !limitedBubbleActive
         if recipientRow.isHidden {
             if recipientRow.superview != nil {
                 headerStack.removeArrangedSubview(recipientRow)
@@ -1359,15 +1377,21 @@ final class BearyDetailViewController: UIViewController {
             }
             headerStackTopConstraint?.isActive = true
             headerStackTopConstraint?.constant = 16
-            authorRowTopConstraint?.isActive = true
+            titleTopConstraint?.isActive = titleInHeader
+            authorRowTopConstraint?.isActive = !titleInHeader
         } else {
             if recipientRow.superview == nil {
                 headerStack.insertArrangedSubview(recipientRow, at: 0)
             }
             headerStack.setCustomSpacing(4, after: recipientRow)
+            titleTopConstraint?.isActive = false
             authorRowTopConstraint?.isActive = false
             headerStackTopConstraint?.isActive = true
             headerStackTopConstraint?.constant = 17
+        }
+        titleZeroHeightConstraint?.isActive = titleLabel.isHidden
+        if titleLabel.superview == headerStack {
+            headerStack.setCustomSpacing(titleInHeader ? 6 : 0, after: titleLabel)
         }
         headerStack.setCustomSpacing(4, after: authorRow)
         // 正文紧贴用户名下方：头行→正文栈间距取规范标题→正文档 6（原 16 有标题／
@@ -1380,12 +1404,11 @@ final class BearyDetailViewController: UIViewController {
         bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
         // 失败横幅→标题 12：横幅隐藏时栈自动忽略，不留空隙。
         bodyStack.setCustomSpacing(12, after: staleBannerView)
-        // 标题贴着正文走：标题→正文 6（ChatGPT 间距跟进，#904 为 4）；标题隐藏时其后间距置 0，正文直接贴头行间距。
+        // 展示审计 G4-10：标题已移出正文栈（标题→作者行 6 走头行栈，见上）；
         // 限时态下标题／正文在气泡内栈里，该间距走气泡内栈（固定 6），正文栈只认气泡后间距。
         if limitedBubbleActive {
             bodyStack.setCustomSpacing(14, after: limitedBubbleView)
         } else {
-            bodyStack.setCustomSpacing(titleLabel.isHidden ? 0 : 6, after: titleLabel)
             // 正文→图片 14（ChatGPT 间距跟进，#904 为 10）：正文与图片条直接相邻。
             bodyStack.setCustomSpacing(14, after: bodyLabel)
         }
@@ -2387,12 +2410,13 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 标题／正文移进气泡内文字栈（幂等）：气泡插到标题原位（失败横幅之后、
-    /// 标题之前；横幅是正文栈首行，气泡不得顶到它前面）；标题→正文 6 走气泡内栈间距；
-    /// 移出时按原顺序插回横幅之后的首两位。
+    /// 正文之前；横幅是正文栈首行，气泡不得顶到它前面）；标题取自头行栈
+    /// （展示审计 G4-10），正文取自正文栈；标题→正文 6 走气泡内栈间距；
+    /// 移出时标题插回头行栈作者行上方、正文插回横幅之后的首位。
     private func moveTextIntoLimitedBubble() {
         guard !limitedBubbleActive else { return }
         limitedBubbleActive = true
-        bodyStack.removeArrangedSubview(titleLabel)
+        headerStack.removeArrangedSubview(titleLabel)
         titleLabel.removeFromSuperview()
         bodyStack.removeArrangedSubview(bodyLabel)
         bodyLabel.removeFromSuperview()
@@ -2414,9 +2438,11 @@ final class BearyDetailViewController: UIViewController {
         bodyLabel.removeFromSuperview()
         bodyStack.removeArrangedSubview(limitedBubbleView)
         limitedBubbleView.removeFromSuperview()
-        let titleIndex = staleBannerView.superview != nil ? 1 : 0
-        bodyStack.insertArrangedSubview(bodyLabel, at: titleIndex + 1)
-        bodyStack.insertArrangedSubview(titleLabel, at: titleIndex)
+        // 展示审计 G4-10：标题回头行栈作者行上方，正文回正文栈横幅后一位。
+        let titleIndex = headerStack.arrangedSubviews.firstIndex(of: authorRow) ?? headerStack.arrangedSubviews.count
+        headerStack.insertArrangedSubview(titleLabel, at: titleIndex)
+        let bodyIndex = staleBannerView.superview != nil ? 1 : 0
+        bodyStack.insertArrangedSubview(bodyLabel, at: bodyIndex)
     }
 
     /// 倒计时 1 秒 tick：只在档位跃迁时整组重算，其余只刷倒计时文字；
