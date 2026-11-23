@@ -99,6 +99,10 @@ final class BearyOfflineSaveManager {
             }
             let keys = entry.images ?? []
             let title = BearyOfflineSaveStore.displayTitle(for: entry)
+            // A2：单篇保存的两次清单写（pending 与 finalize 各一次 upsert）
+            // 并作一批：其间只改内存缓存，finalize 结算后一次落盘。
+            // 批量时外层 saveAllOwnEntries 另开一批，整批 N 篇只落盘一次。
+            BearyOfflineSaveStore.beginManifestBatch(accountId: accountId)
             // 先记 pending：中途退出/崩溃后残留，下次保存凭它续传未下载的图片。
             let pending = BearyOfflineSaveRecord(
                 entryId: entryId, title: title, createdAtMs: entry.createdAt,
@@ -139,7 +143,12 @@ final class BearyOfflineSaveManager {
                 }
             }
             group.notify(queue: self.queue) { [weak self] in
-                guard let self = self else { return }
+                guard let self = self else {
+                    // Manager 已释放、finalize 跑不到：把本篇开的批量合上，
+                    // 脏缓存落盘一次，别让 depth 卡住、后续 upsert 一直不写盘。
+                    BearyOfflineSaveStore.endManifestBatch(accountId: accountId)
+                    return
+                }
                 let outcome = self.finalize(accountId: accountId, entry: entry, downloadedKeys: downloadedKeys, failedKeys: failedKeys)
                 self.completeOnMain(.success(outcome), completion: completion)
             }
@@ -147,8 +156,11 @@ final class BearyOfflineSaveManager {
     }
 
     /// 结算：按实际落盘情况写回清单记录（complete/partial）并算本篇总字节。
+    /// 写完合上本篇开的批量（单篇保存时 depth 回 0、一次落盘；批量时
+    /// 外层仍在批内，不写盘，等整批结束再落盘）。
     private func finalize(accountId: Int, entry: Entry, downloadedKeys: [String], failedKeys: [String]) -> BearyOfflineSaveOutcome {
         guard let entryId = entry.id else {
+            _ = BearyOfflineSaveStore.endManifestBatch(accountId: accountId)
             return BearyOfflineSaveOutcome(savedImages: 0, failedKeys: failedKeys, totalBytes: 0, status: "partial")
         }
         let keys = entry.images ?? []
@@ -169,6 +181,7 @@ final class BearyOfflineSaveManager {
             totalBytes: totalBytes,
             status: status)
         _ = BearyOfflineSaveStore.upsertRecord(accountId: accountId, record: record)
+        _ = BearyOfflineSaveStore.endManifestBatch(accountId: accountId)
         return BearyOfflineSaveOutcome(savedImages: downloadedKeys.count, failedKeys: failedKeys, totalBytes: totalBytes, status: status)
     }
 
@@ -187,6 +200,9 @@ final class BearyOfflineSaveManager {
                 DispatchQueue.main.async { completion(BearyOfflineSaveBatchResult(saved: 0, partial: 0, failed: 0, skipped: 0)) }
                 return
             }
+            // A2：整批只落盘一次——其间每篇的 pending/finalize 两次 upsert
+            // 只改内存缓存，末篇结算后 endManifestBatch 一次写盘。
+            BearyOfflineSaveStore.beginManifestBatch(accountId: accountId)
             let all = BearyEntrySyncStore.loadAllEntries(accountId: accountId) ?? []
             let own = all.filter { $0.isMine == true || $0.authorId == accountId }
             let total = own.count
@@ -196,6 +212,7 @@ final class BearyOfflineSaveManager {
             // 顺序链：一次只跑一篇，清单写盘不交错；progress 在每篇结算后报。
             func saveNext(index: Int) {
                 guard index < own.count else {
+                    _ = BearyOfflineSaveStore.endManifestBatch(accountId: accountId)
                     DispatchQueue.main.async { completion(result) }
                     return
                 }
