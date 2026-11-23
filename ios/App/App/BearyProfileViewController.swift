@@ -1341,8 +1341,7 @@ class BearyProfileViewController: UIViewController {
     private var statsGridRowBottom: UIStackView?
 
     /// 写作统计卡内词汇指纹紧凑版：当年 top 4 + 口径徽标行（只本人可见）。
-    /// 词行本身不点——整卡点按进年度回顾，避免词行手势与整卡手势双触发；
-    /// 点词看篇数只在年报首屏主视觉里。年份取当年，缺当年时取最近有词条目的年，
+    /// 词行本身不点；点词看篇数只在年报首屏主视觉里。年份取当年，缺当年时取最近有词条目的年，
     /// 词视图标题行自带年份，绝不把别年的词顶在当年名下。
     private let statsWordprintView = BearyWordprintView(mode: .compact)
     private var statsWordprintYear: Int?
@@ -1353,32 +1352,6 @@ class BearyProfileViewController: UIViewController {
     /// 写作统计在途代次：renderStats 每调一次即 +1；过期回调（旧语料 /
     /// 旧账号）到达时凭此丢弃，绝不覆盖新结果。
     private var statsRequest = 0
-    private let statsEnterRow: UIStackView = {
-        let stackValue = UIStackView()
-        stackValue.translatesAutoresizingMaskIntoConstraints = false
-        stackValue.axis = .horizontal
-        stackValue.spacing = 4
-        stackValue.alignment = .center
-        // 仅作进入提示（非按钮）：真正的手势在整卡上，避免按钮与手势双触发双弹页。
-        stackValue.isUserInteractionEnabled = false
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-        labelValue.textColor = BearyColors.ink
-        labelValue.text = "进入年度回顾"
-        let chevronView = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 14))
-        chevronView.translatesAutoresizingMaskIntoConstraints = false
-        chevronView.contentMode = .scaleAspectFit
-        chevronView.tintColor = BearyColors.ink
-        stackValue.addArrangedSubview(labelValue)
-        stackValue.addArrangedSubview(chevronView)
-        NSLayoutConstraint.activate([
-            chevronView.widthAnchor.constraint(equalToConstant: 14),
-            chevronView.heightAnchor.constraint(equalToConstant: 14),
-        ])
-        return stackValue
-    }()
-
     /// 那年今日卡：主显最近一年当天最晚一篇；同年多篇时展开列表；往年今天
     /// 没写时显示解释性空态（不编造、不拿别的日子顶替），不整卡消失——
     /// 前提是语料非空（全新 0 篇用户整卡隐藏，见 renderThisDay）。
@@ -4361,18 +4334,6 @@ class BearyProfileViewController: UIViewController {
         statsCard.contentStack.addArrangedSubview(statsRowBottom)
         statsCard.contentStack.addArrangedSubview(statsMoodWeatherLabel)
         statsCard.contentStack.addArrangedSubview(statsWordprintView)
-        statsCard.contentStack.addArrangedSubview(statsEnterRow)
-        let statsTap = UITapGestureRecognizer(target: self, action: #selector(statsCardTapped))
-        statsCard.addGestureRecognizer(statsTap)
-        // 05：整卡只有一个操作（进年度回顾），VoiceOver 下读作一个按钮：
-        // 子视图不再逐个读出，统计内容收进 accessibilityLabel（renderStats
-        // 每次填数后同步更新）；双击走 accessibilityActivate，与点按等价。
-        statsCard.isAccessibilityElement = true
-        statsCard.accessibilityTraits = .button
-        statsCard.accessibilityLabel = "写作统计"
-        statsCard.accessibilityActivateHandler = { [weak self] in
-            self?.openYearReview() ?? false
-        }
         updateStatsGridLayout()
 
         // —— 写作热力图：格子 + 月份名/星期名/图例/提示都在视图内；点某天走 onOpenTimelineDay 到时间线该日。
@@ -4893,28 +4854,6 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// 05：整卡是单个 VoiceOver 按钮，子视图不再逐个读出，统计内容收进
-    /// 卡片的 accessibilityLabel——数值与心情／天气行与可见文案逐字一致，
-    /// 末尾点明操作（进入年度回顾）。每次填数后同步更新。
-    private func updateStatsCardAccessibilityLabel(
-        stats: BearyProfilePersonalLogic.WritingStats,
-        charsText: String,
-        moodWeatherParts: [String]
-    ) {
-        var readParts: [String] = [
-            "写作统计",
-            "总篇数 \(stats.total) 篇",
-            "总字数 \(charsText) 字",
-        ]
-        if let slot = stats.bestSlotStartHour {
-            readParts.append("最常写时段 \(String(format: "%02d:00–%02d:00", slot, slot + 2))")
-        }
-        readParts.append("当前连续写作 \(stats.currentStreakDays) 天")
-        readParts.append(contentsOf: moodWeatherParts)
-        readParts.append("进入年度回顾")
-        statsCard.accessibilityLabel = readParts.joined(separator: "，")
-    }
-
     /// 异步统计回填后复核脚部容器显隐：回填可能翻转统计卡显隐（未命中时
     /// 先藏卡、算完再显；语料清空时反向塌掉），而 renderModules 只在同步
     /// 渲染时算过一次容器显隐。失败态容器恒显（重试行所在），不动。
@@ -4979,16 +4918,9 @@ class BearyProfileViewController: UIViewController {
             statsMoodWeatherLabel.isHidden = false
             statsMoodWeatherLabel.text = parts.joined(separator: " · ")
         }
-        // 主线后加的无障碍标签更新：分支抽 helper 时基线还没有这行，
-        // 放进 helper 里，两路（新算 / 快照）都带上。
-        updateStatsCardAccessibilityLabel(stats: stats, charsText: charsText, moodWeatherParts: parts)
     }
 
-    // MARK: 词汇指纹 —— 点写作统计卡进年度回顾（只本人可见）
-
-    @objc private func statsCardTapped() {
-        openYearReview()
-    }
+    // MARK: 年度回顾入口（只本人可见）
 
     @discardableResult
     private func openYearReview() -> Bool {
