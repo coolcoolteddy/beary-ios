@@ -2360,12 +2360,9 @@ class BearyTimelineViewController: UIViewController {
     /// 账号切换清掉；invalidateStatsLine 不清——删缓存后走网络重拉，
     /// 不得用旧落盘把刚失效的缓存顶回去）。
     private var calendarSnapshotRestoreTried: Set<String> = []
-    /// 64 包反馈修（第 3 项）+ 本批新规矩：统计行已渲染数值（streak|monthTotal，
-    /// 失败/空态另计）。签名故意不含月份 key——切月时数值不变即一字不碰按钮，
-    /// 旧签名含月份 key 是闪的根因（数值未变仍整行 setAttributedTitle 重建）。
-    /// 数值真变时只替换数字段（见 updateStatsNumbersOnly），静态段与火苗图标不动。
-    /// 签名只在写新日记时由 invalidateStatsLine 清掉（删除/回收站恢复走
-    /// refreshAfterDetailChange 强制重拉，值变了签名自然不同、无需另清）。
+    /// 展示审计 G1-05：统计行签名守卫（lastStatsLineSignature／lastStatsStreak／
+    /// lastStatsMonthTotal）与数字段-only 更新（updateStatsNumbersOnly）已随
+    /// statsButton 删除；单行渲染只靠 renderMergedStatsLine 内的同文守卫。
     private var calendarMode: BearyCalendarCardView.ViewMode = .week
     private var calendarAnchor: (year: Int, month: Int, day: Int)?
     private var calendarDisplayedMonth: (year: Int, month: Int)?
@@ -2623,8 +2620,6 @@ class BearyTimelineViewController: UIViewController {
     /// 计数行最小高度约束（跳动修）：行高钉死一行，见 buildHeader 内注释；
     /// 字号变化时在 traitCollectionDidChange 里随新字号重算。
     private var countsLabelMinHeightConstraint: NSLayoutConstraint?
-    // 审计-时间线：表头统计/重试钮改 BearyHit44Button，视觉帧不动、热区扩至 44×44（正常态禁用，失败态可点时生效）。
-    private let statsButton = BearyHit44Button(type: .system)
     private let calendarCard = BearyCalendarCardView()
     /// 表头筛选行——只放筛子钮（当前可见范围：全部／公开／私密／限时／
     /// 仅好友）；日期只在当日面板组头出现，见 dayPanelTitleParts。
@@ -4246,17 +4241,6 @@ class BearyTimelineViewController: UIViewController {
         countsMinHeight.isActive = true
         countsLabelMinHeightConstraint = countsMinHeight
 
-        statsButton.translatesAutoresizingMaskIntoConstraints = false
-        statsButton.contentHorizontalAlignment = .left
-        // R8：统计行按钮走 scaledFont + adjusts（富文本各段见 updateStatsLine）。
-        statsButton.titleLabel?.font = BearyDynamicType.secondaryFont()
-        statsButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        statsButton.addTarget(self, action: #selector(didTapStats), for: .touchUpInside)
-        statsButton.bearyAddPressFeedback()
-        // R15-L1：统计行恒不可点（只作次要信息展示；日历失败重试在卡内，
-        // 不经本钮；初态无文案、失败态留空、正常态展示统计）。
-        statsButton.isEnabled = false
-
         calendarCard.translatesAutoresizingMaskIntoConstraints = false
         calendarCard.onSelectDay = { [weak self] day in
             self?.didSelectCalendarDay(day)
@@ -4313,17 +4297,16 @@ class BearyTimelineViewController: UIViewController {
         filterRow.addArrangedSubview(visFilterButton)
         filterRow.addArrangedSubview(UIView())
 
-        // R15-L1：表头顺序改为标题与回收站 → 统计（共 X 篇／已连续写 X 天，
-        // 紧贴标题「时间线」下方，2026-11-12 Li 定）→ 日历 → 筛选 → 日记；
+        // 展示审计 G1-05＋G1-20：表头顺序改为标题与回收站 → 统计单行（共 X 篇 ·
+        // 已连续写 X 天，火苗只跟连续天数，紧贴标题「时间线」下方，2026-11-12 Li 定）→ 日历 → 筛选 → 日记；
         // ≥821pt 居中列 / ≤820pt 全宽列与左右各 16 边距一律不动
         // （见下方约束与 SceneDelegate 宽度口径）。
-        let stack = UIStackView(arrangedSubviews: [titleRow, countsLabel, statsButton, calendarCard, filterRow])
+        let stack = UIStackView(arrangedSubviews: [titleRow, countsLabel, calendarCard, filterRow])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.spacing = 0
         stack.setCustomSpacing(4, after: titleRow)
-        stack.setCustomSpacing(2, after: countsLabel)
-        stack.setCustomSpacing(12, after: statsButton)
+        stack.setCustomSpacing(12, after: countsLabel)
         stack.setCustomSpacing(12, after: calendarCard)
         headerStack = stack
         headerContainer.addSubview(stack)
@@ -4513,13 +4496,13 @@ class BearyTimelineViewController: UIViewController {
         return true
     }
 
-    /// 116 数据填入动效：文案／数字变化时只淡入该元素本身（alpha 0→1、
-    /// 0.26s，不动 transform／布局、不重建节点、不缩放弹一下）；同值不赋值
-    /// 不重播；减动效或未进窗口时直设终值。按钮只淡入 titleLabel，图标
-    /// （火苗／回收站图标）不动，符合“数字只动数字本身”。
-    private func setLabelTextFaded(_ label: UILabel, _ text: String) {
-        guard label.text != text else { return }
-        label.text = text
+    /// 116 数据填入动效（富文本版）：文案变化时只淡入该 label 本身（alpha 0→1、
+    /// 0.26s，不动 transform／布局、不重建节点、不缩放弹一下）；同文案不赋值
+    /// 不重播（按纯文本比对——火苗附件只随连续天数段出现／消失，文案变即附件
+    /// 变）；减动效或未进窗口时直设终值。
+    private func setLabelAttributedTextFaded(_ label: UILabel, _ text: NSAttributedString?) {
+        guard label.attributedText?.string != text?.string else { return }
+        label.attributedText = text
         guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
             label.alpha = 1
             return
@@ -4530,6 +4513,7 @@ class BearyTimelineViewController: UIViewController {
         })
     }
 
+    /// 按钮只淡入 titleLabel，图标（回收站图标）不动，符合“数字只动数字本身”。
     private func fadeButtonTitle(_ button: UIButton) {
         guard !UIAccessibility.isReduceMotionEnabled, button.window != nil,
               let titleLabel = button.titleLabel else { return }
@@ -4539,27 +4523,19 @@ class BearyTimelineViewController: UIViewController {
         })
     }
 
+    /// 展示审计 G1-05＋G1-20：表头统计只留一行（countsLabel），渲染见
+    /// renderMergedStatsLine；总数取 countsValue，私密／公开明细不再展示
+    ///（数据仍留 countsValue 供缓存／快照用）。本方法只作转发——时间线
+    /// 各拉取点仍调它，连续天数到达时由 updateStatsLine 侧刷新。
     private func updateCountsLabel() {
-        if let counts = countsValue {
-            let total = counts.total ?? 0
-            let priv = counts.priv ?? 0
-            let pub = counts.pub ?? 0
-            // 116：数值变时整行只淡入（不拆多 label——拆分属布局结构改动，
-            // 且数字段已在行内；淡入覆盖整行文案，数字随之淡入，不弹一下）；
-            // 文案不变时不重复赋值不重播。
-            setLabelTextFaded(countsLabel, "共 \(total) 篇 · 私密 \(priv) · 公开 \(pub)")
-        } else {
-            setLabelTextFaded(countsLabel, "")
-        }
+        renderMergedStatsLine()
     }
 
-    /// 64 包反馈修（第 3 项）：写新日记后统计行失效——清已渲染签名并丢掉当前视图月份缓存，
+    /// 64 包反馈修（第 3 项）：写新日记后统计行失效——丢掉当前视图月份缓存，
     /// 使随后 reloadTimeline 的非强制月份拉取真正走网络（否则缓存命中、统计恒旧）。
-    /// 切日期、翻页、删除、恢复均不调本方法（删除/恢复走强制重拉 + 签名比对）。
+    /// 切日期、翻页、删除、恢复均不调本方法（删除/恢复走强制重拉）。
+    /// 展示审计 G1-05：签名守卫已随 statsButton 删除，渲染只靠同文守卫。
     func invalidateStatsLine() {
-        lastStatsLineSignature = nil
-        lastStatsStreak = nil
-        lastStatsMonthTotal = nil
         for key in monthKeysForCurrentView() {
             calendarCache.removeValue(forKey: key)
             // r17-C1：落盘恢复的旧数据标记随缓存一起摘（统计不再认旧）；
@@ -4568,10 +4544,6 @@ class BearyTimelineViewController: UIViewController {
             calendarStreakUnknownKeys.remove(key)
         }
     }
-    private var lastStatsLineSignature: String?
-    /// 统计行上次渲染的数值（与签名分离：数值段替换时也要同步，供下次比对）。
-    private var lastStatsStreak: Int?
-    private var lastStatsMonthTotal: Int?
 
     // MARK: - 统计行与日历失败态（R15-L1：悬浮条已收掉，重试只留卡内）
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -4584,16 +4556,13 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
-    /// 连续写作行：网页 .cal-stats（13.5 灰、数字墨色加粗、16pt 橙色火苗图标）。
-    /// 火苗图为本批新建的 icon_fire 资产（beary.html #beary-fire sprite 路径渲染）。
-    /// R15-L1：日历失败重试只留卡内一处（BearyCalendarCardView.setLoadFailed，
-    /// 重试走 didTapStats）；统计行失败时只留空、不再变重试入口（旧 G14
-    /// 统计行重试与 113 顶部悬浮条随本支一并收掉）。在途/缺失月份不出加载态
-    ///（无“日历加载中…”）。
+    /// 统计行（R15-L1：悬浮条已收掉，重试只留卡内；连续写作行原为 statsButton，
+    /// 展示审计 G1-05＋G1-20 起并入 countsLabel 单行，见 renderMergedStatsLine）。
+    /// 本方法只剩卡内失败行的显隐（任一可视月失败即显，重试走 didTapStats
+    /// 强制重拉失败月）＋调单行渲染；失败／空态不再另有文案，统计行只按缓存
+    /// 如实渲染（主月无缓存即不报连续天数）。
     private func updateStatsLine() {
-        let primaryKey = primaryStatsMonthKey()
         let visibleKeys = monthKeysForCurrentView()
-        let anyVisibleFailed = visibleKeys.contains { calendarFailed.contains($0) && calendarCache[$0] == nil }
         // r17-C1 三态（原横条文案，R15-L1 后改写进卡内失败行，位置仍只留卡内
         // 一处）：可视月里有失败且全无数据 →「日历加载失败」；有失败但有旧快照
         // 可画 →「显示的是上次的数据」；有失败且其余月已画出（周跨月只到一部
@@ -4611,157 +4580,62 @@ class BearyTimelineViewController: UIViewController {
         } else {
             failedText = "日历加载失败"
         }
-        // R15-L1：卡内失败行先于统计行签名守卫更新——失败签名不变时统计行
-        // 提前返回，但切月/重试后失败态可能已变，卡内行的显隐必须每次重算
-        //（不靠签名守卫）；显隐真变时重算表头高度（失败行约 20pt）。
+        // R15-L1：卡内失败行每次重算（不靠签名守卫）；显隐真变时重算表头高度（失败行约 20pt）。
         if calendarCard.setLoadFailed(!failedUncached.isEmpty || !failedStale.isEmpty, text: failedText) {
             refreshHeaderHeight()
         }
-        if anyVisibleFailed {
-            // R15-L1：失败态统计行留空、不可点（重试入口已移到日历卡内）。
-            statsButton.isEnabled = false
-            statsButton.accessibilityLabel = nil
-            // 64 包反馈修（第 3 项）：失败态亦计签名，一致则不重碰按钮。
-            let signature = "fail"
-            guard signature != lastStatsLineSignature else { return }
-            lastStatsLineSignature = signature
-            lastStatsStreak = nil
-            lastStatsMonthTotal = nil
-            statsButton.setImage(nil, for: .normal)
-            statsButton.setAttributedTitle(nil, for: .normal)
-            statsButton.setTitle("", for: .normal)
-            return
-        }
-        guard let primaryKey = primaryKey, let data = calendarCache[primaryKey] else {
-            // P2：空态无内容、无重试可做，与正常态同为不可点。
-            statsButton.isEnabled = false
-            statsButton.accessibilityLabel = nil
-            let signature = "empty"
-            guard signature != lastStatsLineSignature else { return }
-            lastStatsLineSignature = signature
-            lastStatsStreak = nil
-            lastStatsMonthTotal = nil
-            statsButton.setImage(nil, for: .normal)
-            statsButton.setAttributedTitle(nil, for: .normal)
-            statsButton.setTitle("", for: .normal)
-            return
-        }
-        // 本批新规矩：签名不含月份 key——切月数值不变直接返回，按钮一字不动
-        // （确诊：旧签名 "\(primaryKey)|streak|monthTotal"，切月必变签名 →
-        // 整行 setAttributedTitle 重建 → 闪；容器/表头在此路径下本就不重建，
-        // 闪只来自本行标题重建，不是 stepCalendar/renderCalendar 重建容器）。
-        // 数值真变时只换数字段（下分支），静态段与火苗图标一律不动。
-        // r17-C1：跨日恢复的 streak 未重新确认（nil）时不报连续天数，
-        // 只报本月篇数；刷新到达后恢复完整行（见 fetch 成功处摘未知态）。
-        // 服务端直接回 streak 缺失时未知态不含该月（见恢复体），走下方的 ?? 0 旧口径。
-        if data.streak == nil, calendarStreakUnknownKeys.contains(primaryKey) {
-            let signature = "month-only"
-            guard signature != lastStatsLineSignature else { return }
-            lastStatsLineSignature = signature
-            lastStatsStreak = nil
-            lastStatsMonthTotal = data.monthTotal ?? 0
-            statsButton.isEnabled = false
-            statsButton.accessibilityLabel = "本月共 \(data.monthTotal ?? 0) 篇，连续天数待刷新确认"
-            statsButton.setImage(nil, for: .normal)
-            statsButton.setAttributedTitle(nil, for: .normal)
-            statsButton.setTitle("本月共 \(data.monthTotal ?? 0) 篇", for: .normal)
-            statsButton.setTitleColor(BearyColors.gray, for: .normal)
-            fadeButtonTitle(statsButton)
-            return
-        }
-        let streak = data.streak ?? 0
-        let monthTotal = data.monthTotal ?? 0
-        // R15-L1：统计行恒不可点——禁用即去掉按压反馈（touchDown 缩放／点按
-        // 确认轻震只在启用钮上触发）；didTapStats 的重试逻辑只由日历卡内失败行触发，
-        // 不再经统计行可达；P1-26：无障碍名与可见统计文案一致。
-        statsButton.isEnabled = false
-        statsButton.accessibilityLabel = "已连续写 \(streak) 天，本月共 \(monthTotal) 篇"
-        if lastStatsLineSignature == "normal", lastStatsStreak == streak, lastStatsMonthTotal == monthTotal {
-            return
-        }
-        if lastStatsLineSignature == "normal",
-           let current = statsButton.attributedTitle(for: .normal),
-           updateStatsNumbersOnly(current, streak: streak, monthTotal: monthTotal) {
-            lastStatsLineSignature = "normal"
-            lastStatsStreak = streak
-            lastStatsMonthTotal = monthTotal
-            // 116：数字段-only 更新后只淡入标题文案（火苗图标不动）。
-            fadeButtonTitle(statsButton)
-            return
-        }
-        // 首建或态切换（失败/空态 → 正常）或数字段解析失败时才整行重建；
-        // 数字段解析失败回落整行是防残留旧格式的安全阀，不是常规路径。
-        lastStatsLineSignature = "normal"
-        lastStatsStreak = streak
-        lastStatsMonthTotal = monthTotal
-        statsButton.setImage(BearyIconImages.image(named: "icon_fire", pointSize: 16), for: .normal)
-        statsButton.tintColor = BearyColors.orange
-        statsButton.imageEdgeInsets = UIEdgeInsets.zero
-        statsButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        // R8：统计行富文本各段走 scaledFont（按钮 adjusts 开关见 buildHeader）。
-        let baseAttributes: [NSAttributedString.Key: Any] = [
-            .font: BearyDynamicType.secondaryFont(),
-            .foregroundColor: BearyColors.gray,
-        ]
-        let boldAttributes: [NSAttributedString.Key: Any] = [
-            .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13)),
-            .foregroundColor: BearyColors.ink,
-        ]
-        let text = NSMutableAttributedString(string: "已连续写 ", attributes: baseAttributes)
-        text.append(NSAttributedString(string: "\(streak) 天", attributes: boldAttributes))
-        text.append(NSAttributedString(string: " · 本月共 ", attributes: baseAttributes))
-        text.append(NSAttributedString(string: "\(monthTotal) 篇", attributes: boldAttributes))
-        statsButton.setTitle(nil, for: .normal)
-        statsButton.setAttributedTitle(text, for: .normal)
-        // 116：首建／态切换整行重建时同样只淡入标题文案（火苗图标不动）。
-        fadeButtonTitle(statsButton)
+        renderMergedStatsLine()
     }
 
-    /// 统计行数字段-only 更新：只替换两处纯数字区间（streak、monthTotal），
-    /// 静态段“已连续写 ”、“ 天 · 本月共 ”、“ 篇”与火苗图标原样不动（不重建
-    /// 整行 attributed 文案、不碰 image/tint）。格式对不上（旧格式残留、
-    /// 数字段非纯数字）时返回 false，调用方回落整行重建。
-    /// 区间用 NSString（UTF-16）定位：文案固定中文 + 阿拉伯数字，均为 BMP
-    /// 字符，NSString 长度与 NSRange 定位一致；先换后段（monthTotal）再换
-    /// 前段（streak），使前段位置不受后段长度变化影响。
-    private func updateStatsNumbersOnly(_ current: NSAttributedString, streak: Int, monthTotal: Int) -> Bool {
-        let prefix = "已连续写 "
-        let middle = " 天 · 本月共 "
-        let suffix = " 篇"
-        let full = current.string
-        guard full.hasPrefix(prefix), full.hasSuffix(suffix) else { return false }
-        let nsFull = full as NSString
-        let prefixLength = (prefix as NSString).length
-        let middleLength = (middle as NSString).length
-        let suffixLength = (suffix as NSString).length
-        let middleRange = nsFull.range(of: middle)
-        guard middleRange.location != NSNotFound else { return false }
-        let streakRange = NSRange(location: prefixLength, length: middleRange.location - prefixLength)
-        let totalRange = NSRange(
-            location: middleRange.location + middleRange.length,
-            length: nsFull.length - suffixLength - (middleRange.location + middleRange.length)
-        )
-        guard streakRange.length > 0, totalRange.length > 0 else { return false }
-        guard Int(nsFull.substring(with: streakRange)) != nil,
-              Int(nsFull.substring(with: totalRange)) != nil else { return false }
-        let boldAttributes: [NSAttributedString.Key: Any] = [
-            .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13)),
-            .foregroundColor: BearyColors.ink,
+    /// 表头统计单行渲染（展示审计 G1-05＋G1-20）：「共 X 篇 · 已连续写 X 天」，
+    /// 火苗只跟连续天数（16pt 橙色 icon_fire 附件，缀在「已连续写」之前）。
+    /// 总数取 countsValue；连续天数取主月份日历缓存的 streak——跨日未确认
+    ///（主月在 calendarStreakUnknownKeys 内）或为 0 时不报该段；两者皆无时
+    /// 整行留空（与旧两行皆空同态）。同文案不重建不重播（见
+    /// setLabelAttributedTextFaded 的同文守卫）。
+    private func renderMergedStatsLine() {
+        let total = countsValue?.total
+        var streak: Int?
+        if let primaryKey = primaryStatsMonthKey(),
+           !calendarStreakUnknownKeys.contains(primaryKey) {
+            streak = calendarCache[primaryKey]?.streak
+        }
+        let showStreak = (streak ?? 0) > 0
+        if total == nil, !showStreak {
+            countsLabel.accessibilityLabel = nil
+            setLabelAttributedTextFaded(countsLabel, nil)
+            return
+        }
+        let font = BearyDynamicType.captionFont()
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: BearyColors.gray,
         ]
-        let mutable = NSMutableAttributedString(attributedString: current)
-        let newStreakText = "\(streak)"
-        let newTotalText = "\(monthTotal)"
-        mutable.replaceCharacters(in: totalRange, with: newTotalText)
-        mutable.replaceCharacters(in: streakRange, with: newStreakText)
-        let newStreakRange = NSRange(location: prefixLength, length: (newStreakText as NSString).length)
-        let newTotalRange = NSRange(
-            location: prefixLength + (newStreakText as NSString).length + middleLength,
-            length: (newTotalText as NSString).length
-        )
-        mutable.addAttributes(boldAttributes, range: newStreakRange)
-        mutable.addAttributes(boldAttributes, range: newTotalRange)
-        statsButton.setAttributedTitle(mutable, for: .normal)
-        return true
+        let text = NSMutableAttributedString()
+        var plain = ""
+        if let total = total {
+            text.append(NSAttributedString(string: "共 \(total) 篇", attributes: attrs))
+            plain += "共 \(total) 篇"
+        }
+        if showStreak {
+            if !text.string.isEmpty {
+                text.append(NSAttributedString(string: " · ", attributes: attrs))
+            }
+            if !plain.isEmpty {
+                plain += "，"
+            }
+            if let fire = BearyIconImages.image(named: "icon_fire", pointSize: 16)?.withTintColor(BearyColors.orange) {
+                let attachment = NSTextAttachment()
+                attachment.image = fire
+                attachment.bounds = CGRect(x: 0, y: font.descender, width: 16, height: 16)
+                text.append(NSAttributedString(attachment: attachment))
+                text.append(NSAttributedString(string: " ", attributes: attrs))
+            }
+            text.append(NSAttributedString(string: "已连续写 \(streak!) 天", attributes: attrs))
+            plain += "已连续写 \(streak!) 天"
+        }
+        countsLabel.accessibilityLabel = plain
+        setLabelAttributedTextFaded(countsLabel, text)
     }
 
     private func primaryStatsMonthKey() -> String? {
@@ -5474,7 +5348,7 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.pendingStepFollow = false
                 }
                 strongSelf.updateStatsLine()
-                // 审计-时间线：月份回包只重建该月网格——到达月不在当前视图内时不重渲日历、不重算表头高度（统计行自身有签名守卫，不受影响）。
+                // 审计-时间线：月份回包只重建该月网格——到达月不在当前视图内时不重渲日历、不重算表头高度（统计行只按同文守卫渲染，不受影响）。
                 if strongSelf.monthKeysForCurrentView().contains(key) {
                     strongSelf.renderCalendar()
                     strongSelf.refreshHeaderHeight()
