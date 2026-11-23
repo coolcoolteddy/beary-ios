@@ -72,7 +72,8 @@ enum BearyStarMapNight {
     static let anchor = UIColor(red: 255 / 255.0, green: 179 / 255.0, blue: 51 / 255.0, alpha: 1)
     static let tagNode = UIColor(red: 46 / 255.0, green: 200 / 255.0, blue: 230 / 255.0, alpha: 1)
     static let diary = UIColor(red: 196 / 255.0, green: 181 / 255.0, blue: 240 / 255.0, alpha: 1)
-    static let edge = UIColor(red: 0.36, green: 0.48, blue: 0.71, alpha: 0.65)
+    /// 2.5D 第 4 支：连线 1px 低透明（alpha 0.65→0.35）；选中线仍走 selected 不透明。
+    static let edge = UIColor(red: 0.36, green: 0.48, blue: 0.71, alpha: 0.35)
     static let dust = UIColor(white: 0.25, alpha: 0.5)
     static let sheetBackground = UIColor(white: 1, alpha: 0.08)
     static let sheetBorder = UIColor(white: 1, alpha: 0.14)
@@ -1009,6 +1010,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
             return StarMapEntrance(starDelays: delays, edgeIds: Set(diff.newEdgeIds))
         }()
         skyView.setStars(model.stars, tagNodes: model.tagNodes, edges: skyEdges, pointsById: pointsById, selectedStarId: selectedStarId, selectedEdgeId: selectedEdgeId, entrance: entrance)
+        // 统计行（2.5D 第 4 支）：当前分片模型计数，不受连线过滤与收起影响。
+        skyView.setStats(diaries: model.stars.count, tags: model.tagNodes.count, edges: model.edges.count)
         // P2-12：新范围、新画面与命中数据经 setStars 一起提交后，才恢复
         // 画布点按与无障碍激活；新月份为空时 recompute 的空态先行分支同步
         // 走到这里（空模型当即提交、旧星当即消失），同样恢复。
@@ -2024,33 +2027,48 @@ private final class StarMapSkyView: UIView {
     private let collapseCapsule = UIView()
     private let collapseButton = BearyHit44Button(type: .custom)
     private let expandButton = BearyHit44Button(type: .custom)
+    /// 统计行（2.5D 第 4 支）：浮在画布左上的玻璃 pill，三段「数字＋文字」
+    ///（N 篇日记／M 个标签／K 条连线，数字加粗，预览 stats bar 同款）；
+    ///只展示、不接点按（isUserInteractionEnabled=false，触摸透传画布）。
+    private let statsPill = UIView()
+    private let statsStack = UIStackView()
+    private var statsSegmentLabels: [UILabel] = []
     /// P2-12：切分片过渡期是否暂停旧图交互（点按＋无障碍激活同停）。
     private var interactionPaused = false
 
-    /// 第十一轮 02：未选中时连线显示预算——模型本身的边一字不动（后台建模仍
-    /// 算全部关联），只限制画布每帧实际绘制的边数。420pt 高的画布上 600 条
-    /// 线已是密网，再多也分辨不出，反而拖慢每帧绘制（200 篇理论
-    /// 最多 19,900 条）。选中某颗星时，与该星相连的边全部画出，其余仍受
-    /// 预算约束；选中某条线时该线必画。建层与点按命中都走同一 displayedEdges，
-    /// 看不见的线也点不到。
-    private static let maxDisplayedEdges = 600
+    /// 第十一轮 02（2.5D 第 4 支改）：未选中时连线显示预算——模型本身的边一字不动
+    ///（后台建模仍算全部关联），只限制画布每帧实际绘制的边数。预算 1500，
+    ///分区封顶：标签边 900＋地点／同词边 600（标签边常比日记边多一个量级，
+    ///单预算会被标签边挤占）；选中某颗星／某条线时，该星／该线的边在各分区内
+    ///优先保留。建层与点按命中都走同一 displayedEdges，看不见的线也点不到。
+    private static let maxDisplayedTagEdges = 900
+    private static let maxDisplayedOtherEdges = 600
 
     private var displayedEdges: [StarMapSkyEdge] {
         // 2.5D 第 3 支：收起时只留两端都可见的边（锚点–锚点、锚点–标签），
         // 任一端是日记星的边隐藏；展开时不过滤。预算逻辑走过滤后的边。
         let base = isCollapsed ? edges.filter { visibleNodeIds.contains($0.firstId) && visibleNodeIds.contains($0.secondId) } : edges
-        guard base.count > Self.maxDisplayedEdges else { return base }
-        if let selectedStarId {
-            let selected = base.filter { $0.firstId == selectedStarId || $0.secondId == selectedStarId }
-            let rest = base.filter { $0.firstId != selectedStarId && $0.secondId != selectedStarId }
-            return selected + Array(rest.prefix(max(0, Self.maxDisplayedEdges - selected.count)))
+        let tagEdges = base.filter { $0.reasons.contains(where: { $0.kind == .tag }) }
+        let otherEdges = base.filter { !$0.reasons.contains(where: { $0.kind == .tag }) }
+        return Self.cappedEdges(tagEdges, cap: Self.maxDisplayedTagEdges, selectedStarId: selectedStarId, selectedEdgeId: selectedEdgeId)
+            + Self.cappedEdges(otherEdges, cap: Self.maxDisplayedOtherEdges, selectedStarId: selectedStarId, selectedEdgeId: selectedEdgeId)
+    }
+
+    /// 单分区预算：分区内边数 ≤ cap 时全画；超了则选中星／选中线的边优先，
+    /// 其余按原序截断（与旧单预算同款优先口径，分区内生效）。
+    private static func cappedEdges(_ partition: [StarMapSkyEdge], cap: Int, selectedStarId: String?, selectedEdgeId: String?) -> [StarMapSkyEdge] {
+        guard partition.count > cap else { return partition }
+        if let selectedStarId = selectedStarId {
+            let selected = partition.filter { $0.firstId == selectedStarId || $0.secondId == selectedStarId }
+            let rest = partition.filter { $0.firstId != selectedStarId && $0.secondId != selectedStarId }
+            return selected + Array(rest.prefix(max(0, cap - selected.count)))
         }
-        if let selectedEdgeId {
-            let selected = base.filter { $0.id == selectedEdgeId }
-            let rest = base.filter { $0.id != selectedEdgeId }
-            return selected + Array(rest.prefix(max(0, Self.maxDisplayedEdges - selected.count)))
+        if let selectedEdgeId = selectedEdgeId {
+            let selected = partition.filter { $0.id == selectedEdgeId }
+            let rest = partition.filter { $0.id != selectedEdgeId }
+            return selected + Array(rest.prefix(max(0, cap - selected.count)))
         }
-        return Array(base.prefix(Self.maxDisplayedEdges))
+        return Array(partition.prefix(cap))
     }
 
     /// 第十一轮 01：星图日期共用一个格式化器——setStars 在主线程遍历全部星星，
@@ -2137,6 +2155,84 @@ private final class StarMapSkyView: UIView {
         let tap = UITapGestureRecognizer(target: self, action: #selector(didTap(_:)))
         addGestureRecognizer(tap)
         setupCollapseCapsule()
+        setupStatsPill()
+    }
+
+    /// 统计行赋值（2.5D 第 4 支）：数字为当前分片模型计数（日记星数／标签节点数／
+    /// 全部连线数，不受连线过滤与收起影响）；无篇时整行隐藏（空态／加载态归空视图管）。
+    func setStats(diaries: Int, tags: Int, edges: Int) {
+        statsPill.isHidden = diaries == 0
+        guard diaries > 0 else { return }
+        let units = [
+            NSLocalizedString("starmap.stats.diaries", comment: "星图统计行：篇日记"),
+            NSLocalizedString("starmap.stats.tags", comment: "星图统计行：个标签"),
+            NSLocalizedString("starmap.stats.edges", comment: "星图统计行：条连线"),
+        ]
+        let counts = [diaries, tags, edges]
+        for (index, label) in statsSegmentLabels.enumerated() {
+            let number = NSAttributedString(string: "\(counts[index])", attributes: [
+                .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold)),
+                .foregroundColor: UIColor.white,
+            ])
+            let unit = NSAttributedString(string: " " + units[index], attributes: [
+                .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11)),
+                .foregroundColor: UIColor(white: 1, alpha: 0.62),
+            ])
+            let text = NSMutableAttributedString()
+            text.append(number)
+            text.append(unit)
+            label.attributedText = text
+        }
+        // 读屏整行一句话（见 syncAccessibilityElements 追加的元素）。
+        statsPill.accessibilityLabel = "\(diaries) \(units[0])，\(tags) \(units[1])，\(edges) \(units[2])"
+    }
+
+    private func setupStatsPill() {
+        // 玻璃背板在下、三段＋两条 1px 分隔线在上（预览 .stats i 同款）；
+        // 层级 z 10，与胶囊同款，不被星核盖住；不接点按，触摸透传画布。
+        let glass = BearyGlass.effectView()
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        statsPill.addSubview(glass)
+        statsPill.layer.cornerRadius = 16
+        statsPill.layer.borderWidth = 1
+        statsPill.layer.borderColor = UIColor(white: 1, alpha: 0.2).cgColor
+        statsPill.clipsToBounds = true
+        statsPill.layer.zPosition = 10
+        statsPill.isUserInteractionEnabled = false
+        statsPill.translatesAutoresizingMaskIntoConstraints = false
+        statsStack.translatesAutoresizingMaskIntoConstraints = false
+        statsStack.axis = .horizontal
+        statsStack.spacing = 8
+        statsStack.alignment = .center
+        statsPill.addSubview(statsStack)
+        addSubview(statsPill)
+        NSLayoutConstraint.activate([
+            glass.topAnchor.constraint(equalTo: statsPill.topAnchor),
+            glass.leadingAnchor.constraint(equalTo: statsPill.leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: statsPill.trailingAnchor),
+            glass.bottomAnchor.constraint(equalTo: statsPill.bottomAnchor),
+            statsStack.topAnchor.constraint(equalTo: statsPill.topAnchor, constant: 8),
+            statsStack.leadingAnchor.constraint(equalTo: statsPill.leadingAnchor, constant: 14),
+            statsStack.trailingAnchor.constraint(equalTo: statsPill.trailingAnchor, constant: -14),
+            statsStack.bottomAnchor.constraint(equalTo: statsPill.bottomAnchor, constant: -8),
+            statsPill.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            statsPill.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+        ])
+        for index in 0..<3 {
+            let label = UILabel()
+            label.isUserInteractionEnabled = false
+            statsStack.addArrangedSubview(label)
+            statsSegmentLabels.append(label)
+            if index < 2 {
+                let divider = UIView()
+                divider.backgroundColor = UIColor(white: 1, alpha: 0.16)
+                divider.translatesAutoresizingMaskIntoConstraints = false
+                divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+                divider.heightAnchor.constraint(equalToConstant: 13).isActive = true
+                statsStack.addArrangedSubview(divider)
+            }
+        }
+        statsPill.isHidden = true
     }
 
     /// 收起／全展开切换（2.5D 第 3 支）：改状态＋重建图层（藏起的日记星
@@ -2579,6 +2675,15 @@ private final class StarMapSkyView: UIView {
         }
         var elements: [UIAccessibilityElement] = []
         elements.reserveCapacity(stars.count)
+        // 统计行（2.5D 第 4 支）：整行一个静态文本元素，读出三段计数；
+        // 无篇时 pill 本身隐藏，这里也不追加。
+        if !statsPill.isHidden, let statsLabel = statsPill.accessibilityLabel {
+            let statsElement = UIAccessibilityElement(accessibilityContainer: self)
+            statsElement.accessibilityLabel = statsLabel
+            statsElement.accessibilityTraits = .staticText
+            statsElement.accessibilityFrameInContainerSpace = statsPill.frame
+            elements.append(statsElement)
+        }
         for star in stars {
             // 2.5D 第 3 支：收起时藏起的日记星不暴露给读屏（与视觉一致）。
             if isCollapsed && star.kind == .diary { continue }
@@ -2621,8 +2726,8 @@ private final class StarMapSkyView: UIView {
             }
             elements.append(element)
         }
-        // 只暴露画得出来的连线：建层与点按命中都走 displayedEdges（600 条预算），
-        // 看不见的线也点不到，VoiceOver 里同样不出现。
+        // 只暴露画得出来的连线：建层与点按命中都走 displayedEdges（1500 条预算：
+        // 标签 900＋地点／同词 600），看不见的线也点不到，VoiceOver 里同样不出现。
         for edge in displayedEdges {
             guard let a = pointsById[edge.firstId], let b = pointsById[edge.secondId],
                   let first = entriesById[edge.firstId], let second = entriesById[edge.secondId] else { continue }
