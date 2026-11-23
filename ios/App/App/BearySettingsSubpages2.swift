@@ -963,11 +963,6 @@ final class BearyNotificationSettingsViewController: BearySettingsSubpageViewCon
         hintRowView.isHidden = true
         hintRow = hintRowView
         rows.append(hintRowView)
-        // 第 25 轮 59：广场有新日记的提醒不另设开关，纳入上面四类——任一类
-        // 开着才发，四类全关即停；说明放组末行。
-        let plazaNoteLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        plazaNoteLabel.text = "广场有新日记时也会发一条提醒；上面四类提醒全关时不再发。"
-        rows.append(plazaNoteLabel)
         contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: rows))
     }
 
