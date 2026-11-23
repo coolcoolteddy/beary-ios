@@ -72,6 +72,9 @@ struct BearyUserProfile: Decodable {
     /// 编辑资料页签名行，见 BearyEditProfileViewController；写口为 accounts
     /// Worker PUT /api/account/profile 的 signature 字段，分支待补，见 PR 说明）。
     var signature: String?
+    /// 城市（只显市）：日记 Worker 公开资料读口下发（服务端加城市字段的
+    /// diff 待部署，未下发时为 nil）；本页只做展示，无值时整行不出现。
+    var city: String?
     /// 32 注销口径：已注销判定（App 侧唯一信号，后端 profile 不下发 deleted 字段）。
     /// 注销 sweep 把 display_name 精确写成“已注销用户”，profilePayload 对
     /// deleted 用户恒置 handle/avatar 为 null；活号 handle 永不为空，故
@@ -104,6 +107,7 @@ struct BearyUserProfile: Decodable {
         case movedFrom
         case movedTo
         case signature
+        case city
     }
 }
 
@@ -1298,6 +1302,34 @@ class BearyProfileViewController: UIViewController {
         return labelValue
     }()
 
+    /// 城市行（签名下方）：官方定位图标＋城市名（只显市）；无城市时整行
+    /// 不出现（容器 hidden + 0 高约束，不留空行），本人页与他人页同一口径。
+    private let cityContainer: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = .clear
+        viewValue.isHidden = true
+        return viewValue
+    }()
+
+    private let cityIconView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.image = BearyIconImages.image(named: "icon_location", pointSize: 14)
+        imageViewValue.tintColor = BearyColors.gray
+        imageViewValue.contentMode = .scaleAspectFit
+        return imageViewValue
+    }()
+
+    private let cityLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.secondaryFont()
+        labelValue.adjustsFontForContentSizeCategory = true
+        labelValue.textColor = BearyColors.gray
+        return labelValue
+    }()
+
     /// 模块容器（tab 区挪位后：标签之后）：内为纵向 stack，各卡按预览顺序排列；
     /// 单卡隐藏即从 stack 塌掉（UIStackView 对 hidden 的 arrangedSubview 不占位），
     /// 各卡全隐藏时容器本身以 0 高约束塌掉，不留空标题区。
@@ -2082,6 +2114,9 @@ class BearyProfileViewController: UIViewController {
     /// 批 D：签名容器隐藏时高归零（与墙同款），handle 顶仍贴签名底 +8，
     /// 无签名时 handle 距名字同改动前（8pt），不整体下跳。
     private lazy var signatureHeightConstraint: NSLayoutConstraint = signatureContainer.heightAnchor.constraint(equalToConstant: 0)
+    /// 城市行隐藏时高归零（与签名容器同款），handle 顶仍贴城市行底 +8，
+    /// 无城市时 handle 距签名同改动前（8pt），不整体下跳。
+    private lazy var cityHeightConstraint: NSLayoutConstraint = cityContainer.heightAnchor.constraint(equalToConstant: 0)
     /// 批 D：签名行右缘——本人时留 48 给右上角编辑钮，他人只读时不留（长签名不提前换行）。
     private lazy var signatureLabelTrailingConstraint: NSLayoutConstraint = signatureLabel.trailingAnchor.constraint(lessThanOrEqualTo: signatureContainer.trailingAnchor, constant: -48)
     /// F17：头模块间距链（网页口径：墙 margin-top 10、模块 margin-top 16、标签 margin-top 16）。
@@ -2092,11 +2127,12 @@ class BearyProfileViewController: UIViewController {
     private lazy var joinedIconLeadingWithHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: handleLabel.trailingAnchor, constant: 5)
     private lazy var joinedIconLeadingWithoutHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16)
     /// 第 6 轮第 8 项：无 handle 时加入日期行改锚点。纵向约束二选一：
-    /// 有 handle 时日期行居中贴 handle 行；无 handle 时日期行顶贴签名底 +8、
+    /// 有 handle 时日期行居中贴 handle 行；无 handle 时日期行顶贴城市行底 +8
+    /// （城市行隐藏时高为 0，等同贴签名底 +8）、
     /// 图标居中贴日期行（不沿用已塌掉的 handle 行中心）；统计行锚点见 applyEmailRow。
     private lazy var joinedIconCenterYWithHandleConstraint: NSLayoutConstraint = joinedIconView.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor)
     private lazy var joinedLabelCenterYWithHandleConstraint: NSLayoutConstraint = joinedLabel.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor)
-    private lazy var joinedLabelTopWithoutHandleConstraint: NSLayoutConstraint = joinedLabel.topAnchor.constraint(equalTo: signatureContainer.bottomAnchor, constant: 8)
+    private lazy var joinedLabelTopWithoutHandleConstraint: NSLayoutConstraint = joinedLabel.topAnchor.constraint(equalTo: cityContainer.bottomAnchor, constant: 8)
     private lazy var joinedIconCenterYWithoutHandleConstraint: NSLayoutConstraint = joinedIconView.centerYAnchor.constraint(equalTo: joinedLabel.centerYAnchor)
     /// 无 handle 且有加入日期时统计行贴日期行下 12（与 #1252 改后的统计行距 12 一致，原支写 13 是旧值）。
     private lazy var statsTopAfterJoinedConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: joinedLabel.bottomAnchor, constant: 12)
@@ -2946,6 +2982,7 @@ class BearyProfileViewController: UIViewController {
         // 只移容器、不另移行内 signatureLabel（容器位移已带走子视图，另移会双倍）；
         // 签名上下邻（名字、handle）均为 fullShift，同值跟移、间距恒定。
         signatureContainer.transform = fullShift
+        cityContainer.transform = fullShift
         handleLabel.transform = fullShift
         joinedIconView.transform = fullShift
         joinedLabel.transform = fullShift
@@ -3137,6 +3174,9 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(publicCountLabel)
         headerView.addSubview(signatureContainer)
         signatureContainer.addSubview(signatureLabel)
+        headerView.addSubview(cityContainer)
+        cityContainer.addSubview(cityIconView)
+        cityContainer.addSubview(cityLabel)
         headerView.addSubview(wallContainer)
         headerView.addSubview(tabsContainer)
         // 模块容器不在 header：tab 下方直接就是表格行，模块组改由
@@ -3166,6 +3206,7 @@ class BearyProfileViewController: UIViewController {
             wallHeightConstraint,
             modulesHeightConstraint,
             signatureHeightConstraint,
+            cityHeightConstraint,
         ])
         // 批 D：模块卡片进纵向 stack（顺序即预览排法）；各卡内部结构在
         // buildPersonalModuleCards 内一次搭好，render 时只改文案与显隐。
@@ -3252,7 +3293,20 @@ class BearyProfileViewController: UIViewController {
             signatureLabel.leadingAnchor.constraint(equalTo: signatureContainer.leadingAnchor),
             signatureLabelTrailingConstraint,
             signatureLabel.bottomAnchor.constraint(equalTo: signatureContainer.bottomAnchor),
-            handleLabel.topAnchor.constraint(equalTo: signatureContainer.bottomAnchor, constant: 8),
+            // 城市行贴签名底（行内顶留 8 作签名与城市间的空隙）；城市隐藏时
+            // 容器高被 0 约束压住，handle 距签名 = 0 + 8，与改动前一字不差。
+            cityContainer.topAnchor.constraint(equalTo: signatureContainer.bottomAnchor),
+            cityContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            cityContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
+            cityIconView.leadingAnchor.constraint(equalTo: cityContainer.leadingAnchor),
+            cityIconView.centerYAnchor.constraint(equalTo: cityLabel.centerYAnchor),
+            cityIconView.widthAnchor.constraint(equalToConstant: 14),
+            cityIconView.heightAnchor.constraint(equalToConstant: 14),
+            cityLabel.topAnchor.constraint(equalTo: cityContainer.topAnchor, constant: 8),
+            cityLabel.leadingAnchor.constraint(equalTo: cityIconView.trailingAnchor, constant: 4),
+            cityLabel.trailingAnchor.constraint(lessThanOrEqualTo: cityContainer.trailingAnchor),
+            cityLabel.bottomAnchor.constraint(equalTo: cityContainer.bottomAnchor),
+            handleLabel.topAnchor.constraint(equalTo: cityContainer.bottomAnchor, constant: 8),
             handleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
             // I7：加入时间前补 13px 日历图标，图标与加入时间同显隐（见 applyProfile）。
             joinedIconCenterYWithHandleConstraint,
@@ -3990,6 +4044,7 @@ class BearyProfileViewController: UIViewController {
             // 批 D：签名（名字下方）与模块语料跟资料走同一回包；资料失败时
             // 不动旧模块（与 G12「保留整套旧头」同哲学，失败不清空已显内容）。
             renderSignature()
+            renderCity()
             applyProfileThemeTint()
             scheduleModulesRefresh(fromProfileResult: true)
             if targetHandleValue != nil {
@@ -4503,6 +4558,30 @@ class BearyProfileViewController: UIViewController {
         // 避免首帧签名仍在原地、与已下移的名字贴上；无签名时容器隐藏，赋值无可视
         // 影响；复位时 applyProfileBelowShift(0) 会把容器一并归零。
         signatureContainer.transform = CGAffineTransform(translationX: 0, y: currentBelowShift)
+    }
+
+    // MARK: 城市行（签名下方）
+
+    // 纯展示：本人页与他人页同一口径——有城市显示一行（官方定位图标＋
+    // 城市名，只显市），未设整行塌掉（容器 hidden + 0 高约束，不留空行）。
+    // 服务端未下发 city 字段时为 nil，行不出现（防御写法，见模型注释）。
+    private func renderCity() {
+        let city = (profile?.city ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if city.isEmpty {
+            cityContainer.isHidden = true
+            cityHeightConstraint.isActive = true
+        } else {
+            let cityWasHidden = cityContainer.isHidden
+            cityContainer.isHidden = false
+            cityHeightConstraint.isActive = false
+            cityLabel.text = city
+            fadeInViewIfAppearing(cityContainer, wasHidden: cityWasHidden)
+        }
+        if headerWidthValue > 0 {
+            layoutHeaderForced(widthValue: headerWidthValue)
+        }
+        // 与签名容器同款：已上滑态下出现／消失时先按当前位移贴合。
+        cityContainer.transform = CGAffineTransform(translationX: 0, y: currentBelowShift)
     }
 
     // MARK: 批 D —— 模块语料（作者 scope 全量分页）
