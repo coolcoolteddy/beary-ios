@@ -197,21 +197,26 @@ final class BearyLimitedBubbleView: UIView {
 /// 对齐走文字基线，与名字／时间天然对齐（不要用 UIView 容器＋viewForFirstBaselineLayout
 /// override——该方法在本工程 SDK 下不成立，编译报错；容器底边对齐又会让 pill
 /// 文字比时间高约 8pt）。
-final class BearyLimitedPillView: UILabel {
+/// 展示审计 G4-04：作者行可见性 pill（四档，规范 v28 §九）——存活限时
+/// “限时”深紫虚线边、仅好友“仅好友”墨字＋surface2 灰底无边框、公开“公开”
+/// 深橙描边、私密“私密”深蓝描边；字号／内边距／圆角与旧限时 pill 同款
+/// （13 semibold、左右 10 上下 3、圆角 999、边 1.5、虚线 [4,3]）。
+final class BearyVisibilityPillView: UILabel {
 
     /// pill 内边距（左右 10、上下 3）。
     private let insets = UIEdgeInsets(top: 3, left: 10, bottom: 3, right: 10)
+
+    /// 当前档位（主题切换时重刷边色用）。
+    private var currentKind = "private"
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
         font = UIFont.systemFont(ofSize: 13, weight: .semibold)
-        textColor = BearyColors.blue
         numberOfLines = 1
         layer.cornerRadius = 999
         layer.borderWidth = 1.5
-        layer.borderColor = BearyColors.blue.cgColor
     }
 
     required init?(coder: NSCoder) {
@@ -235,22 +240,50 @@ final class BearyLimitedPillView: UILabel {
         return rect.inset(by: UIEdgeInsets(top: -insets.top, left: -insets.left, bottom: -insets.bottom, right: -insets.right))
     }
 
-    /// 存活“限时”虚线边／到期“私密”实线边；边色恒为蓝（CGColor 快照，
-    /// 主题切换时重刷）。
-    func configure(text: String, expired: Bool) {
-        self.text = text
-        layer.borderColor = BearyColors.blue.cgColor
-        if expired {
-            layer.borderWidth = 1.5
-            // 实线边：用 borderWidth 走实线；虚线用 dashedLayer 才画得出，
-            // 故虚线态另挂 dashedLayer（见下）。
-            dashedLayer.isHidden = true
-        } else {
-            layer.borderWidth = 0
-            dashedLayer.strokeColor = BearyColors.blue.cgColor
-            dashedLayer.isHidden = false
+    /// 四档文案＋配色；边色为 CGColor 快照，主题切换时由
+    /// traitCollectionDidChange 经 applyKindColors 重刷。
+    func configure(kind: String) {
+        currentKind = kind
+        switch kind {
+        case "limited":
+            text = "限时"
+        case "friends":
+            text = "仅好友"
+        case "public":
+            text = "公开"
+        default:
+            text = "私密"
         }
+        applyKindColors()
         setNeedsLayout()
+    }
+
+    private func applyKindColors() {
+        switch currentKind {
+        case "limited":
+            textColor = BearyColors.deepPurpleText
+            backgroundColor = .clear
+            layer.borderWidth = 0
+            dashedLayer.strokeColor = BearyColors.deepPurpleText.cgColor
+            dashedLayer.isHidden = false
+        case "friends":
+            textColor = BearyColors.ink
+            backgroundColor = BearyColors.surface2
+            layer.borderWidth = 0
+            dashedLayer.isHidden = true
+        case "public":
+            textColor = BearyColors.deepOrangeText
+            backgroundColor = .clear
+            layer.borderColor = BearyColors.deepOrangeText.cgColor
+            layer.borderWidth = 1.5
+            dashedLayer.isHidden = true
+        default:
+            textColor = BearyColors.deepBlueText
+            backgroundColor = .clear
+            layer.borderColor = BearyColors.deepBlueText.cgColor
+            layer.borderWidth = 1.5
+            dashedLayer.isHidden = true
+        }
     }
 
     private lazy var dashedLayer: CAShapeLayer = {
@@ -270,7 +303,6 @@ final class BearyLimitedPillView: UILabel {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        layer.borderColor = BearyColors.blue.cgColor
-        dashedLayer.strokeColor = BearyColors.blue.cgColor
+        applyKindColors()
     }
 }
