@@ -597,14 +597,19 @@ public final class ProfileCoverView: UIView {
     /// (250,212)、(790,192) 布满天空），跟远层走。D-2：(150,62) 与 (950,192)
     /// 两颗出屏，已在 newyear-egg-burst.png 里分别移到 (230,62) 与 (790,192)。
     /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 canvasRectToView 同一套映射。
-    /// App 侧动态层跟图集同速：彩蛋跟远层，帧移 1(f−6) px 即 6*depth
-    /// （depth ∈ [−1, 1]，f = (depth+1)*6）。
+    /// App 侧动态层跟图集同速：彩蛋跟远层，B 批 P-2 起帧移 2(f−6) px 即 12*depth
+    /// （depth ∈ [−1, 1]，f = (depth+1)*6），与中层烟花同速；baked 远层仍为 ±6，
+    /// 夜空平滑、无锚点可漂，见 farX 处注释。
     private func drawNewyear(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
         // 彩蛋：7 颗金色四角星，倾斜保持 0.45 秒后随 egg 淡入（触发走共享
         // step 逻辑，与圣诞同款；每次进页 restartVisit 可再触发）。
-        // farX = 6*depth = (f−6)，即远层帧移 1×(n−7) px（n 为 1 起帧号）。
-        let farX = 6 * depth * scaleX
+        // B 批 P-2：远层只有 ±6（总 12px，低于 skill 的 24px 底线），彩蛋星星跟远层走
+        // 也几乎不动——farX 改 ±12（总 24）。星星正好与中层烟花同速（中层 ±12，见图集
+        // 注释），(843,49) 那颗仍贴在右上金色大烟花里不漂移；其余 6 颗在平滑夜空里，
+        // 与 baked 远层（±6）的相对漂移无锚点、不可见。baked 远层本身要动须重画图集，
+        // 不在本批。farX = 12*depth = 2(f−6)，即远层帧移 2×(n−7) px（n 为 1 起帧号）。
+        let farX = 12 * depth * scaleX
         if egg > 0.001 {
             bitmap("newyear-egg-burst", in: ctx,
                    center: CGPoint(x: padded.midX + farX, y: padded.midY),
@@ -749,7 +754,8 @@ public final class ProfileCoverView: UIView {
     /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 canvasRectToView 同一套映射。
     /// 三层位移（第 1→13 帧全程）：远 24／中 36／前景 60；帧内位移即
     /// (T/2)*depth——花环在糖骷髅正上方、跟前景走（±30px），花瓣飘在前景、
-    /// 跟前景走一半（±15px）。
+    /// 跟前景走（±30px；B 批 P-4：原半速 ±15 与遮挡打架——花瓣画在花丛前面、
+    /// 却比花丛动得慢，看起来像飘在花丛后面）。
     /// 彩蛋（golden-marigold-wreath.png，130×130、中央镂空）：金色花环浮在
     /// 糖骷髅正上方的干净夜空里（中心帧坐标 (501, 95)，宽 130），倾斜保持
     /// 0.45 秒后随 egg 淡入（触发走共享 step 逻辑，与圣诞同款；每次进页
@@ -757,8 +763,10 @@ public final class ProfileCoverView: UIView {
     /// 这两个数。
     /// 花瓣（marigold-petal-1～4.png，从一张四瓣图裁开，各瓣原生比不同）：
     /// 四片错开相位循环飘落（周期约 12 秒，从 y≈-30 落到 y≈350，首尾淡入淡出），
-    /// 横向轻摆 ±20px、微转；落点（x 260／420／680／770）与大小（宽 46）是我
+    /// 横向轻摆 ±20px、微转；落点（x 270／420／680／755）与大小（宽 46）是我
     /// 定的，想挪直接改这两个数。D-9：原 1 号 150、4 号 900 出屏，重排进窗。
+    /// B 批 P-4：花瓣改全速后 1 号 260→270、4 号 770→755 各内收一点，补全速
+    /// 多出的位移，最坏摆动下仍在窗内（见 D-9 处注释）。
     private func drawMuertos(_ ctx: CGContext, depth: CGFloat, travel: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
         let scaleY = padded.height / 323
@@ -777,13 +785,14 @@ public final class ProfileCoverView: UIView {
         // 花瓣：四片错开相位循环飘落（周期 12 秒，从 y≈-30 落到 y≈350）。
         let petalWidth: CGFloat = 46
         // D-9：1 号瓣静止仅 26% 可见、4 号瓣永远 0%——落点重排进窗（1 号 150 → 260，
-        // 4 号 900 → 770；2、3 号不动）。最坏摆动下 1 号左缘到 229、4 号右缘到 1008，
-        // 均在可见窗 x[213,1017] 内。
+        // 4 号 900 → 770；2、3 号不动）。B 批 P-4：花瓣改全速（±30）后最坏摆动下
+        // 1 号左缘到 223、4 号右缘到 1008，均在可见窗 x[213,1017] 内（1 号 260→270、
+        // 4 号 770→755 各内收一点补全速多出的位移）。
         let petalSizes: [(key: String, aspect: CGFloat, baseX: CGFloat)] = [
-            ("marigold-petal-1", 426 / 490, 260),
+            ("marigold-petal-1", 426 / 490, 270),
             ("marigold-petal-2", 417 / 683, 420),
             ("marigold-petal-3", 229 / 438, 680),
-            ("marigold-petal-4", 373 / 550, 770),
+            ("marigold-petal-4", 373 / 550, 755),
         ]
         let period: CGFloat = 12
         let fall: CGFloat = 380
@@ -794,7 +803,7 @@ public final class ProfileCoverView: UIView {
             let sway = 20 * sin(phase * .pi * 4 + CGFloat(index))
             let centerY = -30 + phase * fall
             bitmap(petal.key, in: ctx,
-                   center: CGPoint(x: -32 + (petal.baseX + sway) * scaleX + foregroundX * 0.5,
+                   center: CGPoint(x: -32 + (petal.baseX + sway) * scaleX + foregroundX,
                                    y: -12 + centerY * scaleY + vertical),
                    width: petalWidth, height: petalWidth * petal.aspect,
                    angle: 0.15 * sin(phase * .pi * 2 + CGFloat(index)) + 0.03 * travel, alpha: fade, layered: true)
@@ -907,7 +916,11 @@ public final class ProfileCoverView: UIView {
         // 底图为全幅图集：按 5 列 × 3 行切帧，每帧 1024×323。
         let tileWidth = CGFloat(backdrop.width) / 5
         let tileHeight = CGFloat(backdrop.height) / 3
-        let position = (depth + 1) * 6
+        // B 批 P-3：亡灵节图集方向反了——帧号越大内容越往左（亮点质心帧 0 x=512.1 →
+        // 帧 12 x=452.1），其余 12 个主题全反向；overlay 的 foregroundX = +30·depth
+        // 随倾斜往右，底图与前景互逆滑动。对该主题取反帧映射；depth=0 时仍是第 7 帧，
+        // 海报与中心构图不动；混合比计算不变。
+        let position = theme == .muertos ? (1 - depth) * 6 : (depth + 1) * 6
         let first = min(12, Int(position.rounded(.down)))
         let second = min(12, first + 1)
         let blend = position - CGFloat(first)
@@ -930,6 +943,22 @@ public final class ProfileCoverView: UIView {
 
     /// 底图图层刷新：帧切换只换 contents，混合只改透明度，位置只改 frame；
     /// 不触发任何重画。poster 层在底图未到时显示、到了即藏。
+    /// B 批 P-1：六国底图额外平移量（画布坐标）——图集里背景 baked 位移只有 12 帧 px
+    /// （skill 要求 ≥24px），图集已压平、背景层无法单独重画，App 侧把底图层整体再平移
+    /// ±6 帧 px，与图集同向（depth 增大时内容右移），背景总位移 12 → 24。底图里只有
+    /// 背景层在动（其余是平坦天空／水面，移动不可见）；前景物（船／火车／风铃／缆车／
+    /// 水上飞机／风筝）仍走各自的 overlay 偏移，层比不变。节日款底图背景已 ≥24
+    /// （元旦见 drawNewyear 的 farX），不补。零倾斜时位移为 0，构图不动；最大平移
+    /// 约 7.6pt，远小于左右 32pt 的扩边，不会露边。
+    private var backdropParallaxExtraX: CGFloat {
+        switch theme {
+        case .china, .usa, .japan, .germany, .canada, .korea:
+            return 6 * currentDepth * (Self.artSize.width + 64) / 1024
+        default:
+            return 0
+        }
+    }
+
     private func updateBackdropLayers() {
         guard bounds.width > 0, bounds.height > 0 else { return }
         let size = Self.artSize
@@ -945,7 +974,7 @@ public final class ProfileCoverView: UIView {
             return
         }
         posterLayer.isHidden = true
-        let padded = canvas.insetBy(dx: -32, dy: -12).offsetBy(dx: 0, dy: currentVertical)
+        let padded = canvas.insetBy(dx: -32, dy: -12).offsetBy(dx: backdropParallaxExtraX, dy: currentVertical)
         let frame = canvasRectToView(padded)
         let pair = backdropFramePair(depth: currentDepth)
         backdropBackLayer.isHidden = false
