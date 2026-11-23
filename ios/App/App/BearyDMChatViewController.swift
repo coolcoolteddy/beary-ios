@@ -64,10 +64,18 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 纯不透明底色、无文案，不复用空态/加载态（两者都带文案且各有互斥逻辑）；
     /// 只盖顶栏以下的内容区，顶栏返回钮仍可点，permBanner（无消息内容）不盖。
     private let sessionMaskView = UIView()
-    // 审计第 19 项：首次加载态复用 BearyStateView（转圈 +“加载中…”），不加骨架屏。
-    // 只在“首次请求且尚无本地/旧消息”时出现；有旧消息时保留内容后台刷新。
-    private let firstLoadStateView = BearyStateView()
+    // 首载骨架行（第 9 题）：首次加载态改气泡骨架行（见 BearyDMChatSkeletonCell），
+    // 不再复用 BearyStateView 转圈＋“加载中…”；只在“首次请求且尚无本地/旧消息”
+    // 时出现；有旧消息时保留内容后台刷新。骨架行数与会话列表／广场同款 3 行。
+    private let skeletonRowCount = 3
     private var firstLoadPending = true
+
+    /// 首载骨架行是否在屏——首次请求未落定、尚无消息、且不在下拉刷新中
+    /// （下拉刷新自带转圈，不叠加骨架）。本地回填出内容后 messages 非空，骨架即退。
+    private var showingSkeleton: Bool {
+        firstLoadPending && messages.isEmpty
+            && tableView.refreshControl?.isRefreshing != true
+    }
     /// 新一轮 01：相对时间分钟边界刷新定时器（页面统一持有，不进 Cell）。
     private var relativeTimeTimer: Timer?
     /// 60 秒轮询（通知页 pollTimer 同款口径）：聊天页打开时对方发来的新消息
@@ -91,8 +99,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     // 审计：发送钮视觉高 32 不变，热区用 Hit44 扩到 44（读“全部已读”钮同款口径）。
     private let sendButton = BearyHit44Button(type: .system)
     private let newMessagePill = BearyHit44Button(type: .system)
-    // U5：加载失败态（空消息时）复用 BearyStateView 的动作入口（重试钮），
-    // 与 #685 的 firstLoadStateView（仅 loading 形态）分开，不动它。
+    // U5：加载失败态（空消息时）复用 BearyStateView 的动作入口（重试钮）；
+    // 首载态已改骨架行（见 showingSkeleton），不再走 StateView 加载形态。
     private let loadFailedStateView = BearyStateView()
     private let placeholderLabel = UILabel()
     private let countLabel = UILabel()
@@ -232,6 +240,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         tableView.delegate = self
         tableView.dataSource = self
         tableView.register(BearyDMMessageCell.self, forCellReuseIdentifier: "dmMessageCell")
+        tableView.register(BearyDMChatSkeletonCell.self, forCellReuseIdentifier: BearyDMChatSkeletonCell.reuseIdentifier)
         let refresh = UIRefreshControl()
         refresh.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
         tableView.refreshControl = refresh
@@ -251,10 +260,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         emptyLabel.numberOfLines = 0
         emptyLabel.isHidden = true
         view.addSubview(emptyLabel)
-
-        firstLoadStateView.translatesAutoresizingMaskIntoConstraints = false
-        firstLoadStateView.isHidden = true
-        view.addSubview(firstLoadStateView)
 
         // 输入条：纯文字，无图片按钮；发送钮墨色 pill，空输入时禁用。
         inputBar.translatesAutoresizingMaskIntoConstraints = false
@@ -398,8 +403,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             permBannerLabelBottom,
         ])
 
-        // U5：失败态 StateView（仅空消息时显，与 emptyLabel 同槽位居中、互斥）；
-        // #685 的 firstLoadStateView 不动（两者不同视图，合入时同槽位互斥逻辑需复核）。
+        // U5：失败态 StateView（仅空消息时显，与 emptyLabel 同槽位居中、互斥）。
         loadFailedStateView.translatesAutoresizingMaskIntoConstraints = false
         loadFailedStateView.isHidden = true
         view.addSubview(loadFailedStateView)
@@ -470,11 +474,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
-            // 首次加载态与空态同槽位居中（互斥显隐，见 loadLatest/updateEmptyState）。
-            firstLoadStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            firstLoadStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            firstLoadStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
-            firstLoadStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
             inputBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             inputBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             topLine.topAnchor.constraint(equalTo: inputBar.topAnchor),
@@ -638,7 +637,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 // 审计 26-7：首批本地消息已上表即结束首屏加载态——
                 // 否则加载视图先显、再被本地内容盖住，直至网络回包才收起；与网络回包同款收起。
                 self.firstLoadPending = false
-                self.firstLoadStateView.isHidden = true
                 self.tableView.reloadData()
                 self.tableView.layoutIfNeeded()
                 if wasNearBottomBeforeReload {
@@ -1440,6 +1438,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     }
 
     private func updateEmptyState() {
+        // 首载骨架行在屏时不下空／失败结论（骨架行即加载态），
+        // 空态只在首拉落定后才按 messages 判定（会话列表同款）。
+        if showingSkeleton {
+            emptyLabel.isHidden = true
+            emptyStateView.isHidden = true
+            loadFailedStateView.isHidden = true
+            return
+        }
         if sessionClosed {
             emptyLabel.text = "该会话已关闭"
             emptyLabel.isHidden = false
@@ -1587,12 +1593,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 审计第 19 项：首次无本地消息才显加载态；有本地消息时先显旧消息、
         // 后台刷新（不遮内容）。下拉刷新自带转圈时不叠加；发送成功后的重拉
         // 此时 firstLoadPending 已为 false，同样不遮内容（#668 回显口径不动）。
-        if firstLoadPending && messages.isEmpty && tableView.refreshControl?.isRefreshing != true {
+        // 首载改骨架行：首次无本地消息时出 3 行气泡骨架（下拉刷新自带转圈时不叠加）；
+        // 有本地消息时不遮内容，后台刷新完直接换行。
+        if showingSkeleton {
             emptyLabel.isHidden = true
             emptyStateView.isHidden = true
-            firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
-            firstLoadStateView.isHidden = false
             loadFailedStateView.isHidden = true
+            tableView.reloadData()
         }
         // A6：位置只在回包时复查——请求在途期间用户可能滑离底部，
         // 发请求前拍的旧值不能再决定是否滚到底。锚点与底部态都在回包当刻、
@@ -1663,7 +1670,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         self.hasMoreOlder = history.resolvedMessages.count >= 30
                         self.loadFailed = false
                         self.firstLoadPending = false
-                        self.firstLoadStateView.isHidden = true
                         self.updateEmptyState()
                         // 位置已在 applyMerged 开头拍定（回包当刻的锚点与底部态）；
                         // 这里只记回包当刻的偏移与表高，供锚点丢失时按插入高度平移视口。
@@ -1767,9 +1773,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         self.updateSendButton()
                     }
                     self.loadFailed = true
+                    // 首拉失败：骨架行已在屏（firstLoadPending 仍为 true 时），
+                    // 先记下、再清旗标并重刷表，骨架退、失败态才接得上；
+                    // 非首拉失败不重刷，不动已有内容与滚动位置。
+                    let wasShowingSkeleton = self.showingSkeleton
                     self.firstLoadPending = false
-                    self.firstLoadStateView.isHidden = true
                     self.updateEmptyState()
+                    if wasShowingSkeleton {
+                        self.tableView.reloadData()
+                    }
                     // 第二批体验检查第 9 项：连续失败即退避——次数 +1 并按新
                     // 间隔重排下一拍（页面不可见时不重排，离页已停轮询）；
                     // 排队的刷新不再失败当刻立即重跑（弱网下会连着再败一次），
@@ -2091,7 +2103,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         if tableView == searchResultsTableView { return searchResults.count }
-        return messages.count
+        // 首拉无数据时出 3 行气泡骨架（不冒充真实消息）；
+        // 落定后按真实消息数出行，骨架行不与真实行叠加。
+        return showingSkeleton ? skeletonRowCount : messages.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -2101,6 +2115,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             let isMine = message.senderId != nil && message.senderId == storeAccountId
             let peerName = (peer.displayName?.isEmpty == false) ? peer.displayName! : "对方"
             cell.configure(message: message, isMine: isMine, peerName: peerName, query: searchField.text ?? "")
+            return cell
+        }
+        if showingSkeleton {
+            let cell = tableView.dequeueReusableCell(withIdentifier: BearyDMChatSkeletonCell.reuseIdentifier, for: indexPath) as! BearyDMChatSkeletonCell
+            // 三行交错对方／本人气泡、条宽错开，不与真实行高差太多。
+            cell.configure(isMine: indexPath.row % 2 == 1, widthFraction: [0.55, 0.42, 0.62][indexPath.row % 3])
             return cell
         }
         let cell = tableView.dequeueReusableCell(withIdentifier: "dmMessageCell", for: indexPath) as! BearyDMMessageCell
@@ -2478,5 +2498,79 @@ private final class BearyDMChatSearchResultCell: UITableViewCell {
             titleLabel.text = sender
         }
         snippetLabel.text = BearyDMStoreCore.searchSnippet(body: message.body ?? "", query: query)
+    }
+}
+
+// MARK: - 首载骨架行（气泡占位 + 扫光）
+
+/// 私信聊天首载骨架行：与 BearyDMMessageCell 同几何——气泡左右贴边
+/// （对方左 16、本人右 16，另一侧各留 104），上下各留 6；气泡块高 44，
+/// 约两行消息高。扫光走站内同款 BearySkeletonShimmerView（1.5s 斜向、
+/// 只走 transform、减动效不起扫光）。无文字、不冒充真实消息；只在首拉
+/// 无数据时出（有旧消息／下拉刷新／翻旧消息都不出）。
+private final class BearyDMChatSkeletonCell: UITableViewCell {
+
+    static let reuseIdentifier = "BearyDMChatSkeletonCell"
+
+    private let bubbleBlock = UIView()
+    private lazy var shimmerView = BearySkeletonShimmerView(blocks: [bubbleBlock])
+    private var leadingConstraint: NSLayoutConstraint?
+    private var trailingConstraint: NSLayoutConstraint?
+    private var widthConstraint: NSLayoutConstraint?
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        selectionStyle = .none
+        backgroundColor = BearyColors.bg
+        contentView.backgroundColor = BearyColors.bg
+        // 骨架行不进读屏：无文字内容，VoiceOver 直接跳过（会话行骨架同款）。
+        isAccessibilityElement = false
+        accessibilityElementsHidden = true
+        bubbleBlock.backgroundColor = BearySkeletonShimmerView.baseColor()
+        bubbleBlock.layer.cornerRadius = BearyCorners.single
+        bubbleBlock.translatesAutoresizingMaskIntoConstraints = false
+        shimmerView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(bubbleBlock)
+        contentView.addSubview(shimmerView)
+        let leading = bubbleBlock.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16)
+        let trailing = bubbleBlock.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
+        let width = bubbleBlock.widthAnchor.constraint(equalTo: contentView.widthAnchor, multiplier: 0.55)
+        leadingConstraint = leading
+        trailingConstraint = trailing
+        widthConstraint = width
+        NSLayoutConstraint.activate([
+            bubbleBlock.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
+            bubbleBlock.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
+            bubbleBlock.heightAnchor.constraint(equalToConstant: 44),
+            leading,
+            width,
+            shimmerView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            shimmerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            shimmerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            shimmerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+        // 本人行初始不贴右：configure 接管左右锚点；默认对方行（左贴边）。
+        trailing.isActive = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// isMine 为 true 时气泡贴右（本人），否则贴左（对方）；widthFraction
+    /// 按行错开条宽。复用时旧宽约束先撤再建，不叠加。
+    func configure(isMine: Bool, widthFraction: CGFloat) {
+        leadingConstraint?.isActive = !isMine
+        trailingConstraint?.isActive = isMine
+        if let old = widthConstraint {
+            old.isActive = false
+        }
+        let width = bubbleBlock.widthAnchor.constraint(equalTo: contentView.widthAnchor, multiplier: widthFraction)
+        width.isActive = true
+        widthConstraint = width
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        alpha = 1
+        transform = .identity
     }
 }
