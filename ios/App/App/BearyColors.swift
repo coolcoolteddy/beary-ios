@@ -44,6 +44,15 @@ enum BearyColors {
     /// 唯一例外（第十轮 #13）：系统通知图标（19pt 信封，橙 14% 底）浅色对比仅
     /// 约 2.20:1，浅色改走本 token（深色与 orange 同值 #ff9500，不变）。
     static var deepOrangeText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) : UIColor(red: 194.0/255.0, green: 65.0/255.0, blue: 12.0/255.0, alpha: 1) } }
+    /// 正文用深蓝（样式 token 表 §7 可见性四档：私密 pill 文字／边框色）：
+    /// 浅 #0066CC / 深 #0A84FF，白底对比约 5.6:1、黑底约 5.4:1，均 ≥4.5:1。
+    /// 现行 blue 浅 #007AFF 白底仅约 4.0:1（v28 备注「白底口径未核实」的落点），
+    /// 故 pill 文字／描边走本 token，不走 blue；图标／链接等非文字蓝不动。
+    static var deepBlueText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 10.0/255.0, green: 132.0/255.0, blue: 1.0, alpha: 1) : UIColor(red: 0.0, green: 102.0/255.0, blue: 204.0/255.0, alpha: 1) } }
+    /// 正文用深紫（样式 token 表 §7 可见性四档：限时 pill 文字／边框色）：
+    /// 浅 #8E2FB8 / 深 #AF52DE，白底对比约 6.5:1、黑底约 4.8:1，均 ≥4.5:1。
+    /// 只用于 pill 文字前景与描边；限时气泡／倒计时四档色不动。
+    static var deepPurpleText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 175.0/255.0, green: 82.0/255.0, blue: 222.0/255.0, alpha: 1) : UIColor(red: 142.0/255.0, green: 47.0/255.0, blue: 184.0/255.0, alpha: 1) } }
     /// 正文用深绿（同上）：浅 #166534 / 深 #34C759（系统绿亮值）。
     /// 浅色白底对比约 7.13:1、绿底 0.12 浅底对比约 6.42:1；深色黑底对比约 9.46:1。
     /// 只用于文字前景；语义绿填充 #2fbf71 底色不动。

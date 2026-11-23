@@ -190,28 +190,60 @@ final class BearyLimitedBubbleView: UIView {
     }
 }
 
-// MARK: - 限时 pill（作者行时间后；13 semibold 蓝档）
+// MARK: - 可见性 pill（作者行时间后；13 semibold）
 
-/// 限时／私密 pill：存活“限时”虚线蓝边、到期“私密”实线蓝边（与气泡虚实同理；
-/// 规范 §3：私密／限时 pill 沿用蓝档）。本身就是 UILabel，作者行 firstBaseline
+/// 卡片／详情页作者行可见性 pill（规范 §九）：作者本人看四档（限时／公开／
+/// 仅好友／私密），别人只显存活限时；限时到期按私密算。描边款透明底、边框色
+/// 走 pill 文字色；只有存活限时用虚线边（pillDash [4, 3]）；仅好友例外：
+/// 无边框，墨字＋surface2 灰底。本身就是 UILabel，作者行 firstBaseline
 /// 对齐走文字基线，与名字／时间天然对齐（不要用 UIView 容器＋viewForFirstBaselineLayout
 /// override——该方法在本工程 SDK 下不成立，编译报错；容器底边对齐又会让 pill
 /// 文字比时间高约 8pt）。
+/// 文字色口径（样式 token 表 §7，浅色均 ≥4.5:1）：公开深橙 deepOrangeText、
+/// 私密深蓝 deepBlueText、限时深紫 deepPurpleText、仅好友 ink。现行 blue
+/// 浅 #007AFF 白底仅约 4.0:1（v28 备注「白底口径未核实」的落点），故私密／
+/// 限时不走 blue，改走深色文字 token。
 final class BearyLimitedPillView: UILabel {
+
+    /// 四档 pill 形态（§九）。
+    enum Style {
+        case shared    // 公开：深橙字＋深橙实线边
+        case locked    // 私密：深蓝字＋深蓝实线边
+        case friends   // 仅好友：墨字＋surface2 底，无边框
+        case limited   // 存活限时：深紫字＋深紫虚线边
+    }
+
+    /// §九显隐口径：作者本人看四档，别人只显存活限时；限时到期按私密算
+    /// （作者显“私密”，别人不显）。返回 nil = 不显。
+    /// 调用方按 isPublic 兜底（visibility 缺失时 true=公开、其余=私密），
+    /// 绝不凭缺失推断为仅好友。
+    static func state(hasEphemeral: Bool, ephemeralLive: Bool, isFriendsOnly: Bool, isPublic: Bool, isAuthor: Bool) -> (text: String, style: Style)? {
+        if hasEphemeral {
+            if ephemeralLive { return ("限时", .limited) }
+            return isAuthor ? ("私密", .locked) : nil
+        }
+        guard isAuthor else { return nil }
+        if isFriendsOnly { return ("仅好友", .friends) }
+        if isPublic { return ("公开", .shared) }
+        return ("私密", .locked)
+    }
 
     /// pill 内边距（左右 10、上下 3）。
     private let insets = UIEdgeInsets(top: 3, left: 10, bottom: 3, right: 10)
+
+    /// 当前形态：主题切换时按它重刷边框 CGColor 快照。
+    private var currentStyle: Style = .locked
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
         font = UIFont.systemFont(ofSize: 13, weight: .semibold)
-        textColor = BearyColors.blue
+        textColor = BearyColors.deepBlueText
         numberOfLines = 1
         layer.cornerRadius = 999
         layer.borderWidth = 1.5
-        layer.borderColor = BearyColors.blue.cgColor
+        layer.borderColor = BearyColors.deepBlueText.cgColor
     }
 
     required init?(coder: NSCoder) {
@@ -235,22 +267,38 @@ final class BearyLimitedPillView: UILabel {
         return rect.inset(by: UIEdgeInsets(top: -insets.top, left: -insets.left, bottom: -insets.bottom, right: -insets.right))
     }
 
-    /// 存活“限时”虚线边／到期“私密”实线边；边色恒为蓝（CGColor 快照，
-    /// 主题切换时重刷）。
-    func configure(text: String, expired: Bool) {
+    /// 按四档刷文字／边框／底色；边色恒走文字色（CGColor 快照，主题切换时重刷）。
+    func configure(text: String, style: Style) {
         self.text = text
-        layer.borderColor = BearyColors.blue.cgColor
-        if expired {
-            layer.borderWidth = 1.5
-            // 实线边：用 borderWidth 走实线；虚线用 dashedLayer 才画得出，
-            // 故虚线态另挂 dashedLayer（见下）。
-            dashedLayer.isHidden = true
-        } else {
-            layer.borderWidth = 0
-            dashedLayer.strokeColor = BearyColors.blue.cgColor
-            dashedLayer.isHidden = false
-        }
+        currentStyle = style
+        applyStyleColors()
         setNeedsLayout()
+    }
+
+    private func applyStyleColors() {
+        let color: UIColor
+        switch currentStyle {
+        case .shared: color = BearyColors.deepOrangeText
+        case .locked: color = BearyColors.deepBlueText
+        case .friends: color = BearyColors.ink
+        case .limited: color = BearyColors.deepPurpleText
+        }
+        textColor = color
+        if currentStyle == .friends {
+            backgroundColor = BearyColors.surface2
+            layer.borderWidth = 0
+            dashedLayer.isHidden = true
+        } else if currentStyle == .limited {
+            backgroundColor = .clear
+            layer.borderWidth = 0
+            dashedLayer.strokeColor = color.cgColor
+            dashedLayer.isHidden = false
+        } else {
+            backgroundColor = .clear
+            layer.borderWidth = 1.5
+            layer.borderColor = color.cgColor
+            dashedLayer.isHidden = true
+        }
     }
 
     private lazy var dashedLayer: CAShapeLayer = {
@@ -270,7 +318,6 @@ final class BearyLimitedPillView: UILabel {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        layer.borderColor = BearyColors.blue.cgColor
-        dashedLayer.strokeColor = BearyColors.blue.cgColor
+        applyStyleColors()
     }
 }
