@@ -897,7 +897,6 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
               let peerId = conversations[indexPath.row].peer?.id else { return nil }
         let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
             guard let self = self else { done(false); return }
-            BearyHaptics.press()
             self.deleteConversation(peerId: peerId) { _ in }
             done(true)
         }

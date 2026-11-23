@@ -1765,8 +1765,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 
     @objc private func newDraftTapped() {
-        // 轻震只在点按确认时给：touchDown 里给会在 sheet 内起滑时误震。
-        BearyHaptics.press()
         // 与关闭／点开路共用 exitWithUndoGuard：6 秒窗内有可撤销笔时先弹确认，
         // 取消保留箱内撤销，确认才退场并调原 onNew 回调。
         exitWithUndoGuard(confirmTitle: "仍要继续") { [weak self] in
@@ -1916,8 +1914,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     @objc private func cardTapped(_ sender: UIButton) {
         for entry in cardEntries {
             if entry.button === sender {
-                // 轻震只在点按确认时给：touchDown 里给会在 sheet 内起滑时误震。
-                BearyHaptics.press()
                 // E1-18：整卡打开先走统一退场，dismiss 后再调原 onOpen 回调；
                 // 与关闭／新建路共用 exitWithUndoGuard：6 秒窗内有可撤销笔时
                 // 先弹确认，取消保留箱内撤销，确认才退场。

@@ -1099,7 +1099,6 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             guard let notificationId = item.id else { return nil }
             let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
                 guard let self = self else { done(false); return }
-                BearyHaptics.press()
                 done(true)
                 DispatchQueue.main.async {
                     self.notifChild.deleteNotification(id: notificationId) { _ in }
@@ -1111,7 +1110,6 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             guard let peerId = conv.peer?.id else { return nil }
             let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
                 guard let self = self else { done(false); return }
-                BearyHaptics.press()
                 done(true)
                 DispatchQueue.main.async {
                     self.conversationsChild.deleteConversation(peerId: peerId) { _ in }

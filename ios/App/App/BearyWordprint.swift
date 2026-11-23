@@ -67,12 +67,11 @@ final class BearyWordprintView: UIView {
         }
 
         // A11：UIButton 版按压反馈是 UIControl 专属，词行是 UIView＋手势，
-        // 故在此自带同款手感（同 BearyCalloutPicker 菜单行）：轻震＋微缩＋
+        // 故在此自带同款手感（同 BearyCalloutPicker 菜单行）：微缩＋
         // 微暗，0.18s（BearyMotion.micro），松手／取消回弹。
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
             super.touchesBegan(touches, with: event)
             guard isPressEnabled else { return }
-            BearyHaptics.press()
             UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
                            delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
                            animations: {

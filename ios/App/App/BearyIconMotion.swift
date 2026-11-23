@@ -100,19 +100,18 @@ enum BearyIconMotion {
         UIView.animate(withDuration: duration, animations: { imageView.transform = transform })
     }
 
-    /// 通用按压反馈（80 包 W6 全量推广）：按下缩 0.95，松手弹簧回 1。
+    /// 通用按压反馈（80 包 W6 全量推广）：按下缩 0.95，松手弹簧回 1。（2026-11-19 震动精简：轻震去掉）
     /// 第十四轮审计二-2（Li 2026-11-12 定版：按审计建议来）：按下 0.1s＋回弹
     /// 按下 0.95 缩放、单段 0.18s（micro 档，合规范 §6「按压反馈 0.18s」）；
     /// 0.32s 两段式合成单段 0.18s——按下与回弹同为 0.18s 单段动画，视觉仍是轻缩后回弹。
     /// 时长走 BearyMotion.micro（#1414 已合入）。
-    /// 口径（2026-11-21 改抬起确认，改 2026-11-19 震动精简）：按压视觉只留缩放，
-    /// 轻震不在按下时发，改到 touchUpInside 点按确认时发一次（见 bearyAddPressFeedback）；
+    /// 口径（2026-11-19 震动精简，改 2026-10-28 定版）：按压只留视觉缩放，不发轻震；
     /// 点赞/发布/拒绝三处专属反馈（成功/警告）另算。
     /// 缩放一律走按钮层（button.transform）：图标层 pop 与粒子 overlay 不受影响，
     /// 三层叠加不抢 transform；行级全宽钮与 imageView 自带旋转的钮不用它。
     /// 减动效：缩放直达终值（普通按压）。
-    /// 审计第 30 项（已随震动改抬起失效）：touchDown 与重新滑入都只恢复视觉按压态，
-    /// 不发触感；触感只在 touchUpInside 发一次，无需另存序列状态。
+    /// 审计第 30 项的分流保留：touchDown 与重新滑入都只恢复视觉按压态；
+    /// touchDragEnter 只在已开始的触摸序列内触发。
     /// 成功/警告反馈按实际结果触发（publishSuccess/rejectionWarning），不受此分流影响。
     /// 审计 M1：两项动画选项补齐 .allowUserInteraction（回弹窗口内的下一按
     /// 不被吞）与 .beginFromCurrentState（新按压从当前态起播，中断旧回弹）。
@@ -164,25 +163,15 @@ enum BearyIconMotion {
 }
 
 extension UIButton {
-    /// W6：挂通用按压反馈（touchDown 只缩 0.95 视觉；轻震改到 touchUpInside
-    /// 点按确认时发一次；松手/滑出/取消回弹）。不改原有 touchUpInside
-    /// 业务逻辑与布局；钮自身作 target，不依赖所在 VC 的方法。
-    /// 震动改抬起确认的根因：手指按在行上开始滑动时，按下瞬间就震、
-    /// touchCancel 只回弹视觉、震收不回，滚动容器内滑动误震；滑出/取消
-    /// 不震，点按确认才震，每点按只震一次。
-    /// 减动效：缩放直达终值（普通按压）；震动不拿减动效门控
-    ///（BearyHaptics 头注释既定口径：两者不是一回事）。
+    /// W6：挂通用按压反馈（touchDown 缩放；松手/滑出/取消回弹）。不改原有
+    /// touchUpInside 逻辑与布局；钮自身作 target，不依赖所在 VC 的方法。
     /// 审计 15 项第 12 项：补 touchDragExit（滑出恢复）与 touchDragEnter
     /// （滑入恢复按压态）；业务动作仍只由 touchUpInside 执行；滚动容器
     /// 内滑动时 touchCancel 仍兜底（原有行为不动）。
-    /// 触感只在 touchUpInside 发：同一次触摸最多震一次，无需另存序列状态；
-    /// touchDragEnter 只恢复视觉按压态，不发触感（原审计第 30 项“每序列
-    /// 首次才震”的分流口径随震动改抬起而失效，不再适用）。
-    /// 轻震走 BearyHaptics.press()（复用缓存的反馈生成器，不现建现扔）；
-    /// 成功/警告反馈按实际结果触发（publishSuccess/rejectionWarning），不受此改动影响。
+    /// 审计第 30 项：touchDragEnter 改挂 bearyPressDownVisual——同一次按压
+    /// 滑出再滑入只恢复视觉按压态。（2026-11-19 震动精简：按压轻震去掉。）
     func bearyAddPressFeedback() {
         addTarget(self, action: #selector(bearyPressDownVisual), for: .touchDown)
-        addTarget(self, action: #selector(bearyPressDownHapticOnly), for: .touchUpInside)
         addTarget(self, action: #selector(bearyPressUp), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
         addTarget(self, action: #selector(bearyPressDownVisual), for: .touchDragEnter)
     }
@@ -190,5 +179,4 @@ extension UIButton {
     /// 重新滑入只恢复视觉按压态，不发触感。
     @objc func bearyPressDownVisual() { BearyIconMotion.pressDownVisual(on: self) }
     @objc func bearyPressUp() { BearyIconMotion.pressUp(on: self) }
-    @objc func bearyPressDownHapticOnly() { BearyHaptics.press() }
 }

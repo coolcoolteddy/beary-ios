@@ -1551,7 +1551,6 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
-        BearyHaptics.press()
         // 月份分节后重试节下标即照片节数（photosRetrySectionIndex），
         // 不再是写死的 section 1。
         if indexPath.section == photosRetrySectionIndex, photosPageLoadFailed {
