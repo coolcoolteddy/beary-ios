@@ -81,6 +81,7 @@ final class BearySettingsIDCardView: UIView {
         ])
         let tap = UITapGestureRecognizer(target: self, action: #selector(cardTapped))
         addGestureRecognizer(tap)
+        bearyAddRowPressFeedback()
         isAccessibilityElement = true
         accessibilityLabel = "我的 ID 卡，点按翻转查看背面"
         accessibilityTraits = .button

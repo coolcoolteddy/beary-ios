@@ -332,6 +332,16 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
     /// 点选即回调（插入式：不收起，方便连着插多个）。
     /// 首格 ＋ 添加格走 onUploadGIF；其余格走 onSelectGIF（传完整 key）。
+    func collectionView(_ collectionView: UICollectionView, didHighlightItemAt indexPath: IndexPath) {
+        guard let cell = collectionView.cellForItem(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didUnhighlightItemAt indexPath: IndexPath) {
+        guard let cell = collectionView.cellForItem(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
+    }
+
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: false)
         if indexPath.item == 0 {

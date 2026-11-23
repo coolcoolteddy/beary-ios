@@ -1041,6 +1041,7 @@ final class BearyDetailViewController: UIViewController {
         // @ 行：有 mentionedName 才显（见 renderHeaderMeta），点按进被 @ 者主页。
         recipientRow.isUserInteractionEnabled = true
         recipientRow.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(mentionTapped)))
+        recipientRow.bearyAddRowPressFeedback()
         headerStack.addArrangedSubview(recipientRow)
 
         // 118 闪退修复（.ips 实证）：作者行必须是懒初始化的 authorRow，

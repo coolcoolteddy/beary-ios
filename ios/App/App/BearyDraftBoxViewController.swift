@@ -957,6 +957,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         card.layer.borderWidth = 0
         card.layer.cornerRadius = BearyCorners.single
         card.addTarget(self, action: #selector(cardTapped(_:)), for: .touchUpInside)
+        card.bearyAddRowPressFeedback()
 
         let inner = UIStackView()
         inner.axis = .vertical

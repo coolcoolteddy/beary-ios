@@ -1060,6 +1060,25 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
         }
     }
 
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        guard indexPath.row < mergedRows.count else { return }
+        switch mergedRows[indexPath.row] {
+        case .sentinel(let state):
+            guard state == .failed else { return }
+        case .notifFailure, .dmFailure:
+            return
+        default:
+            break
+        }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
         guard indexPath.row < mergedRows.count else { return }

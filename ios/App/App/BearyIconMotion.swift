@@ -144,6 +144,32 @@ enum BearyIconMotion {
         })
     }
 
+    /// 行级极轻按压态（HIG W9）：只降透明度到 0.9，不缩放。按下 0.1s
+    /// （Li 2026-11-21 定版按压时长），松手回弹走 motion.micro 0.18s；
+    /// 减动效时直达终值。调用方：表行 didHighlight／didUnhighlight、
+    /// 集合格 didHighlightItem／didUnhighlightItem、
+    /// UIView.bearyAddRowPressFeedback。
+    static func rowPressDown(on view: UIView) {
+        guard BearyMotion.animated(true) else {
+            view.alpha = 0.9
+            return
+        }
+        UIView.animate(withDuration: 0.1, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
+            view.alpha = 0.9
+        })
+    }
+
+    /// 行级按压松手：透明度回 1，走 motion.micro 0.18s；减动效直达终值。
+    static func rowPressUp(on view: UIView) {
+        guard BearyMotion.animated(true) else {
+            view.alpha = 1
+            return
+        }
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
+            view.alpha = 1
+        })
+    }
+
     /// 无限旋转（网页 .spin 1s / .official-spin .9s 由调用方传 duration；
     /// 减动效不转，见网页 prefers-reduced-motion 下 .spin{animation:none}）。
     static func startSpin(on view: UIView, duration: TimeInterval, key: String) {
@@ -180,3 +206,30 @@ extension UIButton {
     @objc func bearyPressDownVisual() { BearyIconMotion.pressDownVisual(on: self) }
     @objc func bearyPressUp() { BearyIconMotion.pressUp(on: self) }
 }
+
+extension UIView {
+    /// 行级极轻按压态（HIG W9）：给无 UIControl 按压态的可点行／卡片挂
+    /// 0 秒长按手势，touch-down 时整体透明度降到 0.9，松手／取消时恢复。
+    /// 只动 alpha，不动 transform（行 transform 另有用途：草稿卡拖动、
+    /// 个人页行跟移）；不延迟、不拦截原有 tap 手势与按钮触摸。
+    func bearyAddRowPressFeedback() {
+        let press = UILongPressGestureRecognizer(target: self, action: #selector(bearyRowPressChanged(_:)))
+        press.minimumPressDuration = 0
+        press.cancelsTouchesInView = false
+        press.delaysTouchesBegan = false
+        press.delaysTouchesEnded = false
+        addGestureRecognizer(press)
+    }
+
+    @objc func bearyRowPressChanged(_ gesture: UILongPressGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            BearyIconMotion.rowPressDown(on: self)
+        case .ended, .cancelled, .failed:
+            BearyIconMotion.rowPressUp(on: self)
+        default:
+            break
+        }
+    }
+}
+

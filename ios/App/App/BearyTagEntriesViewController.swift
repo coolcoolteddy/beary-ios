@@ -101,6 +101,7 @@ final class BearyTagEntriesViewController: UIViewController {
         stateLabel.isHidden = true
         let retryTap = UITapGestureRecognizer(target: self, action: #selector(stateLabelTapped))
         stateLabel.addGestureRecognizer(retryTap)
+        stateLabel.bearyAddRowPressFeedback()
         stateLabel.isUserInteractionEnabled = true
         view.addSubview(stateLabel)
 
@@ -403,6 +404,17 @@ extension BearyTagEntriesViewController: UITableViewDataSource, UITableViewDeleg
         cell.configure(with: entry)
         wireCell(cell, entry: entry)
         return cell
+    }
+
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        guard indexPath.row < entries.count else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {

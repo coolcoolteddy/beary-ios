@@ -4426,6 +4426,7 @@ class BearyProfileViewController: UIViewController {
         statsCard.contentStack.addArrangedSubview(statsEnterRow)
         let statsTap = UITapGestureRecognizer(target: self, action: #selector(statsCardTapped))
         statsCard.addGestureRecognizer(statsTap)
+        statsCard.bearyAddRowPressFeedback()
         // 05：整卡只有一个操作（进年度回顾），VoiceOver 下读作一个按钮：
         // 子视图不再逐个读出，统计内容收进 accessibilityLabel（renderStats
         // 每次填数后同步更新）；双击走 accessibilityActivate，与点按等价。
@@ -4447,6 +4448,7 @@ class BearyProfileViewController: UIViewController {
         thisDayContentStack.addArrangedSubview(thisDayBodyLabel)
         let thisDayTap = UITapGestureRecognizer(target: self, action: #selector(thisDayContentTapped))
         thisDayContentStack.addGestureRecognizer(thisDayTap)
+        thisDayContentStack.bearyAddRowPressFeedback()
         thisDayCard.contentStack.addArrangedSubview(thisDayContentStack)
         thisDayCard.contentStack.addArrangedSubview(thisDayExpandButton)
         thisDayCard.contentStack.addArrangedSubview(thisDayExpandStack)
@@ -4492,6 +4494,7 @@ class BearyProfileViewController: UIViewController {
         randomContentStack.addArrangedSubview(randomBodyLabel)
         let randomTap = UITapGestureRecognizer(target: self, action: #selector(randomContentTapped))
         randomContentStack.addGestureRecognizer(randomTap)
+        randomContentStack.bearyAddRowPressFeedback()
         randomCard.contentStack.addArrangedSubview(randomContentStack)
         randomCard.contentStack.addArrangedSubview(randomShuffleButton)
         NSLayoutConstraint.activate([
@@ -9860,6 +9863,17 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             BearyNineGridPresenter.present(from: strongSelf, anchorView: button, imageKeys: entryValue.images ?? [], liveVideos: entryValue.liveVideos)
         }
         return cellValue
+    }
+
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        guard indexPath.row < displayedEntries.count || (diaryMoreButtonVisible && indexPath.row == displayedEntries.count) else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {

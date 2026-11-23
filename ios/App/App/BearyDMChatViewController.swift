@@ -333,6 +333,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         olderLoadingView.layer.cornerRadius = 16
         olderLoadingView.isHidden = true
         olderLoadingView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(olderLoadingViewTapped)))
+        olderLoadingView.bearyAddRowPressFeedback()
         // 读屏入口：与点按同一方法，VoiceOver 双击即重试（见 OlderLoadingHitView）。
         olderLoadingView.accessibilityTraits = .button
         olderLoadingView.onActivate = { [weak self] in self?.olderLoadingViewTapped() }
