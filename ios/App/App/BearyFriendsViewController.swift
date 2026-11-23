@@ -247,7 +247,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     }
 
     @objc private func refreshPulled() {
-        load()
+        // A-P0-2：下拉刷新强制穿透 GET 缓存。
+        load(forceRefresh: true)
     }
 
     @objc private func refreshFailedRetryTapped() {
@@ -298,7 +299,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         }
     }
 
-    private func load() {
+    private func load(forceRefresh: Bool = false) {
         guard SessionManager.shared.isLoggedIn else {
             tableView.refreshControl?.endRefreshing()
             onRequireLogin?()
@@ -320,7 +321,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         // 的陈旧快照当作有效回包渲染；authEpoch 每次权威登录态变迁
         // 单调 +1，旧回包凭代次丢弃（同款修法见 #1126 DM 会话页）。
         let requestEpoch = BearyAPI.shared.authEpoch
-        BearyAPI.shared.fetchFriends { [weak self] result in
+        // A-P0-2：下拉刷新强制穿透 GET 缓存；进页重拉走缓存（切 tab 不重拉）。
+        BearyAPI.shared.fetchFriends(forceRefresh: forceRefresh) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.loading = false

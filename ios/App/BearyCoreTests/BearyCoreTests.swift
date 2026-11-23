@@ -1671,3 +1671,141 @@ final class BearySearchSnippetTests: XCTestCase {
         XCTAssertEqual(entry.snippet, "…公园散步…")
     }
 }
+
+// ===== A-P0-2：全局 GET 去重 + 短 TTL 缓存 =====
+// 桩协议数真实网络请求数：连续两次进同一列表，第二次须 0 新增请求
+// （命中 TTL）；并发同 key 只发 1 个请求；forceRefresh 强制穿透；
+// 开关关时恢复每次都发请求。BearyAPI 注入桩会话，不碰真网。
+private final class BearyGetDedupStubProtocol: URLProtocol {
+    static var requestCount = 0
+    static var responseJSON = "{\"friends\":[]}"
+    static var countLock = NSLock()
+
+    override class func canInit(with request: URLRequest) -> Bool { return true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { return request }
+
+    override func startLoading() {
+        BearyGetDedupStubProtocol.countLock.lock()
+        BearyGetDedupStubProtocol.requestCount += 1
+        BearyGetDedupStubProtocol.countLock.unlock()
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(BearyGetDedupStubProtocol.responseJSON.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+final class BearyGetDedupCacheTests: XCTestCase {
+    private func stubAPI() -> BearyAPI {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [BearyGetDedupStubProtocol.self]
+        return BearyAPI(session: URLSession(configuration: config))
+    }
+
+    private func resetStubCount() {
+        BearyGetDedupStubProtocol.countLock.lock()
+        BearyGetDedupStubProtocol.requestCount = 0
+        BearyGetDedupStubProtocol.countLock.unlock()
+    }
+
+    private func stubCount() -> Int {
+        BearyGetDedupStubProtocol.countLock.lock()
+        defer { BearyGetDedupStubProtocol.countLock.unlock() }
+        return BearyGetDedupStubProtocol.requestCount
+    }
+
+    override func setUp() {
+        super.setUp()
+        resetStubCount()
+        BearyAPI.getDedupCacheEnabled = true
+    }
+
+    override func tearDown() {
+        BearyAPI.getDedupCacheEnabled = true
+        super.tearDown()
+    }
+
+    func testDedupKeyDistinguishesAccountEpochQueryAndType() {
+        let base = BearyAPI.getDedupKey(path: "/beary/api/friends/list", query: [:], accountId: 1, epoch: 5, responseTypeName: "FriendListResponse")
+        XCTAssertEqual(base, BearyAPI.getDedupKey(path: "/beary/api/friends/list", query: [:], accountId: 1, epoch: 5, responseTypeName: "FriendListResponse"))
+        XCTAssertNotEqual(base, BearyAPI.getDedupKey(path: "/beary/api/friends/list", query: [:], accountId: 2, epoch: 5, responseTypeName: "FriendListResponse"))
+        XCTAssertNotEqual(base, BearyAPI.getDedupKey(path: "/beary/api/friends/list", query: [:], accountId: 1, epoch: 6, responseTypeName: "FriendListResponse"))
+        XCTAssertNotEqual(base, BearyAPI.getDedupKey(path: "/beary/api/friends/list", query: ["user_id": "7"], accountId: 1, epoch: 5, responseTypeName: "FriendListResponse"))
+        XCTAssertNotEqual(base, BearyAPI.getDedupKey(path: "/beary/api/friends/list", query: [:], accountId: 1, epoch: 5, responseTypeName: "OtherResponse"))
+        XCTAssertNotEqual(base, BearyAPI.getDedupKey(path: "/beary/api/friends/following", query: [:], accountId: 1, epoch: 5, responseTypeName: "FriendListResponse"))
+    }
+
+    func testDedupKeyIgnoresQueryOrder() {
+        let first = BearyAPI.getDedupKey(path: "/p", query: ["a": "1", "b": "2"], accountId: 1, epoch: 5, responseTypeName: "T")
+        let second = BearyAPI.getDedupKey(path: "/p", query: ["b": "2", "a": "1"], accountId: 1, epoch: 5, responseTypeName: "T")
+        XCTAssertEqual(first, second)
+    }
+
+    func testTTLIsWithinDocumentedRange() {
+        XCTAssertTrue(BearyAPI.getCacheTTL >= 30 && BearyAPI.getCacheTTL <= 60)
+    }
+
+    func testSecondSequentialRequestHitsTTLCache() {
+        let api = stubAPI()
+        let firstDone = expectation(description: "first")
+        let secondDone = expectation(description: "second")
+        api.request("/beary/api/friends/list", cacheTTL: BearyAPI.getCacheTTL) { (result: Result<BearyAPI.FriendListResponse, APIError>) in
+            if case .success = result { firstDone.fulfill() }
+        }
+        wait(for: [firstDone], timeout: 5)
+        XCTAssertEqual(stubCount(), 1)
+        api.request("/beary/api/friends/list", cacheTTL: BearyAPI.getCacheTTL) { (result: Result<BearyAPI.FriendListResponse, APIError>) in
+            if case .success = result { secondDone.fulfill() }
+        }
+        wait(for: [secondDone], timeout: 5)
+        XCTAssertEqual(stubCount(), 1)
+    }
+
+    func testConcurrentSameKeySendsOneRequest() {
+        let api = stubAPI()
+        let firstDone = expectation(description: "first")
+        let secondDone = expectation(description: "second")
+        api.request("/beary/api/friends/list", cacheTTL: BearyAPI.getCacheTTL) { (result: Result<BearyAPI.FriendListResponse, APIError>) in
+            if case .success = result { firstDone.fulfill() }
+        }
+        api.request("/beary/api/friends/list", cacheTTL: BearyAPI.getCacheTTL) { (result: Result<BearyAPI.FriendListResponse, APIError>) in
+            if case .success = result { secondDone.fulfill() }
+        }
+        wait(for: [firstDone, secondDone], timeout: 5)
+        XCTAssertEqual(stubCount(), 1)
+    }
+
+    func testForceRefreshBypassesCache() {
+        let api = stubAPI()
+        let firstDone = expectation(description: "first")
+        let refreshDone = expectation(description: "refresh")
+        api.request("/beary/api/friends/list", cacheTTL: BearyAPI.getCacheTTL) { (result: Result<BearyAPI.FriendListResponse, APIError>) in
+            if case .success = result { firstDone.fulfill() }
+        }
+        wait(for: [firstDone], timeout: 5)
+        XCTAssertEqual(stubCount(), 1)
+        api.request("/beary/api/friends/list", cacheTTL: BearyAPI.getCacheTTL, forceRefresh: true) { (result: Result<BearyAPI.FriendListResponse, APIError>) in
+            if case .success = result { refreshDone.fulfill() }
+        }
+        wait(for: [refreshDone], timeout: 5)
+        XCTAssertEqual(stubCount(), 2)
+    }
+
+    func testFlagOffDisablesDedupAndCache() {
+        BearyAPI.getDedupCacheEnabled = false
+        let api = stubAPI()
+        let firstDone = expectation(description: "first")
+        let secondDone = expectation(description: "second")
+        api.request("/beary/api/friends/list", cacheTTL: BearyAPI.getCacheTTL) { (result: Result<BearyAPI.FriendListResponse, APIError>) in
+            if case .success = result { firstDone.fulfill() }
+        }
+        wait(for: [firstDone], timeout: 5)
+        api.request("/beary/api/friends/list", cacheTTL: BearyAPI.getCacheTTL) { (result: Result<BearyAPI.FriendListResponse, APIError>) in
+            if case .success = result { secondDone.fulfill() }
+        }
+        wait(for: [secondDone], timeout: 5)
+        XCTAssertEqual(stubCount(), 2)
+    }
+}

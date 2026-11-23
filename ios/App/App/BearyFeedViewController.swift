@@ -1116,9 +1116,10 @@ class BearyFeedViewController: UIViewController {
             centralSpinner.startSpinning()
         }
         if loginFlippedBypass {
-            loadPlazaFirstPage(diffMode: !plazaRaw.isEmpty)
+            // A-P0-2：登录翻转／空表刷新强制穿透 GET 缓存（不吃旧身份／旧空态）。
+            loadPlazaFirstPage(diffMode: !plazaRaw.isEmpty, forceRefresh: true)
         } else if plazaRaw.isEmpty {
-            loadPlazaFirstPage(diffMode: false)
+            loadPlazaFirstPage(diffMode: false, forceRefresh: true)
         } else {
             // 113：常规刷新走 since 增量（新篇前插、旧篇不动、不跳顶）；
             // 登录翻转已在上支全量，空表走首拉。
@@ -1312,13 +1313,13 @@ class BearyFeedViewController: UIViewController {
     /// 登录翻转都走这里，不再整表替换）；无内容时走旧替换路径。
     /// silent：后台静默刷新用，失败不提示、不进错误行（旧内容继续展示，
     /// 下次进页/下拉再试；原位失败条只留给用户主动触发的刷新）。
-    private func loadPlazaFirstPage(diffMode: Bool = false, silent: Bool = false) {
+    private func loadPlazaFirstPage(diffMode: Bool = false, silent: Bool = false, forceRefresh: Bool = false) {
         // 80 包 B4：首拉带代际（revalidate 同口径），旧首拉回包直接丢弃。
         let firstPageGeneration = revalidateGeneration
         plazaLoading = true
         plazaFirstPageInFlight = true
         plazaError = false
-        BearyAPI.shared.fetchEntries(scope: feedScope, limit: firstPageLimit) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: feedScope, limit: firstPageLimit, forceRefresh: forceRefresh) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // 80 包 B4：代际不符时直接丢弃，不动模型与表；plazaLoading 不复位

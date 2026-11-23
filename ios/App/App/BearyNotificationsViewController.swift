@@ -1190,7 +1190,7 @@ final class BearyNotificationsViewController: UIViewController {
 
     // MARK: - 拉取
 
-    private func loadFirstPage(completion: (() -> Void)? = nil) {
+    private func loadFirstPage(forceRefresh: Bool = false, completion: (() -> Void)? = nil) {
         if isLoadingFirstPage {
             completion?()
             return
@@ -1202,7 +1202,8 @@ final class BearyNotificationsViewController: UIViewController {
         let requestEpoch = BearyAPI.shared.authEpoch
         // 第 17 轮 11：拍下发起时的已读操作代次（同轻量刷新）。
         let operationGen = readOperationGeneration
-        BearyAPI.shared.fetchNotifications(limit: requestedLimit) { [weak self] result in
+        // A-P0-2：下拉刷新强制穿透 GET 缓存；其余进页／未读变化重拉走缓存。
+        BearyAPI.shared.fetchNotifications(limit: requestedLimit, forceRefresh: forceRefresh) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.isLoadingFirstPage = false
@@ -1511,7 +1512,7 @@ final class BearyNotificationsViewController: UIViewController {
         } else {
             UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
         }
-        loadFirstPage(completion: { [weak self] in
+        loadFirstPage(forceRefresh: true, completion: { [weak self] in
             guard let strongSelf = self else { return }
             // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，loadFirstPage 回包到即收回。
             strongSelf.endCustomPullRefresh()

@@ -122,7 +122,8 @@ enum BearyBackgroundRefresh {
                 completion(false)
                 return
             }
-            BearyAPI.shared.fetchEntries(scope: .plaza, limit: BearyFeedCache.snapshotEntryLimit) { result in
+            // A-P0-2：后台快照要的是新鲜服务端数据，强制穿透 GET 缓存。
+            BearyAPI.shared.fetchEntries(scope: .plaza, limit: BearyFeedCache.snapshotEntryLimit, forceRefresh: true) { result in
                 DispatchQueue.main.async {
                     // 超时后晚到的回包：不做任何副作用，只收尾
                     //（finish 已由超时方调过，completion(false) 只是空操作）。
