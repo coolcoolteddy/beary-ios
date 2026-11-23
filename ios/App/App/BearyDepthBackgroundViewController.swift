@@ -124,7 +124,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
     private let overlayNameLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        labelValue.font = BearyDynamicType.pageTitleFont()
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = .white
         labelValue.shadowColor = UIColor.black.withAlphaComponent(0.5)
@@ -136,7 +136,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
         let stackValue = UIStackView()
         stackValue.translatesAutoresizingMaskIntoConstraints = false
         stackValue.axis = .vertical
-        stackValue.spacing = 12
+        stackValue.spacing = BearySpace.md
         return stackValue
     }()
 
@@ -144,7 +144,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
         let stackValue = UIStackView()
         stackValue.translatesAutoresizingMaskIntoConstraints = false
         stackValue.axis = .horizontal
-        stackValue.spacing = 8
+        stackValue.spacing = BearySpace.sm
         stackValue.alignment = .center
         return stackValue
     }()
@@ -152,7 +152,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
     private let nameLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        labelValue.font = BearyDynamicType.cardTitleFont()
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         return labelValue
@@ -161,7 +161,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
     private let stateLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        labelValue.font = BearyDynamicType.buttonRegularFont()
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         return labelValue
@@ -182,7 +182,6 @@ final class BearyDepthBackgroundViewController: UIViewController {
         scrollValue.showsHorizontalScrollIndicator = false
         scrollValue.showsVerticalScrollIndicator = false
         scrollValue.contentInsetAdjustmentBehavior = .never
-        scrollValue.contentInset = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         return scrollValue
     }()
 
@@ -190,7 +189,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
         let stackValue = UIStackView()
         stackValue.translatesAutoresizingMaskIntoConstraints = false
         stackValue.axis = .horizontal
-        stackValue.spacing = 8
+        stackValue.spacing = BearySpace.sm
         stackValue.alignment = .center
         return stackValue
     }()
@@ -199,8 +198,8 @@ final class BearyDepthBackgroundViewController: UIViewController {
         let buttonValue = UIButton(type: .custom)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.backgroundColor = BearyColors.orange
-        buttonValue.layer.cornerRadius = 14
-        buttonValue.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        buttonValue.layer.cornerRadius = BearyCorners.single
+        buttonValue.titleLabel?.font = BearyDynamicType.buttonFont()
         buttonValue.setTitleColor(.white, for: .normal)
         buttonValue.addTarget(self, action: #selector(applyButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
@@ -475,13 +474,13 @@ final class BearyDepthBackgroundViewController: UIViewController {
     /// 底部一行状态：当前档“已应用”、锁定档“Plus 专属”、节日款“节日限定”。
     private func stateForTheme(_ theme: Theme) -> (text: String?, color: UIColor) {
         if theme == currentThemeValue {
-            return ("已应用", BearyColors.gray)
+            return (NSLocalizedString("depth_picker.applied", comment: ""), BearyColors.gray)
         }
         if theme != .none && !isPlusValue {
-            return ("Plus 专属", BearyColors.ink)
+            return (NSLocalizedString("depth_picker.plus_only", comment: ""), BearyColors.ink)
         }
         if theme.isFestivalTheme {
-            return ("节日限定", BearyColors.orange)
+            return (NSLocalizedString("depth_picker.festival_limited", comment: ""), BearyColors.orange)
         }
         return (nil, BearyColors.gray)
     }
@@ -495,11 +494,11 @@ final class BearyDepthBackgroundViewController: UIViewController {
         stateLabel.textColor = state.color
         pageControl.currentPage = currentIndex
         if theme == currentThemeValue {
-            applyButton.setTitle("已应用", for: .normal)
+            applyButton.setTitle(NSLocalizedString("depth_picker.applied", comment: ""), for: .normal)
         } else if theme != .none && !isPlusValue {
-            applyButton.setTitle("Plus 专属", for: .normal)
+            applyButton.setTitle(NSLocalizedString("depth_picker.plus_only", comment: ""), for: .normal)
         } else {
-            applyButton.setTitle("应用这张封面", for: .normal)
+            applyButton.setTitle(NSLocalizedString("depth_picker.apply_cover", comment: ""), for: .normal)
         }
         updatePlusFooter()
         for (index, button) in thumbButtons.enumerated() {
