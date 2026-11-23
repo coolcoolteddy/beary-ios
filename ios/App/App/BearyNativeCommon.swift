@@ -3660,7 +3660,7 @@ enum BearyEphemeral {
         if ms < 6 * 3_600_000 { return .near }
         return .calm
     }
-    /// 四档倒计时文字色：充裕 #8e8e8a、临近暖黄、紧急橙、到期 #6d6d68。
+    /// 四档倒计时文字色：充裕 #8e8e8a、临近暖黄、紧急橙、到期深 #8e8e8e／浅 #6d6d68。
     static func countdownColor(for state: CountdownState) -> UIColor {
         switch state {
         case .calm: return BearyColors.limitedCalmCountdown
