@@ -1744,7 +1744,7 @@ final class BearyGetDedupCacheTests: XCTestCase {
     }
 
     func testTTLIsWithinDocumentedRange() {
-        XCTAssertTrue(BearyAPI.getCacheTTL >= 30 && BearyAPI.getCacheTTL <= 60, "TTL 须落在文档 30~60s 区间内")
+        XCTAssertTrue(BearyAPI.getCacheTTL >= 30 && BearyAPI.getCacheTTL <= 60)
     }
 
     func testSecondSequentialRequestHitsTTLCache() {
@@ -1760,7 +1760,7 @@ final class BearyGetDedupCacheTests: XCTestCase {
             if case .success = result { secondDone.fulfill() }
         }
         wait(for: [secondDone], timeout: 5)
-        XCTAssertEqual(stubCount(), 1, "第二次连续进入同一列表须命中 TTL 缓存、0 新增网络请求")
+        XCTAssertEqual(stubCount(), 1)
     }
 
     func testConcurrentSameKeySendsOneRequest() {
@@ -1774,7 +1774,7 @@ final class BearyGetDedupCacheTests: XCTestCase {
             if case .success = result { secondDone.fulfill() }
         }
         wait(for: [firstDone, secondDone], timeout: 5)
-        XCTAssertEqual(stubCount(), 1, "并发同 key 只发 1 个请求")
+        XCTAssertEqual(stubCount(), 1)
     }
 
     func testForceRefreshBypassesCache() {
@@ -1790,7 +1790,7 @@ final class BearyGetDedupCacheTests: XCTestCase {
             if case .success = result { refreshDone.fulfill() }
         }
         wait(for: [refreshDone], timeout: 5)
-        XCTAssertEqual(stubCount(), 2, "下拉刷新（forceRefresh）须强制穿透、重新发网络请求")
+        XCTAssertEqual(stubCount(), 2)
     }
 
     func testFlagOffDisablesDedupAndCache() {
@@ -1806,6 +1806,6 @@ final class BearyGetDedupCacheTests: XCTestCase {
             if case .success = result { secondDone.fulfill() }
         }
         wait(for: [secondDone], timeout: 5)
-        XCTAssertEqual(stubCount(), 2, "开关关时恢复旧行为：每次 GET 都走网络")
+        XCTAssertEqual(stubCount(), 2)
     }
 }
