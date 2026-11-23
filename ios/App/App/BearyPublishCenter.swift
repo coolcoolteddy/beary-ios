@@ -969,17 +969,17 @@ final class BearyPublishCenter {
         return "账号已变化，本篇未发布。请回到原账号后再发布，或丢弃本篇重新开始。"
     }
 
-    /// 部分成功失败文案：第 25 轮 13（收窄）：原日记已公开时，在原失败
-    /// 文案前加“原日记已公开，新篇未发布。”；未公开时原样返回。
-    /// 通用“发布失败，请重试”只改成“原日记已公开，新篇未发布，请重试”，
-    /// 不重复“发布失败”。仅供上述四条分支用；fail(error:) 与账号失配
-    /// 分支已有部分成功口径，不走这里。
+    /// 部分成功失败文案：Li 2026-11-22 定——先说失败，再说引用的日记已公开；
+    /// 原日记确实已公开时才走这里（sourcePublished 门），未公开时原样返回。
+    /// 通用“发布失败，请重试”只改成“发布失败，引用的日记已公开，请重试”；
+    /// 有具体原因的接在后面，不丢原因。仅供上述四条分支用；fail(error:) 与
+    /// 账号失配分支已有部分成功口径，不走这里。
     private func partialFailureMessage(_ base: String, runningJob: RunningJob) -> String {
         guard runningJob.sourcePublished else { return base }
         if base == "发布失败，请重试" {
-            return "原日记已公开，新篇未发布，请重试"
+            return "发布失败，引用的日记已公开，请重试"
         }
-        return "原日记已公开，新篇未发布。" + base
+        return "发布失败，引用的日记已公开。" + base
     }
 
     private func reportProgress(_ runningJob: RunningJob, value: Double) {
