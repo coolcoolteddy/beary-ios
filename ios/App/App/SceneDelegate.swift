@@ -3866,7 +3866,7 @@ final class BearyChromeViewController: UIViewController {
         let initialNickname = displayName.isEmpty ? "Teddy" : displayName
         let locatedCity = pendingLocatedCity
         pendingLocatedCity = nil
-        BearyIDCardFormSheet.show(from: topmostViewController(), initialNickname: initialNickname, locatedCity: locatedCity, onGenerate: { [weak self] data in
+        BearyIDCardFormSheet.show(from: topmostViewController(), initialNickname: initialNickname, serverDisplayName: displayName.isEmpty ? nil : displayName, locatedCity: locatedCity, onGenerate: { [weak self] data in
             guard let strongSelf = self else { return }
             strongSelf.isIDCardFormPresenting = false
             BearyIDCardStore.markFormSeen(userId: userId)

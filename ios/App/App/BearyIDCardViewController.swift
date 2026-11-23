@@ -4,16 +4,17 @@ import UIKit
 // 流程：进主页后约 400ms 弹表单（只弹一次）→「生成 ID 卡」/「跳过」380ms 后
 // 弹 ID 卡。两张 sheet 都走共享底部弹窗容器 BearyBottomSheet（阻力＋弹回
 // 手感与全站弹窗统一），视觉按预览：白底、顶圆角 26、抓手。
-// 数据只存本地（见 BearyIDCard.swift 注释：服务端 display_name 有唯一性
-// 校验且无生日/城市字段，本流程不调 profile 接口）。
+// 生日/城市只存本地（见 BearyIDCard.swift 注释：服务端无对应字段）；
+// 昵称上云，见 generateTapped，先 PUT /api/account/profile 同步 display_name，
+// 服务端唯一校验，重名回 name_taken。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 // MARK: - Form sheet
 
 enum BearyIDCardFormSheet {
 
-    static func show(from presenter: UIViewController, initialNickname: String, locatedCity: (country: String, region: String, city: String)?, onGenerate: @escaping (BearyIDCardData) -> Void, onSkip: @escaping (BearyIDCardData) -> Void, onDismissedWithoutChoice: @escaping () -> Void) {
-        let sheet = BearyIDCardFormViewController(initialNickname: initialNickname, locatedCity: locatedCity)
+    static func show(from presenter: UIViewController, initialNickname: String, serverDisplayName: String?, locatedCity: (country: String, region: String, city: String)?, onGenerate: @escaping (BearyIDCardData) -> Void, onSkip: @escaping (BearyIDCardData) -> Void, onDismissedWithoutChoice: @escaping () -> Void) {
+        let sheet = BearyIDCardFormViewController(initialNickname: initialNickname, serverDisplayName: serverDisplayName, locatedCity: locatedCity)
         sheet.onGenerate = onGenerate
         sheet.onSkip = onSkip
         sheet.onDismissedWithoutChoice = onDismissedWithoutChoice
@@ -32,6 +33,11 @@ enum BearyIDCardFormSheet {
     }
 }
 
+/// PUT /api/account/profile 回包（服务端回 {ok, signature}，本流程只取 ok）。
+private struct NicknameUpdateResponse: Decodable {
+    var ok: Bool?
+}
+
 final class BearyIDCardFormViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate {
 
     var onGenerate: ((BearyIDCardData) -> Void)?
@@ -42,6 +48,9 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
     var sheetDelegate: BearyBottomSheetTransitioningDelegate?
 
     private let initialNickname: String
+    /// 服务端现行 display_name（nil = 未设置）：生成时填的新昵称与它不同才上传；
+    /// 与 initialNickname 的区别是后者为空时已回退成默认名 Teddy，不能用来比对。
+    private let serverDisplayName: String?
     private let locatedCity: (country: String, region: String, city: String)?
 
     // 表单状态。
@@ -52,6 +61,9 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
     private var selectedCity: String?
     private var didChoose = false
     private var extraBottomInset: CGFloat = 0
+    /// 生成／跳过钮：昵称上传在途时一并禁用，重名退回时恢复。
+    private var generateButton: UIButton?
+    private var skipButton: UIButton?
 
     // 级联选择器状态。
     private var pickerLevel = 0 // 0 国家 / 1 地区 / 2 城市
@@ -73,8 +85,9 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
     private let cityContainer = UIView()
     private let birthdayPicker = UIDatePicker()
 
-    init(initialNickname: String, locatedCity: (country: String, region: String, city: String)?) {
+    init(initialNickname: String, serverDisplayName: String?, locatedCity: (country: String, region: String, city: String)?) {
         self.initialNickname = initialNickname
+        self.serverDisplayName = serverDisplayName
         self.locatedCity = locatedCity
         if let located = locatedCity {
             selectedCountry = located.country
@@ -258,6 +271,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         // 生成＋跳过。
         let generateButton = makeSheetBlackButton(title: "生成 ID 卡")
         generateButton.addTarget(self, action: #selector(generateTapped), for: .touchUpInside)
+        self.generateButton = generateButton
         formStack.addArrangedSubview(generateButton)
         let skipButton = UIButton(type: .system)
         skipButton.translatesAutoresizingMaskIntoConstraints = false
@@ -266,6 +280,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         skipButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         skipButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         skipButton.addTarget(self, action: #selector(skipFormTapped), for: .touchUpInside)
+        self.skipButton = skipButton
         formStack.addArrangedSubview(skipButton)
         formStack.addArrangedSubview(spacer(20))
     }
@@ -328,12 +343,69 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
 
     @objc private func generateTapped() {
         guard !didChoose else { return }
-        didChoose = true
         let nickname = nicknameField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let resolved = nickname.isEmpty ? "Teddy" : nickname
         let data = BearyIDCardData(nickname: resolved, birthdayMonth: birthdayMonth, birthdayDay: birthdayDay, country: selectedCountry, region: selectedRegion, city: selectedCity)
+        // 昵称上云：没填（占位默认名 Teddy 不上传，免得抢占公共名）或与服务端
+        // 现值相同，直接走原流程；填了新昵称才 PUT /api/account/profile。
+        let serverName = (serverDisplayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !nickname.isEmpty, nickname != serverName else {
+            finishGenerate(data: data)
+            return
+        }
+        didChoose = true
+        setActionButtonsEnabled(false)
+        BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: ["display_name": nickname]) { [weak self] (result: Result<NicknameUpdateResponse, APIError>) in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                switch result {
+                case .success:
+                    // 成功即更新当前用户快照（名字／保管库同步，编辑资料页同款），
+                    // 设置页账号列表与 ID 卡不再等下一次 /me。
+                    SessionManager.shared.applyEditedProfile(displayName: nickname, handle: SessionManager.shared.currentUser?.handle ?? "", avatarDataURL: nil)
+                    strongSelf.finishGenerate(data: data)
+                case .failure(let err):
+                    if case .server(let code, _) = err, code == "name_taken" || code == "name_too_long" || code == "name_no_text" {
+                        // 重名／超长／无文字数字：留在表单里改，不记已选、不关表单。
+                        strongSelf.didChoose = false
+                        strongSelf.setActionButtonsEnabled(true)
+                        let message: String
+                        switch code {
+                        case "name_taken": message = "这个昵称已被使用，换一个吧"
+                        case "name_too_long": message = "显示名称最多 30 个字"
+                        default: message = "昵称需至少包含一个文字或数字"
+                        }
+                        strongSelf.presentSimpleAlert(message: message)
+                        return
+                    }
+                    // 其余失败（网络／服务端异常）：先本地生成、不卡引导流程，
+                    // 明示同步失败，稍后可在编辑资料里再改。
+                    strongSelf.presentSimpleAlert(message: "昵称没能同步到云端，已先保存在本机，稍后可在编辑资料里修改") {
+                        strongSelf.finishGenerate(data: data)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 生成收尾：记已选、调 onGenerate、关表单（原 generateTapped 后半段）。
+    private func finishGenerate(data: BearyIDCardData) {
+        didChoose = true
         onGenerate?(data)
         dismiss(animated: BearyMotion.animated(true))
+    }
+
+    private func setActionButtonsEnabled(_ enabled: Bool) {
+        generateButton?.isEnabled = enabled
+        skipButton?.isEnabled = enabled
+    }
+
+    /// 原 UIAlertController(.alert) 单「知道了」钮，改走共享底部弹窗
+    /// （编辑资料页 presentSimpleAlert 同款做法：标题传空，只显说明＋按钮）。
+    private func presentSimpleAlert(message: String, onDismiss: (() -> Void)? = nil) {
+        BearyConfirmSheet.show(from: self, title: "", message: message, actions: [
+            BearyConfirmSheet.Action(title: "知道了", style: .default, handler: onDismiss),
+        ])
     }
 
     @objc private func skipFormTapped() {

@@ -2,10 +2,10 @@ import Foundation
 
 /// 注册后引导 ID 卡：本地数据与持久化。
 ///
-/// 注意：只存本地，不写服务端。服务端 PUT /api/account/profile 对 display_name
-/// 有唯一性校验（重名回 name_taken），且没有生日/城市字段——任务口径「服务端
-/// display_name 无唯一性校验」与本地 worker.js 不符（见 PR 说明），故本流程
-/// 不调任何 profile 接口；昵称可重复、空昵称回退默认名 Teddy。
+/// 注意：生日/城市只存本地，不写服务端（服务端无对应字段）。昵称上云：
+/// 表单里填的新昵称先 PUT /api/account/profile 同步 display_name（服务端
+/// 唯一校验，重名回 name_taken，表单内提示改名；见 BearyIDCardFormViewController
+/// generateTapped）；空昵称回退默认名 Teddy，占位名不上传。
 struct BearyIDCardData: Codable {
     /// 解析后昵称（表单空着时填默认名 Teddy，永不为空）。
     var nickname: String
