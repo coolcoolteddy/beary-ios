@@ -2147,8 +2147,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         wrap.addSubview(label)
         NSLayoutConstraint.activate([
             label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
-            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -16),
             label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
         ])
         staleResultsBanner = wrap
@@ -2213,8 +2213,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         wrap.addSubview(label)
         NSLayoutConstraint.activate([
             label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
-            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -16),
             label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
         ])
         localOnlyBanner = wrap
@@ -2264,8 +2264,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         wrap.addSubview(label)
         NSLayoutConstraint.activate([
             label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
-            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -16),
             label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
         ])
         partialArchiveBanner = wrap
@@ -3103,8 +3103,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         wrap.addSubview(label)
         NSLayoutConstraint.activate([
             label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
-            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -16),
             label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
         ])
         return wrap
