@@ -30,8 +30,12 @@ enum BearyColors {
     /// 新底 #F5F5F5 上约 5.01:1，本 token 字色不动、仍保留。
     static var surface3ErrorText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 107.0/255.0, blue: 97.0/255.0, alpha: 1) : UIColor(red: 189.0/255.0, green: 36.0/255.0, blue: 36.0/255.0, alpha: 1) } }
     /// 点赞填色：亮红 #ff3b30（2026-10-29 Li 定，明显亮于语义红 #e5484d；仅点赞入口用——
-    /// 删除按钮走 destructiveText，语义红仍走 red，收藏点亮仍走 orange，不动）。
+    /// 删除按钮走 destructiveText，语义红仍走 red，收藏点亮走 bookmarkGold，不动）。
     static var likeRed: UIColor { UIColor(red: 1.0, green: 59.0/255.0, blue: 48.0/255.0, alpha: 1) }
+    /// 收藏点亮金：浅 #B8860B / 深 #FFCC00（2026-11-21 Li 定，规范 v12 选 1：
+    /// 橙只留给公开档位，收藏已选态与收藏反馈粒子（星星）均走本 token，不走 orange）。
+    /// 浅色白底对比约 3.25:1、深色黑底对比约 13.89:1，均 ≥3:1。
+    static var bookmarkGold: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 204.0/255.0, blue: 0, alpha: 1) : UIColor(red: 184.0/255.0, green: 134.0/255.0, blue: 11.0/255.0, alpha: 1) } }
     /// 图片上的深色衬底：固定黑色半透明（与 ink 不同——深色下 ink 是近白，白字会看不清）。
     static var scrim: UIColor { UIColor(white: 0, alpha: 0.6) }
     /// 网页 --blue：浅 #007aff / 深 #0a84ff（深色 G 通道精确 132/255，勿再写 0.52）。
@@ -40,7 +44,7 @@ enum BearyColors {
     static var green: UIColor { UIColor(red: 47.0/255.0, green: 191.0/255.0, blue: 113.0/255.0, alpha: 1) }
     /// 正文用深橙（ChatGPT 审计第四类新 token）：浅 #C2410C / 深 #ff9500。
     /// 浅色白底对比约 5.18:1、橙底 0.12 浅底对比约 4.69:1；深色黑底对比约 9.55:1。
-    /// 只用于文字前景；图标/FAB/收藏/大号文字/描边仍走 orange，不动。
+    /// 只用于文字前景；图标/FAB/大号文字/描边仍走 orange，不动。
     /// 唯一例外（第十轮 #13）：系统通知图标（19pt 信封，橙 14% 底）浅色对比仅
     /// 约 2.20:1，浅色改走本 token（深色与 orange 同值 #ff9500，不变）。
     static var deepOrangeText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) : UIColor(red: 194.0/255.0, green: 65.0/255.0, blue: 12.0/255.0, alpha: 1) } }
