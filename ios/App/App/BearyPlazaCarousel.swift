@@ -14,8 +14,8 @@ import UIKit
 // （登录用 user id，未登录用 guest），登录态绝不读 guest 桶；切号即换桶，
 // 旧桶内容不再渲染；缓存里只有 id，不存正文——渲染永远取当前内存里的
 // 广场条目，id 对不上就地重挑，不把旧内容当新鲜的展示。历史上的今天是
-// 公开静态内容，不按身份缓存（当日一桶）；历史页只列当天 3 条，
-// 不拉日记、不写入口。
+// 公开静态内容，不按身份缓存（当日一桶）；历史页列当天事件
+// （服务端给几条列几条；未部署新字段时用老 events 兜底），不拉日记、不写入口。
 // 部署目标 iOS 15.0、Swift 5.0：只用闭包回调，不用 async/await，不用 if-let 简写。
 
 // MARK: - 历史上的今天（GET /api/history-today；每天 3 条＋小熊评论）
@@ -23,10 +23,31 @@ import UIKit
 /// 服务端回包：{ date: "yyyy-MM-dd", events: [3 条], comments: [3 条] }。
 /// comments 在兜底路径下可能缺省；events 为空或解码失败一律按未加载处理。
 /// 事件文案是陈述句（服务端已按“不超过 25 字”成句），直接展示、不再加工。
+/// 服务端新字段（历史上的今天改版）：农历、节日、带年份的事件明细、生日。
+/// 一律可选——老端点回包没有这些字段时照常解码，展示层用老 events 兜底，
+/// 绝不空白页。
+struct BearyHistoryTodayEventDetail: Codable {
+    var year: Int?
+    var text: String
+    var comment: String?
+}
+
+struct BearyHistoryTodayBirth: Codable {
+    var year: Int?
+    var name: String
+    var intro: String?
+}
+
 struct BearyHistoryToday: Codable {
     var date: String
     var events: [String]
     var comments: [String]?
+
+    var lunar: String?
+    var lunarYear: String?
+    var festival: String?
+    var eventsDetail: [BearyHistoryTodayEventDetail]?
+    var births: [BearyHistoryTodayBirth]?
 
     var firstEvent: String? { events.first }
 
@@ -35,6 +56,39 @@ struct BearyHistoryToday: Codable {
         guard let comments = comments, index >= 0, index < comments.count else { return nil }
         let text = comments[index].trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : text
+    }
+
+    /// 展示用事件行：新字段 eventsDetail 优先；缺省或全空时用老 events＋
+    /// 同下标评论合成，绝不空白页。
+    var displayEvents: [BearyHistoryTodayEventDetail] {
+        if let detail = eventsDetail {
+            let cleaned = detail.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if !cleaned.isEmpty { return cleaned }
+        }
+        return events.enumerated().map { BearyHistoryTodayEventDetail(year: nil, text: $0.element, comment: comment(at: $0.offset)) }
+    }
+
+    /// 展示用生日：最多 4 人（服务端多给也只取前 4）。
+    var displayBirths: [BearyHistoryTodayBirth] {
+        return Array((births ?? []).prefix(4))
+    }
+
+    /// 农历日期（"十月十五"），空白当缺省。
+    var lunarDay: String? {
+        guard let lunar = lunar?.trimmingCharacters(in: .whitespacesAndNewlines), !lunar.isEmpty else { return nil }
+        return lunar
+    }
+
+    /// 农历年份（"丙午年"），空白当缺省。
+    var lunarYearText: String? {
+        guard let lunarYear = lunarYear?.trimmingCharacters(in: .whitespacesAndNewlines), !lunarYear.isEmpty else { return nil }
+        return lunarYear
+    }
+
+    /// 节日，空白当缺省；没有就不显示节日行。
+    var festivalText: String? {
+        guard let festival = festival?.trimmingCharacters(in: .whitespacesAndNewlines), !festival.isEmpty else { return nil }
+        return festival
     }
 
     /// 当日日期文案（"11月18日"）。
@@ -287,14 +341,22 @@ enum BearyPlazaCarouselText {
         formatter.timeStyle = .none
         return formatter
     }()
+
+    /// 历史卡日期行："11月23日 · 农历十月十五"；农历缺省时只显公历日期。
+    static func historyDateLine(for payload: BearyHistoryToday) -> String {
+        guard let lunar = payload.lunarDay else { return payload.dateLabel }
+        return String(format: NSLocalizedString("historyToday.carousel_date_lunar", comment: ""), payload.dateLabel, lunar)
+    }
 }
 
 // MARK: - 轮播视图
 
 final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UIScrollViewDelegate {
 
-    static let cardHeight: CGFloat = 76
-    static let preferredHeight: CGFloat = 100
+    // 卡高 76 → 112：历史卡现为 5 行（日期行＋3 条事件速览＋第一句小熊评论），
+    // 76 放不下；精选／盲盒卡内部结构不动，文字栈仍居中，只是卡变高了。
+    static let cardHeight: CGFloat = 112
+    static let preferredHeight: CGFloat = 136
 
     /// 自动换页间隔（方案定 3–5 秒，取中间 4 秒）。
     private static let autoAdvanceInterval: TimeInterval = 4
@@ -572,6 +634,10 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         eyebrowLabel.isHidden = false
+        // 历史卡改了标题行数／字重／副行显隐，复用前一律复位（精选／盲盒卡是单行）。
+        titleLabel.numberOfLines = 1
+        titleLabel.font = BearyDynamicType.smallSemiboldFont()
+        metaLabel.isHidden = false
         onSelect = nil
     }
 
@@ -585,17 +651,25 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
             bodyButton.accessibilityLabel = "今日推荐：\(BearyPlazaCarouselText.displayTitle(for: entry))"
         case .historyToday(let payload):
             eyebrowLabel.isHidden = false
-            eyebrowLabel.text = "历史上的今天"
-            if let event = payload?.firstEvent {
-                // 轮播每天一条：取当日 3 条里的第一条；副行配它的小熊评论。
-                titleLabel.text = event
-                metaLabel.text = payload?.comment(at: 0) ?? payload?.dateLabel ?? ""
+            if let payload = payload {
+                // 日期行：公历＋农历（农历缺省只显公历）。
+                eyebrowLabel.text = BearyPlazaCarouselText.historyDateLine(for: payload)
+                // 3 条事件速览：前 3 条各一行；副行是第一句小熊评论（没有不显示）。
+                titleLabel.numberOfLines = 3
+                titleLabel.font = BearyDynamicType.smallBodyFont()
+                let previewEvents = payload.displayEvents.prefix(3)
+                let previewText = previewEvents.map { $0.text }.joined(separator: "\n")
+                titleLabel.text = previewText.isEmpty ? payload.dateLabel : previewText
+                let firstComment: String? = previewEvents.first.flatMap { $0.comment }
+                metaLabel.text = firstComment
+                metaLabel.isHidden = firstComment == nil
             } else {
-                // 还在加载：标题给日期、副行明说正在加载，不编一条假事件。
+                // 还在加载：眉标给标题、标题给日期、副行明说正在加载，不编一条假事件。
+                eyebrowLabel.text = NSLocalizedString("historyToday.title", comment: "")
                 titleLabel.text = BearyHistoryToday.dateLabel(for: BlindBoxDate.todayKey())
                 metaLabel.text = "正在加载…"
             }
-            bodyButton.accessibilityLabel = "历史上的今天：\(titleLabel.text ?? "")"
+            bodyButton.accessibilityLabel = String(format: NSLocalizedString("historyToday.carousel_a11y", comment: ""), NSLocalizedString("historyToday.title", comment: ""), titleLabel.text ?? "")
         case .blindBox:
             // 盲盒页不用眉标行（标题本身就是“盲盒交换”）；副行是今日计数，
             // 已换完追加原小卡已换态文案，未登录追加登录提示。
@@ -615,239 +689,5 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
 
     @objc private func bodyTapped() {
         onSelect?()
-    }
-}
-
-// MARK: - 历史上的今天页（轮播历史卡点开进这里：当天 3 条＋小熊评论）
-
-final class BearyHistoryTodayViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
-
-    private enum LoadState {
-        case loading
-        case loaded(BearyHistoryToday)
-        case failed
-    }
-
-    private var loadState: LoadState = .loading
-
-    private let topBar = UIView()
-    private let tableView = UITableView(frame: .zero, style: .plain)
-    private let headerView = UIView()
-    private let dateLabel = UILabel()
-    private var headerHeight: CGFloat = 0
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
-
-        // 顶栏：全屏页统一左箭头返回（与盲盒流程页同口径）。
-        topBar.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(topBar)
-        let backButton = BearyHit44Button(type: .system)
-        backButton.translatesAutoresizingMaskIntoConstraints = false
-        if let back = BearyIconImages.image(named: "icon_back", pointSize: 24) {
-            backButton.setImage(back, for: .normal)
-        } else {
-            backButton.setTitle("返回", for: .normal)
-        }
-        backButton.tintColor = BearyColors.ink
-        backButton.setTitleColor(BearyColors.ink, for: .normal)
-        backButton.accessibilityLabel = "返回"
-        backButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        backButton.bearyAddPressFeedback()
-        topBar.addSubview(backButton)
-        let topTitle = UILabel()
-        topTitle.translatesAutoresizingMaskIntoConstraints = false
-        topTitle.text = "历史上的今天"
-        topTitle.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
-        topTitle.adjustsFontForContentSizeCategory = true
-        topTitle.textColor = BearyColors.ink
-        topBar.addSubview(topTitle)
-
-        tableView.translatesAutoresizingMaskIntoConstraints = false
-        tableView.backgroundColor = BearyColors.bg
-        tableView.separatorStyle = .none
-        tableView.dataSource = self
-        tableView.delegate = self
-        tableView.register(BearyHistoryTodayRowCell.self, forCellReuseIdentifier: "BearyHistoryTodayRowCell")
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "BearyHistoryTodayStateCell")
-        view.addSubview(tableView)
-
-        NSLayoutConstraint.activate([
-            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBar.heightAnchor.constraint(equalToConstant: 52),
-            backButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 8),
-            backButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            backButton.widthAnchor.constraint(equalToConstant: 44),
-            backButton.heightAnchor.constraint(equalToConstant: 44),
-            topTitle.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
-            topTitle.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-
-        buildHeaderView()
-        // 缓存命中直接渲染（轮播拉过即有，不闪加载态）；未命中才发请求。
-        if let payload = BearyHistoryTodayLoader.cached() {
-            loadState = .loaded(payload)
-            dateLabel.text = payload.dateLabel
-        } else {
-            load()
-        }
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        layoutHeaderView()
-    }
-
-    @objc private func closeTapped() {
-        dismiss(animated: BearyMotion.animated(true), completion: nil)
-    }
-
-    // MARK: - 表头（当日日期）
-
-    private func buildHeaderView() {
-        dateLabel.translatesAutoresizingMaskIntoConstraints = false
-        dateLabel.text = BearyHistoryToday.dateLabel(for: BlindBoxDate.todayKey())
-        dateLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 20, weight: .semibold))
-        dateLabel.adjustsFontForContentSizeCategory = true
-        dateLabel.textColor = BearyColors.ink
-        dateLabel.numberOfLines = 1
-        headerView.addSubview(dateLabel)
-        NSLayoutConstraint.activate([
-            dateLabel.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 8),
-            dateLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
-            dateLabel.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
-            dateLabel.bottomAnchor.constraint(equalTo: headerView.bottomAnchor, constant: -8),
-        ])
-        tableView.tableHeaderView = headerView
-    }
-
-    private func layoutHeaderView() {
-        let width = tableView.bounds.width
-        guard width > 0 else { return }
-        headerView.frame.size.width = width
-        let height = headerView.systemLayoutSizeFitting(
-            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height
-        if abs(height - headerHeight) > 0.5 || tableView.tableHeaderView == nil {
-            headerHeight = height
-            headerView.frame = CGRect(x: 0, y: 0, width: width, height: height)
-            tableView.tableHeaderView = headerView
-        }
-    }
-
-    // MARK: - 加载（失败不谎报，给重试）
-
-    private func load() {
-        loadState = .loading
-        tableView.reloadData()
-        BearyHistoryTodayLoader.load { [weak self] payload in
-            guard let self = self else { return }
-            if let payload = payload {
-                self.loadState = .loaded(payload)
-                self.dateLabel.text = payload.dateLabel
-            } else {
-                self.loadState = .failed
-            }
-            self.tableView.reloadData()
-        }
-    }
-
-    // MARK: - UITableViewDataSource / Delegate
-
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        switch loadState {
-        case .loading, .failed: return 1
-        case .loaded(let payload): return payload.events.count
-        }
-    }
-
-    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        switch loadState {
-        case .loading:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "BearyHistoryTodayStateCell", for: indexPath)
-            cell.textLabel?.text = "正在加载…"
-            cell.textLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-            cell.textLabel?.textColor = BearyColors.gray
-            cell.textLabel?.textAlignment = .center
-            cell.selectionStyle = .none
-            return cell
-        case .failed:
-            let cell = tableView.dequeueReusableCell(withIdentifier: "BearyHistoryTodayStateCell", for: indexPath)
-            cell.textLabel?.text = "加载失败，点按重试"
-            cell.textLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-            cell.textLabel?.textColor = BearyColors.gray
-            cell.textLabel?.textAlignment = .center
-            cell.selectionStyle = .none
-            return cell
-        case .loaded(let payload):
-            let cell = tableView.dequeueReusableCell(withIdentifier: "BearyHistoryTodayRowCell", for: indexPath) as! BearyHistoryTodayRowCell
-            cell.configure(event: payload.events[indexPath.row], comment: payload.comment(at: indexPath.row))
-            return cell
-        }
-    }
-
-    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        tableView.deselectRow(at: indexPath, animated: true)
-        if case .failed = loadState {
-            load()
-        }
-    }
-}
-
-// MARK: - 历史事件行（事件＋小熊评论）
-
-final class BearyHistoryTodayRowCell: UITableViewCell {
-
-    private let eventLabel = UILabel()
-    private let commentLabel = UILabel()
-
-    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
-        super.init(style: style, reuseIdentifier: reuseIdentifier)
-        backgroundColor = BearyColors.bg
-        selectionStyle = .none
-
-        eventLabel.translatesAutoresizingMaskIntoConstraints = false
-        eventLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
-        eventLabel.adjustsFontForContentSizeCategory = true
-        eventLabel.textColor = BearyColors.ink
-        eventLabel.numberOfLines = 0
-
-        commentLabel.translatesAutoresizingMaskIntoConstraints = false
-        commentLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        commentLabel.adjustsFontForContentSizeCategory = true
-        commentLabel.textColor = BearyColors.gray
-        commentLabel.numberOfLines = 0
-
-        let stack = UIStackView(arrangedSubviews: [eventLabel, commentLabel])
-        stack.axis = .vertical
-        stack.spacing = 4
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
-            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
-        ])
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func configure(event: String, comment: String?) {
-        eventLabel.text = event
-        commentLabel.text = comment
-        commentLabel.isHidden = (comment == nil)
-        accessibilityLabel = event
     }
 }
