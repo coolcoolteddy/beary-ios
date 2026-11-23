@@ -5,7 +5,7 @@ import UIKit
 // 2026-11-16 05:44 构建，简洁精致版＋裁切已修；Li 2026-11-18 定按预览做 App 实现）。
 // 与 v3 的主要变化：顶栏四段细进度 → 四圆点（当前页 20pt 长胶囊）；底部圆角卡片
 // 改为标题区（页码＋衬线标题＋副文案，左对齐）＋底部按钮区（墨色 99px 胶囊主钮
-// 52 高＋仅第 4 页的次钮）；演示卡改为预览同款（日期＋可见性胶囊＋占位灰线）；
+// 56 高＋仅第 4 页的次钮）；演示卡改为预览同款（日期＋可见性胶囊＋占位灰线）；
 // 第 2 页可见性列表改为静态三行；第 3 页回应钮 56 圆＋分段切换联动胶囊；第 4 页
 // 庆祝熊＋闪烁光标＋点主钮盖橙色印章；「跳过」直达第 4 页（不再直接退出）。
 // 公开契约（与 v3 相同，SceneDelegate 不动）：
@@ -394,7 +394,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         titleStack.setCustomSpacing(6, after: pageNumberLabel)
         titleStack.setCustomSpacing(9, after: titleLabel)
 
-        // 底部按钮区：墨色胶囊主钮 52 高＋仅第 4 页的次钮（42 高占位，平时透明）。
+        // 底部按钮区：墨色胶囊主钮 56 高＋仅第 4 页的次钮（44 高占位，平时透明）。
         actionsView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(actionsView)
         actionsStack.translatesAutoresizingMaskIntoConstraints = false
@@ -492,8 +492,8 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
             actionsStack.leadingAnchor.constraint(equalTo: actionsView.leadingAnchor),
             actionsStack.trailingAnchor.constraint(equalTo: actionsView.trailingAnchor),
             actionsStack.bottomAnchor.constraint(equalTo: actionsView.bottomAnchor),
-            primaryButton.heightAnchor.constraint(equalToConstant: 52),
-            secondaryButton.heightAnchor.constraint(equalToConstant: 42),
+            primaryButton.heightAnchor.constraint(equalToConstant: 56),
+            secondaryButton.heightAnchor.constraint(equalToConstant: 44),
         ])
     }
 
