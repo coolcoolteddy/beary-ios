@@ -3295,7 +3295,7 @@ final class BearyDetailViewController: UIViewController {
                     if saved {
                         BearyOfflineSaveManager.shared.remove(entryId: entryId) { [weak self] removed in
                             guard let self = self else { return }
-                            BearyToast.show(in: self.view, message: removed ? "已取消离线保存" : "取消失败，请重试")
+                            BearyToast.show(in: self.view, message: removed ? NSLocalizedString("offline_save.cancel_success", comment: "") : NSLocalizedString("offline_save.cancel_failed", comment: ""))
                         }
                     } else {
                         BearyOfflineSaveManager.shared.save(entry: self.entry) { result in

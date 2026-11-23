@@ -844,7 +844,7 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
         // 移除走 Manager 串行队列（与批量保存的清单写盘串行），完成回主线程再刷新。
         BearyOfflineSaveManager.shared.remove(entryId: entryId) { [weak self] removed in
             guard let self = self else { return }
-            BearyToast.show(in: self.view, message: removed ? "已移除离线保存" : "移除失败，请重试")
+            BearyToast.show(in: self.view, message: removed ? NSLocalizedString("offline_save.remove_success", comment: "") : NSLocalizedString("offline_save.remove_failed", comment: ""))
             self.render()
         }
     }
@@ -883,7 +883,7 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
                 // 清除走 Manager 串行队列，批量保存进行中会排队，等本批结算完再删整桶。
                 BearyOfflineSaveManager.shared.removeAll() { [weak self] cleared in
                     guard let self = self else { return }
-                    BearyToast.show(in: self.view, message: cleared ? "已清除全部离线保存" : "清除失败，请重试")
+                    BearyToast.show(in: self.view, message: cleared ? NSLocalizedString("offline_save.clear_all_success", comment: "") : NSLocalizedString("offline_save.clear_all_failed", comment: ""))
                     self.render()
                 }
             },
