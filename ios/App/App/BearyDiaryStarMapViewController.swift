@@ -38,19 +38,21 @@ import UIKit
 //   注册由另一工人做；本页不自绘、不拿 SF Symbol 顶替）。页内其余图标
 //   一律官方包已有：关闭 icon_close、星星 icon_star、日历 icon_calendar、
 //   锁 icon_lock、地球 icon_globe、右箭头 icon_chevron_right。
-// - 星空固定深色夜空（不跟随系统深浅），亮度语义在任何主题下可读。
+// - 星空固定纯黑画布 #000000（不跟随系统深浅），亮度语义在任何主题下可读。
 
 // MARK: - 星图夜景样式 Token（视觉清单第 11 项）
 //
-// 星空页固定深色夜空，不随系统深浅 / 全局主题变色：以下全部为固定值
-// （非 UIColor { trait } 动态色）。
+// 星空页固定纯黑画布（#000000），不随系统深浅 / 全局主题变色：
+// 以下全部为固定值（非 UIColor { trait } 动态色）。
 // [24] 小项 7：星图颜色换成 #FFB333（255 / 179 / 51）：星体本色与选中色
 // 同为该值；旧星体色 1 / 0.85 / 0.54（偏浅黄）已改，选中色原 1 / 0.70 / 0.20
 // 只是 #FFB333 的近似值，现改写为精确值；星图结构与亮度/大小逻辑一字不动。
 // 刻意未收进来的：底卡可见性行与详情钮仍走 BearyColors.orange / blue
 //（全局品牌与语义色，非夜景固定色），不在本 Token 口径内。
 enum BearyStarMapNight {
-    static let background = UIColor(red: 0.02, green: 0.03, blue: 0.06, alpha: 1)
+    /// 画布底色固定纯黑 #000000（2.5D 改版第 0 支）：不跟随浅色，
+    /// 与预览画布（fillStyle '#000'）一致；页底色与画布底色同值。
+    static let background = UIColor.black
     static let primaryText: UIColor = .white
     static let bodyText = UIColor(white: 0.85, alpha: 1)
     static let secondaryText = UIColor(white: 0.72, alpha: 1)
@@ -235,7 +237,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     // MARK: - 生命周期
 
-    /// 星图页底色是固定夜色（功能底色，不跟随系统深浅），故状态栏恒为
+    /// 星图页底色是固定纯黑（功能底色，不跟随系统深浅），故状态栏恒为
     /// 浅色内容；导航栏用本页 navigationItem 专属透明外观（标题色为夜空
     /// 主文字色），不改全局导航栏、不改夜空本身。
     override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
