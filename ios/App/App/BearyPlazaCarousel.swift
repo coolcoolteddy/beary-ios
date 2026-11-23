@@ -508,6 +508,7 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
         textStack.spacing = 3
         textStack.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(textStack)
+        textStack.isUserInteractionEnabled = false
 
         // 卡片主体点按（整张卡；熊按钮盖在它上面，先截获熊的点按）。
         bodyButton.translatesAutoresizingMaskIntoConstraints = false
