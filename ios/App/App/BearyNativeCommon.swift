@@ -4496,7 +4496,7 @@ extension UITableView {
     /// 且 fatalError 点名缺失的类型，不再是调用方的无名 `as!` 崩溃。
     func dequeue<T: UITableViewCell>(_ identifier: String, for indexPath: IndexPath) -> T {
         guard let cell = dequeueReusableCell(withIdentifier: identifier, for: indexPath) as? T else {
-            fatalError("未注册 \(T.self)")
+            fatalError("Cell not registered: \(T.self)")
         }
         return cell
     }
