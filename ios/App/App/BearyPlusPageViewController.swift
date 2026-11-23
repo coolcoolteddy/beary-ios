@@ -471,7 +471,7 @@ final class BearyPlusPageViewController: UIViewController {
             }
             return text
         }
-        return "暂无（好友注册并绑定邀请码，双方各得 +30 天）"
+        return "暂无"
     }
 
     /// 内测限免行文案（旧设置页 Plus 组同款）。
