@@ -162,7 +162,10 @@ enum BearyOfflineSaveStore {
     }
 
     static func hasImageData(accountId: Int, entryId: String, key: String) -> Bool {
-        imageData(accountId: accountId, entryId: entryId, key: key) != nil
+        guard let url = imageFileURL(accountId: accountId, entryId: entryId, key: key),
+              FileManager.default.fileExists(atPath: url.path) else { return false }
+        // 空文件按不存在算（与旧版 imageData 的 !data.isEmpty 口径一致）。
+        return imageByteCount(accountId: accountId, entryId: entryId, key: key) > 0
     }
 
     static func imageByteCount(accountId: Int, entryId: String, key: String) -> Int64 {
