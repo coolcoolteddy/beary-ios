@@ -1295,50 +1295,6 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             reminderSwitch.centerYAnchor.constraint(equalTo: row1.centerYAnchor),
         ])
         stack.addArrangedSubview(row1)
-        let hairline = UIView()
-        hairline.translatesAutoresizingMaskIntoConstraints = false
-        hairline.backgroundColor = BearyOnboardingPalette.line2
-        hairline.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        stack.addArrangedSubview(hairline)
-        // 行 2：好友通知提醒（推送未上线，置灰、无开关）。
-        let row2 = UIView()
-        row2.translatesAutoresizingMaskIntoConstraints = false
-        row2.alpha = 0.45
-        let texts2 = UIStackView()
-        texts2.translatesAutoresizingMaskIntoConstraints = false
-        texts2.axis = .vertical
-        texts2.spacing = 3
-        let title2 = UILabel()
-        title2.font = UIFont.systemFont(ofSize: 16, weight: .medium)
-        title2.textColor = BearyOnboardingPalette.ink
-        title2.text = "好友通知提醒"
-        texts2.addArrangedSubview(title2)
-        let sub2 = UILabel()
-        sub2.font = UIFont.systemFont(ofSize: 13)
-        sub2.textColor = BearyOnboardingPalette.muted
-        sub2.text = "随时接收朋友的喜欢和评论"
-        texts2.addArrangedSubview(sub2)
-        row2.addSubview(texts2)
-        let tagLabel = UILabel()
-        tagLabel.translatesAutoresizingMaskIntoConstraints = false
-        tagLabel.font = UIFont.systemFont(ofSize: 11)
-        tagLabel.textColor = BearyOnboardingPalette.muted
-        tagLabel.backgroundColor = BearyOnboardingPalette.tagBackground
-        tagLabel.layer.cornerRadius = 8
-        tagLabel.clipsToBounds = true
-        tagLabel.textAlignment = .center
-        tagLabel.text = "推送上线后开启"
-        row2.addSubview(tagLabel)
-        NSLayoutConstraint.activate([
-            row2.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
-            texts2.leadingAnchor.constraint(equalTo: row2.leadingAnchor, constant: 16),
-            texts2.centerYAnchor.constraint(equalTo: row2.centerYAnchor),
-            texts2.trailingAnchor.constraint(lessThanOrEqualTo: tagLabel.leadingAnchor, constant: -12),
-            tagLabel.trailingAnchor.constraint(equalTo: row2.trailingAnchor, constant: -16),
-            tagLabel.centerYAnchor.constraint(equalTo: row2.centerYAnchor),
-            tagLabel.heightAnchor.constraint(equalToConstant: 24),
-        ])
-        stack.addArrangedSubview(row2)
         return card
     }
 
