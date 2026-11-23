@@ -173,23 +173,60 @@ enum BearyOfflineSaveStore {
 
     // MARK: - 清单（逐篇下载状态）
 
+    /// A2：清单内存缓存总开关（默认开）。关掉即回落到旧口径：每次读盘、
+    /// 每次 upsert 整表重写；开着时 record/isSaved/savedRecords 走缓存，
+    /// upsert 在批量内只改缓存、脏标记后由 endManifestBatch 一次落盘。
+    /// .atomic 写与数据格式不变。
+    static var isManifestCacheEnabled = true
+
+    /// 清单读写只走这条串行队列：Manager 串行队列与主线程 UI 都会碰清单，
+    /// 单一队列保证“读-改-写”不交错；缓存与脏标记、批量深度都只在这条
+    /// 队列上读写，不另加锁。
+    private static let manifestQueue = DispatchQueue(label: "com.beary.offline-save.manifest")
+    /// 按账号分的内存清单（只在 manifestQueue 上读写）。
+    private static var manifestCache: [Int: BearyOfflineSaveManifest] = [:]
+    /// 有未落盘改动的账号（只在 manifestQueue 上读写）。
+    private static var manifestDirtyAccounts: Set<Int> = []
+    /// 批量落盘嵌套深度（只在 manifestQueue 上读写）：批量 saveAll 包着
+    /// 单篇 save 各自的 begin/end，depth 回 0 才落盘。
+    private static var manifestBatchDepth: [Int: Int] = [:]
+
     /// 清单缺失/损坏即按空处理（文件本身仍在盘上，下次保存重建清单，不谎报丢失）。
+    /// 开着缓存时：已缓存即直接返回，不再整表 decode；未缓存读盘一次后入缓存。
     static func loadManifest(accountId: Int) -> BearyOfflineSaveManifest {
+        manifestQueue.sync { loadManifestOnQueue(accountId: accountId) }
+    }
+
+    private static func loadManifestOnQueue(accountId: Int) -> BearyOfflineSaveManifest {
+        if isManifestCacheEnabled, let cached = manifestCache[accountId] {
+            return cached
+        }
         guard let url = manifestURL(accountId: accountId),
               let data = try? Data(contentsOf: url),
               let manifest = try? JSONDecoder().decode(BearyOfflineSaveManifest.self, from: data) else {
             return BearyOfflineSaveManifest(entries: [])
+        }
+        if isManifestCacheEnabled {
+            manifestCache[accountId] = manifest
         }
         return manifest
     }
 
     @discardableResult
     static func saveManifest(accountId: Int, manifest: BearyOfflineSaveManifest) -> Bool {
+        manifestQueue.sync { saveManifestOnQueue(accountId: accountId, manifest: manifest) }
+    }
+
+    private static func saveManifestOnQueue(accountId: Int, manifest: BearyOfflineSaveManifest) -> Bool {
         guard let url = manifestURL(accountId: accountId),
               let data = try? JSONEncoder().encode(manifest) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
+            if isManifestCacheEnabled {
+                manifestCache[accountId] = manifest
+                manifestDirtyAccounts.remove(accountId)
+            }
             return true
         } catch {
             return false
@@ -197,29 +234,82 @@ enum BearyOfflineSaveStore {
     }
 
     static func record(accountId: Int, entryId: String) -> BearyOfflineSaveRecord? {
-        loadManifest(accountId: accountId).record(for: entryId)
+        manifestQueue.sync { loadManifestOnQueue(accountId: accountId).record(for: entryId) }
     }
 
     /// 同篇记录只留一份：新记录替换旧记录（按 entryId 去重后追加，顺序按保存时间）。
+    /// 批量内只改内存缓存、不写盘（脏标记，endManifestBatch 时一次落盘）；
+    /// 批量外与旧口径一致：立即整表重写，写失败返回 false。
     @discardableResult
     static func upsertRecord(accountId: Int, record: BearyOfflineSaveRecord) -> Bool {
-        var manifest = loadManifest(accountId: accountId)
+        manifestQueue.sync { upsertRecordOnQueue(accountId: accountId, record: record) }
+    }
+
+    private static func upsertRecordOnQueue(accountId: Int, record: BearyOfflineSaveRecord) -> Bool {
+        var manifest = loadManifestOnQueue(accountId: accountId)
         manifest.entries.removeAll { $0.entryId == record.entryId }
         manifest.entries.append(record)
         manifest.entries.sort { $0.savedAt > $1.savedAt }
-        return saveManifest(accountId: accountId, manifest: manifest)
+        if isManifestCacheEnabled, manifestBatchDepth[accountId, default: 0] > 0 {
+            manifestCache[accountId] = manifest
+            manifestDirtyAccounts.insert(accountId)
+            return true
+        }
+        return saveManifestOnQueue(accountId: accountId, manifest: manifest)
     }
 
     @discardableResult
     static func removeRecord(accountId: Int, entryId: String) -> Bool {
-        var manifest = loadManifest(accountId: accountId)
+        manifestQueue.sync { removeRecordOnQueue(accountId: accountId, entryId: entryId) }
+    }
+
+    private static func removeRecordOnQueue(accountId: Int, entryId: String) -> Bool {
+        var manifest = loadManifestOnQueue(accountId: accountId)
         guard manifest.entries.contains(where: { $0.entryId == entryId }) else { return true }
         manifest.entries.removeAll { $0.entryId == entryId }
-        return saveManifest(accountId: accountId, manifest: manifest)
+        if isManifestCacheEnabled, manifestBatchDepth[accountId, default: 0] > 0 {
+            manifestCache[accountId] = manifest
+            manifestDirtyAccounts.insert(accountId)
+            return true
+        }
+        return saveManifestOnQueue(accountId: accountId, manifest: manifest)
     }
 
     static func savedRecords(accountId: Int) -> [BearyOfflineSaveRecord] {
-        loadManifest(accountId: accountId).entries
+        manifestQueue.sync { loadManifestOnQueue(accountId: accountId).entries }
+    }
+
+    /// 批量落盘开端：其间 upsert/removeRecord 只改内存缓存、不写盘。
+    /// 可嵌套（批量 saveAll 包着单篇 save 各自的 begin/end），depth 回 0 才落盘。
+    /// 关掉缓存开关时是空操作（upsert 本来就每次直写盘）。
+    static func beginManifestBatch(accountId: Int) {
+        manifestQueue.sync {
+            guard isManifestCacheEnabled else { return }
+            manifestBatchDepth[accountId, default: 0] += 1
+        }
+    }
+
+    /// 批量落盘收尾：depth 回 0 且脏时一次写盘；写失败脏标记保留，
+    /// 下次 upsert（批量外直写）或下次 end 时重试，不静默丢改动。
+    /// 未开 batch 时调用：depth 已是 0，脏则直接落盘一次。
+    /// 崩溃窗口：落盘前崩溃，内存里的 pending/finalize 记录丢了，磁盘
+    /// 清单停在批量前；文字＋图片文件仍在盘上，下次保存凭 hasImageData
+    /// 跳过已下载的图片、重建清单记录，不丢文件。
+    @discardableResult
+    static func endManifestBatch(accountId: Int) -> Bool {
+        manifestQueue.sync { endManifestBatchOnQueue(accountId: accountId) }
+    }
+
+    private static func endManifestBatchOnQueue(accountId: Int) -> Bool {
+        guard isManifestCacheEnabled else { return true }
+        let depth = manifestBatchDepth[accountId, default: 0]
+        if depth > 0 {
+            manifestBatchDepth[accountId] = depth - 1
+        }
+        guard manifestBatchDepth[accountId, default: 0] == 0,
+              manifestDirtyAccounts.contains(accountId),
+              let manifest = manifestCache[accountId] else { return true }
+        return saveManifestOnQueue(accountId: accountId, manifest: manifest)
     }
 
     // MARK: - 删除与占用
@@ -243,8 +333,15 @@ enum BearyOfflineSaveStore {
     }
 
     /// 删整桶：整个账号目录删除（含清单）；目录不存在即算成功。
+    /// 先清该账号的内存缓存与脏标记、批量深度（测试 setUp/tearDown 与
+    /// 设置页“清除全部”都走这里；不清缓存会读到已删的旧清单）。
     @discardableResult
     static func removeAll(accountId: Int) -> Bool {
+        manifestQueue.sync {
+            manifestCache[accountId] = nil
+            manifestDirtyAccounts.remove(accountId)
+            manifestBatchDepth[accountId] = 0
+        }
         guard let dir = accountDir(accountId: accountId) else { return false }
         guard FileManager.default.fileExists(atPath: dir.path) else { return true }
         do {
