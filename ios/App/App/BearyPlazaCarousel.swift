@@ -1,12 +1,11 @@
 import UIKit
 
-// ===== 广场顶部轮播（取代顶部盲盒卡；盲盒改收轮播下方一行小卡）=====
-// 卡片与旧盲盒卡同宽（表宽 - 32），一次一张，可左右滑，4 秒自动换一张，
+// ===== 广场顶部轮播（第一页是盲盒交换，其余页为精选与历史上的今天）=====
+// 卡片同宽（表宽 - 32），一次一张，可左右滑，4 秒自动换一张，
 // 下方小圆点可点切页；页面不可见时停表，手动滑动时不抢。
-// 卡片主体点按：精选卡进那篇日记详情，历史卡进历史上的今天页；点按不切换下一条。
-// 角落小熊是独立点按区（44pt 热区）：只播一个戳一下的小反应，不跳页、
-// 不写数据；给日记加小熊回应进详情页走原有入口。
-// 吉祥物：官方资产 side_beary_icon（一笔画抱信封小熊，深色变体由 imageset 自带），不自绘。
+// 卡片主体点按：精选卡进那篇日记详情，历史卡进历史上的今天页，盲盒页进盲盒流程页；
+// 点按不切换下一条。盲盒页标题与计数走盲盒当日态（BlindBoxState），计数变化时
+// 宿主重建轮播（见 BearyFeedViewController.rebuildCarouselItems）。
 // 精选挑法（客户端就地实现，未新开后端接口）：复用广场首屏已加载数据
 // （BearyFeedViewController.plazaRaw，首屏 fetchEntries scope=plaza，
 // 已按有效公开过滤），按赞数 + 回应数 + 新近加权挑 3 篇，见 BearyPlazaFeaturedPicker。
@@ -205,6 +204,7 @@ enum BearyPlazaFeaturedPicker {
 enum BearyPlazaCarouselItem {
     case featured(Entry)
     case historyToday(BearyHistoryToday?)
+    case blindBox
 }
 
 enum BearyPlazaCarouselText {
@@ -254,6 +254,19 @@ enum BearyPlazaCarouselText {
         parts.append("\(entry.likeCount ?? 0) 赞")
         return parts.joined(separator: " · ")
     }
+
+    /// 盲盒页副行：今日计数（与原下方小卡同一 BlindBoxState 口径）；
+    /// 已换完追加原小卡已换态文案，未登录追加登录提示；文案走 catalog，不自编。
+    static func blindBoxMetaText() -> String {
+        let count = BlindBoxState.shared.countText()
+        if SessionManager.shared.isLoggedIn == false {
+            return "\(count) · \(NSLocalizedString("blindbox.exchange.login_hint", comment: ""))"
+        }
+        if BlindBoxState.shared.usedToday {
+            return "\(count) · \(NSLocalizedString("blindbox.exchange.used_hint", comment: ""))"
+        }
+        return count
+    }
 }
 
 // MARK: - 轮播视图
@@ -268,6 +281,7 @@ final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollec
 
     var onSelectFeatured: ((Entry) -> Void)?
     var onSelectHistory: (() -> Void)?
+    var onSelectBlindBox: (() -> Void)?
 
     private var items: [BearyPlazaCarouselItem] = []
     private var pageVisible = false
@@ -366,6 +380,7 @@ final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollec
             switch item {
             case .featured(let entry): return "f:\(entry.id ?? "")"
             case .historyToday(let payload): return "h:\(payload?.date ?? ""):\(payload?.firstEvent ?? "")"
+            case .blindBox: return "b:\(SessionManager.shared.isLoggedIn):\(BlindBoxState.shared.countText())"
             }
         }.joined(separator: ",")
     }
@@ -433,6 +448,7 @@ final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollec
             switch item {
             case .featured(let entry): self.onSelectFeatured?(entry)
             case .historyToday: self.onSelectHistory?()
+            case .blindBox: self.onSelectBlindBox?()
             }
         }
         return cell
@@ -474,8 +490,6 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
     private let titleLabel = UILabel()
     private let metaLabel = UILabel()
     private let bodyButton = BearyHit44Button(type: .custom)
-    private let bearButton = BearyHit44Button(type: .custom)
-    private let bearImageView = UIImageView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -510,39 +524,17 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
         contentView.addSubview(textStack)
         textStack.isUserInteractionEnabled = false
 
-        // 卡片主体点按（整张卡；熊按钮盖在它上面，先截获熊的点按）。
+        // 卡片主体点按（整张卡）。
         bodyButton.translatesAutoresizingMaskIntoConstraints = false
         bodyButton.addTarget(self, action: #selector(bodyTapped), for: .touchUpInside)
         bodyButton.bearyAddPressFeedback()
         contentView.addSubview(bodyButton)
         contentView.sendSubviewToBack(bodyButton)
 
-        bearImageView.translatesAutoresizingMaskIntoConstraints = false
-        bearImageView.contentMode = .scaleAspectFit
-        // 官方一笔画熊（深色变体 imageset 自带）；缺失时直接无图，不走暂代。
-        bearImageView.image = UIImage(named: "side_beary_icon")
-        bearImageView.isUserInteractionEnabled = false
-        contentView.addSubview(bearImageView)
-
-        // 熊独立点按区：视觉 30pt，热区 44pt；只播戳动效，不跳页、不写数据。
-        bearButton.translatesAutoresizingMaskIntoConstraints = false
-        bearButton.addTarget(self, action: #selector(bearTapped), for: .touchUpInside)
-        bearButton.accessibilityLabel = "贝瑞"
-        bearButton.accessibilityHint = "点按戳一下"
-        contentView.addSubview(bearButton)
-
         NSLayoutConstraint.activate([
             textStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 14),
             textStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            textStack.trailingAnchor.constraint(equalTo: bearButton.leadingAnchor, constant: -8),
-            bearImageView.widthAnchor.constraint(equalToConstant: 30),
-            bearImageView.heightAnchor.constraint(equalToConstant: 30),
-            bearImageView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            bearImageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
-            bearButton.widthAnchor.constraint(equalToConstant: 44),
-            bearButton.heightAnchor.constraint(equalToConstant: 44),
-            bearButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            bearButton.centerXAnchor.constraint(equalTo: bearImageView.centerXAnchor),
+            textStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -14),
             bodyButton.topAnchor.constraint(equalTo: contentView.topAnchor),
             bodyButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             bodyButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
@@ -556,18 +548,20 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        bearImageView.transform = .identity
+        eyebrowLabel.isHidden = false
         onSelect = nil
     }
 
     func configure(item: BearyPlazaCarouselItem) {
         switch item {
         case .featured(let entry):
+            eyebrowLabel.isHidden = false
             eyebrowLabel.text = "今日推荐"
             titleLabel.attributedText = BearyPlazaCarouselText.displayTitleAttributed(for: entry, font: titleLabel.font, dark: traitCollection.userInterfaceStyle == .dark)
             metaLabel.text = BearyPlazaCarouselText.metaText(for: entry)
             bodyButton.accessibilityLabel = "今日推荐：\(BearyPlazaCarouselText.displayTitle(for: entry))"
         case .historyToday(let payload):
+            eyebrowLabel.isHidden = false
             eyebrowLabel.text = "历史上的今天"
             if let event = payload?.firstEvent {
                 // 轮播每天一条：取当日 3 条里的第一条；副行配它的小熊评论。
@@ -579,23 +573,18 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
                 metaLabel.text = "正在加载…"
             }
             bodyButton.accessibilityLabel = "历史上的今天：\(titleLabel.text ?? "")"
+        case .blindBox:
+            // 盲盒页不用眉标行（标题本身就是“盲盒交换”）；副行是今日计数，
+            // 已换完追加原小卡已换态文案，未登录追加登录提示。
+            eyebrowLabel.isHidden = true
+            titleLabel.text = NSLocalizedString("blindbox.exchange.title", comment: "")
+            metaLabel.text = BearyPlazaCarouselText.blindBoxMetaText()
+            bodyButton.accessibilityLabel = (titleLabel.text ?? "") + " " + (metaLabel.text ?? "")
         }
     }
 
     @objc private func bodyTapped() {
         onSelect?()
-    }
-
-    /// 戳一下：小幅放大 + 轻转后弹簧回位（跟主站戳熊一个意思），不跳页、不写数据。
-    @objc private func bearTapped() {
-        bearImageView.layer.removeAllAnimations()
-        UIView.animate(withDuration: BearyMotion.micro, animations: {
-            self.bearImageView.transform = CGAffineTransform(scaleX: 1.18, y: 1.18).rotated(by: -0.10)
-        }) { _ in
-            UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0.5, options: [], animations: {
-                self.bearImageView.transform = .identity
-            }, completion: nil)
-        }
     }
 }
 
