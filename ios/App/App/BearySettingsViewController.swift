@@ -3856,6 +3856,26 @@ private final class BearyDataStatusViewController: UIViewController {
             diaryDetail = state.displayText
         }
         rows.append(makeStatusRow(title: "日记与回收站", detail: diaryDetail))
+        // 后台刷新（C3）：上次跑完的一轮＋结果，只在埋点总闸开时显示；
+        // 从未跑完过只显“未运行”。文案走 catalog，与日记行“状态 · 上次 …”同口径。
+        if BearyBackgroundRefresh.lastRunTelemetryEnabled {
+            let backgroundDetail: String
+            if let lastRun = BearyBackgroundRefresh.lastRun {
+                let time = BearyText.monthDayHourMinuteFormatter.string(from: lastRun.date)
+                if lastRun.succeeded {
+                    if lastRun.hadNewHeadline {
+                        backgroundDetail = String(format: NSLocalizedString("settings.data_status.background_refresh.succeeded_with_new_headline", comment: ""), time)
+                    } else {
+                        backgroundDetail = String(format: NSLocalizedString("settings.data_status.background_refresh.succeeded", comment: ""), time)
+                    }
+                } else {
+                    backgroundDetail = String(format: NSLocalizedString("settings.data_status.background_refresh.failed", comment: ""), time)
+                }
+            } else {
+                backgroundDetail = NSLocalizedString("settings.data_status.background_refresh.never_run", comment: "")
+            }
+            rows.append(makeStatusRow(title: NSLocalizedString("settings.data_status.background_refresh.title", comment: ""), detail: backgroundDetail))
+        }
         // 留话：未同步条数（localOnly 行；含已撤回未同步行，撤回本身也未同步）。
         // 0 条即全部已同步；有未同步时提醒换设备前先打开个人页同步——留话
         // 同步只在个人页语料加载完成时触发，不走本页「重新同步」的日记/

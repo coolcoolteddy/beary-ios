@@ -25,6 +25,41 @@ enum BearyBackgroundRefresh {
     /// 提醒）；同走 UNUserNotificationCenter 这一本地通知通道。
     private static let plazaNewIdentifier = "beary.background-refresh.plaza-new"
 
+    /// lastRun 埋点总闸（C3）：默认开；关掉则不记、不在设置页显示。
+    static var lastRunTelemetryEnabled = true
+
+    /// lastRun 埋点（C3）：上次跑完的一轮记三键 UserDefaults（轻量、无新依赖，
+    /// 与 BearyLocalNotifications 的 beary.localNotifications.* 同口径）。
+    /// 只在“跑完一轮有定论”时记：拉取失败记失败，拉取成功记成功＋有无新头条；
+    /// 切号放弃与超时取消不记——前者根本没跑，后者没跑完，旧记录仍代表
+    /// “上次跑完的一轮”，不拿未完成的结果覆盖它。
+    private static let lastRunAtKey = "beary.backgroundRefresh.lastRunAt"
+    private static let lastRunSucceededKey = "beary.backgroundRefresh.lastRunSucceeded"
+    private static let lastRunHadNewHeadlineKey = "beary.backgroundRefresh.lastRunHadNewHeadline"
+
+    /// 上次跑完的一轮；从未跑完过为 nil。
+    struct LastRun {
+        let date: Date
+        let succeeded: Bool
+        let hadNewHeadline: Bool
+    }
+
+    static var lastRun: LastRun? {
+        guard lastRunTelemetryEnabled else { return nil }
+        guard let date = UserDefaults.standard.object(forKey: lastRunAtKey) as? Date else { return nil }
+        return LastRun(
+            date: date,
+            succeeded: UserDefaults.standard.bool(forKey: lastRunSucceededKey),
+            hadNewHeadline: UserDefaults.standard.bool(forKey: lastRunHadNewHeadlineKey))
+    }
+
+    private static func recordLastRun(succeeded: Bool, hadNewHeadline: Bool) {
+        guard lastRunTelemetryEnabled else { return }
+        UserDefaults.standard.set(Date(), forKey: lastRunAtKey)
+        UserDefaults.standard.set(succeeded, forKey: lastRunSucceededKey)
+        UserDefaults.standard.set(hadNewHeadline, forKey: lastRunHadNewHeadlineKey)
+    }
+
     /// 启动时调一次：注册 + 排下一次。注册失败（标识未进 plist 的
     /// BGTaskSchedulerPermittedIdentifiers 等）只记日志，不阻塞启动。
     static func registerAndSchedule() {
@@ -139,6 +174,7 @@ enum BearyBackgroundRefresh {
                             return
                         }
                         BearyLocalNotifications.shared.refreshAll(force: true)
+                        recordLastRun(succeeded: false, hadNewHeadline: false)
                         completion(false)
                     case .success(let list):
                         // 检查点 2（写盘前）：请求在途期间切号 → 回包属于旧会话，
@@ -152,6 +188,11 @@ enum BearyBackgroundRefresh {
                         }
                         let entries = list.entries ?? []
                         let fresh = BearyFeedCache.visibleHead(entries)
+                        // 有无新头条：只比快照头条（与提醒门同口径），记进 lastRun 埋点。
+                        let hasNewHeadline: Bool = {
+                            guard let latest = fresh.first, let seen = seenHead else { return false }
+                            return isNewer(latest, than: seen)
+                        }()
                         // 取消态贯穿：每处副作用前都复核。
                         guard !isCancelled() else {
                             completion(false)
@@ -162,7 +203,7 @@ enum BearyBackgroundRefresh {
                         BearyFeedCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= BearyFeedCache.snapshotEntryLimit)
                         // 有新头条才考虑提醒：无头条（空广场）不提醒；无快照基线
                         // （首次后台跑）只记不提醒，不把旧内容当新内容推。
-                        if let latest = fresh.first, let seen = seenHead, isNewer(latest, than: seen) {
+                        if hasNewHeadline, let latest = fresh.first {
                             // 自己的新篇不提醒（刚发布完就弹“广场有新日记”是噪音）。
                             // 第 25 轮 59：广场新提醒纳入现有四类开关——任一类开着才发，
                             // 四类全关即停；不新增开关。说明见设置页通知组末行。
@@ -181,6 +222,7 @@ enum BearyBackgroundRefresh {
                             return
                         }
                         BearyLocalNotifications.shared.refreshAll(force: true)
+                        recordLastRun(succeeded: true, hadNewHeadline: hasNewHeadline)
                         completion(true)
                     }
                 }
