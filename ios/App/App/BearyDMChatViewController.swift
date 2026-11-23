@@ -96,6 +96,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private let loadFailedStateView = BearyStateView()
     private let placeholderLabel = UILabel()
     private let countLabel = UILabel()
+    /// 字数计数在输入条内的布局约束（展示审计 G6-H9）：计数显时发送钮改钉
+    /// 计数右缘、计数钉输入框右缘；计数藏时发送钮钉回输入框右缘。
+    private var sendButtonLeadingToTextViewConstraint: NSLayoutConstraint?
+    private var sendButtonLeadingToCountConstraint: NSLayoutConstraint?
+    private var countLabelLeadingConstraint: NSLayoutConstraint?
     /// 2026-11-04 乐观发送：失败待发行的本地键集合（行侧边出红叹号、点按重发）。
     private var failedSendKeys = Set<String>()
     /// 审计四轮增量 03：重发在途集合——同一条消息在请求结束前只允许一次重发，
@@ -306,7 +311,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         countLabel.adjustsFontForContentSizeCategory = true
         countLabel.textColor = BearyColors.gray
         countLabel.isHidden = true
-        view.addSubview(countLabel)
+        // 展示审计 G6-H9：计数收进输入条内（输入框与发送钮之间），输入条上方
+        // 只留「新消息」pill 一层浮层；计数出现时 pill 不再上移。
+        inputBar.addSubview(countLabel)
         newMessagePill.translatesAutoresizingMaskIntoConstraints = false
         newMessagePill.setTitle("新消息", for: .normal)
         newMessagePill.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
@@ -319,12 +326,18 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         newMessagePill.addTarget(self, action: #selector(newMessagePillTapped), for: .touchUpInside)
         newMessagePill.bearyAddPressFeedback()
         view.addSubview(newMessagePill)
+        // 计数在输入条内：纵向与发送钮同中线；横向约束见 updateInputChrome
+        // 随显隐切换（G6-H9）；隐藏时低优先级 trailing 兜底定位，不挤输入框。
+        let countFallbackTrailing = countLabel.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -8)
+        countFallbackTrailing.priority = .defaultLow
         NSLayoutConstraint.activate([
-            countLabel.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -4),
-            countLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            countLabel.centerYAnchor.constraint(equalTo: sendButton.centerYAnchor),
+            countFallbackTrailing,
             newMessagePill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             newMessagePill.heightAnchor.constraint(equalToConstant: 32),
         ])
+        sendButtonLeadingToCountConstraint = sendButton.leadingAnchor.constraint(equalTo: countLabel.trailingAnchor, constant: 8)
+        countLabelLeadingConstraint = countLabel.leadingAnchor.constraint(equalTo: inputTextView.trailingAnchor, constant: 8)
         newMessagePillBottomConstraint = newMessagePill.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -8)
         newMessagePillBottomConstraint?.isActive = true
         // 翻旧加载态浮标（见声明处注释）：悬在列表顶部，不占表高。
@@ -488,12 +501,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             inputTextView.bottomAnchor.constraint(equalTo: inputBar.bottomAnchor, constant: -9),
             // 输入框高度走 inputTextViewHeightConstraint（空态一行、上限五行，见 updateInputTextViewHeight）；
             // 旧的 36~160 区间约束不给确定高度，空态会被布局落到高处，故不再保留。
-            sendButton.leadingAnchor.constraint(equalTo: inputTextView.trailingAnchor, constant: 8),
             sendButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             sendButton.bottomAnchor.constraint(equalTo: inputBar.bottomAnchor, constant: -9),
             // V6：发送钮改最小高度 32——常规字号视觉仍 32，大字号下字高超 32 时钮随内容长高不截字。
             sendButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
         ])
+        // 发送钮左缘走存储约束（G6-H9：计数显时改钉计数右缘，藏时钉回输入框右缘）。
+        sendButtonLeadingToTextViewConstraint = sendButton.leadingAnchor.constraint(equalTo: inputTextView.trailingAnchor, constant: 8)
+        sendButtonLeadingToTextViewConstraint?.isActive = true
 
         // 会话内搜索栏（默认收起、高 0 不占位）：搜索框＋取消＋提示行。
         // 提示行明说只搜本机已有消息；结果表盖在聊天列表上方，输入条不动。
@@ -1104,7 +1119,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let count = inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count
         countLabel.isHidden = count < 1800
         countLabel.text = "\(count)/2000"
-        // 字数提示显隐变化时 pill 位置/预留随之变（两者共存即 pill 上移）。
+        // 展示审计 G6-H9：计数在输入条内显隐，发送钮左缘随之切——计数显时
+        // 输入框→计数→发送钮，计数藏时输入框直连发送钮；pill 不再随计数上移。
+        let showCount = count >= 1800
+        sendButtonLeadingToTextViewConstraint?.isActive = !showCount
+        sendButtonLeadingToCountConstraint?.isActive = showCount
+        countLabelLeadingConstraint?.isActive = showCount
         updateNewMessagePillLayout()
     }
 
@@ -1133,8 +1153,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// “新消息”pill 显隐唯一入口：显隐之外同步两件事——
     /// (1) 列表底部预留：pill 出现时 tableView.contentInset.bottom 预留 pill 所占高度
     /// （视觉高 32 + 与输入条的间距），底部一条消息不再被 pill 盖住；收起即清零。
-    /// (2) 与字数提示共存：两者同时出现时 pill 上移到字数提示上方（间距 12），
-    /// 纵向不再互叠；字数提示收起即回到底部 -8。视觉高 32、圆角、颜色、字号一律不动；
+    /// (2) 字数提示已收进输入条内（G6-H9），pill 恒贴输入条上方 -8，不再上移。
+    /// 视觉高 32、圆角、颜色、字号一律不动；
     /// 操作区扩到 44 靠 BearyHit44Button 的 point(inside:)（视觉帧不动）。
     private func setNewMessagePillVisible(_ visible: Bool) {
         // A6：收起即消费——计数与文案一起清零，下次出现重新计数；
@@ -1153,13 +1173,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     private func updateNewMessagePillLayout() {
         let pillVisible = !newMessagePill.isHidden
-        let newConstant: CGFloat
-        if pillVisible, !countLabel.isHidden {
-            let countHeight = countLabel.intrinsicContentSize.height
-            newConstant = -((countHeight > 0 ? countHeight : 16) + 12)
-        } else {
-            newConstant = -8
-        }
+        // 展示审计 G6-H9：计数已收进输入条，pill 恒贴输入条上方 -8，不再上移。
+        let newConstant: CGFloat = -8
         if newMessagePillBottomConstraint?.constant != newConstant {
             newMessagePillBottomConstraint?.constant = newConstant
         }
