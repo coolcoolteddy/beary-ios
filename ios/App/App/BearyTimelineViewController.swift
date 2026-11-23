@@ -821,7 +821,8 @@ final class BearyTimelineCell: UITableViewCell {
         v.isUserInteractionEnabled = false
         return v
     }()
-    /// 限时倒计时行（meta 行 pill 之后；仅存活期显示，灰字 12pt）。
+    /// 限时倒计时行（足行，紧贴点赞计数右边；仅存活期显示，灰字 12pt、无图标）。
+    /// 展示审计 G1-03：原在 meta 行，移进足行（字号颜色不动）。
     private let ephemeralLabel: UILabel = {
         let l = UILabel()
         l.translatesAutoresizingMaskIntoConstraints = false
@@ -1630,7 +1631,7 @@ final class BearyTimelineCell: UITableViewCell {
             // 109：限时存活期只换图标为官方 icon_limited（熊头 + 虚线环，
             // 与顶栏限时态同款，#272 误删后本支从 2bb7df9^ 原样恢复；
             // 纠正：不要 icon_clock；尺寸/灰色与公开/私密同款）；
-            // 圆点仍走公开橙边、虚线框与倒计时行一字不动；到期后 isLive 为假、
+            // 圆点仍走公开橙边、虚线框不动（倒计时行已移进足行，见 G1-03）；到期后 isLive 为假、
             // isEffectivelyPublic 回私密，走下方锁分支，图标自动回锁。
             pillIconView.image = BearyIconImages.image(named: BearyEphemeral.isLive(entry) ? "icon_limited" : "icon_globe", pointSize: 14)
             pillIconView.tintColor = BearyColors.timelineIconGray
@@ -1674,15 +1675,8 @@ final class BearyTimelineCell: UITableViewCell {
             dotRingView.isHidden = true
         }
         metaStack.addArrangedSubview(pillIconView)
-        // 限时存活期：meta 行追加灰字倒计时（只留这一行，不另加标签）+ 卡片改虚线边框；
+        // 限时存活期：卡片改虚线边框（倒计时不在 meta 行，见足行 G1-03）；
         // 到期或非限时按普通卡（pill/dot 已按有效态走私密分支）。
-        if BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil {
-            ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
-            ephemeralRow.isHidden = false
-            metaStack.addArrangedSubview(ephemeralRow)
-        } else {
-            ephemeralRow.isHidden = true
-        }
         let ephemeralLive = BearyEphemeral.isLive(entry)
         // 对称分割线式：内容列无实线边；虚线层仍按存活期显隐（限时篇只留虚线框）。
         cardView.layer.borderWidth = 0
@@ -1911,6 +1905,19 @@ final class BearyTimelineCell: UITableViewCell {
             let bookmarkCount = entry.bookmarkCount ?? 0
             if bookmarkCount > 0 {
                 footItems.append(footItem(iconName: "icon_bookmark", text: "\(bookmarkCount)", accessibilityName: "收藏"))
+            }
+            // 展示审计 G1-03：倒计时移进足行、紧贴点赞计数右边（灰字 12、无图标，字号颜色不动）。
+            // 限时存活篇才有倒计时；有点赞项时插在其后，否则放行首；三项计数全 0 时足行只剩倒计时，仍显示。
+            if BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil {
+                ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
+                ephemeralRow.isHidden = false
+                if likeCount > 0, !footItems.isEmpty {
+                    footItems.insert(ephemeralRow, at: 1)
+                } else {
+                    footItems.insert(ephemeralRow, at: 0)
+                }
+            } else {
+                ephemeralRow.isHidden = true
             }
             if !footItems.isEmpty {
                 for item in footItems {
