@@ -3293,8 +3293,10 @@ final class BearyDetailViewController: UIViewController {
                 actions.append(BearyConfirmSheet.Action(title: saved ? "取消离线保存" : "离线保存", style: saved ? .destructive : .default) { [weak self] in
                     guard let self = self else { return }
                     if saved {
-                        let removed = BearyOfflineSaveManager.shared.remove(entryId: entryId)
-                        BearyToast.show(in: self.view, message: removed ? "已取消离线保存" : "取消失败，请重试")
+                        BearyOfflineSaveManager.shared.remove(entryId: entryId) { [weak self] removed in
+                            guard let self = self else { return }
+                            BearyToast.show(in: self.view, message: removed ? "已取消离线保存" : "取消失败，请重试")
+                        }
                     } else {
                         BearyOfflineSaveManager.shared.save(entry: self.entry) { result in
                             switch result {

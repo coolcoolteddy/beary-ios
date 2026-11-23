@@ -810,6 +810,8 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
         removeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         removeButton.accessibilityLabel = "移除\(record.title)的离线保存"
         removeButton.tag = index
+        // 批量保存进行中置灰：行移除排队会等本批结算，按钮先拦住误点（与清除全部同口径）。
+        removeButton.isEnabled = !isSaving
         removeButton.addTarget(self, action: #selector(removeTapped(_:)), for: .touchUpInside)
         removeButton.bearyAddPressFeedback()
         let row = UIStackView(arrangedSubviews: [textStack, removeButton])
@@ -837,11 +839,14 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
     }
 
     @objc private func removeTapped(_ sender: UIButton) {
-        guard sender.tag >= 0, sender.tag < currentRecords.count else { return }
+        guard !isSaving, sender.tag >= 0, sender.tag < currentRecords.count else { return }
         let entryId = currentRecords[sender.tag].entryId
-        let removed = BearyOfflineSaveManager.shared.remove(entryId: entryId)
-        BearyToast.show(in: view, message: removed ? "已移除离线保存" : "移除失败，请重试")
-        render()
+        // 移除走 Manager 串行队列（与批量保存的清单写盘串行），完成回主线程再刷新。
+        BearyOfflineSaveManager.shared.remove(entryId: entryId) { [weak self] removed in
+            guard let self = self else { return }
+            BearyToast.show(in: self.view, message: removed ? "已移除离线保存" : "移除失败，请重试")
+            self.render()
+        }
     }
 
     @objc private func saveAllTapped() {
@@ -875,9 +880,12 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
         BearyConfirmSheet.show(from: self, title: "清除全部离线保存？", message: "已离线保存的日记文字与图片将从本设备删除，已同步的日记不受影响。", actions: [
             BearyConfirmSheet.Action(title: "清除全部", style: .destructive) { [weak self] in
                 guard let self = self else { return }
-                let cleared = BearyOfflineSaveManager.shared.removeAll()
-                BearyToast.show(in: self.view, message: cleared ? "已清除全部离线保存" : "清除失败，请重试")
-                self.render()
+                // 清除走 Manager 串行队列，批量保存进行中会排队，等本批结算完再删整桶。
+                BearyOfflineSaveManager.shared.removeAll() { [weak self] cleared in
+                    guard let self = self else { return }
+                    BearyToast.show(in: self.view, message: cleared ? "已清除全部离线保存" : "清除失败，请重试")
+                    self.render()
+                }
             },
             BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
