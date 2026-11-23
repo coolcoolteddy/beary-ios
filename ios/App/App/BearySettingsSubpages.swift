@@ -858,11 +858,11 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
               BearyOfflineSaveManager.shared.currentAccountId != nil else { return }
         didResumePending = true
         isSaving = true
-        saveProgressText = "正在续传…"
+        saveProgressText = NSLocalizedString("offline_save.resume.in_progress", comment: "")
         render()
         BearyOfflineSaveManager.shared.resumePendingEntries(progress: { [weak self] done, total in
             guard let self = self else { return }
-            self.saveProgressText = "正在续传 \(done)/\(total)…"
+            self.saveProgressText = String(format: NSLocalizedString("offline_save.resume.progress", comment: ""), done, total)
             self.render()
         }, completion: { [weak self] result in
             guard let self = self else { return }
@@ -870,7 +870,7 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
             self.saveProgressText = nil
             self.render()
             if result.failed > 0 {
-                BearyToast.show(in: self.view, message: "有 \(result.failed) 篇离线保存续传失败，下次打开再试")
+                BearyToast.show(in: self.view, message: String(format: NSLocalizedString("offline_save.resume.failed_toast", comment: ""), result.failed))
             }
         })
     }
