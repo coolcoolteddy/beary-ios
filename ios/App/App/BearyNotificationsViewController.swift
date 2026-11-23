@@ -4348,7 +4348,8 @@ class BearyNotificationCell: UITableViewCell {
         bodyStackTopToAvatarConstraint?.isActive = false
         bodyStackCenterYToAvatarConstraint?.isActive = false
         bodyStackTopToContentConstraint?.isActive = true
-        bodyStack.spacing = 2
+        // 展示审计 G6-A7：标题／摘要间距统一为 4pt（与私信行一致）。
+        bodyStack.spacing = 4
         nestedLineView.isHidden = true
         unreadBgView.backgroundColor = .clear
         unreadBgLeadingConstraint?.constant = 0
@@ -4492,11 +4493,11 @@ class BearyNotificationCell: UITableViewCell {
     /// 已读灰底＋墨图标（第十轮 #15）；未读底一律蓝 9%（网页 .nt-item.sys.unread，
     /// 互动卡同样带 sys 类）。
     /// - Parameter mergedList: 合并消息页与通知详情页时 true：分隔线缩进 16、
-    ///   标题/摘要不用 1.5 倍行高、头像垂直居中、标题／摘要间距 5（与私信行一致），
+    ///   标题/摘要不用 1.5 倍行高、头像垂直居中、标题／摘要间距 4（与私信行一致），
     ///   且不显示右三角；独立通知页传 false（默认），下箭头展开行为不变。
     func configureAsCard(title: String, excerpt: String, timeMs: Int?, anyUnread: Bool, isSystem: Bool, expanded: Bool, highlight: Bool, mergedList: Bool = false) {
         applyAvatarVerticalStyle(mergedList: mergedList)
-        bodyStack.spacing = mergedList ? 4 : 2
+        bodyStack.spacing = 4
         cancelAvatarLoad()
         hideFollowAction()
         avatarRetryURL = nil
@@ -4611,14 +4612,14 @@ class BearyNotificationCell: UITableViewCell {
     }
 
     /// - Parameter mergedList: 合并消息页与通知详情页时 true：分隔线缩进 16、
-    ///   标题/摘要不用 1.5 倍行高、头像垂直居中、标题／摘要间距 5，与私信行统一；
+    ///   标题/摘要不用 1.5 倍行高、头像垂直居中、标题／摘要间距 4，与私信行统一；
     ///   独立通知页传 false（默认）。
     func configure(with item: NotificationItem, nested: Bool, highlight: Bool, mergedList: Bool = false) {
         // 复用行先清关注动作区；关注行由 VC 随后调 configureFollowCard 补上。
         hideFollowAction()
         resetAvatarStack()
         applyAvatarVerticalStyle(mergedList: mergedList)
-        bodyStack.spacing = mergedList ? 4 : 2
+        bodyStack.spacing = 4
         let itemType = item.type ?? ""
         let isSystemStyle = itemType == "system" || itemType == "letter"
         let isUnread = (item.read ?? true) == false
@@ -5590,7 +5591,7 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         }
         let item = items[indexPath.row]
         // 详情页行是顶层行（非嵌套）：头像 x=16、分隔线缩进 16、
-        // 行高 72、头像垂直居中、标题／摘要间距 5，与私信行统一（mergedList）。
+        // 行高 72、头像垂直居中、标题／摘要间距 4，与私信行统一（mergedList）。
         cell.configure(with: item, nested: false, highlight: notifSource.highlightForDetail(item), mergedList: true)
         if item.type == "follow", let actorId = item.actorId {
             cell.configureFollowCard(state: notifSource.followStateForDetail(actorId: actorId)) { [weak self] in
