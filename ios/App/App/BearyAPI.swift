@@ -700,10 +700,17 @@ final class BearyAPI {
 
     init(session: URLSession? = nil) {
         self.session = session ?? Self.makeDedicatedSession()
+        self.decoder = Self.sharedDecoder
+    }
+
+    /// 全局请求解码器（B-P1-4 补充）：与 PastSelf 专用的 plain 解码器同款
+    /// 静态复用口径——原 init 内现建现用，改为静态共享（snake 策略不变）。
+    /// 单例 decoder 本就跨 URLSession 回调线程共享，本改动不新增线程暴露。
+    private static let sharedDecoder: JSONDecoder = {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
-        self.decoder = d
-    }
+        return d
+    }()
 
     /// PastSelf 专用的 plain 解码器（不带 convertFromSnakeCase）。
     /// PastSelfMessage 用显式 snake_case CodingKeys，与全局 convert 解码器
