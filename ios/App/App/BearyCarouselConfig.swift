@@ -38,7 +38,7 @@ struct BearyCarouselPageConfig: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let rawType = try container.decode(String.self, forKey: .type)
         guard let parsed = PageType(rawValue: rawType) else {
-            throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "未知轮播页类型")
+            throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: NSLocalizedString("carousel.page_type.unknown", comment: ""))
         }
         type = parsed
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true

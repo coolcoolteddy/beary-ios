@@ -609,7 +609,7 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
             eyebrowLabel.text = BearyPlazaCarouselText.announcementEyebrow()
             titleLabel.text = ann.title
             metaLabel.text = BearyPlazaCarouselText.dateText(ms: ann.createdAt)
-            bodyButton.accessibilityLabel = "\(BearyPlazaCarouselText.announcementEyebrow())：\(ann.title)"
+            bodyButton.accessibilityLabel = BearyPlazaCarouselText.announcementEyebrow() + "：" + ann.title
         }
     }
 
