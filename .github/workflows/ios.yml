@@ -7,6 +7,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# CI 排队优化（2026-11-23）：同分支旧 run 自动取消，变基 force-push 后不再占 macOS 槽。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   simulator:
     runs-on: macos-latest
@@ -63,7 +68,10 @@ jobs:
           name: beary-simulator-app
           path: build/Build/Products/Debug-iphonesimulator/App.app
 
+  # 打包只在合入 main 时跑：PR 阶段 simulator 编译＋test 已足够验证，sideload 的
+  # Release 打包改由 main push 覆盖，PR 每个少占 1 个 macOS 槽。
   sideload:
+    if: github.event_name != 'pull_request'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
