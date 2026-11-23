@@ -722,6 +722,27 @@ enum BearyDraftStore {
         }
     }
 
+    /// B-P0-3：异步读整库——读盘＋解码＋归一化走 ioQueue（与 save/deleteAsync
+    /// 同队列，读不到写一半的库），结果回主线程。发布中心主线程路径（每图
+    /// 写回 key、失败留档、重试指纹、状态表剪枝）一律走这里，不得再同步调
+    /// loadAll/loadAllResult（100+ 草稿时一次全库解码＋逐图读头会卡住主线程）。
+    /// 失败时回 .failure，不以空数组冒充无草稿（与 loadAllResult 同款口径）；
+    /// 调用方读失败时按“未知”处理（重试走编辑器、状态表不剪枝），不丢数据。
+    static func loadAllAsync(completion: @escaping (Result<[BearyDraft], LoadError>) -> Void) {
+        loadAllAsync(forAccount: currentAccountId, completion: completion)
+    }
+
+    /// 捕获账号版异步读整库（后台读任务与发布中心专用）：入队时捕获账号，
+    /// 执行中不再重读 currentAccountId；其余语义与 loadAllAsync 一致。
+    static func loadAllAsync(forAccount accountId: Int?, completion: @escaping (Result<[BearyDraft], LoadError>) -> Void) {
+        ioQueue.async {
+            let result = loadAllResult(forAccount: accountId)
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }
+    }
+
     private static let fileName = "beary_draft_v3.json"
     private static let legacyV2FileName = "beary_draft_v2.json"
     private static let v1Key = "beary_native_draft_v1"

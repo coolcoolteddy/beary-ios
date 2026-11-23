@@ -1937,18 +1937,22 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             showDraftToast(message: "发布中…")
             return
         }
-        switch BearyPublishCenter.shared.retryPublish(draftId: draftValue.draftId) {
-        case .started:
-            // 重试已接管，退箱看胶囊（toast 会随箱一起退场，不另弹）。
-            exitWithUndoGuard(confirmTitle: "仍要继续") { [weak self] in
-                self?.dismissWithExitAnimation { }
-            }
-        case .alreadyRunning:
-            showDraftToast(message: "发布中…")
-        case .needsEditor:
-            exitWithUndoGuard(confirmTitle: "仍要继续") { [weak self] in
-                self?.dismissWithExitAnimation { [weak self] in
-                    self?.onOpenHandler(draftValue)
+        // B-P0-3：重试判定走异步指纹读盘，结果经 completion 回主线程再分流。
+        BearyPublishCenter.shared.retryPublish(draftId: draftValue.draftId) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .started:
+                // 重试已接管，退箱看胶囊（toast 会随箱一起退场，不另弹）。
+                self.exitWithUndoGuard(confirmTitle: "仍要继续") { [weak self] in
+                    self?.dismissWithExitAnimation { }
+                }
+            case .alreadyRunning:
+                self.showDraftToast(message: "发布中…")
+            case .needsEditor:
+                self.exitWithUndoGuard(confirmTitle: "仍要继续") { [weak self] in
+                    self?.dismissWithExitAnimation { [weak self] in
+                        self?.onOpenHandler(draftValue)
+                    }
                 }
             }
         }

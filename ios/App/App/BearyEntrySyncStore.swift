@@ -51,6 +51,33 @@ enum BearySyncStateStore {
         guard let url = stateURL, let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(BearySyncStateRecord.self, from: data)
     }
+
+    /// 状态文件读盘专用队列（只读，不与同步写盘串行——写盘走 BearyEntrySync.queue
+    /// 原子写，读到写盘中途的旧文件即上一份完整状态，不谎报）。
+    private static let loadQueue = DispatchQueue(label: "beary.syncState.load", qos: .utility)
+
+    /// 异步版 load：读盘＋解码只在后台队列做，结果回主线程；读不出／解不出
+    /// 回 nil（与同步版同口径：无确认过的同步时间）。文件在却解不出时记 NSLog
+    /// （失败可见，不静默吞）；文件缺失是“从未同步”的正常态，不记日志。
+    /// 第三轮 B 项：数据状态页原来在主线程同步读两腿状态文件，改走本函数。
+    static func loadAsync(stateURL: URL?, completion: @escaping (BearySyncStateRecord?) -> Void) {
+        loadQueue.async {
+            guard let url = stateURL else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            guard let data = try? Data(contentsOf: url) else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            guard let record = try? JSONDecoder().decode(BearySyncStateRecord.self, from: data) else {
+                NSLog("[BearySyncState] corrupt state file, ignored: \(url.lastPathComponent)")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            DispatchQueue.main.async { completion(record) }
+        }
+    }
 }
 
 /// 时间线日缓存的磁盘持久层：按账号分桶、按北京日归档。

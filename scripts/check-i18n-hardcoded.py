@@ -10,6 +10,9 @@
   那是格式串不是文案；
 - 白名单文件：ios/App/BearyCoreTests/BearyI18nCatalogTests.swift——
   它以中文原文作期望值断言，中文是测试数据本身。
+- 挪位置豁免：新增行里的中文串若在同一 PR 的删除行里原样出现过
+  （整段字面量逐字相同），只算挪了位置，不标红；只有删除行里没有的
+  新文案才进 catalog。
 
 两项检查（同一行只报一处，中文优先）：
 1. 中文：新增行里 NSLocalizedString key 参数之外的中文字符串字面量即失败。
@@ -102,10 +105,34 @@ def is_swift_path(path: str) -> bool:
     return any(fnmatch.fnmatch(path, pat) for pat in SWIFT_PATHS)
 
 
+def moved_literals(diff_text: str):
+    """同一 PR 删除行里的字符串字面量集合（挪位置豁免用）。
+
+    只收与新增行同口径的行：Swift 源码路径、非白名单文件、去 // 注释后
+    抽出的字面量原文。比对时整段字面量逐字相同才算挪位置（含插值段原文，
+    如 "\\(stateText) · 上次同步 ..." 与 "\\(state.displayText) · 上次同步 ..."
+    是两个不同的串，后者不豁免前者）。
+    """
+    removed = set()
+    cur_file = None
+    for raw in diff_text.splitlines():
+        if raw.startswith("+++ b/"):
+            cur_file = raw[len("+++ b/"):]
+            continue
+        if not raw.startswith("-") or raw.startswith("---"):
+            continue
+        if cur_file is None or not is_swift_path(cur_file) or cur_file in ALLOWLIST_FILES:
+            continue
+        for lit, _q in string_literals_with_pos(strip_line_comment(raw[1:])):
+            removed.add(lit)
+    return removed
+
+
 def scan_diff(diff_text: str):
     """扫一段 git diff 文本（-U0），返回 [(文件, 行号, 种类, 字面量, 代码行)]。
     种类为 "中文" 或 "英文文案"。纯函数，便于单测（不跑 git）。"""
     violations = []
+    moved = moved_literals(diff_text)
     cur_file = None
     cur_line = 0
     for raw in diff_text.splitlines():
@@ -133,10 +160,16 @@ def scan_diff(diff_text: str):
         )
         lits = string_literals_with_pos(code)
         hit = None
-        for lit, _q in lits:
-            if CJK.search(lit):
+        cjk_lits = [lit for lit, _q in lits if CJK.search(lit)]
+        for lit in cjk_lits:
+            if lit not in moved:
                 hit = ("中文", lit)
                 break
+        if hit is None and cjk_lits:
+            # 行内中文串全部在删除行里原样出现过：纯挪位置，豁免整行。
+            # 英文检查也不跑——该行此前报中文时英文检查本就到不了。
+            cur_line += 1
+            continue
         if hit is None:
             for lit, q in lits:
                 if not ASCII_LETTER.search(lit):

@@ -749,6 +749,11 @@ final class BearyDetailViewController: UIViewController {
         if !applyEphemeralExpiryIfNeeded() {
             scheduleEphemeralExpiry()
         }
+        // 离线保存清单预热（仅作者本人）：⋯ 菜单里的“已保存？”只读内存缓存，
+        // 清单读盘在后台提前做，不在开菜单那一刻读盘。
+        if isAuthor {
+            BearyOfflineSaveManager.shared.warmManifestCache()
+        }
     }
 
     deinit {
@@ -3289,12 +3294,16 @@ final class BearyDetailViewController: UIViewController {
             // 文字 JSON 与原图字节另存 Application Support 持久目录，
             // 不走 24h/200MB 的 Caches 缓存、不参与淘汰；已保存时改取消。
             if let entryId = entry.id, !entryId.isEmpty {
-                let saved = BearyOfflineSaveManager.shared.isSaved(entryId: entryId)
+                // 内存缓存里的保存态（进页时已后台预热；未读到时按未保存出“离线保存”，
+                // 点按重存是幂等的，不丢内容）。
+                let saved = BearyOfflineSaveManager.shared.cachedIsSaved(entryId: entryId) ?? false
                 actions.append(BearyConfirmSheet.Action(title: saved ? "取消离线保存" : "离线保存", style: saved ? .destructive : .default) { [weak self] in
                     guard let self = self else { return }
                     if saved {
-                        let removed = BearyOfflineSaveManager.shared.remove(entryId: entryId)
-                        BearyToast.show(in: self.view, message: removed ? "已取消离线保存" : "取消失败，请重试")
+                        BearyOfflineSaveManager.shared.remove(entryId: entryId) { [weak self] removed in
+                            guard let self = self else { return }
+                            BearyToast.show(in: self.view, message: removed ? "已取消离线保存" : "取消失败，请重试")
+                        }
                     } else {
                         BearyOfflineSaveManager.shared.save(entry: self.entry) { result in
                             switch result {
