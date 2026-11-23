@@ -1364,7 +1364,7 @@ class BearyDiaryCardCell: UITableViewCell {
         return v
     }()
 
-    /// 限时 pill（作者行时间后；13 semibold 蓝档，存活“限时”虚线边／到期“私密”实线边）。
+    /// 可见性 pill（作者行时间后；13 semibold，§九四档：作者本人全显、别人只显存活限时）。
     private let limitedPillView = BearyLimitedPillView()
 
     /// 限时倒计时 1 秒 tick：仅存活期限时篇在窗时跑；复用／离窗／到期即停。
@@ -3605,7 +3605,8 @@ class BearyDiaryCardCell: UITableViewCell {
         refreshMoreRow()
     }
     /// 限时卡渲染（2026-11-19 预览定版）：限时篇（存活或已到期）正文包虚线气泡、
-    /// 倒计时贴点赞右边、作者行挂“限时”／“私密”pill；其余一律按普通卡。
+    /// 倒计时贴点赞右边；作者行 pill 按 §九四档显（作者本人全显、别人只显存活限时）；
+    /// 其余一律按普通卡。
     /// 2026-10-31 107 真机报：首页限时篇下方没有分割线。旧口径是存活期
     /// “底线藏（边框代之）”，即 separatorView.isHidden = live，导致限时篇
     /// 下方与下一篇之间无实线。修法：首页模式（.feed）存活期底线也显，
@@ -3614,10 +3615,10 @@ class BearyDiaryCardCell: UITableViewCell {
     private func refreshEphemeralState(entry: Entry) {
         let hasEphemeral = entry.ephemeralUntil != nil
         let live = BearyEphemeral.isLive(entry)
-        // pill：限时篇才显（存活“限时”／到期“私密”，蓝档）；其余不显。
-        if hasEphemeral {
+        // pill（§九）：作者本人看四档，别人只显存活限时；限时到期按私密算。
+        if let pill = BearyLimitedPillView.state(hasEphemeral: hasEphemeral, ephemeralLive: live, isFriendsOnly: entry.isFriendsOnly, isPublic: entry.isPublic == true, isAuthor: isEntryAuthor(entry)) {
             limitedPillView.isHidden = false
-            limitedPillView.configure(text: live ? "限时" : "私密", expired: !live)
+            limitedPillView.configure(text: pill.text, style: pill.style)
         } else {
             limitedPillView.isHidden = true
         }
