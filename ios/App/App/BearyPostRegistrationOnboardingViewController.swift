@@ -8,28 +8,30 @@ import UserNotifications
 // 仅设置页重播保留）；本流程在注册成功后出现，含权限步与 ID 卡接线。
 // 文案一字未动（P2 标题与导语在预览里就是同一句，原文保留）。
 // 翻页只左右滑入（0.34s），不要上下渐显；横向留白统一 24。
-// 固定浅色按预览 token（页面 #f4f4f2、墨 #111、弱 #8a8a86）；
+// 调色板动态：浅色按预览 token（页面 #f4f4f2、墨 #111、弱 #8a8a86），深色走 BearyColors 明度阶；
 // 衬线只走展示性大标题（withDesign(.serif)，New York＋宋体），其余系统字体。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 enum BearyOnboardingPalette {
-    static let pageBackground = UIColor(red: 244.0 / 255.0, green: 244.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
-    static let cardBackground = UIColor.white
-    static let ink = UIColor(red: 17.0 / 255.0, green: 17.0 / 255.0, blue: 17.0 / 255.0, alpha: 1)
-    static let ink2 = UIColor(red: 58.0 / 255.0, green: 58.0 / 255.0, blue: 58.0 / 255.0, alpha: 1)
-    static let muted = UIColor(red: 138.0 / 255.0, green: 138.0 / 255.0, blue: 134.0 / 255.0, alpha: 1)
-    static let faint = UIColor(red: 199.0 / 255.0, green: 199.0 / 255.0, blue: 204.0 / 255.0, alpha: 1)
-    static let line = UIColor(red: 230.0 / 255.0, green: 230.0 / 255.0, blue: 230.0 / 255.0, alpha: 1)
-    static let line2 = UIColor(red: 239.0 / 255.0, green: 239.0 / 255.0, blue: 239.0 / 255.0, alpha: 1)
-    static let track = UIColor(red: 217.0 / 255.0, green: 217.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
-    static let blueSoft = UIColor(red: 238.0 / 255.0, green: 245.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
-    static let loveSoft = UIColor(red: 253.0 / 255.0, green: 238.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
-    static let cheerSoft = UIColor(red: 255.0 / 255.0, green: 243.0 / 255.0, blue: 223.0 / 255.0, alpha: 1)
-    static let chipSelectedBackground = UIColor(red: 255.0 / 255.0, green: 250.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
+    static let pageBackground = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 11.0 / 255.0, green: 11.0 / 255.0, blue: 13.0 / 255.0, alpha: 1) : UIColor(red: 244.0 / 255.0, green: 244.0 / 255.0, blue: 242.0 / 255.0, alpha: 1) }
+    static let cardBackground = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 24.0 / 255.0, green: 24.0 / 255.0, blue: 28.0 / 255.0, alpha: 1) : UIColor.white }
+    static let ink = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : UIColor(red: 17.0 / 255.0, green: 17.0 / 255.0, blue: 17.0 / 255.0, alpha: 1) }
+    static let ink2 = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(red: 58.0 / 255.0, green: 58.0 / 255.0, blue: 58.0 / 255.0, alpha: 1) }
+    static let muted = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.45, alpha: 1) : UIColor(red: 138.0 / 255.0, green: 138.0 / 255.0, blue: 134.0 / 255.0, alpha: 1) }
+    static let faint = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.45, alpha: 1) : UIColor(red: 199.0 / 255.0, green: 199.0 / 255.0, blue: 204.0 / 255.0, alpha: 1) }
+    static let line = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 58.0 / 255.0, green: 58.0 / 255.0, blue: 64.0 / 255.0, alpha: 1) : UIColor(red: 230.0 / 255.0, green: 230.0 / 255.0, blue: 230.0 / 255.0, alpha: 1) }
+    static let line2 = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 36.0 / 255.0, green: 36.0 / 255.0, blue: 42.0 / 255.0, alpha: 1) : UIColor(red: 239.0 / 255.0, green: 239.0 / 255.0, blue: 239.0 / 255.0, alpha: 1) }
+    static let track = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 58.0 / 255.0, green: 58.0 / 255.0, blue: 64.0 / 255.0, alpha: 1) : UIColor(red: 217.0 / 255.0, green: 217.0 / 255.0, blue: 217.0 / 255.0, alpha: 1) }
+    static let blueSoft = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 36.0 / 255.0, green: 36.0 / 255.0, blue: 42.0 / 255.0, alpha: 1) : UIColor(red: 238.0 / 255.0, green: 245.0 / 255.0, blue: 255.0 / 255.0, alpha: 1) }
+    static let loveSoft = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 36.0 / 255.0, green: 36.0 / 255.0, blue: 42.0 / 255.0, alpha: 1) : UIColor(red: 253.0 / 255.0, green: 238.0 / 255.0, blue: 242.0 / 255.0, alpha: 1) }
+    static let cheerSoft = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 36.0 / 255.0, green: 36.0 / 255.0, blue: 42.0 / 255.0, alpha: 1) : UIColor(red: 255.0 / 255.0, green: 243.0 / 255.0, blue: 223.0 / 255.0, alpha: 1) }
+    static let chipSelectedBackground = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 36.0 / 255.0, green: 36.0 / 255.0, blue: 42.0 / 255.0, alpha: 1) : UIColor(red: 255.0 / 255.0, green: 250.0 / 255.0, blue: 242.0 / 255.0, alpha: 1) }
     static let orange = BearyColors.orange
     static let linkBlue = BearyColors.blue
     static let switchGreen = UIColor(red: 52.0 / 255.0, green: 199.0 / 255.0, blue: 89.0 / 255.0, alpha: 1)
-    static let tagBackground = UIColor(red: 242.0 / 255.0, green: 242.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
+    static let tagBackground = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 36.0 / 255.0, green: 36.0 / 255.0, blue: 42.0 / 255.0, alpha: 1) : UIColor(red: 242.0 / 255.0, green: 242.0 / 255.0, blue: 242.0 / 255.0, alpha: 1) }
+    /// 墨底按钮上的字色：ink 深色下翻成近白，固定白字会看不见，故跟随翻转。
+    static let onInk = UIColor { t in t.userInterfaceStyle == .dark ? UIColor.black : UIColor.white }
 }
 
 extension UIFont {
@@ -257,7 +259,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         view.addSubview(footerView)
         primaryButton.translatesAutoresizingMaskIntoConstraints = false
         primaryButton.backgroundColor = BearyOnboardingPalette.ink
-        primaryButton.setTitleColor(.white, for: .normal)
+        primaryButton.setTitleColor(BearyOnboardingPalette.onInk, for: .normal)
         primaryButton.titleLabel?.font = BearyDynamicType.buttonFont()
         primaryButton.layer.cornerRadius = 12
         primaryButton.addTarget(self, action: #selector(primaryTapped), for: .touchUpInside)
@@ -680,7 +682,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         let button = UIButton(type: .custom)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.backgroundColor = BearyOnboardingPalette.ink
-        button.setTitleColor(.white, for: .normal)
+        button.setTitleColor(BearyOnboardingPalette.onInk, for: .normal)
         button.titleLabel?.font = BearyDynamicType.buttonFont()
         button.setTitle(title, for: .normal)
         button.layer.cornerRadius = 12
@@ -1444,7 +1446,7 @@ private final class ReactionChipView: UIControl {
         self.reaction = reaction
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = .white
+        backgroundColor = BearyOnboardingPalette.cardBackground
         layer.borderColor = BearyOnboardingPalette.line.cgColor
         layer.borderWidth = 1
         layer.cornerRadius = 16
@@ -1493,7 +1495,7 @@ private final class ReactionChipView: UIControl {
 
     func setSelected(_ selected: Bool) {
         layer.borderColor = selected ? BearyOnboardingPalette.orange.cgColor : BearyOnboardingPalette.line.cgColor
-        backgroundColor = selected ? BearyOnboardingPalette.chipSelectedBackground : .white
+        backgroundColor = selected ? BearyOnboardingPalette.chipSelectedBackground : BearyOnboardingPalette.cardBackground
     }
 }
 
