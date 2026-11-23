@@ -389,8 +389,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         // 就显人数，刷新失败也不退成光秃标题（旧口径 loadFailed 时一律只显
         // “好友”，把失败画成人数丢失）；只有空列表时只显“好友”，不把失败画成 0 人。
         // 标题只留「好友」；人数为空时整段隐藏。
-        titleLabel.text = "好友"
-        titleCountLabel.text = friends.isEmpty ? nil : "· \(friends.count)人"
+        titleLabel.text = NSLocalizedString("friends.title", comment: "")
+        titleCountLabel.text = friends.isEmpty ? nil : String(format: NSLocalizedString("friends.title_count", comment: ""), friends.count)
         titleCountLabel.isHidden = friends.isEmpty
         if loadFailed && friends.isEmpty {
             // 审计 U3：失败态给重试钮（与消息页同款）：点按即重拉；下拉手势仍可用。
