@@ -3191,6 +3191,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.addSubview(avatarView)
         row.addSubview(textStack)
         row.addSubview(chevron)
+        // G3-S1 修红：withPriority 是 BearyOnboardingViewController.swift 里
+        // private extension 的成员，跨文件不可见；改卡片作者行同款直接设 priority。
+        let crownWidth = crownView.widthAnchor.constraint(equalToConstant: 19)
+        crownWidth.priority = UILayoutPriority(999)
+        let crownHeight = crownView.heightAnchor.constraint(equalToConstant: 19)
+        crownHeight.priority = UILayoutPriority(999)
+        let crownWrapWidth = crownWrapView.widthAnchor.constraint(equalToConstant: 19)
+        crownWrapWidth.priority = UILayoutPriority(999)
+        let crownWrapHeight = crownWrapView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor)
+        crownWrapHeight.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             avatarView.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
             // R6-1：底部改为 ≤，行高不再锁死 72pt；大字号下由文字栈撑高，默认仍 72pt。
@@ -3210,10 +3220,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             // G3-S1：皇冠 19pt 固定尺寸用 999（行被栈复用、皇冠隐藏时
             // 不与栈的零尺寸约束冲突，卡片作者行同款口径）。
-            crownView.widthAnchor.constraint(equalToConstant: 19).withPriority(.init(999)),
-            crownView.heightAnchor.constraint(equalToConstant: 19).withPriority(.init(999)),
-            crownWrapView.widthAnchor.constraint(equalToConstant: 19).withPriority(.init(999)),
-            crownWrapView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor).withPriority(.init(999)),
+            crownWidth,
+            crownHeight,
+            crownWrapWidth,
+            crownWrapHeight,
             crownView.centerXAnchor.constraint(equalTo: crownWrapView.centerXAnchor),
             crownView.centerYAnchor.constraint(equalTo: crownWrapView.centerYAnchor),
         ])
