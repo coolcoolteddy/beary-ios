@@ -618,7 +618,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func makeTitleLabel(_ text: String) -> UILabel {
         let label = UILabel()
         label.numberOfLines = 0
-        label.attributedText = attributed(text, font: .onboardingSerif(ofSize: 30), color: BearyOnboardingPalette.ink, lineHeightMultiple: 1.35)
+        label.attributedText = attributed(text, font: .onboardingSerif(ofSize: 26, weight: .bold), color: BearyOnboardingPalette.ink, lineHeightMultiple: 1.35)
         return label
     }
 
@@ -1420,7 +1420,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         let titleLabel = UILabel()
         titleLabel.numberOfLines = 0
         titleLabel.textAlignment = .center
-        titleLabel.attributedText = attributed("设置完成", font: .onboardingSerif(ofSize: 30), color: BearyOnboardingPalette.ink, lineHeightMultiple: 1.35)
+        titleLabel.attributedText = attributed("设置完成", font: .onboardingSerif(ofSize: 26, weight: .bold), color: BearyOnboardingPalette.ink, lineHeightMultiple: 1.35)
         stack.addArrangedSubview(titleLabel)
         stack.addArrangedSubview(spacer(10))
         let leadLabel = UILabel()
