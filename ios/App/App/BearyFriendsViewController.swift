@@ -82,10 +82,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         tableView.delegate = self
         tableView.dataSource = self
         tableView.register(BearyFriendCell.self, forCellReuseIdentifier: "friendCell")
-        let refresh = UIRefreshControl()
-        refresh.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
-        tableView.refreshControl = refresh
         view.addSubview(tableView)
+        tableView.addSubview(pullView)
 
         // 已有内容刷新失败条：覆盖在顶栏下方、列表顶部之上（非弹框、非 toast，
         // 失败不消失直至下次成功）；点“重试”只重拉，不改列表与滚动位置。
@@ -195,6 +193,9 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        if pullView.frame.width != tableView.bounds.width {
+            pullView.frame.size.width = tableView.bounds.width
+        }
         // 底栏浮在页底：表底补 80 + 安全区底（与消息页同口径），末行不被底栏盖住。
         let bottom = 80 + view.safeAreaInsets.bottom
         if tableView.contentInset.bottom != bottom {
@@ -235,18 +236,143 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: BearyMotion.animated(true))
     }
 
-    func refresh() {
+    // MARK: - 自定义下拉刷新（消息页同款）
+
+    /// 自定义下拉指示器图标（32pt 官方刷新图标；平时 alpha 0，下拉时淡入＋跟随旋转，刷新中常亮连续旋转）。
+    private lazy var pullIconView = BearyRefreshIconView()
+
+    /// 自定义下拉指示器：固定高 116、藏在表内容上方（content y=-116..0），
+    /// 指示高按手指行程 ×0.48 阻尼（上限 116），不拦截触摸；刷新中改固定 84 高。
+    private lazy var pullView: UIView = {
+        let pull = UIView()
+        pull.backgroundColor = BearyColors.bg
+        pull.isUserInteractionEnabled = false
+        pull.frame = CGRect(x: 0, y: -116, width: 0, height: 116)
+        pull.addSubview(pullIconView)
+        NSLayoutConstraint.activate([
+            pullIconView.centerXAnchor.constraint(equalTo: pull.centerXAnchor),
+            pullIconView.bottomAnchor.constraint(equalTo: pull.bottomAnchor, constant: -14),
+            pullIconView.widthAnchor.constraint(equalToConstant: 32),
+            pullIconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        return pull
+    }()
+
+    private var isCustomPullRefreshing = false
+    private var customPullEndInFlight = false
+    private var customPullStartTime: Date?
+    private var pullEngageTranslation: CGFloat?
+
+    /// 自定义下拉指示器跟随：手指行程 ×0.48 阻尼、上限 116；指示高 ≥67.2 时转满一圈（= 触发行程 140pt × 0.48，满格点即触发点）。
+    private func updateCustomPullIndicator() {
+        if isCustomPullRefreshing {
+            return
+        }
+        if !tableView.isDragging {
+            pullEngageTranslation = nil
+            pullView.frame = CGRect(x: 0, y: -116, width: tableView.bounds.width, height: 116)
+            pullIconView.setPullProgress(0)
+            return
+        }
+        let contentRaw = max(0, -(tableView.contentOffset.y + tableView.contentInset.top))
+        let panTranslation = tableView.panGestureRecognizer.translation(in: tableView).y
+        if tableView.contentOffset.y <= -tableView.contentInset.top && pullEngageTranslation == nil {
+            pullEngageTranslation = panTranslation
+        } else if tableView.contentOffset.y > -tableView.contentInset.top {
+            pullEngageTranslation = nil
+        }
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        let indicatorHeight = min(fingerRaw * 0.48, 116)
+        pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: tableView.bounds.width, height: 116)
+        if indicatorHeight <= 0 {
+            pullIconView.setPullProgress(0)
+        } else {
+            let progress = min(1, indicatorHeight / 67.2)
+            pullIconView.setPullProgress(progress)
+        }
+    }
+
+    /// 自定义下拉刷新进入：指示固定 84 高 + 转圈，回包到即收回（无 0.5 秒最低展示）。
+    private func beginCustomPullRefresh() {
+        if isCustomPullRefreshing || loading {
+            return
+        }
+        isCustomPullRefreshing = true
+        customPullStartTime = Date()
+        pullIconView.startSpinning()
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        tableView.setContentOffset(tableView.contentOffset, animated: false)
+        let pullIn = {
+            self.tableView.contentInset.top = 84
+            self.tableView.scrollIndicatorInsets.top = 84
+            self.tableView.contentOffset = CGPoint(x: 0, y: -84)
+            self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullIn()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
+        }
         load()
+    }
+
+    /// 自定义下拉刷新结束：回包到即复位到基线内边距（无最低展示）；仍停在下拉位的才按旧口径回到 0（指示区须收掉）。
+    private func endCustomPullRefresh() {
+        if !isCustomPullRefreshing || customPullEndInFlight {
+            return
+        }
+        customPullEndInFlight = true
+        // 下拉位 = -84（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
+        let stillAtPullPosition = !self.tableView.isDragging
+            && self.tableView.contentOffset.y <= -84 + 8
+        let pullOut = {
+            self.tableView.contentInset.top = 0
+            self.tableView.scrollIndicatorInsets.top = 0
+            if stillAtPullPosition {
+                self.tableView.contentOffset = CGPoint(x: 0, y: 0)
+            }
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullOut()
+            self.isCustomPullRefreshing = false
+            self.customPullEndInFlight = false
+            self.pullIconView.stopSpinning()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+                self.isCustomPullRefreshing = false
+                self.customPullEndInFlight = false
+                self.pullIconView.stopSpinning()
+            })
+        }
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        updateCustomPullIndicator()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard scrollView === tableView else { return }
+        // 自定义下拉触发（消息页同款）：手指原始行程满 140pt 松手才刷新。
+        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        pullEngageTranslation = nil
+        if fingerRaw >= 140 && !isCustomPullRefreshing {
+            BearyHaptics.press()
+            beginCustomPullRefresh()
+        }
+    }
+
+    /// 程序触发也走自定义下拉外观（通知页同口径）。
+    func refresh() {
+        beginCustomPullRefresh()
     }
 
     /// 进页重拉（容器 showPage 切入时调，与消息页同口径）：本页此前只在
     /// viewDidLoad 拉一次；首拉失败／回空后切走再进不再重拉，会一直停在
     /// 失败／空态。进页即重拉自愈；在途时 load() 内守卫直接返回，不重复请求。
     func pageDidEnter() {
-        load()
-    }
-
-    @objc private func refreshPulled() {
         load()
     }
 
@@ -300,7 +426,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
 
     private func load() {
         guard SessionManager.shared.isLoggedIn else {
-            tableView.refreshControl?.endRefreshing()
+            endCustomPullRefresh()
             onRequireLogin?()
             return
         }
@@ -309,7 +435,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         loadFailed = false
         // 审计第 19 项：首次无数据才显加载态（下拉刷新自带转圈时不叠加）；
         // 有旧数据时不遮内容，后台刷新完直接换行。
-        if firstLoadPending && friends.isEmpty && tableView.refreshControl?.isRefreshing != true {
+        if firstLoadPending && friends.isEmpty && !isCustomPullRefreshing {
             emptyStateView.isHidden = true
             firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
             firstLoadStateView.isHidden = false
@@ -324,7 +450,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.loading = false
-                self.tableView.refreshControl?.endRefreshing()
+                self.endCustomPullRefresh()
                 self.firstLoadStateView.isHidden = true
                 // 切号后到达的旧回包直接丢弃（账号 ID + 代次双重校验；
                 // A→B→A 时账号 ID 再次相等，代次不等仍丢弃）；若新号重拉挂起，补发一次。
