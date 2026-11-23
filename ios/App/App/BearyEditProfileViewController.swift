@@ -415,6 +415,9 @@ class BearyEditProfileViewController: UIViewController {
         if #available(iOS 13.4, *) {
             picker.preferredDatePickerStyle = .wheels
         }
+        // 生日年份钳制：服务端只收 1900–今年（见 clampedBirthdayDate）。
+        picker.minimumDate = BearyEditProfileViewController.birthdayMinimumDate
+        picker.maximumDate = BearyEditProfileViewController.birthdayMaximumDate
         return picker
     }()
 
@@ -680,6 +683,22 @@ class BearyEditProfileViewController: UIViewController {
         return "\(month)月\(day)日"
     }
 
+    // 生日年份钳制：服务端只收 1900–今年，超出 PUT 回 400 bad_birthday。
+    // 上界取当年 12 月 31 日（不是今天）：当年内任何月日都合法，12 月生日在 11 月也须可选。
+    private static let birthdayMinimumDate: Date = {
+        Calendar.current.date(from: DateComponents(year: 1900, month: 1, day: 1)) ?? Date(timeIntervalSince1970: 0)
+    }()
+
+    private static var birthdayMaximumDate: Date {
+        let year = Calendar.current.component(.year, from: Date())
+        return Calendar.current.date(from: DateComponents(year: year, month: 12, day: 31)) ?? Date()
+    }
+
+    /// 把日期钳制到 1900-01-01–当年 12 月 31 日（最近合法值）。
+    private func clampedBirthdayDate(_ date: Date) -> Date {
+        min(max(date, Self.birthdayMinimumDate), Self.birthdayMaximumDate)
+    }
+
     /// 生日选择器指到当前值（已有生日时指到该日，没选过时保持今天）；
     /// ID 卡表单 textFieldDidBeginEditing 同款。
     private func syncBirthdayPickerDate() {
@@ -690,7 +709,16 @@ class BearyEditProfileViewController: UIViewController {
             components.day = day
         }
         if let date = Calendar.current.date(from: components) {
-            birthdayPicker.date = date
+            let clamped = clampedBirthdayDate(date)
+            birthdayPicker.date = clamped
+            if clamped != date {
+                // 超出范围的旧值落到最近合法值（不清空、不报错），字段文案同步跟上。
+                let clampedComponents = Calendar.current.dateComponents([.year, .month, .day], from: clamped)
+                birthdayYear = clampedComponents.year
+                birthdayMonth = clampedComponents.month
+                birthdayDay = clampedComponents.day
+                birthdayField.text = birthdayFieldText(year: birthdayYear, month: birthdayMonth, day: birthdayDay)
+            }
         }
     }
 
@@ -711,7 +739,9 @@ class BearyEditProfileViewController: UIViewController {
     }
 
     @objc private func birthdayPickerChanged(_ sender: UIDatePicker) {
-        let components = Calendar.current.dateComponents([.year, .month, .day], from: sender.date)
+        let clamped = clampedBirthdayDate(sender.date)
+        if clamped != sender.date { sender.date = clamped }
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: clamped)
         birthdayYear = components.year
         birthdayMonth = components.month
         birthdayDay = components.day
