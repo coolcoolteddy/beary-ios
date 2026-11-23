@@ -59,6 +59,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// reload 在读桶完成前再调直接丢弃，下次进页重读）。
     private var trashBucketLoading = false
     private var trashFirstLoadFailed = false
+    /// C-P1-6：本地桶快照标注——本次列表来自磁盘桶（非新鲜网络回包）时
+    /// 置位，noteRow 下亮「上次数据·X 前」；静默刷新成功提交或网络
+    /// 首拉成功后清掉。飞行模式下静默刷新失败，标注常驻。
+    private var trashShowingLocalSnapshot = false
+    private var trashSnapshotSavedAt: Date?
     private var trashLoginEmpty = false
     private var trashBusyIdentifiers: Set<String> = []
     private var restoreEntries: [(button: UIButton, trashValue: TrashItem)] = []
@@ -93,6 +98,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private let titleLabel = UILabel()
     private let closeButton = BearyHit44Button(type: .custom)
     private let noteLabel = UILabel()
+    /// C-P1-6：离线标注行（13pt 灰字，同搜索页横幅样式；隐藏即塌掉）。
+    private let trashStaleLabel = UILabel()
     private let listStack = UIStackView()
     private let loadingView = BearyRefreshIconView()
     // 空态走 BearyStateView（与失败态 failureStateView 同为 contentStack 的 arranged subview）。
@@ -196,6 +203,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashDraggingRow = nil
         trashItems = []
         trashHasMore = false
+        trashShowingLocalSnapshot = false
+        trashSnapshotSavedAt = nil
         trashFirstLoadFailed = false
         trashLoginEmpty = false
         trashLoadMoreFailed = false
@@ -297,6 +306,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         }
         noteRow.addArrangedSubview(noteLabel)
 
+        // C-P1-6：离线标注行（初始隐藏；updateTrashStaleLabel 按快照态显隐）。
+        trashStaleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        trashStaleLabel.adjustsFontForContentSizeCategory = true
+        trashStaleLabel.textColor = BearyColors.gray
+        trashStaleLabel.numberOfLines = 0
+        trashStaleLabel.isHidden = true
+
         listStack.axis = .vertical
         listStack.spacing = 10
         listStack.translatesAutoresizingMaskIntoConstraints = false
@@ -368,6 +384,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         headerRow.addArrangedSubview(headerSpacer)
         contentStack.addArrangedSubview(headerRow)
         contentStack.addArrangedSubview(noteRow)
+        contentStack.addArrangedSubview(trashStaleLabel)
         contentStack.addArrangedSubview(listStack)
         contentStack.addArrangedSubview(loadingView)
         emptyTopSpacer.backgroundColor = .clear
@@ -383,6 +400,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         failureWrap.addArrangedSubview(failureStateView)
         contentStack.setCustomSpacing(6, after: headerRow)
         contentStack.setCustomSpacing(4, after: noteRow)
+        // C-P1-6：标注行与首行卡片留 8pt；标注隐藏时栈跳过隐藏视图，
+        // noteRow 到 listStack 仍按上面 4pt 走，不多出空白。
+        contentStack.setCustomSpacing(8, after: trashStaleLabel)
         contentStack.setCustomSpacing(10, after: listStack)
     }
 
@@ -505,6 +525,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             trashBucketLoading = true
             BearyEntrySync.shared.runDiskWrite(accountId: uid) { [weak self] in
                 let localItems = BearyTrashSyncStore.loadAll(accountId: uid)
+                // C-P1-6：保存时间随桶同在后台读（文件属性，不占主线程）。
+                let bucketSavedAt = BearyTrashSyncStore.lastSavedAt(accountId: uid)
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     self.trashBucketLoading = false
@@ -524,6 +546,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     self.trashLoginEmpty = false
                     self.trashHasMore = false
                     self.trashItems = localItems
+                    // C-P1-6：本次列表来自本地桶，立快照标注；随后静默刷新
+                    // 成功提交时再摘掉（失败则保留，飞行模式下常驻）。
+                    self.trashShowingLocalSnapshot = true
+                    self.trashSnapshotSavedAt = bucketSavedAt
                     self.updateListRowsIncrementally()
                     self.renderStateViews()
                     self.silentRefreshTrash()
@@ -561,6 +587,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     let filtered = list.items.filter { !self.trashRemovedDuringSilentRefresh.contains($0.id) }
                     self.trashRemovedDuringSilentRefresh.removeAll()
                     self.trashItems = filtered
+                    // C-P1-6：网络首拉成功即新鲜内容，快照标注不亮。
+                    self.trashShowingLocalSnapshot = false
+                    self.trashSnapshotSavedAt = nil
                     self.trashHasMore = list.hasMore
                     self.updateListRowsIncrementally()
                     self.renderStateViews()
@@ -681,6 +710,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         }
                         // 增量更新：无变化时各行原地不动（见 updateListRowsIncrementally）。
                         self.trashItems = deduped
+                        // C-P1-6：静默刷新成功提交即内容已对齐，摘掉快照标注
+                        //（提交守卫丢弃旧快照的分支不走到这里，标注保留）。
+                        self.trashShowingLocalSnapshot = false
+                        self.trashSnapshotSavedAt = nil
                         self.trashHasMore = false
                         self.updateListRowsIncrementally()
                         self.renderStateViews()
@@ -825,6 +858,30 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         listStack.isHidden = hasItems == false
         // B-G14: web trash has no trailing "已到底" footer (the list just ends);
         // this page no longer renders one.
+        updateTrashStaleLabel()
+    }
+
+    /// C-P1-6：离线标注显隐——仅当 flag 开、本次列表来自本地桶、有保存
+    /// 时间且列表非空时亮；静默刷新成功 / 网络首拉成功后标志已清，
+    /// 这里自然摘掉。文案走 String Catalog（i18n-guard 口径）；相对
+    /// 时间复用全站统一口径 publishedRelativeString（中文存量，英文
+    /// 相对时间随本地化 v7 后续批次统一换）。
+    private func updateTrashStaleLabel() {
+        guard BearySnapshotFlags.isDiskSnapshotEnabled,
+              trashShowingLocalSnapshot,
+              trashItems.isEmpty == false,
+              let savedAt = trashSnapshotSavedAt else {
+            trashStaleLabel.isHidden = true
+            return
+        }
+        let ms = Int(savedAt.timeIntervalSince1970 * 1000)
+        guard let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) else {
+            trashStaleLabel.isHidden = true
+            return
+        }
+        let format = NSLocalizedString("snapshot.stale_data", comment: "")
+        trashStaleLabel.text = String(format: format, relative)
+        trashStaleLabel.isHidden = false
     }
 
     /// B4-3：刷新改增量（分页追加仍走 appendListRows，不动）。

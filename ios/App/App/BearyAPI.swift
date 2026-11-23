@@ -359,7 +359,7 @@ struct NotificationList: Decodable {
     var msgVersion: Int?
 }
 
-struct SearchUser: Decodable {
+struct SearchUser: Codable {
     var id: Int?
     var displayName: String?
     var handle: String?

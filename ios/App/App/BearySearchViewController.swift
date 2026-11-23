@@ -118,6 +118,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var currentSearchTask: URLSessionDataTask?
     private var lastQuery: String = ""
     private var showingResults: Bool = false
+    /// C-P1-6：磁盘快照态——当前结果来自上次搜索的磁盘快照（非新鲜回包）
+    /// 时置位，resultsStack 首位亮「上次数据·X 前」横幅；新一轮搜索开始
+    /// 即清掉。飞行模式冷启进页靠它看到上次内容。
+    private var showingSearchSnapshot = false
+    private var searchSnapshotSavedAt: Date?
+    private var snapshotStaleBanner: UIView?
     /// T3：切回结果页保留阅读位置——离页（切 tab／进详情）时记下的
     /// scrollView 纵向偏移；切回时 pageDidReturn 按它恢复（±1pt 内不动）。
     private var savedResultsOffsetY: CGFloat?
@@ -344,6 +350,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         buildViews()
         buildConstraints()
         showInitialState()
+        // C-P1-6：冷启有快照先出上次结果（只读盘，不发网络）。
+        loadLatestSearchSnapshot()
         // 审计 P2-20：搜索页监听拉黑/举报即时清行并清 quoteCache。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
@@ -1633,6 +1641,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 self.searchMineLocalOnly = false
                 data.mine = self.mergedMine(serverMine: data.mine, ftsMine: self.searchLocalMineEntries)
                 self.renderResults(data: data, query: trimmed)
+                // C-P1-6：服务端成功回包的首屏落盘（只存首屏窗口，不存翻页；
+                // 断网本地兜底不存，下次冷启可重算）。桶复用广场规则。
+                BearySearchCache.save(bucket: BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId()), query: trimmed, result: data)
                 // FTS 晚到时再渲一次：同 query 走行复用路径，只补「我的」组行；
                 // 两路都到齐才停框内圈。
                 if ftsDone { self.setBoxBusy(false) }
@@ -1765,6 +1776,89 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if BearyDevPreviewState.forcedSearch != .none {
             applyDevForcedSearch()
         }
+    }
+
+    /// C-P1-6：冷启读盘——初始态下读最近一条搜索快照并渲染（框内预填
+    /// 该词，不触发搜索；回车即按该词重搜）。只在 viewDidLoad / 切号后
+    /// 调一次；切 tab 不重读（pageDidReturn 只保位）。回包守卫：flag
+    /// 仍开、序号未变、框仍空、未在展示其他结果，否则丢弃。
+    private func loadLatestSearchSnapshot() {
+        guard BearySnapshotFlags.isDiskSnapshotEnabled else { return }
+        guard (searchField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, showingResults == false else { return }
+        let seq = searchSeq
+        let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
+        BearySearchCache.load(bucket: bucket) { [weak self] history in
+            guard let strongSelf = self else { return }
+            guard BearySnapshotFlags.isDiskSnapshotEnabled,
+                  seq == strongSelf.searchSeq,
+                  (strongSelf.searchField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  strongSelf.showingResults == false,
+                  let snap = history.first, !snap.query.isEmpty else { return }
+            strongSelf.searchField.text = snap.query
+            strongSelf.updateClearButtonVisibility()
+            // lastQuery 与快照词一致，stale 横幅（「下方是「q」的结果」）不误亮。
+            strongSelf.lastQuery = snap.query
+            strongSelf.showingSearchSnapshot = true
+            strongSelf.searchSnapshotSavedAt = Date(timeIntervalSince1970: snap.savedAt)
+            let data = SearchResult(users: snap.users, entries: snap.entries, mine: snap.mine)
+            strongSelf.renderResults(data: data, query: snap.query)
+            // 重放时拉黑/过期过滤可能滤空三组：renderResults 已走无结果态，
+            // 快照标注随之失效，清掉标志（无结果态本身已是诚实显示）。
+            if strongSelf.showingResults == false {
+                strongSelf.showingSearchSnapshot = false
+                strongSelf.searchSnapshotSavedAt = nil
+            }
+        }
+    }
+
+    /// C-P1-6：快照标注横幅——当前结果来自磁盘快照时在 resultsStack 首位
+    /// 亮「上次数据·X 前」（13pt 灰字，同本地横幅样式）；新搜索 / 切号 /
+    /// 清结果时摘掉。renderResults 与 showFailedStateKeepingResults 末尾
+    /// 随三横幅一并刷新。
+    private func updateSnapshotStaleBanner() {
+        guard showingResults, showingSearchSnapshot,
+              let savedAt = searchSnapshotSavedAt else {
+            removeSnapshotStaleBanner()
+            return
+        }
+        let ms = Int(savedAt.timeIntervalSince1970 * 1000)
+        guard let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) else {
+            removeSnapshotStaleBanner()
+            return
+        }
+        let format = NSLocalizedString("snapshot.stale_data", comment: "")
+        let text = String(format: format, relative)
+        if let banner = snapshotStaleBanner, banner.superview == resultsStack,
+           let label = banner.subviews.first as? UILabel {
+            label.text = text
+            return
+        }
+        removeSnapshotStaleBanner()
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.numberOfLines = 0
+        label.text = text
+        wrap.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
+            label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
+        ])
+        snapshotStaleBanner = wrap
+        resultsStack.insertArrangedSubview(wrap, at: 0)
+    }
+
+    private func removeSnapshotStaleBanner() {
+        guard let banner = snapshotStaleBanner else { return }
+        snapshotStaleBanner = nil
+        resultsStack.removeArrangedSubview(banner)
+        banner.removeFromSuperview()
     }
 
     /// 开发者模式变化：强制态切换直接置态渲染；清除后回初始态。
@@ -2104,6 +2198,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateStaleResultsBanner()
         updatePartialArchiveBanner()
         updateLocalOnlyBanner()
+        updateSnapshotStaleBanner()
     }
 
     /// B2：旧结果保留提示横幅——换词搜索失败、旧结果仍在屏时，列表头写清
@@ -2348,6 +2443,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchServerPending = false
         ftsMineEntryIds = []
         removeLocalOnlyBanner()
+        // C-P1-6：新一轮搜索 / 切号先清快照态（快照标注随之摘掉）。
+        showingSearchSnapshot = false
+        searchSnapshotSavedAt = nil
+        removeSnapshotStaleBanner()
     }
 
     /// 从服务端回包原始数组更新三组 hasMore 与游标（LIMIT：日记组 20、用户组 8；
@@ -2403,6 +2502,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         staleResultsBanner = nil
         partialArchiveBanner = nil
         localOnlyBanner = nil
+        // C-P1-6：快照标注横幅同摘。
+        snapshotStaleBanner = nil
         mineSectionHeader = nil
         publicSectionHeader = nil
         usersSectionHeader = nil
@@ -2595,6 +2696,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateStaleResultsBanner()
         updatePartialArchiveBanner()
         updateLocalOnlyBanner()
+        updateSnapshotStaleBanner()
         // 第七轮 02：横幅也可能插在结果上方，恢复放在横幅落位之后、
         // 入场动画之前，一次把锚点行顶回原视口位置。
         restoreResultAnchor(reuseAnchor)
@@ -3559,6 +3661,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         showingResults = false
         savedResultsOffsetY = nil
         showInitialState()
+        // C-P1-6：切号后按新桶再读一次快照（框内有旧词时守卫会拦住，不错显）。
+        loadLatestSearchSnapshot()
     }
 
     /// S5：关注状态只进排队，不立即发请求——可见行优先由
@@ -4201,5 +4305,120 @@ private final class BearyRoundedMarkLabel: UILabel {
             }
         }
         super.drawText(in: rect)
+    }
+}
+
+// MARK: - C-P1-6：搜索首屏磁盘快照（套 BearyFeedCache 模式）
+
+/// C-P1-6 单旗灰度：UserDefaults 缺省 true；关掉即搜索不读不写快照、
+/// 回收站不亮离线标注。无远控通道，先以本地开关占位。
+enum BearySnapshotFlags {
+    static var isDiskSnapshotEnabled: Bool {
+        if let value = UserDefaults.standard.object(forKey: "beary.v2.c-p1-6.enabled") as? Bool {
+            return value
+        }
+        return true
+    }
+}
+
+/// 搜索首屏磁盘快照：只存最近 historyLimit 条查询的首屏结果（新在前、
+/// 同词去重），每条 query + users≤8 + entries≤20 + mine≤20 + savedAt。
+/// 桶按账号隔离（复用 BearyFeedCache.bucket 规则：userId / "guest"）；
+/// 退出时由 SessionManager.purgeLocalSnapshots 同清。
+/// 只存服务端成功回包的首屏（断网本地 FTS 结果不存，下次冷启可重算）。
+enum BearySearchCache {
+    static let historyLimit = 3
+    static let usersLimit = 8
+    static let entriesLimit = 20
+    static let mineLimit = 20
+
+    private static let filePrefix = "beary_search_cache_"
+    private static let ioQueue = DispatchQueue(label: "beary.searchCache.io", qos: .utility)
+
+    struct Snapshot: Codable {
+        var query: String
+        var savedAt: TimeInterval
+        var users: [SearchUser]
+        var entries: [Entry]
+        var mine: [Entry]
+    }
+
+    private static func fileURL(bucket: String) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(filePrefix)\(bucket).json")
+    }
+
+    /// 代次屏障（同 BearyFeedCache 审计 22 项口径）：purge 同步推进代次、
+    /// 删除进 ioQueue；purge 前排队的写在执行时因代次已变被弃写，不再
+    /// 重新创建刚删除的旧账号缓存。
+    private static let generationLock = NSLock()
+    private static var generations: [String: UInt64] = [:]
+
+    private static func generation(for bucket: String) -> UInt64 {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return generations[bucket] ?? 0
+    }
+
+    private static func bumpGeneration(for bucket: String) {
+        generationLock.lock()
+        generations[bucket, default: 0] += 1
+        generationLock.unlock()
+    }
+
+    private static func readHistory(bucket: String) -> [Snapshot] {
+        guard let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) else { return [] }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return (try? decoder.decode([Snapshot].self, from: data)) ?? []
+    }
+
+    private static func writeHistory(bucket: String, history: [Snapshot]) {
+        guard let url = fileURL(bucket: bucket) else { return }
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        guard let data = try? encoder.encode(history) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+
+    /// 读最近历史（新在前）；无文件/损坏返回 []。读盘 + 解码在缓存 IO
+    /// 队列，回包到主线程；桶已换时旧回包由调用方 searchSeq 守卫丢弃。
+    static func load(bucket: String, completion: @escaping ([Snapshot]) -> Void) {
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            let history = readHistory(bucket: bucket)
+            let result = capturedGeneration == generation(for: bucket) ? history : []
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// 存一条查询的首屏结果：同词去重、新在前、截断到 historyLimit 条。
+    /// 各组截到首屏页宽（用户组 8、日记组 20，与 updateSearchPagination
+    /// 的页宽一致）；写盘异步进行，调用方先应用界面、不等写盘。
+    static func save(bucket: String?, query: String, result: SearchResult) {
+        guard let bucket = bucket, !bucket.isEmpty, !query.isEmpty else { return }
+        let snap = Snapshot(
+            query: query,
+            savedAt: Date().timeIntervalSince1970,
+            users: Array((result.users ?? []).prefix(usersLimit)),
+            entries: Array((result.entries ?? []).prefix(entriesLimit)),
+            mine: Array((result.mine ?? []).prefix(mineLimit))
+        )
+        let capturedGeneration = generation(for: bucket)
+        ioQueue.async {
+            guard capturedGeneration == generation(for: bucket) else { return }
+            var history = readHistory(bucket: bucket).filter { $0.query != query }
+            history.insert(snap, at: 0)
+            writeHistory(bucket: bucket, history: Array(history.prefix(historyLimit)))
+        }
+    }
+
+    static func purge(bucket: String) {
+        bumpGeneration(for: bucket)
+        ioQueue.async {
+            guard let url = fileURL(bucket: bucket) else { return }
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }
