@@ -4491,4 +4491,13 @@ extension UITableView {
             self.contentOffset = targetOffset
         })
     }
+
+    /// G-P0-16：类型化复用出队。五处 `as!` 收敛到这一处：复用标识错配时只在这里崩，
+    /// 且 fatalError 点名缺失的类型，不再是调用方的无名 `as!` 崩溃。
+    func dequeue<T: UITableViewCell>(_ identifier: String, for indexPath: IndexPath) -> T {
+        guard let cell = dequeueReusableCell(withIdentifier: identifier, for: indexPath) as? T else {
+            fatalError("Cell not registered: \(T.self)")
+        }
+        return cell
+    }
 }

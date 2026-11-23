@@ -272,7 +272,7 @@ extension BearyDepthBackgroundViewController: UITableViewDataSource, UITableView
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "BearyDepthBackgroundCell", for: indexPath) as! BearyDepthBackgroundCell
+        let cell: BearyDepthBackgroundCell = tableView.dequeue("BearyDepthBackgroundCell", for: indexPath)
         let theme = themesValue[indexPath.row]
         let isCurrent = theme == currentThemeValue
         let isLocked = theme != .none && !isPlusValue

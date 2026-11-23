@@ -431,7 +431,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "friendCell", for: indexPath) as! BearyFriendCell
+        let cell: BearyFriendCell = tableView.dequeue("friendCell", for: indexPath)
         let user = friends[indexPath.row]
         cell.configure(user: user) { [weak self] button in
             self?.presentFriendMenu(user: user, sourceButton: button)

@@ -5004,7 +5004,7 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "BearyBlockedCell", for: indexPath) as! BearyBlockedUserCell
+        let cell: BearyBlockedUserCell = tableView.dequeue("BearyBlockedCell", for: indexPath)
         let userId = blockedIds[indexPath.row]
         cell.configure(
             userId: userId,
