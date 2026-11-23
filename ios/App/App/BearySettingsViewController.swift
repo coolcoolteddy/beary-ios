@@ -1591,9 +1591,7 @@ final class BearySettingsViewController: UIViewController {
         // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
         titleLabel.font = BearyDynamicType.smallBodyFont()
         titleLabel.text = "添加账号"
-        let detailLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        detailLabel.text = "登录另一个账号，当前账号保持登录"
-        let textStack = UIStackView(arrangedSubviews: [titleLabel, detailLabel])
+        let textStack = UIStackView(arrangedSubviews: [titleLabel])
         textStack.axis = .vertical
         textStack.spacing = 2
         textStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1854,7 +1852,7 @@ final class BearySettingsViewController: UIViewController {
         exportTitle.text = "导出我的数据"
         exportTitle.numberOfLines = 0 // P1-7：行正文标题多行
         let exportDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
-        exportDetail.text = "导出 JSON，包含账户资料、日记和点赞记录"
+
         exportDetailLabel = exportDetail
         let exportStack = UIStackView(arrangedSubviews: [exportTitle, exportDetail])
         exportStack.axis = .vertical
@@ -2572,12 +2570,12 @@ final class BearySettingsViewController: UIViewController {
     }
 
     /// 2026-10-29（P2-13）：导出进度提示——串行四阶段在行副文案上轮换，结束（失败/触顶确认前）复原；
-    /// 只改副文案文字，不重建行、不播动效；nil = 复原默认文案。
+    /// 只改副文案文字，不重建行、不播动效；nil = 清空（无静态副文案）。
     /// 审计三轮第 24 项：直出成功路径不再于四阶段结束时复原，buildAndShareExport
     /// 置“正在生成文件…”、文件写完（成功 present 前 / 失败 toast 前）才复原。
     private func setExportProgress(_ text: String?) {
         DispatchQueue.main.async { [weak self] in
-            self?.exportDetailLabel?.text = text ?? "导出 JSON，包含账户资料、日记和点赞记录"
+            self?.exportDetailLabel?.text = text ?? ""
         }
     }
 
