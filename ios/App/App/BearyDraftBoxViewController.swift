@@ -21,8 +21,9 @@ import UIKit
 // 不用 async/await，不用 if-let 简写。
 
 /// 审计第 2 项：草稿卡片 meta 区流式布局视图。
-/// 原 metaRow 是单行横排 stack（字数 required + 写给/心情 chip + “忽略丢失图片”钮 +
-/// 正在写 + 保存状态 required + 末尾 spacer）：窄屏多标签时横排总宽超卡片宽，
+/// 原 metaRow 是单行横排 stack（字数 required + 写给/心情 chip +
+/// 正在写 + 保存状态 required + 末尾 spacer；“忽略丢失图片”钮已收到
+/// 卡片操作区状态行右端，见展示审计 G5-12）：窄屏多标签时横排总宽超卡片宽，
 /// 只能靠压 chip 或触发约束冲突。UIStackView 本身不换行，故此处用手动分行：
 /// 按现有顺序从左到右排，排不下即另起一行；行高取本行最高项，行距 6。
 /// 高度由内部 height 约束驱动（layoutSubviews 按当前宽度重算、变化时才更新，
@@ -1096,29 +1097,12 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             chip.translatesAutoresizingMaskIntoConstraints = false
             metaFlow.addSubview(chip)
         }
-        // DF-1 “忽略丢失图片”可点清除 chip：只针对已无物可续传的失败图
-        // （本地文件与服务端 key 皆无，网页 imgs_lost 的等价情形）；点一下清掉
-        // 这些图项与提示，可续传的失败图仍走“图片已存本机，待上传”状态行。
-        if hasUnrecoverableImage(for: draftValue) {
-            // Hit44：视觉约 19 高不动；纵向扩区以流式容器 bounds 为限（独占一行时到不了满 44），
-            // 横向已够宽不扩；同行／邻行均为非交互 label／chip，不抢其他按钮热区。
-            let lostButton = BearyHit44Button(type: .custom)
-            lostButton.setTitle("忽略丢失图片", for: .normal)
-            // D-G13：网页 .df-chip.df-lost 为 faint 底 + 灰字 + 500 字重；
-            // 原 App 红底红字 semibold 改齐。
-            lostButton.setTitleColor(BearyColors.gray, for: .normal)
-            lostButton.titleLabel?.font = UIFont.systemFont(ofSize: 12, weight: .medium)
-            lostButton.backgroundColor = BearyColors.surface2
-            lostButton.layer.cornerRadius = 999
-            lostButton.layer.masksToBounds = true
-            lostButton.contentEdgeInsets = UIEdgeInsets(top: 2.5, left: 9, bottom: 2.5, right: 9)
-            lostButton.accessibilityLabel = "移除无法恢复的图片记录"
-            lostButton.addTarget(self, action: #selector(clearLostTapped(_:)), for: .touchUpInside)
-            lostButton.bearyAddPressFeedback()
-            lostButton.translatesAutoresizingMaskIntoConstraints = false
-            metaFlow.addSubview(lostButton)
-            lostEntries.append((button: lostButton, draftValue: draftValue))
-        }
+        // DF-1 “忽略丢失图片”清除操作（展示审计 G5-12）：只针对已无物可续传
+        // 的失败图（本地文件与服务端 key 皆无，网页 imgs_lost 的等价情形）；
+        // 点一下清掉这些图项与提示，可续传的失败图仍走“图片已存本机，待上传”
+        // 状态行。原先做成 meta 流里的 chip，与状态 chip（字数／写给／心情／
+        // 正在写）同一视觉权重、操作与状态不分；现收到卡片操作区（状态行右端，
+        // 与发布失败重试钮同排），见下方 statusRow 段；meta 流里只留状态。
         // DF-1 正在写标记：编辑器当前正在写的那篇（currentDraftId 由容器设置）。
         if let current = currentDraftId, current == draftValue.draftId {
             let writingLabel = UILabel()
@@ -1148,6 +1132,28 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         statusRow.addArrangedSubview(statusLabel)
         let metaSpacer = UIView()
         statusRow.addArrangedSubview(metaSpacer)
+        // 展示审计 G5-12：“忽略丢失图片”清除操作收进卡片操作区（状态行右端，
+        // 与发布失败重试钮同排），不再混在 meta 流 chip 里；样式与重试钮同款
+        // （surface2 底 pill），操作与状态视觉区分。
+        if hasUnrecoverableImage(for: draftValue) {
+            let lostButton = BearyHit44Button(type: .custom)
+            lostButton.setTitle("忽略丢失图片", for: .normal)
+            // D-G13：网页 .df-chip.df-lost 为 faint 底 + 灰字 + 500 字重；
+            // 原 App 红底红字 semibold 改齐。
+            lostButton.setTitleColor(BearyColors.gray, for: .normal)
+            lostButton.titleLabel?.font = UIFont.systemFont(ofSize: 12, weight: .medium)
+            lostButton.backgroundColor = BearyColors.surface2
+            lostButton.layer.cornerRadius = 999
+            lostButton.layer.masksToBounds = true
+            lostButton.contentEdgeInsets = UIEdgeInsets(top: 2.5, left: 9, bottom: 2.5, right: 9)
+            lostButton.accessibilityLabel = "移除无法恢复的图片记录"
+            lostButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+            lostButton.addTarget(self, action: #selector(clearLostTapped(_:)), for: .touchUpInside)
+            lostButton.bearyAddPressFeedback()
+            lostButton.translatesAutoresizingMaskIntoConstraints = false
+            statusRow.addArrangedSubview(lostButton)
+            lostEntries.append((button: lostButton, draftValue: draftValue))
+        }
         // 发布失败行：草稿箱是失败的持久落点——失败文案红字（单行截断，
         // 全文见 pill 状态表／失败 toast）＋重试钮；原日记已公开时钮文
         // “只重试新篇”，点按走发布中心一键重试，不重开编辑器。
@@ -1428,7 +1434,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         return false
     }
 
-    /// “忽略丢失图片”chip 点按：清掉已无物可续传的失败图项并后台写盘、只刷新这一张卡
+    /// “忽略丢失图片”按钮点按：清掉已无物可续传的失败图项并后台写盘、只刷新这一张卡
     /// （网页点 imgs_lost chip 清标记 + 重渲的等价动作；可续传图项不受影响）。
     /// 审计第 8 轮第 9 项：旧流程先 renderDrafts() 又在写盘成功回调里再
     /// renderDrafts()，整列卡片重建两次、可见位置也无保留；现只原位替换
@@ -1450,7 +1456,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 drafts[offset] = draftValue
             }
         }
-        // 清除后立即只刷新这一张卡（图片计数、状态行、“忽略丢失图片” chip
+        // 清除后立即只刷新这一张卡（图片计数、状态行、“忽略丢失图片”按钮
         // 都随新卡重算），不等磁盘写盘回包；其余卡片不动、滚动位置由锚点保留。
         replaceCard(for: draftValue)
         // G5：改用带 Bool 回调的写盘；写盘成功直接结束，不再重渲；
