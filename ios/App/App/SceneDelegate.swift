@@ -53,6 +53,13 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         BearyAppLanguage.installBundleOverrideIfNeeded()
         NotificationCenter.default.addObserver(forName: BearyAppLanguage.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self = self, let window = self.window else { return }
+            // Y6：换根会同步释放正在编辑的编辑器——先冲刷待保存草稿（400ms
+            // 防抖窗口内的输入否则会丢），再换根。写盘已入队
+            // BearyDraftStore.ioQueue，调完即可换根，不必等回调。
+            if let chrome = window.rootViewController as? BearyChromeViewController,
+               let composer = chrome.presentedComposer() {
+                composer.flushDraftBeforeLanguageChange()
+            }
             window.rootViewController = BearyChromeViewController()
             window.makeKeyAndVisible()
         }
@@ -4760,6 +4767,18 @@ final class BearyChromeViewController: UIViewController {
             top = next
         }
         return top
+    }
+
+    /// Y6：沿 presented 链找正在编辑的编辑器——alert 盖在编辑器上时顶层不是
+    /// 编辑器，也要找到；找不到返回 nil（没有正在编辑的编辑器）。SceneDelegate
+    /// 切语言换根前经此找编辑器冲刷草稿。
+    func presentedComposer() -> BearyComposerViewController? {
+        var current: UIViewController? = window?.rootViewController
+        while let vc = current {
+            if let composer = vc as? BearyComposerViewController { return composer }
+            current = vc.presentedViewController
+        }
+        return nil
     }
 
     /// 编辑模式入口：详情“编辑”钮 → 编辑器（从详情 nav 上 present）。
