@@ -449,7 +449,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
 
         headerWrap.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "草稿箱"
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
