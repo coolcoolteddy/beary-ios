@@ -2103,7 +2103,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             cell.configure(message: message, isMine: isMine, peerName: peerName, query: searchField.text ?? "")
             return cell
         }
-        let cell = tableView.dequeueReusableCell(withIdentifier: "dmMessageCell", for: indexPath) as! BearyDMMessageCell
+        let cell = tableView.dequeueReusableCell(ofType: BearyDMMessageCell.self, withIdentifier: "dmMessageCell", for: indexPath)
         let message = messages[indexPath.row]
         let isMine = message.senderId != nil && message.senderId == storeAccountId
         // 2026-11-04 乐观发送：仅本人待发行可带失败态；失败时叹号点按重发该条。

@@ -857,7 +857,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         if showingSkeleton {
             return tableView.dequeueReusableCell(withIdentifier: BearyDMConversationSkeletonCell.reuseIdentifier, for: indexPath)
         }
-        let cell = tableView.dequeueReusableCell(withIdentifier: "dmConversationCell", for: indexPath) as! BearyDMConversationCell
+        let cell = tableView.dequeueReusableCell(ofType: BearyDMConversationCell.self, withIdentifier: "dmConversationCell", for: indexPath)
         cell.configure(conversation: conversations[indexPath.row])
         return cell
     }

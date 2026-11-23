@@ -4491,4 +4491,13 @@ extension UITableView {
             self.contentOffset = targetOffset
         })
     }
+
+    /// 泛型出队：identifier 与 cell 类型一一对应，取不到同类型时新建一个同类型 cell 兜底，不崩。
+    /// 审计 §一-4：五处 `as!` 强转收敛于此；注册点与类型当前一致，正常路径仍是复用池出队。
+    func dequeueReusableCell<T: UITableViewCell>(ofType type: T.Type, withIdentifier identifier: String, for indexPath: IndexPath) -> T {
+        if let cell = dequeueReusableCell(withIdentifier: identifier, for: indexPath) as? T {
+            return cell
+        }
+        return T(style: .default, reuseIdentifier: identifier)
+    }
 }
