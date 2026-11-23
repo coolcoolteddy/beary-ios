@@ -1704,7 +1704,7 @@ final class BearyDetailViewController: UIViewController {
 
         // 正文 16pt（diaryBodyFont 即 scaled 16），行高 1.6（首页卡片口径）。
         // 正文仅表情放大（2026-11-18 Li 定）：1–3 个纯表情时字号 ×2（见 detailBodyAttributedText）。
-        // 限时篇按卡片同款放大：短句 19／长文 16.5（见 BearyEphemeral.bodyFontSize）。
+        // 限时篇按卡片同款：正文 16.5（展示审计 G4-06，旧短句 19 已改，不超过标题）。
         // 旧心情改位：心情缀正文末尾（见 detailBodyAttributedText）。
         bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood, fontSize: BearyEphemeral.bodyFontSize(content: entry.content ?? "", limited: entry.ephemeralUntil != nil))
         bodyLabel.isHidden = (entry.content ?? "").isEmpty && (entry.mood ?? "").isEmpty
@@ -1728,7 +1728,7 @@ final class BearyDetailViewController: UIViewController {
     private func detailBodyAttributedText(_ content: String, moodKey: String?, fontSize: CGFloat = 16) -> NSAttributedString {
         // 正文仅表情放大：1–3 个纯表情时字号 ×2（与写日记页 #1964、卡片同口径）；
         // 行高倍数 1.6 跟字号走；心情缀尾附件按生效字号 ×1.2。
-        // 限时篇字号由调用方按 BearyEphemeral.bodyFontSize 传入（短句 19／长文 16.5）。
+        // 限时篇字号由调用方按 BearyEphemeral.bodyFontSize 传入（限时 16.5，不超过标题）。
         let font = BearyText.effectiveBodyFont(BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize)), for: content)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.6
