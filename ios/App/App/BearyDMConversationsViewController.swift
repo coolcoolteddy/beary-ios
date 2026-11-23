@@ -889,16 +889,45 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         onOpenChat?(conversations[indexPath.row])
     }
 
+    /// 左滑删除二次确认（HIG W4）：会话含聊天记录、服务端只存 7 天，删后
+    /// 本侧记录无法恢复；先弹 action sheet，确认才走 deleteConversation
+    /// （乐观移除／失败插回／toast 原样），取消不做任何事。iPad 上以行
+    /// cell 为 popover 锚点，免得无锚点崩溃；消息页会话行共用本方法（见
+    /// BearyMessagesViewController 会话行左滑）。
+    func confirmDeleteConversation(peerId: Int, sourceView: UIView) {
+        let sheet = UIAlertController(
+            title: NSLocalizedString("dm.delete.confirm.title", comment: ""),
+            message: NSLocalizedString("dm.delete.confirm.message", comment: ""),
+            preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(
+            title: NSLocalizedString("dm.delete.confirm.delete", comment: ""),
+            style: .destructive) { [weak self] _ in
+                self?.deleteConversation(peerId: peerId) { _ in }
+            })
+        sheet.addAction(UIAlertAction(
+            title: NSLocalizedString("dm.delete.confirm.cancel", comment: ""),
+            style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = sourceView
+            popover.sourceRect = sourceView.bounds
+        }
+        present(sheet, animated: BearyMotion.animated(true))
+    }
+
     /// 左滑删除单个会话：只给「删除」一个红色动作（卡片本身不在本页）。
-    /// 骨架行与无对方 id 的行不删；在途重复删由编排层拦。
+    /// 点按先弹二次确认（HIG W4），确认才删；骨架行与无对方 id 的行不删；
+    /// 在途重复删由编排层拦。
     func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
         guard !showingSkeleton,
               indexPath.row < conversations.count,
               let peerId = conversations[indexPath.row].peer?.id else { return nil }
         let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
             guard let self = self else { done(false); return }
-            self.deleteConversation(peerId: peerId) { _ in }
             done(true)
+            // 删前先二次确认：等左滑收起后再弹 sheet，免得在 swipe 进行中弹框。
+            DispatchQueue.main.async {
+                self.confirmDeleteConversation(peerId: peerId, sourceView: tableView.cellForRow(at: indexPath) ?? tableView)
+            }
         }
         delete.accessibilityLabel = "删除这个会话"
         return UISwipeActionsConfiguration(actions: [delete])
