@@ -4773,7 +4773,7 @@ final class BearyChromeViewController: UIViewController {
     /// 编辑器，也要找到；找不到返回 nil（没有正在编辑的编辑器）。SceneDelegate
     /// 切语言换根前经此找编辑器冲刷草稿。
     func presentedComposer() -> BearyComposerViewController? {
-        var current: UIViewController? = window?.rootViewController
+        var current: UIViewController? = view.window?.rootViewController
         while let vc = current {
             if let composer = vc as? BearyComposerViewController { return composer }
             current = vc.presentedViewController
