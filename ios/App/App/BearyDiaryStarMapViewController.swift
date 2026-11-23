@@ -1203,6 +1203,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
     /// 聚焦该天节点群并打开底卡。调用时数据未到也无妨——pending 只记日期，
     /// 拉取回包后的重算同样会消费它。
     func focusDay(_ date: Date) {
+        // 反向跳转（2.5D 第 1 支；第 3 支补）：收起态下目标日记星可能被藏起，
+        // 先展开再聚焦（预览同款：若收起先展开，再聚焦）。
+        if skyView.isCollapsed { skyView.setCollapsed(false) }
         pendingFocusDate = date
         let comps = Calendar.current.dateComponents([.year, .month], from: date)
         if let year = comps.year, let month = comps.month,
@@ -2008,6 +2011,19 @@ private final class StarMapSkyView: UIView {
     private var pointsById: [String: (x: Double, y: Double)] = [:]
     private var selectedStarId: String?
     private var selectedEdgeId: String?
+    /// 收起／全展开（2.5D 第 3 支）：默认收起——只显锚点＋标签节点，
+    /// 日记星与相关边隐藏。状态由胶囊按钮改，见 setCollapsed。
+    private(set) var isCollapsed = true
+    /// 收起态下可见的节点 id（锚点星 id＋标签节点 id），setStars 时算好；
+    /// displayedEdges 与选中圈共用，避免每边线性扫星。
+    private var visibleNodeIds: Set<String> = []
+    /// 收起／全展开胶囊（2.5D 第 3 支）：系统液态玻璃背板
+    ///（BearyGlass.effectView，不自绘）＋两段按钮，浮在画布底部中央
+    ///（预览同款 dock 位）。玻璃层 isUserInteractionEnabled=false，
+    ///点按由两段按钮本体接管。
+    private let collapseCapsule = UIView()
+    private let collapseButton = BearyHit44Button(type: .custom)
+    private let expandButton = BearyHit44Button(type: .custom)
     /// P2-12：切分片过渡期是否暂停旧图交互（点按＋无障碍激活同停）。
     private var interactionPaused = false
 
@@ -2020,18 +2036,21 @@ private final class StarMapSkyView: UIView {
     private static let maxDisplayedEdges = 600
 
     private var displayedEdges: [StarMapSkyEdge] {
-        guard edges.count > Self.maxDisplayedEdges else { return edges }
+        // 2.5D 第 3 支：收起时只留两端都可见的边（锚点–锚点、锚点–标签），
+        // 任一端是日记星的边隐藏；展开时不过滤。预算逻辑走过滤后的边。
+        let base = isCollapsed ? edges.filter { visibleNodeIds.contains($0.firstId) && visibleNodeIds.contains($0.secondId) } : edges
+        guard base.count > Self.maxDisplayedEdges else { return base }
         if let selectedStarId {
-            let selected = edges.filter { $0.firstId == selectedStarId || $0.secondId == selectedStarId }
-            let rest = edges.filter { $0.firstId != selectedStarId && $0.secondId != selectedStarId }
+            let selected = base.filter { $0.firstId == selectedStarId || $0.secondId == selectedStarId }
+            let rest = base.filter { $0.firstId != selectedStarId && $0.secondId != selectedStarId }
             return selected + Array(rest.prefix(max(0, Self.maxDisplayedEdges - selected.count)))
         }
         if let selectedEdgeId {
-            let selected = edges.filter { $0.id == selectedEdgeId }
-            let rest = edges.filter { $0.id != selectedEdgeId }
+            let selected = base.filter { $0.id == selectedEdgeId }
+            let rest = base.filter { $0.id != selectedEdgeId }
             return selected + Array(rest.prefix(max(0, Self.maxDisplayedEdges - selected.count)))
         }
-        return Array(edges.prefix(Self.maxDisplayedEdges))
+        return Array(base.prefix(Self.maxDisplayedEdges))
     }
 
     /// 第十一轮 01：星图日期共用一个格式化器——setStars 在主线程遍历全部星星，
@@ -2117,7 +2136,81 @@ private final class StarMapSkyView: UIView {
         layer.addSublayer(dotLayer)
         let tap = UITapGestureRecognizer(target: self, action: #selector(didTap(_:)))
         addGestureRecognizer(tap)
+        setupCollapseCapsule()
     }
+
+    /// 收起／全展开切换（2.5D 第 3 支）：改状态＋重建图层（藏起的日记星
+    /// 与相关边即时消失／重现）＋同步无障碍元素；进行中的光点先停，
+    /// 免得沿一条已隐藏的边继续飞。调用方（反向跳转）可直接调本方法展开。
+    func setCollapsed(_ collapsed: Bool) {
+        guard isCollapsed != collapsed else { return }
+        isCollapsed = collapsed
+        endTravellingDot()
+        updateCollapseCapsule()
+        rebuildLayers()
+        syncAccessibilityElements()
+    }
+
+    private func setupCollapseCapsule() {
+        // 玻璃背板在下（只做视觉，不接点按）、两段按钮在上；胶囊层级 z 10，
+        // 压过星线图层（最高 3），不被星核盖住。
+        let glass = BearyGlass.effectView()
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        collapseCapsule.addSubview(glass)
+        collapseCapsule.layer.cornerRadius = 18
+        collapseCapsule.layer.borderWidth = 1
+        collapseCapsule.layer.borderColor = UIColor(white: 1, alpha: 0.25).cgColor
+        collapseCapsule.clipsToBounds = true
+        collapseCapsule.layer.zPosition = 10
+        collapseCapsule.translatesAutoresizingMaskIntoConstraints = false
+        let stack = UIStackView(arrangedSubviews: [collapseButton, expandButton])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.spacing = 4
+        collapseCapsule.addSubview(stack)
+        addSubview(collapseCapsule)
+        NSLayoutConstraint.activate([
+            glass.topAnchor.constraint(equalTo: collapseCapsule.topAnchor),
+            glass.leadingAnchor.constraint(equalTo: collapseCapsule.leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: collapseCapsule.trailingAnchor),
+            glass.bottomAnchor.constraint(equalTo: collapseCapsule.bottomAnchor),
+            stack.topAnchor.constraint(equalTo: collapseCapsule.topAnchor, constant: 4),
+            stack.leadingAnchor.constraint(equalTo: collapseCapsule.leadingAnchor, constant: 4),
+            stack.trailingAnchor.constraint(equalTo: collapseCapsule.trailingAnchor, constant: -4),
+            stack.bottomAnchor.constraint(equalTo: collapseCapsule.bottomAnchor, constant: -4),
+            collapseCapsule.centerXAnchor.constraint(equalTo: centerXAnchor),
+            collapseCapsule.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            collapseCapsule.heightAnchor.constraint(equalToConstant: 36),
+        ])
+        collapseButton.setTitle(NSLocalizedString("starmap.collapse", comment: "星图收起胶囊：收起"), for: .normal)
+        expandButton.setTitle(NSLocalizedString("starmap.expand_all", comment: "星图收起胶囊：全展开"), for: .normal)
+        for button in [collapseButton, expandButton] {
+            button.titleLabel?.adjustsFontForContentSizeCategory = true
+            button.bearyAddPressFeedback()
+            button.layer.cornerRadius = 14
+            button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        }
+        collapseButton.addTarget(self, action: #selector(didTapCollapse), for: .touchUpInside)
+        expandButton.addTarget(self, action: #selector(didTapExpand), for: .touchUpInside)
+        collapseButton.accessibilityHint = NSLocalizedString("starmap.collapse_hint", comment: "星图收起胶囊：收起提示")
+        expandButton.accessibilityHint = NSLocalizedString("starmap.expand_all_hint", comment: "星图收起胶囊：全展开提示")
+        updateCollapseCapsule()
+    }
+
+    private func updateCollapseCapsule() {
+        // 选中段：白 0.2 底＋白字加粗；未选中段：透明底＋白 0.6 字。
+        // 读屏同步选中态（.selected），与筛选药丸同款。
+        for (button, active) in [(collapseButton, isCollapsed), (expandButton, !isCollapsed)] {
+            button.backgroundColor = active ? UIColor(white: 1, alpha: 0.2) : .clear
+            button.setTitleColor(active ? .white : UIColor(white: 1, alpha: 0.6), for: .normal)
+            button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: active ? .semibold : .medium))
+            button.isSelected = active
+            button.accessibilityTraits = active ? [.button, .selected] : .button
+        }
+    }
+
+    @objc private func didTapCollapse() { setCollapsed(true) }
+    @objc private func didTapExpand() { setCollapsed(false) }
 
     /// 字号档位变化时画布日期字重算（图层按当前档位取值），只重建图层不重建模型。
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -2181,6 +2274,13 @@ private final class StarMapSkyView: UIView {
         self.entriesById = byId
         self.tagNodes = tagNodes
         self.edges = edges
+        // 收起态可见集：锚点星 id＋标签节点 id（2.5D 第 3 支）。
+        var visible = Set(tagNodes.map { $0.id })
+        for star in stars where star.kind == .anchor {
+            guard let id = star.entry.id else { continue }
+            visible.insert(id)
+        }
+        self.visibleNodeIds = visible
         self.pointsById = pointsById
         self.selectedStarId = selectedStarId
         self.selectedEdgeId = selectedEdgeId
@@ -2324,8 +2424,10 @@ private final class StarMapSkyView: UIView {
             edgeLayer.zPosition = selected ? 1.5 : 1
             edgeLayer.opacity = 1
         }
+        // 收起时藏起的日记星不描选中圈（底卡仍可留着，见 setCollapsed）。
+        let diaryIds = Set(stars.filter { $0.kind == .diary }.map { $0.id })
         for (id, layers) in starLayers {
-            layers.ring.isHidden = id != selectedStarId
+            layers.ring.isHidden = id != selectedStarId || (isCollapsed && diaryIds.contains(id))
         }
         CATransaction.commit()
         guard edgeFadeIn, BearyMotion.animated(true),
@@ -2478,6 +2580,8 @@ private final class StarMapSkyView: UIView {
         var elements: [UIAccessibilityElement] = []
         elements.reserveCapacity(stars.count)
         for star in stars {
+            // 2.5D 第 3 支：收起时藏起的日记星不暴露给读屏（与视觉一致）。
+            if isCollapsed && star.kind == .diary { continue }
             guard let entry = entriesById[star.id] else { continue }
             let element: StarMapStarAccessibilityElement
             if let cached = starAccessibilityElements[star.id] {
@@ -2742,7 +2846,8 @@ private final class StarMapSkyView: UIView {
             layers.ring.cornerRadius = radius + 3
             // 未到延后时刻整组先藏起（ring 的选中显隐仍由 updateSelectionVisuals
             // 在本函数末尾收尾，到场后这里放出；date 的显隐见下）。
-            let starHidden = starAlpha <= 0
+            // 2.5D 第 3 支：收起时普通日记星整组藏起（锚点与标签节点不受影响）。
+            let starHidden = starAlpha <= 0 || (isCollapsed && star.kind == .diary)
             layers.halo.isHidden = starHidden
             layers.flash.isHidden = starHidden
             layers.core.isHidden = starHidden
@@ -2772,7 +2877,7 @@ private final class StarMapSkyView: UIView {
                     .foregroundColor: labelBaseColor.withAlphaComponent(labelAlpha),
                 ]
                 layers.date.string = NSAttributedString(string: labelText, attributes: attributes)
-                layers.date.isHidden = starAlpha <= 0
+                layers.date.isHidden = starAlpha <= 0 || (isCollapsed && star.kind == .diary)
                 layers.date.frame = CGRect(x: center.x - 30, y: center.y + radius + 3, width: 60, height: 14)
             }
         }
@@ -2853,6 +2958,9 @@ private final class StarMapSkyView: UIView {
 
     @objc private func didTap(_ gesture: UITapGestureRecognizer) {
         let tapPoint = gesture.location(in: self)
+        // 胶囊在画布之上（z 10）：点在胶囊上时走两段按钮，不落到画布点按
+        //（按钮与手势会同时收到触摸，不拦会把点胶囊误判成点背景清选中）。
+        if collapseCapsule.frame.contains(tapPoint) { return }
         // 标签节点先行（2.5D 第 2 支）：命中半径内取最近一个，进标签聚合页；
         // 标签节点是显式目标，不与重叠星抢点按。
         var bestTag: (distance: CGFloat, node: StarMapTagNode)?
@@ -2870,6 +2978,8 @@ private final class StarMapSkyView: UIView {
         // 先星：命中半径内按距离排序；多颗重叠时出列表，不让下层星点不到。
         var starHits: [(distance: CGFloat, entry: Entry)] = []
         for star in stars {
+            // 2.5D 第 3 支：收起时藏起的日记星点不到（与视觉一致）。
+            if isCollapsed && star.kind == .diary { continue }
             guard let entry = entriesById[star.id] else { continue }
             let center = point(for: (x: star.x, y: star.y), in: bounds)
             let distance = hypot(tapPoint.x - center.x, tapPoint.y - center.y)
