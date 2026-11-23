@@ -2126,6 +2126,26 @@ class BearyTimelineViewController: UIViewController {
     /// 呈现逻辑在容器侧，时间线侧直接 present 会走错呈现形态）。
     /// 注意：容器尚未接线本回调前，空态按钮点按无动作（见回执待办）。
     var onCompose: (() -> Void)?
+    /// 展示审计 G1-08：写一笔行·过去日／图片／定位接力（容器接线：把已输入
+    /// 文字存为新草稿后打开编辑器；今天直发不走本回调）。
+    var onComposeDraft: ((BearyDraft) -> Void)?
+    /// 写一笔行诸视图（buildHeader 内搭建，表头末尾，随表滚走）。
+    private let writeLineContainer = UIView()
+    private let writeLineDashedBorder = BearyDashedBorderView()
+    private let writeLineTextView = UITextView()
+    private let writeLinePlaceholderLabel = UILabel()
+    private let writeLineContentStack = UIStackView()
+    private let writeLineActionRow = UIStackView()
+    private let writeLineToolsRow = UIStackView()
+    private let writeLineToolsChevronButton = UIButton(type: .system)
+    private let writeLinePublishButton = UIButton(type: .system)
+    private let writeLineEmoteButton = UIButton(type: .system)
+    private let writeLineImageButton = UIButton(type: .system)
+    private let writeLineLocationButton = UIButton(type: .system)
+    private var writeLineToolsExpanded = false
+    private var writeLineKeyboardHeight: CGFloat = 0
+    private var writeLinePublishing = false
+    private var lastWriteLineTextHeight: CGFloat = 0
     /// 当日/全部列表行点按，传整条 Entry（容器接线：打开详情）。
     var onOpenEntry: ((Entry) -> Void)?
     /// 未登录：首拉 401 时调用一次（另附“请先登录”空态内的“去登录”按钮可再次触发）。
@@ -2369,7 +2389,7 @@ class BearyTimelineViewController: UIViewController {
     private var calendarMode: BearyCalendarCardView.ViewMode = .week
     private var calendarAnchor: (year: Int, month: Int, day: Int)?
     private var calendarDisplayedMonth: (year: Int, month: Int)?
-    private var selectedDayKey: String? { didSet { cachedSections = nil } }
+    private var selectedDayKey: String? { didSet { cachedSections = nil; updateWriteLineRow() } }
     /// 第 3 项翻周/翻月选区跟随：新视图月份缓存未到齐时挂起，到达后在
     /// fetchCalendarMonth 回包里重试（tryStepFollowSelection）。
     private var pendingStepFollow = false
@@ -2693,6 +2713,10 @@ class BearyTimelineViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(handleForegroundEphemeralCheck(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
         // 发布后补拉待办变迁（第三批体验检查第 1 项）：选中日有待办入队/落盘时刷新当日面板（表头“同步中”）。
         NotificationCenter.default.addObserver(self, selector: #selector(handlePendingRefetchChanged(_:)), name: .bearyPendingRefetchDidChange, object: nil)
+        // 展示审计 G1-08：写一笔行键盘抬高与账号变化显隐。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleWriteLineKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleWriteLineKeyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUserDidChangeForWriteLine), name: .bearyUserDidChange, object: nil)
         // G15 toast 已委托 B 批统一 BearyToast（见 showTimelineToast），
         // 此处不再建常驻 toast 容器。
         // 第 2 项 A 调用点 1/2（初次进入）：置守卫挂起；2026-11-04 不跳日口径：
@@ -2762,6 +2786,7 @@ class BearyTimelineViewController: UIViewController {
         // 回页时复位，保证图标回到满尺寸）。
         trashButton.imageView?.transform = .identity
         startCountdownTimer()
+        updateWriteLineRow()
         // 回到本页时栏恢复可见（不带动画，避免进页先闪一下栏）。
         // setChromeHidden 由容器 lane 在 SceneDelegate.swift 提供，本文件只调用。
         // 下滑藏栏已拆除（第 11 项）：底栏分段器与 FAB 常驻，不再按滚动方向藏栏。
@@ -3024,6 +3049,9 @@ class BearyTimelineViewController: UIViewController {
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillHideNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyUserDidChange, object: nil)
     }
 
     /// 审计 P2-20：拉黑/举报广播到后即时清行——内存三处（timelineEntries/dayEntries/
@@ -3080,7 +3108,9 @@ class BearyTimelineViewController: UIViewController {
         guard !isCustomPullRefreshing else { return }
         let top = view.safeAreaInsets.top + (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
         refreshFailedBannerTopConstraint?.constant = (visible ? 60 : 0) + BearyDeveloperMode.shared.devBannerInset
-        let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
+        // 展示审计 G1-08：写一笔行键盘抬高时底内边距取 max（基线，键盘高），
+        // 否则容器重发顶距会把键盘预留顶掉。
+        let bottom = writeLineBottomInset()
         if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
             // 冷启动/首进回顶：内边距变大时偏移不动，标题行会顶进状态栏区
             //（首建时 inset 0→安全区顶、偏移仍停 0）；仅当正停在旧顶（容差
@@ -4312,12 +4342,14 @@ class BearyTimelineViewController: UIViewController {
         filterRow.spacing = 8
         filterRow.addArrangedSubview(visFilterButton)
         filterRow.addArrangedSubview(UIView())
+        // 展示审计 G1-08：写一笔行（表头末尾，随表滚走）。
+        setupWriteLineRow()
 
         // R15-L1：表头顺序改为标题与回收站 → 统计（共 X 篇／已连续写 X 天，
         // 紧贴标题「时间线」下方，2026-11-12 Li 定）→ 日历 → 筛选 → 日记；
         // ≥821pt 居中列 / ≤820pt 全宽列与左右各 16 边距一律不动
         // （见下方约束与 SceneDelegate 宽度口径）。
-        let stack = UIStackView(arrangedSubviews: [titleRow, countsLabel, statsButton, calendarCard, filterRow])
+        let stack = UIStackView(arrangedSubviews: [titleRow, countsLabel, statsButton, calendarCard, filterRow, writeLineContainer])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.spacing = 0
@@ -4325,6 +4357,7 @@ class BearyTimelineViewController: UIViewController {
         stack.setCustomSpacing(2, after: countsLabel)
         stack.setCustomSpacing(12, after: statsButton)
         stack.setCustomSpacing(12, after: calendarCard)
+        stack.setCustomSpacing(12, after: filterRow)
         headerStack = stack
         headerContainer.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -4334,6 +4367,7 @@ class BearyTimelineViewController: UIViewController {
             stack.bottomAnchor.constraint(equalTo: headerContainer.bottomAnchor),
         ])
         tableView.tableHeaderView = headerContainer
+        updateWriteLineRow()
     }
 
     /// 表头高度待重算：refreshHeaderHeight 在表宽为 0 时置位，
@@ -6976,6 +7010,413 @@ class BearyTimelineViewController: UIViewController {
         fetchDayEntries(key: key, clear: false)
     }
 
+}
+
+// MARK: - 写一笔行（展示审计 G1-08）
+
+/// 时间线表头写一笔行：虚线框输入行（点后页面抬高＋键盘升起、工具行默认收起）。
+/// 选中日是今天 → 发布钮直接调 publishEntry 纯文本发布（默认私密）；
+/// 选中日是过去日 → 存为新草稿后经 onComposeDraft 打开编辑器接力——服务端
+/// POST /entries 无回填日期参数，直发会把过去日的日记记成今天，故不直发；
+/// 未来日整行隐藏（锁住写不了），游客态整行隐藏。
+extension BearyTimelineViewController: UITextViewDelegate {
+
+    // MARK: 搭建
+
+    private func setupWriteLineRow() {
+        writeLineContainer.translatesAutoresizingMaskIntoConstraints = false
+        writeLineContainer.backgroundColor = BearyColors.bg
+        writeLineContainer.layer.cornerRadius = BearyCorners.single
+        writeLineContainer.clipsToBounds = true
+        writeLineContainer.isHidden = true  // 初始隐藏，updateWriteLineRow 按登录／选中日定显隐
+
+        writeLineDashedBorder.translatesAutoresizingMaskIntoConstraints = false
+        writeLineContainer.addSubview(writeLineDashedBorder)
+
+        writeLineTextView.translatesAutoresizingMaskIntoConstraints = false
+        writeLineTextView.delegate = self
+        writeLineTextView.font = BearyDynamicType.diaryBodyFont()
+        writeLineTextView.adjustsFontForContentSizeCategory = true
+        writeLineTextView.textColor = BearyColors.ink
+        writeLineTextView.backgroundColor = .clear
+        writeLineTextView.textContainerInset = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        writeLineTextView.textContainer.lineFragmentPadding = 0
+        writeLineTextView.isScrollEnabled = false
+        writeLineTextView.accessibilityLabel = "写日记"
+        // 完成钮：键盘附件栏（收起键盘；不发文、不清文）。
+        let accessory = UIToolbar()
+        accessory.sizeToFit()
+        let done = UIBarButtonItem(title: "完成", style: .done, target: self, action: #selector(didTapWriteLineDone))
+        accessory.items = [UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil), done]
+        writeLineTextView.inputAccessoryView = accessory
+
+        writeLinePlaceholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        writeLinePlaceholderLabel.font = BearyDynamicType.diaryBodyFont()
+        writeLinePlaceholderLabel.adjustsFontForContentSizeCategory = true
+        writeLinePlaceholderLabel.textColor = BearyColors.gray
+        writeLinePlaceholderLabel.numberOfLines = 1
+        writeLinePlaceholderLabel.text = "今天还没写日记哦"
+        writeLineContainer.addSubview(writeLinePlaceholderLabel)
+
+        writeLineContentStack.translatesAutoresizingMaskIntoConstraints = false
+        writeLineContentStack.axis = .vertical
+        writeLineContentStack.spacing = 2
+        writeLineContentStack.addArrangedSubview(writeLineTextView)
+        writeLineContentStack.addArrangedSubview(writeLineActionRow)
+        writeLineContentStack.addArrangedSubview(writeLineToolsRow)
+        writeLineContainer.addSubview(writeLineContentStack)
+
+        writeLineActionRow.translatesAutoresizingMaskIntoConstraints = false
+        writeLineActionRow.axis = .horizontal
+        writeLineActionRow.alignment = .center
+        writeLineActionRow.spacing = 8
+        writeLineActionRow.isHidden = true
+        if let chevron = BearyIconImages.image(named: "icon_chevron_down", pointSize: 14) {
+            writeLineToolsChevronButton.setImage(chevron, for: .normal)
+        }
+        writeLineToolsChevronButton.tintColor = BearyColors.gray
+        writeLineToolsChevronButton.contentMode = .scaleAspectFit
+        writeLineToolsChevronButton.translatesAutoresizingMaskIntoConstraints = false
+        writeLineToolsChevronButton.addTarget(self, action: #selector(didTapWriteLineToolsChevron), for: .touchUpInside)
+        writeLineToolsChevronButton.accessibilityLabel = "更多工具"
+        writeLineActionRow.addArrangedSubview(writeLineToolsChevronButton)
+        let actionSpacer = UIView()
+        actionSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        actionSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        writeLineActionRow.addArrangedSubview(actionSpacer)
+        writeLinePublishButton.setTitle("发布", for: .normal)
+        writeLinePublishButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
+        writeLinePublishButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        writeLinePublishButton.setTitleColor(BearyColors.orange, for: .normal)
+        writeLinePublishButton.setTitleColor(BearyColors.gray, for: .disabled)
+        writeLinePublishButton.translatesAutoresizingMaskIntoConstraints = false
+        writeLinePublishButton.addTarget(self, action: #selector(didTapWriteLinePublish), for: .touchUpInside)
+        writeLinePublishButton.isEnabled = false
+        writeLineActionRow.addArrangedSubview(writeLinePublishButton)
+
+        writeLineToolsRow.translatesAutoresizingMaskIntoConstraints = false
+        writeLineToolsRow.axis = .horizontal
+        writeLineToolsRow.alignment = .center
+        writeLineToolsRow.spacing = 16
+        writeLineToolsRow.isHidden = true
+        writeLineEmoteButton.setTitle("表情", for: .normal)
+        writeLineEmoteButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        writeLineEmoteButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        writeLineEmoteButton.setTitleColor(BearyColors.ink, for: .normal)
+        writeLineEmoteButton.translatesAutoresizingMaskIntoConstraints = false
+        writeLineEmoteButton.addTarget(self, action: #selector(didTapWriteLineEmote), for: .touchUpInside)
+        writeLineToolsRow.addArrangedSubview(writeLineEmoteButton)
+        writeLineImageButton.setTitle("图片", for: .normal)
+        writeLineImageButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        writeLineImageButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        writeLineImageButton.setTitleColor(BearyColors.ink, for: .normal)
+        writeLineImageButton.translatesAutoresizingMaskIntoConstraints = false
+        writeLineImageButton.addTarget(self, action: #selector(didTapWriteLineImage), for: .touchUpInside)
+        writeLineToolsRow.addArrangedSubview(writeLineImageButton)
+        writeLineLocationButton.setTitle("定位", for: .normal)
+        writeLineLocationButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        writeLineLocationButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        writeLineLocationButton.setTitleColor(BearyColors.ink, for: .normal)
+        writeLineLocationButton.translatesAutoresizingMaskIntoConstraints = false
+        writeLineLocationButton.addTarget(self, action: #selector(didTapWriteLineLocation), for: .touchUpInside)
+        writeLineToolsRow.addArrangedSubview(writeLineLocationButton)
+        let toolsSpacer = UIView()
+        toolsSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        toolsSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        writeLineToolsRow.addArrangedSubview(toolsSpacer)
+
+        NSLayoutConstraint.activate([
+            writeLineDashedBorder.topAnchor.constraint(equalTo: writeLineContainer.topAnchor),
+            writeLineDashedBorder.leadingAnchor.constraint(equalTo: writeLineContainer.leadingAnchor),
+            writeLineDashedBorder.trailingAnchor.constraint(equalTo: writeLineContainer.trailingAnchor),
+            writeLineDashedBorder.bottomAnchor.constraint(equalTo: writeLineContainer.bottomAnchor),
+            writeLineContentStack.topAnchor.constraint(equalTo: writeLineContainer.topAnchor, constant: 6),
+            writeLineContentStack.leadingAnchor.constraint(equalTo: writeLineContainer.leadingAnchor),
+            writeLineContentStack.trailingAnchor.constraint(equalTo: writeLineContainer.trailingAnchor),
+            writeLineContentStack.bottomAnchor.constraint(equalTo: writeLineContainer.bottomAnchor, constant: -8),
+            writeLinePlaceholderLabel.topAnchor.constraint(equalTo: writeLineTextView.topAnchor, constant: 10),
+            writeLinePlaceholderLabel.leadingAnchor.constraint(equalTo: writeLineTextView.leadingAnchor, constant: 12),
+            writeLinePlaceholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: writeLineTextView.trailingAnchor, constant: -12),
+            writeLineToolsChevronButton.widthAnchor.constraint(equalToConstant: 28),
+            writeLineToolsChevronButton.heightAnchor.constraint(equalToConstant: 28),
+        ])
+
+        // 点框聚焦输入；钮上的点按不抢焦点（cancelsTouchesInView=false＋落点在钮内时忽略）。
+        let tap = UITapGestureRecognizer(target: self, action: #selector(didTapWriteLineContainer(_:)))
+        tap.cancelsTouchesInView = false
+        writeLineContainer.addGestureRecognizer(tap)
+    }
+
+    // MARK: 显隐与占位
+
+    private enum WriteLineDay {
+        case today
+        case past(month: Int, day: Int)
+        case future
+    }
+
+    /// 选中日相对真实今天的状态；游客返回 nil（整行隐藏）。
+    /// 注意：不用 BearyBeijingDay.todayComponents（它认开发者模式假日，
+    /// 写路径一律不用假日）；今天／过去／未来三态都按真实今天算。
+    private func writeLineDayState() -> WriteLineDay? {
+        guard SessionManager.shared.isLoggedIn else { return nil }
+        guard let today = BearyBeijingDay.components(ofMs: Int(Date().timeIntervalSince1970 * 1000)),
+              let todayNum = BearyBeijingDay.dayNumber(year: today.year, month: today.month, day: today.day) else { return .today }
+        let key = selectedDayKey ?? BearyBeijingDay.dayKey(year: today.year, month: today.month, day: today.day)
+        let parts = key.split(separator: "-")
+        guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]),
+              let num = BearyBeijingDay.dayNumber(year: year, month: month, day: day) else { return .today }
+        if num > todayNum { return .future }
+        if num == todayNum { return .today }
+        return .past(month: month, day: day)
+    }
+
+    private func writeLinePlaceholderText() -> String {
+        if case let .past(month, day) = writeLineDayState() {
+            return "写写 \(month)月\(day)日的日记"
+        }
+        return "今天还没写日记哦"
+    }
+
+    /// 写一笔行显隐与占位：游客隐藏；未来日隐藏；今天／过去日显示。
+    /// 隐藏时若正在编辑先收键盘（文案保留在输入框内，重现时仍在）。
+    private func updateWriteLineRow() {
+        guard headerStack != nil else { return }
+        let visible = writeLineDayState() != nil
+        if !visible, writeLineTextView.isFirstResponder {
+            writeLineTextView.resignFirstResponder()
+        }
+        if writeLineContainer.isHidden != !visible {
+            writeLineContainer.isHidden = !visible
+            refreshHeaderHeight()
+        }
+        writeLinePlaceholderLabel.text = writeLinePlaceholderText()
+        updateWriteLinePublishButton()
+    }
+
+    // MARK: 编辑态
+
+    private func updateWriteLineEditingState() {
+        let text = writeLineTextView.text ?? ""
+        writeLinePlaceholderLabel.isHidden = !text.isEmpty
+        updateWriteLinePublishButton()
+        // 先落定布局再读高度（textViewDidChange 时 contentSize 可能滞后一帧）。
+        writeLineTextView.layoutIfNeeded()
+        // 超 120pt 后行内滚动（不再撑高表头）；高度真变时才重算表头。
+        writeLineTextView.isScrollEnabled = writeLineTextView.contentSize.height > 120
+        let height = writeLineTextView.contentSize.height
+        if height != lastWriteLineTextHeight {
+            lastWriteLineTextHeight = height
+            refreshHeaderHeight()
+        }
+    }
+
+    private func updateWriteLinePublishButton() {
+        let text = (writeLineTextView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        writeLinePublishButton.isEnabled = !text.isEmpty && !writeLinePublishing
+    }
+
+    func textViewDidBeginEditing(_ textView: UITextView) {
+        guard textView === writeLineTextView else { return }
+        writeLineActionRow.isHidden = false
+        writeLineContainer.backgroundColor = BearyColors.surface1
+        refreshHeaderHeight()
+    }
+
+    func textViewDidEndEditing(_ textView: UITextView) {
+        guard textView === writeLineTextView else { return }
+        writeLineContainer.backgroundColor = BearyColors.bg
+        if (writeLineTextView.text ?? "").isEmpty {
+            writeLineToolsExpanded = false
+            writeLineToolsRow.isHidden = true
+            writeLineToolsChevronButton.transform = .identity
+            writeLineActionRow.isHidden = true
+            refreshHeaderHeight()
+        }
+    }
+
+    func textViewDidChange(_ textView: UITextView) {
+        guard textView === writeLineTextView else { return }
+        updateWriteLineEditingState()
+    }
+
+    @objc private func didTapWriteLineContainer(_ gesture: UITapGestureRecognizer) {
+        let point = gesture.location(in: writeLineContainer)
+        for button in [writeLineToolsChevronButton, writeLinePublishButton, writeLineEmoteButton, writeLineImageButton, writeLineLocationButton] {
+            if !button.isHidden, button.convert(button.bounds, to: writeLineContainer).contains(point) { return }
+        }
+        writeLineTextView.becomeFirstResponder()
+    }
+
+    @objc private func didTapWriteLineDone() {
+        writeLineTextView.resignFirstResponder()
+    }
+
+    @objc private func didTapWriteLineToolsChevron() {
+        writeLineToolsExpanded.toggle()
+        writeLineToolsRow.isHidden = !writeLineToolsExpanded
+        writeLineToolsChevronButton.transform = writeLineToolsExpanded ? CGAffineTransform(rotationAngle: .pi) : .identity
+        refreshHeaderHeight()
+    }
+
+    // MARK: 工具
+
+    @objc private func didTapWriteLineEmote() {
+        // 键盘与 Sheet 冲突：先收键盘，选完插记号后再回焦点。
+        writeLineTextView.resignFirstResponder()
+        let sheet = BearyEmotePickerSheetViewController()
+        sheet.modalPresentationStyle = .overFullScreen
+        sheet.playsPickSound = false
+        sheet.onPick = { [weak self] key in
+            self?.dismiss(animated: UIAccessibility.isReduceMotionEnabled == false) {
+                self?.insertWriteLineMarker("[mood:\(key)]")
+                self?.writeLineTextView.becomeFirstResponder()
+            }
+        }
+        present(sheet, animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
+    }
+
+    private func insertWriteLineMarker(_ marker: String) {
+        let tv = writeLineTextView
+        if let range = tv.selectedTextRange {
+            tv.replace(range, withText: marker)
+        } else {
+            tv.text = (tv.text ?? "") + marker
+        }
+        updateWriteLineEditingState()
+    }
+
+    @objc private func didTapWriteLineImage() {
+        handoffWriteLineToComposer()
+    }
+
+    @objc private func didTapWriteLineLocation() {
+        handoffWriteLineToComposer()
+    }
+
+    // MARK: 发布与接力
+
+    @objc private func didTapWriteLinePublish() {
+        let text = (writeLineTextView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !writeLinePublishing else { return }
+        guard let state = writeLineDayState() else { return }
+        switch state {
+        case .today:
+            publishWriteLineToday(text: text)
+        case .past:
+            handoffWriteLineToComposer(text: text)
+        case .future:
+            return
+        }
+    }
+
+    private func publishWriteLineToday(text: String) {
+        writeLinePublishing = true
+        updateWriteLinePublishButton()
+        BearyAPI.shared.publishEntry(
+            content: text, images: [], mood: nil,
+            clientReq: UUID().uuidString,
+            visibility: "private"
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.writeLinePublishing = false
+                self.updateWriteLinePublishButton()
+                switch result {
+                case .success:
+                    self.clearWriteLineRow()
+                    self.invalidateStatsLine()
+                    self.reloadTimeline()
+                case .failure:
+                    self.showTimelineToast(message: "发布失败，请重试")
+                }
+            }
+        }
+    }
+
+    /// 过去日／图片／定位接力：已输入文字存为新草稿，打开编辑器（编辑器内
+    /// 补图片／定位；过去日直发会记成今天，故不直发，见本 extension 头注释）。
+    private func handoffWriteLineToComposer(text: String? = nil) {
+        let content = text ?? (writeLineTextView.text ?? "")
+        let draft = BearyDraft(
+            draftId: UUID().uuidString,
+            content: content,
+            mood: nil,
+            images: [],
+            clientReq: UUID().uuidString,
+            updatedAt: Date().timeIntervalSince1970,
+            weather: nil,
+            recipientId: nil,
+            recipientName: nil,
+            recipientAvatar: nil,
+            notifyRecipient: false,
+            quoteId: nil,
+            quoteAuthorName: nil,
+            quoteAuthorAvatar: nil,
+            quoteCreatedAt: nil,
+            quoteContent: nil,
+            quoteImages: [],
+            quoteIsPublic: nil,
+            quoteDeleted: false)
+        _ = BearyDraftStore.save(draft)
+        clearWriteLineRow()
+        onComposeDraft?(draft)
+    }
+
+    private func clearWriteLineRow() {
+        writeLineTextView.text = ""
+        writeLineTextView.resignFirstResponder()
+        writeLineToolsExpanded = false
+        writeLineToolsRow.isHidden = true
+        writeLineToolsChevronButton.transform = .identity
+        writeLineActionRow.isHidden = true
+        writeLineContainer.backgroundColor = BearyColors.bg
+        updateWriteLineEditingState()
+    }
+
+    // MARK: 键盘抬高
+
+    private func writeLineBottomInset() -> CGFloat {
+        let base = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
+        return max(base, writeLineKeyboardHeight)
+    }
+
+    @objc private func handleWriteLineKeyboardWillShow(_ note: Notification) {
+        guard writeLineTextView.isFirstResponder else { return }
+        guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        let height = view.convert(frame, from: nil).intersection(view.bounds).height
+        writeLineKeyboardHeight = max(0, height)
+        animateWithWriteLineKeyboard(note) {
+            self.tableView.contentInset.bottom = self.writeLineBottomInset()
+            self.tableView.scrollIndicatorInsets.bottom = self.tableView.contentInset.bottom
+        }
+        scrollWriteLineIntoView()
+    }
+
+    @objc private func handleWriteLineKeyboardWillHide(_ note: Notification) {
+        guard writeLineKeyboardHeight > 0 else { return }
+        writeLineKeyboardHeight = 0
+        animateWithWriteLineKeyboard(note) {
+            self.tableView.contentInset.bottom = self.writeLineBottomInset()
+            self.tableView.scrollIndicatorInsets.bottom = self.tableView.contentInset.bottom
+        }
+    }
+
+    @objc private func handleUserDidChangeForWriteLine() {
+        updateWriteLineRow()
+    }
+
+    private func animateWithWriteLineKeyboard(_ note: Notification, _ work: @escaping () -> Void) {
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
+        let curve = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue ?? 7
+        UIView.animate(withDuration: duration, delay: 0, options: UIView.AnimationOptions(rawValue: UInt(curve << 16)), animations: work)
+    }
+
+    private func scrollWriteLineIntoView() {
+        guard writeLineContainer.window != nil else { return }
+        let rect = writeLineContainer.convert(writeLineContainer.bounds, to: tableView)
+        tableView.scrollRectToVisible(rect, animated: true)
+    }
 }
 
 // MARK: - UITableViewDataSource / UITableViewDelegate

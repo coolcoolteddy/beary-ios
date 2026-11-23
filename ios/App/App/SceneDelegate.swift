@@ -2905,6 +2905,8 @@ final class BearyChromeViewController: UIViewController {
         vc.onOpenTrash = { [weak self] in self?.presentTrash() }
         // Q5 空态 CTA 接线：时间线空态“写一篇”与 FAB 同去向（未登录时 presentComposer 内弹原生登录页）。
         vc.onCompose = { [weak self] in self?.presentComposer() }
+        // 展示审计 G1-08：写一笔行过去日／图片／定位接力——已输入文字存为新草稿后打开编辑器。
+        vc.onComposeDraft = { [weak self] draft in self?.presentComposer(openingDraft: draft) }
         vc.onOpenEntry = { [weak self] entry in
             self?.gotoEntryImmediately(entry: entry, source: .timeline)
         }
