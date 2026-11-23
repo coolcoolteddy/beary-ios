@@ -743,8 +743,8 @@ final class BearyInviteViewController: UIViewController {
                 setLabelTextFaded(boundLabel, "已通过 \(inviterName) 的邀请加入 beary")
                 boundCheckIcon.isHidden = false
             } else if status == "flagged" {
-                // flagged 是服务端风控拦截（同 IP / 邀请人被封），须站长在管理端放行或作废——此处“待审核”属实。
-                setLabelTextFaded(boundLabel, "待审核 · \(inviterName) 的邀请")
+                // flagged 是服务端风控拦截（同 IP / 邀请人被封），须站长在管理端放行或作废——行内称“绑定处理中”。
+                setLabelTextFaded(boundLabel, "绑定处理中 · \(inviterName) 的邀请")
                 boundCheckIcon.isHidden = true
             } else {
                 // pending / granting 是结算中（绑定即结算，无人工审核），不再称“待审核”。
