@@ -22,12 +22,23 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     var onBackToMessages: (() -> Void)?
 
     private let tableView = UITableView(frame: .zero, style: .plain)
-    // 空／失败态走 BearyStateView（与首次加载态同槽位居中、互斥）。
+    // 空／失败态走 BearyStateView。
     private let emptyStateView = BearyStateView()
-    // 审计第 19 项：首次加载态复用 BearyStateView（转圈 +“加载中…”），不加骨架屏。
-    // 只在“首次请求且尚无旧数据”时出现；有旧数据时保留内容后台刷新。
-    private let firstLoadStateView = BearyStateView()
+    // 首载骨架行（第 9 题）：首次加载态改骨架行（复用站内已有的
+    // BearyDMConversationSkeletonCell，与好友行同结构：头像 44＋名字条＋
+    // handle 条），不再复用 BearyStateView 转圈＋“加载中…”；只在“首次请求
+    // 且尚无旧数据”时出现；有旧数据时保留内容后台刷新。骨架行数与会话
+    // 列表／广场同款 3 行。
+    private let skeletonRowCount = 3
     private var firstLoadPending = true
+
+    /// 首载骨架行是否在屏——首次请求未落定、尚无好友、已登录、且不在下拉
+    /// 刷新中（下拉刷新自带转圈，不叠加骨架）。会话列表同款口径。
+    private var showingSkeleton: Bool {
+        firstLoadPending && friends.isEmpty
+            && SessionManager.shared.isLoggedIn
+            && tableView.refreshControl?.isRefreshing != true
+    }
     // 新行首次出现透明度过渡的已播记账（按好友 id/handle 键，已有行更新不重播）。
     private var fadedRowKeys = Set<String>()
     private let titleLabel = UILabel()
@@ -82,6 +93,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         tableView.delegate = self
         tableView.dataSource = self
         tableView.register(BearyFriendCell.self, forCellReuseIdentifier: "friendCell")
+        tableView.register(BearyDMConversationSkeletonCell.self, forCellReuseIdentifier: BearyDMConversationSkeletonCell.reuseIdentifier)
         let refresh = UIRefreshControl()
         refresh.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
         tableView.refreshControl = refresh
@@ -130,10 +142,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         emptyStateView.isHidden = true
         view.addSubview(emptyStateView)
 
-        firstLoadStateView.translatesAutoresizingMaskIntoConstraints = false
-        firstLoadStateView.isHidden = true
-        view.addSubview(firstLoadStateView)
-
         topBarTopConstraint?.isActive = true
         let titleLeading = titleLabel.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16)
         titleLeadingConstraint = titleLeading
@@ -172,11 +180,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             emptyStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             emptyStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             emptyStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
-            // 首次加载态与空态同槽位居中（互斥显隐，见 load/updateTitleAndEmptyState）。
-            firstLoadStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            firstLoadStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            firstLoadStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
-            firstLoadStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ])
         // 表顶恒贴顶栏：失败条覆盖在列表顶部之上、不占位，故表顶约束只有
         // 这一条，不随失败条显隐切换，列表 frame 全程不动。
@@ -309,10 +312,11 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         loadFailed = false
         // 审计第 19 项：首次无数据才显加载态（下拉刷新自带转圈时不叠加）；
         // 有旧数据时不遮内容，后台刷新完直接换行。
-        if firstLoadPending && friends.isEmpty && tableView.refreshControl?.isRefreshing != true {
+        // 首载改骨架行：首次无数据才出骨架行（下拉刷新自带转圈时不叠加）；
+        // 有旧数据时不遮内容，后台刷新完直接换行。
+        if showingSkeleton {
             emptyStateView.isHidden = true
-            firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
-            firstLoadStateView.isHidden = false
+            tableView.reloadData()
         }
         let requestUid = SessionManager.shared.currentUser?.id
         // r28-2：发起时同时捕获鉴权代次——只比账号 ID 时，A→B→A
@@ -325,7 +329,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                 guard let self = self else { return }
                 self.loading = false
                 self.tableView.refreshControl?.endRefreshing()
-                self.firstLoadStateView.isHidden = true
                 // 切号后到达的旧回包直接丢弃（账号 ID + 代次双重校验；
                 // A→B→A 时账号 ID 再次相等，代次不等仍丢弃）；若新号重拉挂起，补发一次。
                 if SessionManager.shared.currentUser?.id != requestUid
@@ -374,6 +377,13 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     }
 
     private func updateTitleAndEmptyState() {
+        // 首载骨架行在屏时不下空／失败结论（骨架行即加载态），
+        // 空态只在首拉落定后才按 friends 判定（会话列表同款）。
+        if showingSkeleton {
+            emptyStateView.isHidden = true
+            setRefreshFailedBannerVisible(false)
+            return
+        }
         // 标题行带人数：只要列表非空就显人数，刷新失败也不退成光秃标题
         //（旧口径 loadFailed 时一律只显“好友”，把失败画成人数丢失）；
         // 只有空列表时只显“好友”，不把失败画成 0 人。
@@ -427,10 +437,15 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     // MARK: - Table
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        friends.count
+        // 首拉无数据时出 3 行骨架（不冒充具体好友）；
+        // 落定后按真实好友数出行，骨架行不与真实行叠加。
+        showingSkeleton ? skeletonRowCount : friends.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        if showingSkeleton {
+            return tableView.dequeueReusableCell(withIdentifier: BearyDMConversationSkeletonCell.reuseIdentifier, for: indexPath)
+        }
         let cell = tableView.dequeueReusableCell(withIdentifier: "friendCell", for: indexPath) as! BearyFriendCell
         let user = friends[indexPath.row]
         cell.configure(user: user) { [weak self] button in
