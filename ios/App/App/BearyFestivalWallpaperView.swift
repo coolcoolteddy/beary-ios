@@ -2,6 +2,8 @@ import CoreMotion
 import UIKit
 
 /// Decorative background for a diary card. Put the card's text above this view.
+/// Personal-profile cover: set `isCoverMode = true` for a full-bleed centered crop
+/// without the reading mask (the card layout's left text zone is empty there).
 @MainActor
 public final class BearyFestivalWallpaperView: UIView {
     public enum Theme: String { case halloween, spring }
@@ -50,6 +52,17 @@ public final class BearyFestivalWallpaperView: UIView {
         didSet { updateSubscription() }
     }
 
+    /// 封面模式（个人页用）：max 缩放居中裁切、去掉阅读遮罩。默认 false（日记卡
+    /// 保持 min 缩放右贴边＋左侧文字区遮罩）。D-10：min 缩放下场景只占右侧 270pt，
+    /// 左侧三分之一是纯底色，个人页没有文字却留了文字区。
+    public var isCoverMode = false {
+        didSet {
+            guard isCoverMode != oldValue else { return }
+            decor.mask = isCoverMode ? nil : readingMask
+            setNeedsLayout()
+        }
+    }
+
     public override var isHidden: Bool {
         didSet { updateSubscription() }
     }
@@ -58,6 +71,8 @@ public final class BearyFestivalWallpaperView: UIView {
     private let designSize: CGSize
     private let period: Double
     private let scene = CALayer()
+    private let decor = CALayer()
+    private var readingMask: CAGradientLayer?
     private let nodes: [Node]
     private var neutral: CGPoint?
     private var screenOrientation: UIInterfaceOrientation?
@@ -127,7 +142,6 @@ public final class BearyFestivalWallpaperView: UIView {
         scene.anchorPoint = CGPoint(x: 1, y: 0.5)
         scene.masksToBounds = true
         layer.addSublayer(scene)
-        let decor = CALayer()
         decor.frame = scene.bounds
         let readingMask = CAGradientLayer()
         readingMask.frame = decor.bounds
@@ -138,6 +152,7 @@ public final class BearyFestivalWallpaperView: UIView {
         readingMask.locations = [0, NSNumber(value: manifest.readingWidth),
                                  NSNumber(value: manifest.readingWidth + 36 / manifest.size[0]), 1]
         decor.mask = readingMask
+        self.readingMask = readingMask
         for node in nodes {
             if node.id == "background" { scene.addSublayer(node.layer) }
             else { decor.addSublayer(node.layer) }
@@ -151,10 +166,25 @@ public final class BearyFestivalWallpaperView: UIView {
 
     public override func layoutSubviews() {
         super.layoutSubviews()
-        let scale = min(bounds.width / designSize.width, bounds.height / designSize.height)
+        // 封面模式：max 缩放、纵向锚点 0.578（南瓜／叶子／台阶全进窗；墙顶与屋顶
+        // 少量裁切），与 ProfileCoverView 同款居中裁切构图。卡片模式：min 缩放、
+        // 右贴边（给左侧文字留区）。
+        let scale: CGFloat
+        let anchor: CGPoint
+        let position: CGPoint
+        if isCoverMode {
+            scale = max(bounds.width / designSize.width, bounds.height / designSize.height)
+            anchor = CGPoint(x: 0.5, y: 0.578)
+            position = CGPoint(x: bounds.midX, y: bounds.midY)
+        } else {
+            scale = min(bounds.width / designSize.width, bounds.height / designSize.height)
+            anchor = CGPoint(x: 1, y: 0.5)
+            position = CGPoint(x: bounds.maxX, y: bounds.midY)
+        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        scene.position = CGPoint(x: bounds.maxX, y: bounds.midY)
+        scene.anchorPoint = anchor
+        scene.position = position
         scene.setAffineTransform(CGAffineTransform(scaleX: scale, y: scale))
         CATransaction.commit()
     }
