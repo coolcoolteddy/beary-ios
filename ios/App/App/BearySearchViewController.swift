@@ -3525,9 +3525,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 let now = Date()
                 if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
                 lastNavigationAt = now
-                // 震动只在点按确认（touchUpInside）后触发：行在主 scrollView 内且
-                // delaysContentTouches=false，手指按上即滑会在 touchDown 误震。
-                BearyHaptics.press()
                 onOpenUserHandler(user)
                 return
             }
@@ -3964,9 +3961,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 let now = Date()
                 if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
                 lastNavigationAt = now
-                // 震动只在点按确认（touchUpInside）后触发：行在主 scrollView 内且
-                // delaysContentTouches=false，手指按上即滑会在 touchDown 误震。
-                BearyHaptics.press()
                 // iCity §12：搜索结果点按记 search_click（只记 id，不记查询词；失败静默）。
                 BearyAPI.shared.sendEvent(eventType: "search_click", targetId: rowEntryIds[index])
                 onOpenEntryHandler(rowEntryIds[index])

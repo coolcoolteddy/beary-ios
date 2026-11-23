@@ -5643,7 +5643,6 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         let item = items[indexPath.row]
         let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
             guard let self = self else { done(false); return }
-            BearyHaptics.press()
             self.items.remove(at: indexPath.row)
             tableView.deleteRows(at: [indexPath], with: BearyMotion.animated(true) ? .fade : .none)
             self.notifSource.deleteNotification(id: notificationId) { [weak self] success in
