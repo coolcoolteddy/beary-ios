@@ -66,7 +66,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     }
 
     private enum Visibility {
-        case `public`, friends, selfOnly
+        case `public`, friends, selfOnly, limited
     }
 
     /// 反应 chip 与表单共用（文件级 ReactionChipView 亦用），故用 fileprivate。
@@ -928,6 +928,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             (.public, "公开", "所有人都能看到这篇日记"),
             (.friends, "仅好友", "只有互相关注的好友能看到"),
             (.selfOnly, "仅自己可见", "只有你自己能看到"),
+            (.limited, "限时", "公开 24 小时后自动转私密"),
         ]
         for (index, option) in options.enumerated() {
             if index > 0 {
@@ -947,10 +948,10 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
 
     @objc private func visibilityRowTapped(_ sender: UITapGestureRecognizer) {
         guard let row = sender.view as? VisibilityRowView else { return }
-        let options: [Visibility] = [.public, .friends, .selfOnly]
+        let options: [Visibility] = [.public, .friends, .selfOnly, .limited]
         guard row.tag >= 0, row.tag < options.count else { return }
         visibility = options[row.tag]
-        // 重建当前步即刷新三行选中态。
+        // 重建当前步即刷新四行选中态。
         refreshCurrentStep()
     }
 
