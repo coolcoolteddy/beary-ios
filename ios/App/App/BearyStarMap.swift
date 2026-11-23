@@ -7,7 +7,8 @@ import Foundation
 // UI（BearyDiaryStarMapViewController）只渲染本文件算出的模型，不自算过滤与连线。
 //
 // 口径（与预览一致，偏离处有注）：
-// - 星：过滤后每篇一篇。大小 = 字数，亮度固定，位置 = 日记 id 确定性哈希。
+// - 星：过滤后每篇一篇。大小 = 字数，亮度固定，位置 = 日记 id 确定性哈希
+//   初值经力导向松弛（见 relaxedPositions；2.5D 第 1 支，取代纯哈希定点）。
 // - 连线：同地点 / 同词，两者可并存于一对篇之间（一条边带多条原因）。
 // - 他人视角 fail-closed：过滤与连线都在过滤后的集合上算，私密篇连同它的
 //   连线一并消失；他人地点键只用区级，精确名永远不作兜底、不进原因文案。
@@ -199,10 +200,105 @@ enum BearyStarMap {
 
     /// 归一化星位：x 由 id 哈希，y 由 id + "|star-y" 哈希（两路独立，
     /// 避免 x/y 相关造成的斜线聚集）。同一 id 在任何集合、任何尺寸下同位。
+    /// 力导向布局的初值（见 relaxedPositions），不再直接作最终星位。
     static func position(forEntryId id: String) -> (x: Double, y: Double) {
         let x = Double(fnv1a(id) % 1000) / 1000.0
         let y = Double(fnv1a(id + "|star-y") % 1000) / 1000.0
         return (x, y)
+    }
+
+    // MARK: - 力导向布局（2.5D 第 1 支；纯逻辑，可进测试 target）
+
+    /// 力导向松弛：以 id 哈希位为初值，在 0...1 归一化平面上做确定性松弛。
+    /// - 步进在 recompute 的后台队列（userInitiated）里整段跑完，主线程只渲染
+    ///   终态，不逐帧重绘、不逐帧回主线程。
+    /// - 收敛即停：一步内全部星的最大位移 < 0.5pt（按 360pt 画布折算，
+    ///   归一化 ≈ 0.0014）即停模拟、停重绘；上限 80 步。
+    /// - 力：全部星对互斥（Fruchterman-Reingold，k = sqrt(1/n)）；连线边作
+    ///   弹簧（强度为互斥的一半，簇内聚而不塌）；另有弱中心引力防飘出；
+    ///   步长带温度冷却（0.05 起、每步 ×0.95）。
+    /// - 迭代顺序按 id 排序固定，无随机数：同输入同输出。星位是同一批
+    ///   建模输入（id、连线）的纯函数，指纹（diaryVersion）不变即输出不变，
+    ///   故本次布局改动不升 algorithmVersion（缓存只在内存、不落盘，
+    ///   不跨版本复用；2→3 留给第 2 支的指纹＋节点模型改动）。
+    /// - 距离为 0 的星对按下标奇偶给确定性微扰，不除零、不随机。
+    static func relaxedPositions(
+        for entries: [Entry],
+        edges: [StarMapEdge],
+        viewerIsAuthor: Bool
+    ) -> [String: (x: Double, y: Double)] {
+        let visible = visibleEntries(entries, viewerIsAuthor: viewerIsAuthor)
+        let ids = visible.compactMap { $0.id }.sorted()
+        guard ids.count > 1 else {
+            var single: [String: (x: Double, y: Double)] = [:]
+            for id in ids { single[id] = position(forEntryId: id) }
+            return single
+        }
+        let n = Double(ids.count)
+        let k = (1.0 / n).squareRoot()
+        let stopThreshold = 0.5 / 360.0
+        let maxIterations = 80
+        var pos: [String: (x: Double, y: Double)] = [:]
+        for id in ids { pos[id] = position(forEntryId: id) }
+        var temperature = 0.05
+        for _ in 0..<maxIterations {
+            var disp: [String: (x: Double, y: Double)] = [:]
+            for id in ids { disp[id] = (x: 0, y: 0) }
+            // 互斥：全部星对（O(n²)，n ≤ 500 拉取上限）。
+            for i in ids.indices {
+                for j in ids.indices where j > i {
+                    let a = ids[i]
+                    let b = ids[j]
+                    guard let pa = pos[a], let pb = pos[b] else { continue }
+                    var dx = pa.x - pb.x
+                    var dy = pa.y - pb.y
+                    var dist2 = dx * dx + dy * dy
+                    if dist2 < 1e-12 {
+                        dx = (i % 2 == 0) ? 0.001 : -0.001
+                        dy = (j % 2 == 0) ? 0.0007 : -0.0007
+                        dist2 = dx * dx + dy * dy
+                    }
+                    let dist = dist2.squareRoot()
+                    let force = (k * k) / dist
+                    let fx = (dx / dist) * force
+                    let fy = (dy / dist) * force
+                    disp[a] = (x: (disp[a]?.x ?? 0) + fx, y: (disp[a]?.y ?? 0) + fy)
+                    disp[b] = (x: (disp[b]?.x ?? 0) - fx, y: (disp[b]?.y ?? 0) - fy)
+                }
+            }
+            // 弹簧：连线边相吸（强度减半），同簇收拢。
+            for edge in edges {
+                guard let pa = pos[edge.firstId], let pb = pos[edge.secondId] else { continue }
+                let dx = pa.x - pb.x
+                let dy = pa.y - pb.y
+                let dist = (dx * dx + dy * dy).squareRoot()
+                guard dist > 1e-9 else { continue }
+                let force = (dist * dist) / k * 0.5
+                let fx = (dx / dist) * force
+                let fy = (dy / dist) * force
+                disp[edge.firstId] = (x: (disp[edge.firstId]?.x ?? 0) - fx, y: (disp[edge.firstId]?.y ?? 0) - fy)
+                disp[edge.secondId] = (x: (disp[edge.secondId]?.x ?? 0) + fx, y: (disp[edge.secondId]?.y ?? 0) + fy)
+            }
+            // 弱中心引力 + 步长封顶（温度）+  clamp 到画布边距内。
+            var maxMove = 0.0
+            for id in ids {
+                guard var p = pos[id] else { continue }
+                var dx = (disp[id]?.x ?? 0) + (0.5 - p.x) * 0.02
+                var dy = (disp[id]?.y ?? 0) + (0.5 - p.y) * 0.02
+                let len = (dx * dx + dy * dy).squareRoot()
+                if len > temperature {
+                    dx = dx / len * temperature
+                    dy = dy / len * temperature
+                }
+                p.x = max(0.02, min(0.98, p.x + dx))
+                p.y = max(0.02, min(0.98, p.y + dy))
+                pos[id] = p
+                maxMove = max(maxMove, (dx * dx + dy * dy).squareRoot())
+            }
+            if maxMove < stopThreshold { break }
+            temperature *= 0.95
+        }
+        return pos
     }
 
     // MARK: - 地点键（viewer-aware；与 BearyLocationMap 同口径的本地版）
@@ -346,21 +442,6 @@ enum BearyStarMap {
     static func buildModel(entries: [Entry], viewerIsAuthor: Bool) -> StarMapModel {
         let visible = visibleEntries(entries, viewerIsAuthor: viewerIsAuthor)
         var entryById: [String: Entry] = [:]
-        var stars: [StarMapStar] = []
-        for entry in visible {
-            guard let id = entry.id else { continue }
-            let count = wordCount(entry)
-            let pos = position(forEntryId: id)
-            stars.append(StarMapStar(
-                entry: entry,
-                x: pos.x,
-                y: pos.y,
-                radius: radius(forWordCount: count),
-                brightness: 0.70,
-                wordCount: count
-            ))
-            entryById[id] = entry
-        }
         // 文档频率：词 → 含该词的篇数（只在过滤后集合上算）。
         var docFreq: [String: Int] = [:]
         var keywordsById: [String: Set<String>] = [:]
@@ -401,6 +482,25 @@ enum BearyStarMap {
                     edges.append(StarMapEdge(firstId: first, secondId: second, reasons: reasons))
                 }
             }
+        }
+        // 力导向布局（2.5D 第 1 支）：星位不再是纯哈希定点——以哈希位为初值、
+        // 以连线为弹簧做确定性松弛（后台队列内整段跑完，主线程只渲染终态）。
+        // 星位仍由 id 与连线决定、不随机飘；同输入同输出（见 relaxedPositions）。
+        let relaxed = relaxedPositions(for: visible, edges: edges, viewerIsAuthor: viewerIsAuthor)
+        var stars: [StarMapStar] = []
+        for entry in visible {
+            guard let id = entry.id else { continue }
+            let count = wordCount(entry)
+            let pos = relaxed[id] ?? position(forEntryId: id)
+            stars.append(StarMapStar(
+                entry: entry,
+                x: pos.x,
+                y: pos.y,
+                radius: radius(forWordCount: count),
+                brightness: 0.70,
+                wordCount: count
+            ))
+            entryById[id] = entry
         }
         return StarMapModel(stars: stars, edges: edges, entryById: entryById)
     }

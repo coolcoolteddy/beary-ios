@@ -2128,6 +2128,9 @@ class BearyTimelineViewController: UIViewController {
     var onCompose: (() -> Void)?
     /// 当日/全部列表行点按，传整条 Entry（容器接线：打开详情）。
     var onOpenEntry: ((Entry) -> Void)?
+    /// 反向跳转（2.5D 第 1 支）：当日面板头「星图」入口——传选中那天的日期
+    /// 与当日篇（容器接线：打开星图并聚焦这一天）；未接线时点按无动作。
+    var onOpenStarMapForDay: ((Date, [Entry]) -> Void)?
     /// 未登录：首拉 401 时调用一次（另附“请先登录”空态内的“去登录”按钮可再次触发）。
     var onRequireLogin: (() -> Void)?
     /// TL-3 私密行编辑/删除/引用卡点按（容器接线，未接线时点按无动作）：
@@ -6976,6 +6979,18 @@ class BearyTimelineViewController: UIViewController {
         fetchDayEntries(key: key, clear: false)
     }
 
+    /// 反向跳转（2.5D 第 1 支）：当日面板头「星图」入口——选中日 key
+    /// （yyyy-MM-dd，北京时间日）解析为日期，连同当日篇一起交给容器；
+    /// 当日无篇或解析失败时不动作。容器未接线时同样无动作。
+    @objc private func didTapDayPanelStarMap() {
+        guard let key = selectedDayKey, !dayEntries.isEmpty else { return }
+        let parts = key.split(separator: "-")
+        guard parts.count == 3,
+              let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]),
+              let date = Calendar.current.date(from: DateComponents(year: year, month: month, day: day)) else { return }
+        onOpenStarMapForDay?(date, dayEntries)
+    }
+
 }
 
 // MARK: - UITableViewDataSource / UITableViewDelegate
@@ -7136,6 +7151,29 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
                 retryButton.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 8),
                 retryButton.centerYAnchor.constraint(equalTo: label.centerYAnchor),
                 retryButton.trailingAnchor.constraint(lessThanOrEqualTo: holder.trailingAnchor, constant: -16),
+                bottomView.bottomAnchor.constraint(equalTo: holder.bottomAnchor, constant: bottomConstant),
+            ])
+        } else if isDayPanel, !dayEntries.isEmpty {
+            // 反向跳转（2.5D 第 1 支）：当日面板头日期旁出「星图」入口——
+            // 点按打开星图并聚焦这一天；当日无篇时不出现（无可聚焦的节点群）。
+            label.setContentCompressionResistancePriority(.init(749), for: .horizontal)
+            let starButton = UIButton(type: .system)
+            starButton.translatesAutoresizingMaskIntoConstraints = false
+            starButton.setTitle("星图", for: .normal)
+            starButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+            starButton.titleLabel?.adjustsFontForContentSizeCategory = true
+            starButton.setTitleColor(BearyColors.orange, for: .normal)
+            starButton.addTarget(self, action: #selector(didTapDayPanelStarMap), for: .touchUpInside)
+            starButton.bearyAddPressFeedback()
+            starButton.accessibilityLabel = "在星图中查看这一天的日记"
+            holder.addSubview(starButton)
+            NSLayoutConstraint.activate([
+                label.topAnchor.constraint(equalTo: holder.topAnchor, constant: 16),
+                label.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: leading),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: holder.trailingAnchor, constant: -16),
+                starButton.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 8),
+                starButton.centerYAnchor.constraint(equalTo: label.centerYAnchor),
+                starButton.trailingAnchor.constraint(lessThanOrEqualTo: holder.trailingAnchor, constant: -16),
                 bottomView.bottomAnchor.constraint(equalTo: holder.bottomAnchor, constant: bottomConstant),
             ])
         } else {

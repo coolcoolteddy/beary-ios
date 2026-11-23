@@ -3,10 +3,13 @@ import UIKit
 // ===== 日记星图（星空页，2026-10-30；预览：日记星图屏）=====
 // 入口：我的页（他人主页同款行）→ 日记地图行下一行“日记星图”。
 // 本页只渲染 BearyStarMap 算出的模型：大小 = 字数、亮度固定、
-// 连线 = 同地点 / 同词；星位由日记 id 确定性哈希，不随机飘。
+// 连线 = 同地点 / 同词；星位 = 日记 id 哈希初值经力导向松弛（后台队列
+// 步进、主线程渲染，收敛即停），不随机飘。
 // 点星进详情（走调用方 onOpenEntry，与日记地图同约定）；点线出底卡，
 // 列出连起来的两篇与连线原因（点卡内篇名同样进详情）；
 // 两颗星点位重叠时点按出重叠列表，不让下层星永远点不到。
+// 反向跳转（2.5D 第 1 支）：时间线某天经 focusDay / focusDate 进页，
+// 切到该天所在分片、模型上屏后聚焦该天节点群并打开底卡。
 //
 // 可见性与同步（与日记地图同机制，不另起一套）：
 // - 过滤与连线全在 BearyStarMap.visibleEntries 后的集合上算：他人视角下
@@ -175,6 +178,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
     /// P1-5：重叠列表的可核对选择——记 id，不记调用时传入的快照行；
     /// 刷新后用新模型重填（已删的篇移出），单星／单线仍走上面两个 id。
     private var overlapEntryIds: [String]?
+    /// 反向跳转（2.5D 第 1 支）：待聚焦的那天——模型上屏后由 applyModelToSky
+    /// 消费一次（见 consumeFocusDay），命中与否都清掉，不留到下次重算。
+    /// init 的 focusDate 即经此位进页。
+    private var pendingFocusDate: Date?
+    /// 反向跳转底卡标题（“M月d日 · N 篇”）：重叠列表刷新时沿用；普通重叠
+    /// 列表与清选择时复位（见 showOverlapSheet / clearSelection）。
+    private var overlapSheetTitle: String?
     private var loadGeneration = 0
     /// P1-4：本轮拉取是否在途——加载／空白／有内容／失败共用一个展示
     /// 状态的门控：请求未结束且尚无可展示数据时只出加载态，不下空态结论。
@@ -221,11 +231,12 @@ final class BearyDiaryStarMapViewController: UIViewController {
     /// 第十轮 #20：加载期夜空先行，底锚改锚 skyView 底（原 loadingView 已删），
     /// 约束本体见上方 skyLoadingBottom。
 
-    init(authorId: Int, viewerIsAuthor: Bool, initialEntries: [Entry], onOpenEntry: ((Entry) -> Void)?) {
+    init(authorId: Int, viewerIsAuthor: Bool, initialEntries: [Entry], focusDate: Date? = nil, onOpenEntry: ((Entry) -> Void)?) {
         self.authorId = authorId
         self.viewerIsAuthor = viewerIsAuthor
         self.viewerIdAtOpen = SessionManager.shared.currentUser?.id
         self.allEntries = initialEntries
+        self.pendingFocusDate = focusDate
         self.onOpenEntry = onOpenEntry
         super.init(nibName: nil, bundle: nil)
         title = "日记星图"
@@ -1051,6 +1062,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // 跳动审计第三批第 5 条：详情返回的恢复不在这里消费——它在
         // viewWillAppear 里当即消费；留在这里会让筛选／重试／缓存命中／
         // 后台建模回包／空态等晚到的 applyModelToSky 把旧选中态与旧偏移拉回来。
+        // 反向跳转（2.5D 第 1 支）：pending 的那天只在这里消费一次——模型
+        // 已上屏、底卡显隐已定，命中即聚焦该天节点群并打开底卡；未命中
+        // （该天在当前分片无篇）静默清掉，不留到下次重算。
+        if let focusDate = pendingFocusDate {
+            pendingFocusDate = nil
+            consumeFocusDay(focusDate)
+        }
     }
 
     // MARK: - C4 详情往返只传变化
@@ -1151,8 +1169,64 @@ final class BearyDiaryStarMapViewController: UIViewController {
         showingOverlapSheet = false
         showingEdgeListSheet = false
         overlapEntryIds = nil
+        overlapSheetTitle = nil
         skyView.setSelected(starId: nil, edgeId: nil)
         showDefaultSheet()
+    }
+
+    // MARK: - 反向跳转（2.5D 第 1 支）：时间线某天 → 星图聚焦
+
+    /// 时间线某天跳进星图：切到该天所在分片（篇数 ≤ 阈值时 .all 本就含该天，
+    /// 不动分片），待模型上屏后由 applyModelToSky 消费 pendingFocusDate、
+    /// 聚焦该天节点群并打开底卡。调用时数据未到也无妨——pending 只记日期，
+    /// 拉取回包后的重算同样会消费它。
+    func focusDay(_ date: Date) {
+        pendingFocusDate = date
+        let comps = Calendar.current.dateComponents([.year, .month], from: date)
+        if let year = comps.year, let month = comps.month,
+           filteredEntries.count > BearyStarMap.sliceThreshold {
+            let target = StarMapSlice.month(year: year, month: month)
+            if slice != target {
+                slice = target
+                clearSelection()
+            }
+        }
+        beginSliceTransition()
+        recompute()
+    }
+
+    /// 模型上屏后消费 pending 的那天（只消费一次）：按北京时间日键取该天
+    /// 的篇（与时间线当日面板同口径，见 BearyBeijingDay.dayKey）；单篇走
+    /// 单星卡（选中态＋底卡），多篇走重叠列表同款底卡配日期标题；该天在
+    /// 当前分片无篇时静默不动作（不弹空卡、不留 pending）。
+    private func consumeFocusDay(_ date: Date) {
+        let key = BearyBeijingDay.dayKey(ofMs: Int(date.timeIntervalSince1970 * 1000))
+        let rows = model.stars.compactMap { $0.entry }.filter { entry in
+            guard let ms = entry.createdAt else { return false }
+            return BearyBeijingDay.dayKey(ofMs: ms) == key
+        }
+        guard !rows.isEmpty else { return }
+        if rows.count == 1, let entry = rows.first {
+            didTapStar(entry)
+            return
+        }
+        showFocusDaySheet(date: date, entries: rows)
+    }
+
+    private func showFocusDaySheet(date: Date, entries: [Entry]) {
+        invalidateReturnRestore()
+        selectedStarId = nil
+        selectedEdgeId = nil
+        showingOverlapSheet = true
+        showingEdgeListSheet = false
+        overlapEntryIds = entries.compactMap { $0.id }
+        let dateText = sheetDateString(entries[0])
+        overlapSheetTitle = dateText.isEmpty
+            ? "\(entries.count) 篇日记"
+            : "\(dateText) · \(entries.count) 篇"
+        skyView.setSelected(starId: nil, edgeId: nil)
+        sheetCard.isHidden = false
+        rebuildSheet(title: overlapSheetTitle ?? "", rows: entries)
     }
 
     private func didTapStar(_ entry: Entry) {
@@ -1187,13 +1261,15 @@ final class BearyDiaryStarMapViewController: UIViewController {
         showingEdgeListSheet = false
         // P1-5：只记 id——行数据是调用时传入的快照，刷新时按新模型重取。
         overlapEntryIds = entries.compactMap { $0.id }
+        overlapSheetTitle = nil
         skyView.setSelected(starId: nil, edgeId: nil)
         sheetCard.isHidden = false
         rebuildSheet(title: "这里有 \(entries.count) 颗星重叠", rows: entries)
     }
 
     /// P1-5：按新模型重填重叠列表——已不存在的篇移出列表、标题篇数同步；
-    /// 全删光了回默认底卡，不留指向已删篇的行。
+    /// 全删光了回默认底卡，不留指向已删篇的行。反向跳转的日期标题沿用
+    /// （篇数同步刷新），普通重叠列表仍走默认标题。
     private func refreshOverlapSheet() {
         guard let ids = overlapEntryIds else { return }
         let rows = ids.compactMap { model.entryById[$0] }
@@ -1201,7 +1277,14 @@ final class BearyDiaryStarMapViewController: UIViewController {
             clearSelection()
         } else {
             overlapEntryIds = ids.filter { model.entryById[$0] != nil }
-            rebuildSheet(title: "这里有 \(rows.count) 颗星重叠", rows: rows)
+            if overlapSheetTitle != nil, let first = rows.first {
+                let dateText = sheetDateString(first)
+                let title = dateText.isEmpty ? "\(rows.count) 篇日记" : "\(dateText) · \(rows.count) 篇"
+                overlapSheetTitle = title
+                rebuildSheet(title: title, rows: rows)
+            } else {
+                rebuildSheet(title: "这里有 \(rows.count) 颗星重叠", rows: rows)
+            }
         }
     }
 
