@@ -887,6 +887,23 @@ enum BearyTrashSyncStore {
         return loadAllFile(url: backupFileURL(accountId: accountId))
     }
 
+    /// C-P1-6：桶保存时间——trash.json 不存时间戳，取文件 mtime 作
+    /// 「上次数据」标注的基准；主文件缺失时回落 .bak 的 mtime（与
+    /// loadAll 的回落口径一致）；主备皆无返回 nil（调用方不显标注）。
+    static func lastSavedAt(accountId: Int) -> Date? {
+        if let url = fileURL(accountId: accountId),
+           let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let date = attrs[.modificationDate] as? Date {
+            return date
+        }
+        if let backupURL = backupFileURL(accountId: accountId),
+           let attrs = try? FileManager.default.attributesOfItem(atPath: backupURL.path),
+           let date = attrs[.modificationDate] as? Date {
+            return date
+        }
+        return nil
+    }
+
     /// 仍有可读数据（主文件或 .bak 能解码，含空数组）——中断时状态记 partial 的前提。
     static func hasReadableData(accountId: Int) -> Bool {
         return loadAll(accountId: accountId) != nil

@@ -482,6 +482,8 @@ final class SessionManager {
         BearyStarMapCache.purge(viewerBucket: "\(id)")
         // B1：正在关注段快照是独立桶，退出时同清，不留旧身份行。
         BearyFeedCache.purge(bucket: BearyFeedCache.followingBucket(userId: id))
+        // C-P1-6：搜索首屏快照同桶同清，不留旧身份的上次搜索结果。
+        BearySearchCache.purge(bucket: "\(id)")
         BearyTimelineCache.purge(bucket: "\(id)")
         // 审计-性能：通知页分键缓存同样在退出时清掉该账号槽位。
         BearyNotificationsViewController.purgeAccount(id)
