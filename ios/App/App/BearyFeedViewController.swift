@@ -655,9 +655,6 @@ class BearyFeedViewController: UIViewController {
     private var plazaHistoryEdgeDismiss: BearyEdgeDismissController?
     private var feedEmptyVisible = false
 
-    /// 游客底部 logo（F19）：只在未登录且首拉完成后出现，登录后撤掉。
-    private var footLogoContainer: UIView?
-    private var footLogoImageView: UIImageView?
     /// P2-1：600 列上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews）。
     private var feedColCapConstraint: NSLayoutConstraint?
     /// 顶栏透度批：容器最后一次发来的栏态（viewDidLayoutSubviews 安全区变化时按此重算内边距与转圈顶距）。
@@ -807,7 +804,7 @@ class BearyFeedViewController: UIViewController {
         feedChromeHidden = false
         lastFeedScrollOffsetY = tableView.contentOffset.y
         SceneDelegate.chrome?.setChromeHidden(false, animated: false)
-        updateFootLogo()
+        updateFooterView()
         // G11：登录态翻转（登录/退出）时不走 60 秒门控，直接 refreshAll 重拉鉴权敏感的
         // 广场；容器 lane 在翻转时也会调 refreshFeed()，此处是兜底。
         let currentLoginUserId = SessionManager.shared.currentUser?.id
@@ -917,7 +914,7 @@ class BearyFeedViewController: UIViewController {
         }
         // 盲盒表头：宽变化时重算入口行 + 空态高度（函数内以高度变化守卫赋值，不致布局循环）。
         layoutFeedBlindBoxHeader()
-        updateFootLogo()
+        updateFooterView()
         // 顶栏透度批：安全区变化时按已存栏态重算（容器 viewDidLayoutSubviews 也会重发，双重 no-op）。
         applyHeaderTopInset(visible: headerTopInsetVisible)
         // 冷启动落点：顶距分两段长出来——建页时窗口未入窗、安全区顶为 0，
@@ -1149,12 +1146,12 @@ class BearyFeedViewController: UIViewController {
         plazaFirstPageInFlight || isCustomPullRefreshing
     }
 
-    // MARK: - 游客底部 logo（F19）
+    // MARK: - 列表底部脚部
 
-    /// 游客底部 logo（F19）与加载更多脚部共用一个 tableFooterView（上下叠放）。
-    /// 加载三件套·底部脚部：分页加载中亮 3 个跳动圆点、末页显示“没有更多了”；
+    /// 展示审计 G1-21：游客底部 logo 已去掉（原 F19：游客态列表底部常驻品牌 logo 脚标，
+    /// 与加载脚部叠放、占流末一席）。脚部只剩加载更多脚部（加载中三点／末页“没有更多了”／失败重试）；
     /// 首屏骨架期间不挂脚部；签名不变不重建。
-    private func updateFootLogo() {
+    private func updateFooterView() {
         let footerState: BearyLoadMoreFooterView.State = {
             if isFirstLoad || plazaEntries().isEmpty { return .hidden }
             if plazaLoading && plazaHasMore { return .loading }
@@ -1162,50 +1159,18 @@ class BearyFeedViewController: UIViewController {
             return .hidden
         }()
         loadMoreFooterView.setState(footerState)
-        // G26：登录态未知（网络失败）时不按游客态渲染游客脚标——与已登录同处理（隐藏脚标）。
-        // 64 包反馈修（第 17 项）：本地有有效会话 cookie 时首帧亦按缓存登录态（不闪游客脚标），
-        // 后台 /me 验出 401 后 isLoggedIn 翻游客、缓存过期失效，脚标自然恢复。
-        let showLogo = !(isFirstLoad || SessionManager.shared.isLoggedIn || SessionManager.shared.authUnknown || SessionManager.shared.hasCachedSession)
         let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
-        let signature = "\(showLogo)-\(footerState)-\(Int(width))"
+        let signature = "\(footerState)-\(Int(width))"
         if signature == lastFeedFooterSignature, tableView.tableFooterView != nil { return }
         lastFeedFooterSignature = signature
-        if !showLogo && footerState == .hidden {
+        if footerState == .hidden {
             tableView.tableFooterView = nil
-            footLogoContainer = nil
-            footLogoImageView = nil
             return
         }
-        var height: CGFloat = 0
-        let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 0))
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: BearyLoadMoreFooterView.height))
         container.backgroundColor = BearyColors.bg
-        if showLogo {
-            let logo = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 90))
-            logo.backgroundColor = BearyColors.bg
-            let logoImageValue = UIImage(named: "LogoHorizontal")
-            var logoWidth: CGFloat = 0
-            if let logoImageValue = logoImageValue, logoImageValue.size.height > 0 {
-                logoWidth = 26 * logoImageValue.size.width / logoImageValue.size.height
-            }
-            let imgView = UIImageView(frame: CGRect(x: (width - logoWidth) / 2, y: 30, width: logoWidth, height: 26))
-            imgView.image = logoImageValue
-            imgView.contentMode = .scaleAspectFit
-            imgView.alpha = 0.45
-            logo.addSubview(imgView)
-            footLogoContainer = logo
-            footLogoImageView = imgView
-            container.addSubview(logo)
-            height += 90
-        } else {
-            footLogoContainer = nil
-            footLogoImageView = nil
-        }
-        if footerState != .hidden {
-            loadMoreFooterView.frame = CGRect(x: 0, y: height, width: width, height: BearyLoadMoreFooterView.height)
-            container.addSubview(loadMoreFooterView)
-            height += BearyLoadMoreFooterView.height
-        }
-        container.frame.size.height = height
+        loadMoreFooterView.frame = CGRect(x: 0, y: 0, width: width, height: BearyLoadMoreFooterView.height)
+        container.addSubview(loadMoreFooterView)
         tableView.tableFooterView = container
     }
 
@@ -1652,8 +1617,8 @@ class BearyFeedViewController: UIViewController {
         let nextPageGeneration = revalidateGeneration
         plazaLoading = true
         // 加载三件套·底部脚部：分页一启动即亮 3 个跳动圆点（回包后由
-        // updateOverlayState → updateFootLogo 按 hasMore/末页刷新）。
-        updateFootLogo()
+        // updateOverlayState → updateFooterView 按 hasMore/末页刷新）。
+        updateFooterView()
         // iCity：广场服务端按 published_at DESC 排序，分页游标同步用 publishedAt（缺失时回退 createdAt）。
         // 正在关注段按 created_at DESC，游标同步用 createdAt。
         BearyAPI.shared.fetchEntries(scope: feedScope, limit: pageLimit, before: cursorBefore, beforeId: cursorBeforeId) { [weak self] result in
@@ -2723,7 +2688,7 @@ class BearyFeedViewController: UIViewController {
             // 空态不闪（数据到了再定空态/内容/失败行）。
             if showingSkeleton { centralSpinner.stopSpinning() }
             setEmptyVisible(false)
-            updateFootLogo()
+            updateFooterView()
             return
         }
         // B 视觉文案：菊花只在首拉落袋后停；在途时不截停，否则非手势刷新
@@ -2737,7 +2702,7 @@ class BearyFeedViewController: UIViewController {
             let hasEntries = !plazaEntries().isEmpty
             setEmptyVisible(hasEntries == false && plazaError == false)
         }
-        updateFootLogo()
+        updateFooterView()
     }
 
     private func maybeEndRefreshing() {
