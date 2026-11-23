@@ -22,8 +22,36 @@ final class BearyBlindBoxEntryView: UIView {
         didSet {
             guard compactMode != oldValue else { return }
             subtitleLabel.isHidden = compactMode
-            rowTopConstraint?.constant = compactMode ? 10 : 12
-            rowBottomConstraint?.constant = compactMode ? -10 : -12
+            updateRowPadding()
+        }
+    }
+
+    /// 轻量单行入口（展示审计 G1-04，广场表头用）：去卡片底色与圆角、藏 28pt 图标，
+    /// 只留标题＋今日计数＋箭头一行；上下边距再收窄。盲盒除表头外无其他入口
+    ///（时间线顶部入口已删），故不去掉、只改轻量；轮播（精选＋那年今日）保留。
+    var slimRowMode = false {
+        didSet {
+            guard slimRowMode != oldValue else { return }
+            backgroundColor = slimRowMode ? BearyColors.bg : BearyColors.surface1
+            layer.cornerRadius = slimRowMode ? 0 : BearyCorners.single
+            iconStackView?.isHidden = slimRowMode
+            updateRowPadding()
+        }
+    }
+
+    /// 图标是否为占位图（pendingChip 显隐依据；slimRowMode 下 chip 恒藏）。
+    private var iconIsPlaceholder = false
+
+    private func updateRowPadding() {
+        if slimRowMode {
+            rowTopConstraint?.constant = 6
+            rowBottomConstraint?.constant = -6
+        } else if compactMode {
+            rowTopConstraint?.constant = 10
+            rowBottomConstraint?.constant = -10
+        } else {
+            rowTopConstraint?.constant = 12
+            rowBottomConstraint?.constant = -12
         }
     }
 
@@ -31,6 +59,7 @@ final class BearyBlindBoxEntryView: UIView {
     private var rowBottomConstraint: NSLayoutConstraint?
 
     private let iconView = UIImageView()
+    private var iconStackView: UIStackView?
     private let pendingChip = UILabel()
     private let titleLabel = UILabel()
     private let countLabel = UILabel()
@@ -108,6 +137,7 @@ final class BearyBlindBoxEntryView: UIView {
         textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let iconStack = UIStackView(arrangedSubviews: [iconView, pendingChip])
+        iconStackView = iconStack
         iconStack.axis = .vertical
         iconStack.spacing = 2
         iconStack.alignment = .center
@@ -176,7 +206,8 @@ final class BearyBlindBoxEntryView: UIView {
     func refresh() {
         let (icon, isPlaceholder) = BlindBoxIcons.blindBox(pointSize: 28)
         iconView.image = icon
-        pendingChip.isHidden = !isPlaceholder
+        iconIsPlaceholder = isPlaceholder
+        pendingChip.isHidden = slimRowMode ? true : !isPlaceholder
         if SessionManager.shared.isLoggedIn == false {
             setCountText("今日 0/1")
             subtitleLabel.text = "登录后可交换 · 放一篇旧公开日记，换一篇别人的旧日记"
