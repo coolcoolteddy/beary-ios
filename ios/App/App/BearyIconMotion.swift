@@ -154,7 +154,9 @@ enum BearyIconMotion {
             view.alpha = 0.9
             return
         }
-        UIView.animate(withDuration: 0.1, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
+        // Li 2026-11-21 定版：按压按下 0.1s；token 表只有 micro 0.18 一档，0.1 无 token，用具名常量。
+        let pressDownDuration: TimeInterval = 0.1
+        UIView.animate(withDuration: pressDownDuration, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
             view.alpha = 0.9
         })
     }
