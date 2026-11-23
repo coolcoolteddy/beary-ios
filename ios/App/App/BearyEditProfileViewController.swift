@@ -198,7 +198,7 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("保存", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        // 按钮普查：裸 15pt 粗体改 scaledFont，跟随系统字号（顶行 44 高，最大档不裁剪）。
+        // 按钮普查：裸 15pt 粗体改 scaledFont，跟随系统字号（顶行 60 高，最大档不裁剪）。
         buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.addTarget(self, action: #selector(saveButtonTapped), for: .touchUpInside)
@@ -794,6 +794,7 @@ class BearyEditProfileViewController: UIViewController {
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
             closeButton.widthAnchor.constraint(equalToConstant: 44),
             saveButton.widthAnchor.constraint(equalToConstant: 44),
+            topRow.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
             coverImageView.heightAnchor.constraint(equalToConstant: 180),
             // U7：三输入框高度改最小 28（默认档外观不变），大字号时随字长高、不裁字。
             nameField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),

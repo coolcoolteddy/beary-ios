@@ -391,7 +391,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             topBarCap, topBarWidth,
             topBar.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
             topBar.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
-            topBar.heightAnchor.constraint(equalToConstant: 52),
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
             backButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor),
             backButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),

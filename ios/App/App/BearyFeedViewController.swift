@@ -356,10 +356,10 @@ class BearyFeedViewController: UIViewController {
         return pull
     }()
 
-    /// 自定义下拉基线：即 applyHeaderTopInset 算出的属性顶距（安全区顶 + 108/0 + 8），
+    /// 自定义下拉基线：即 applyHeaderTopInset 算出的属性顶距（安全区顶 + 92/0 + 8），
     /// 刷新中内边距 = 基线 +84、图标中心 = 基线 +54（消息页同款相对口径）。
     private func feedPullBaselineTop() -> CGFloat {
-        view.safeAreaInsets.top + (headerTopInsetVisible ? 108 : 0) + 8
+        view.safeAreaInsets.top + (headerTopInsetVisible ? 92 : 0) + 8
     }
 
     /// 首拉加载：网页 #feed .loading 口径——32pt 官方刷新图标 + 视觉顶边 40。
@@ -701,7 +701,7 @@ class BearyFeedViewController: UIViewController {
         refreshFailedRetryButton.addTarget(self, action: #selector(refreshFailedRetryTapped), for: .touchUpInside)
         refreshFailedRetryButton.bearyAddPressFeedback()
         refreshFailedBanner.addSubview(refreshFailedRetryButton)
-        refreshFailedBannerTopConstraint = refreshFailedBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: (headerTopInsetVisible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset)
+        refreshFailedBannerTopConstraint = refreshFailedBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: (headerTopInsetVisible ? 92 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset)
         refreshFailedBannerTopConstraint?.isActive = true
         tableViewTopToViewTopConstraint = tableView.topAnchor.constraint(equalTo: view.topAnchor)
         tableViewTopToBannerConstraint = tableView.topAnchor.constraint(equalTo: refreshFailedBanner.bottomAnchor)
@@ -946,8 +946,8 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 tableView，
-    /// 表框贴页顶 + .never，故属性内边距即视觉顶距。显示 = 安全区顶 + 108 + 原 8 间隙
-    /// （108 = logo 行 60 + 切换行 32 + 间隙 8 + 底边距 8，切换钉顶栏后顶栏总高），
+    /// 表框贴页顶 + .never，故属性内边距即视觉顶距。显示 = 安全区顶 + 92 + 原 8 间隙
+    /// （92 = logo 行 44 + 切换行 32 + 间隙 8 + 底边距 8，切换钉顶栏后顶栏总高），
     /// 收起 = 安全区顶 + 原 8 间隙（与旧收起时内容起于安全区顶 + 8 一致）。底内边距同步补
     /// 安全区底（.never 后系统不再自动叠加，旧视觉底 = 90 + 安全区底，须显式补回）。
     /// scrollToTop 已用 -contentInset.top，.never 下即顶部，无需改；藏栏阈值见
@@ -958,8 +958,8 @@ class BearyFeedViewController: UIViewController {
         // 自定义下拉刷新进行中不改写（刷新中内边距 = 基线 +84，改写会打断指示器）。
         guard !isCustomPullRefreshing else { return }
         let safeTop = view.safeAreaInsets.top
-        let top = safeTop + (visible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset
-        refreshFailedBannerTopConstraint?.constant = (visible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset
+        let top = safeTop + (visible ? 92 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset
+        refreshFailedBannerTopConstraint?.constant = (visible ? 92 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset
         let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
         if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
             tableView.contentInset.top = top

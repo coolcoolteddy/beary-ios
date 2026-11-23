@@ -140,19 +140,19 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         NSLayoutConstraint.activate([
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            // V5：顶栏高改“下限 44”（紧凑档数值不动）＋标题底距兜底 ≥7：
-            // 默认字号下 14（顶距）＋标题高＋7 ≈ 44，视觉与旧固定 44 一致；
-            // 系统字号放大、标题变高时顶栏随之伸展，不再把标题底边裁在 44 内。
+            // V5：顶栏高改“下限 60”＋标题底距兜底 ≥7：
+            // 默认字号下标题在 60 高栏内垂直居中（顶沿约 18）；
+            // 系统字号放大、标题变高时顶栏随之伸展，不再把标题底边裁在 60 内。
             // 横向护栏：标题右缘 ≤ 顶栏右缘 −16（私信钮已去除）。
-            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyTopBarHeight),
             backButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             backButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),
             backButton.heightAnchor.constraint(equalToConstant: 44),
-            // 时间线同款：标题左对齐、左缘 16、顶距 14（时间线标题行栈顶 +14 同口径）。
+            // 时间线同款：标题左对齐、左缘 16；栏高 60 后标题改垂直居中，不再钉顶距 14。
             // 从消息页进来时左缘改 68（16 + 返回钮 44 + 间隙 8），见 setOpenedFromMessages。
             titleLeading,
-            titleLabel.topAnchor.constraint(equalTo: topBar.topAnchor, constant: 14),
+            titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -7),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBar.trailingAnchor, constant: -16),
             refreshFailedBanner.topAnchor.constraint(equalTo: topBar.bottomAnchor),

@@ -312,10 +312,10 @@ final class BearyChromeViewController: UIViewController {
     /// 编辑器取消要先存草稿/清临时文件，不能由手势直接 dismiss，故本页只用
     /// 边缘滑过阈值后走 didTapCancel 的完成模式，见 BearyEdgeDismiss）。
     private var composerEdgeDismiss: BearyEdgeDismissController?
-    /// 22(b) Plan A：顶栏高恒为安全区顶 + 60，显隐不再塌高（收起态只上移 +
+    /// 22(b) Plan A：顶栏高恒为安全区顶 + 92，显隐不再塌高（收起态只上移 +
     /// 淡出，见 setHeaderVisible）；页顶约束恒为 view.top，但常量为 -12：
     /// 液态玻璃顶边自带高光恰落在屏幕顶边即用户报的那条白线，顶边推出屏外
-    /// 12pt 后高光落在屏外，底边仍为安全区顶 + 60（高同步 +12 补回）。
+    /// 12pt 后高光落在屏外，底边仍为安全区顶 + 92（高同步 +12 补回）。
     /// 顶栏是覆盖层而非把页往下推的栈元素。显隐不再驱动各页 contentInset：
     /// 容器版 applyHeaderTopInsets 只把各页收敛到各自恒定态（首页显示态、他页收起态），
     /// 调用点：viewDidLayoutSubviews 布局纠正与开发者横幅开关；切页时只准备入场页，
@@ -323,7 +323,7 @@ final class BearyChromeViewController: UIViewController {
     private var headerVisible = true
     private var topHeightConstraint: NSLayoutConstraint?
     /// 开发者模式横幅（2026-11-08 新增）：开着时顶上挂一条 36pt 橙条防忘关；
-    /// 顶栏显示时贴顶栏下方（安全区顶 + 108），收起时贴安全区顶；位置跟 headerVisible 走。
+    /// 顶栏显示时贴顶栏下方（安全区顶 + 92），收起时贴安全区顶；位置跟 headerVisible 走。
     private var devBannerView: UIView?
     private var devBannerTopConstraint: NSLayoutConstraint?
     /// 顶栏玻璃顶边推出屏外的量（见上）：只推顶边，不动 tint、高度内容区与 Plan A 显隐。
@@ -708,8 +708,8 @@ final class BearyChromeViewController: UIViewController {
     }
 
     private func buildChrome() {
-        // ---- 顶栏：整宽玻璃，logo 行 60pt 贴安全区下方，其下再加首页切换行
-        // （8pt 间隙 + 32pt 切换 + 8pt 底边距，玻璃总高 = 安全区顶 + 108）。
+        // ---- 顶栏：整宽玻璃，logo 行 44pt 贴安全区下方，其下再加首页切换行
+        // （8pt 间隙 + 32pt 切换 + 8pt 底边距，玻璃总高 = 安全区顶 + 92）。
         // 顶栏玻璃 tint：网页 .nav 底色 bg 52%，与下方白色内容同色系（浅色为白玻璃）；
         // 只改本调用的参数；底栏已改系统分段器，无玻璃调用；不加边框与阴影（网页 .nav 亦无，见 parity_values §7）。
         let top = makeGlassView(tint: BearyColors.alpha(BearyColors.bg, 0.52))
@@ -718,12 +718,12 @@ final class BearyChromeViewController: UIViewController {
         topGlass = top
         top.alpha = 0
         top.isUserInteractionEnabled = false
-        // 22(b) Plan A：顶栏高恒为安全区顶 + 108（viewDidLayoutSubviews 按真实安全区纠正），
+        // 22(b) Plan A：顶栏高恒为安全区顶 + 92（viewDidLayoutSubviews 按真实安全区纠正），
         // 显隐不再塌高（收起只上移 + 淡出，见 setHeaderVisible）；内容栈在玻璃内，裁剪防溢出。
         // 顶边推出屏外 topGlassTopOvershoot：玻璃顶边自带高光落在屏幕顶边即白线，
-        // 推出的量由高度同步补回，底边仍为安全区顶 + 108、内容栈锚底边不动。
+        // 推出的量由高度同步补回，底边仍为安全区顶 + 92、内容栈锚底边不动。
         top.clipsToBounds = true
-        let topHeight = top.heightAnchor.constraint(equalToConstant: 108)
+        let topHeight = top.heightAnchor.constraint(equalToConstant: 92)
         topHeightConstraint = topHeight
         let topTop = top.topAnchor.constraint(equalTo: view.topAnchor, constant: -topGlassTopOvershoot)
         topTopConstraint = topTop
@@ -734,7 +734,7 @@ final class BearyChromeViewController: UIViewController {
             topHeight,
         ])
         // R9-A：logo 图-only、高仅 28（宽 79 已超 44，只扩竖向）：换 Hit44 后
-        // 热区竖向扩到 44（上下各 8pt），仍落在 60 高顶栏栈内、不被裁剪；
+        // 热区竖向扩到 44（上下各 8pt），仍落在 44 高顶栏栈内、不被裁剪；
         // 右侧为弹性 spacer，无邻钮重叠；视觉帧 79×28 不动。
         let logo = BearyHit44Button(type: .custom)
         logo.setImage(UIImage(named: "LogoHorizontal"), for: .normal)
@@ -832,17 +832,17 @@ final class BearyChromeViewController: UIViewController {
             topStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: BearySpace.lg),
             topStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -BearySpace.lg),
             topStack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topStack.heightAnchor.constraint(equalToConstant: 60),
+            topStack.heightAnchor.constraint(equalToConstant: 44),
         ])
         // 首页切换钉顶栏：与表头里旧切换同款系统分段（不新发明样式），
         // 归容器所有、随玻璃显隐走；点按转发给 FeedVC（见 homeSegmentChanged）。
         // 非首页时玻璃整体藏起（transform + alpha + 不可点），切换行随之藏起，
         // 无需另设显隐。
-        // 首页切换热区：视觉高仍钉死 32（外观、玻璃总高 108 一字不动），
+        // 首页切换热区：视觉高仍钉死 32（外观、玻璃总高 92 一字不动），
         // 实体改走底栏同款 BearyHit44SegmentedControl——其 point(inside:)
         // 把高度不足 44 的轴向两侧扩到 44，本控件上下各扩 6pt、有效点击高 44。
-        // 命中关系（以安全区顶为原点）：logo 行底在 +60、切换视觉区在 +68…+100、
-        // 玻璃底在 +108；扩后热区为 +62…+106——上方离 logo 行尚留 2pt、
+        // 命中关系（以安全区顶为原点）：logo 行底在 +44、切换视觉区在 +52…+84、
+        // 玻璃底在 +92；扩后热区为 +46…+90——上方离 logo 行尚留 2pt、
         // 下方离玻璃底尚留 2pt，不碰 logo 行按钮、不探出玻璃压到下方列表；
         // 控件通栏宽远超 44，横向不扩，无左右邻区重叠。顶栏收起时玻璃
         // isUserInteractionEnabled=false，扩区随之一并失效，与收起前一致。
@@ -1115,7 +1115,7 @@ final class BearyChromeViewController: UIViewController {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         banner.addSubview(closeButton)
 
-        let top = banner.topAnchor.constraint(equalTo: view.topAnchor, constant: view.safeAreaInsets.top + (headerVisible ? 108 : 0))
+        let top = banner.topAnchor.constraint(equalTo: view.topAnchor, constant: view.safeAreaInsets.top + (headerVisible ? 92 : 0))
         devBannerTopConstraint = top
         NSLayoutConstraint.activate([
             top,
@@ -1178,7 +1178,7 @@ final class BearyChromeViewController: UIViewController {
     /// 开发者模式横幅位置：顶栏显示时贴顶栏下方，收起时贴安全区顶。
     private func updateDevBannerPosition(animated: Bool = false) {
         guard let top = devBannerTopConstraint else { return }
-        let offset = view.safeAreaInsets.top + (headerVisible ? 108 : 0)
+        let offset = view.safeAreaInsets.top + (headerVisible ? 92 : 0)
         guard top.constant != offset else { return }
         if animated && !UIAccessibility.isReduceMotionEnabled {
             UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
@@ -1879,7 +1879,7 @@ final class BearyChromeViewController: UIViewController {
     /// 22(b) Plan A：header 只在首页出现（调用点不变：showPage 只在首页传 true，
     /// setBarsVisible 的 headerTarget 同样只在首页为真），显隐只改顶栏自身的
     /// transform + alpha——显示 = 位移归零 + alpha 1，收起 = 整块上移自身高度 +
-    /// alpha 0 + 不可点。高度约束恒为安全区顶 + 108 不再动，显隐不再改各页
+    /// alpha 0 + 不可点。高度约束恒为安全区顶 + 92 不再动，显隐不再改各页
     /// contentInset，动画块里不再 layoutIfNeeded：动画期间零布局，内容不跳，
     /// 也不再有每帧改 inset 触发的重新布局开销。顶栏是覆盖层（页框本就贴
     /// view.top），恒占位不挤页。减动效分支保留：直设终值。
@@ -1888,9 +1888,9 @@ final class BearyChromeViewController: UIViewController {
     /// 真机须复核首访他页顶距是否在交叉淡入内干净收敛（见提交说明）。
     private func setHeaderVisible(_ visible: Bool, animated: Bool) {
         headerVisible = visible
-        // 上移量取顶栏自身当前高度（布局后即安全区顶 + 60）；未布局时
-        // bounds 仍为 buildChrome 初值 60，退回安全区顶 + 60 换算。
-        let hideOffset = topGlass.bounds.height > 0 ? topGlass.bounds.height : view.safeAreaInsets.top + 60
+        // 上移量取顶栏自身当前高度（布局后即安全区顶 + 92 + 顶边推出量）；未布局时
+        // bounds 仍为 buildChrome 初值 92，退回安全区顶 + 92 + 顶边推出量换算。
+        let hideOffset = topGlass.bounds.height > 0 ? topGlass.bounds.height : view.safeAreaInsets.top + 92 + topGlassTopOvershoot
         let targetTransform = visible ? CGAffineTransform.identity : CGAffineTransform(translationX: 0, y: -hideOffset)
         topGlass.isUserInteractionEnabled = visible
         if animated && !UIAccessibility.isReduceMotionEnabled {
@@ -1907,10 +1907,10 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 顶栏透度批：各页顶距只认各自的恒定态，与当前选中页无关——首页恒显示态
-    /// （内容区预留顶栏 108pt），他页恒收起态 0（顶栏只在首页出现，从不盖在他页上）。
+    /// （内容区预留顶栏 92pt），他页恒收起态 0（顶栏只在首页出现，从不盖在他页上）。
     /// 此前向所有已建页广播当前页的值（`visible: page == .home`），切页时会把正在
     /// 淡出的离场页顶距翻掉（消息页 0→60 瞬间下移，顶栏与列表一起跳；反向首页的
-    /// contentInset 也会在淡出中塌掉 108pt）。故只在布局纠正点（旋转/分屏、开发者
+    /// contentInset 也会在淡出中塌掉 92pt）。故只在布局纠正点（旋转/分屏、开发者
     /// 横幅开关）把各页收敛到各自恒定态；切页时只准备入场页，见 applyHeaderTopInsetForPage。
     /// 只发已建页（常驻/已懒建），未建页在 ensure* 创建时按各自恒定态取初值。
     /// 占位页无滚动视图、内容居中，不发内边距（其居中偏移见 BearyPlaceholderViewController）。
@@ -2131,12 +2131,12 @@ final class BearyChromeViewController: UIViewController {
         updateDesktopLayout()
         // 审计 2：两侧背景层随 bounds 重算（窄屏隐藏、宽屏定宽/重建）。
         updateSideDecoLayout()
-        // 22(b) Plan A：顶栏高恒为安全区顶 + 108（显隐不再塌高）；安全区变化
+        // 22(b) Plan A：顶栏高恒为安全区顶 + 92（显隐不再塌高）；安全区变化
         // （旋转/分屏）时恒纠正高度，收起态同步把上移量纠正为新高度，
         // 否则 transform 仍是旧高度、顶栏会露出半截。
-        // 高 = 安全区顶 + 108 + 顶边推出量：底边仍为安全区顶 + 108 不变。
+        // 高 = 安全区顶 + 92 + 顶边推出量：底边仍为安全区顶 + 92 不变。
         if let heightConstraint = topHeightConstraint {
-            let corrected = view.safeAreaInsets.top + 108 + topGlassTopOvershoot
+            let corrected = view.safeAreaInsets.top + 92 + topGlassTopOvershoot
             if heightConstraint.constant != corrected { heightConstraint.constant = corrected }
             if !headerVisible {
                 topGlass.transform = CGAffineTransform(translationX: 0, y: -corrected)

@@ -37,9 +37,9 @@ final class BearySubpageLayoutGuard {
         // 118 真机教训：三项全通过仍可能坏——坏的是顶栏高度（顶栏顶正常、
         // 高度吃掉全部可用高度、内容区高度归零），三项里没有一项量高度。
         // 故日志必须记顶栏高度与内容区帧，一次定位到底是帧、位移、顶栏位置
-        // 还是顶栏高度/内容区高度问题；高度本身由约束上界治（见
-        // BearySubpageTopBarHeight），守卫只记不治，不再加一层通用守卫。
-        let topHeightOff = topView.map { $0.frame.height > BearySubpageTopBarHeight.max } ?? false
+        // 还是顶栏高度/内容区高度问题；高度本身由固定 60 约束治（见
+        // BearyTopBarHeight），守卫只记不治，不再加一层通用守卫。
+        let topHeightOff = topView.map { abs($0.frame.height - BearyTopBarHeight) > 0.5 } ?? false
         let contentFrames = contentViews.map { NSCoder.string(for: $0.frame) }.joined(separator: " | ")
         NSLog("[Diag] subpage-layout page=%@ view=%@ top=%@ topH=%@ safeArea=%@ frameOff=%@ transformOff=%@ topOff=%@ topHeightOff=%@ content=[%@] presentation=%@",
               page, NSCoder.string(for: view.frame),
@@ -58,7 +58,7 @@ final class BearySubpageLayoutGuard {
     }
 }
 
-/// 子页顶栏高度上下界（公共路径修法，与设置主页同口径）。
+/// 子页顶栏高度固定 60（Header 统一 60，与设置主页／反馈页同口径，见 BearyTopBarHeight）。
 /// 根因（117/118 真机 + 截图像素实测）：子页顶栏此前只钉了高度下界（>= 52），
 /// 子视图约束又全是不等式（centerY + 上下 >= 6 / <= -6），高度没有任何上界；
 /// 顶栏底边经滚动区/正文区/列表链到页底，内容区（scrollView/textView/tableView）
@@ -69,8 +69,9 @@ final class BearySubpageLayoutGuard {
 /// 此时守卫三项全通过：view.frame == 窗口 bounds、transform 是单位阵、顶栏 minY
 /// == 安全区顶——坏的是顶栏高度，三项里没有一项量它；重布局也只会把同一套
 /// 约束再解出同一个结果，所以 #535 的呈现完成再校兜不住。
-/// 修法：与设置主页（>= 52 且 <= 88）同口径给顶栏加上界；88 内仍有余量，
-/// 大字号下顶栏可长到 88，内容区永远有高度，坏状态直接不在可行解里。
+/// 修法（Header 统一 60）：顶栏高度钉死 == BearyTopBarHeight（60），不再给
+/// 上下界；标题走 cappedFont（上限 20pt），大字号下顶栏也不长，内容区永远
+/// 有高度，坏状态直接不在可行解里。
 /// 全量审计（以 BearySettingsViewController 全部呈现点为准，补查结论）：
 /// 本支 5 处改动实际覆盖 8 页——壳子页（会员来源明细、登录设备，子类调
 /// super.viewDidLoad 故同走壳顶栏）、法律页（隐私政策、用户协议）、诊断日志、
@@ -82,14 +83,7 @@ final class BearySubpageLayoutGuard {
 /// （容器引导页，无顶栏视图）；系统弹窗与分享单（UIAlertController /
 /// UIActivityViewController，无自定义顶栏）。上述排除页若仍见标题落屏中、
 /// 正文全空，即非本机制，需凭新截图另查，不要再往本处加界。
-enum BearySubpageTopBarHeight {
-    static let min: CGFloat = 52
-    static let max: CGFloat = 88
-    static func constraints(for topBar: UIView) -> [NSLayoutConstraint] {
-        [topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: min),
-         topBar.heightAnchor.constraint(lessThanOrEqualToConstant: max)]
-    }
-}
+
 
 // ===== 设置子页：会员来源明细 / 登录设备（2026-10-29 第 7、11 项）=====
 // 两页原先以内联卡/内联展开的形式挤在设置页内（Plus 组的来源明细卡、
@@ -196,7 +190,8 @@ class BearySettingsSubpageViewController: UIViewController {
             contentStack.centerXAnchor.constraint(equalTo: contentScrollView.frameLayoutGuide.centerXAnchor),
             subpageContentWidthConstraint!,
             contentStack.bottomAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.bottomAnchor, constant: -24),
-        ] + BearySubpageTopBarHeight.constraints(for: topBar))
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
+        ])
     }
 
     @objc private func closeTapped() {

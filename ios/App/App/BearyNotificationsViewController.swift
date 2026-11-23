@@ -321,7 +321,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// clearItemsAfterUnauthorized 与 refreshListIfUnreadChanged / 轻量刷新成功分支）。
     private var needsReloadAfterUnauthorized = false
     private var zeroHeightRows: Set<Int> = []
-    private var headerHeight: CGFloat = 48
+    private var headerHeight: CGFloat = BearyTopBarHeight
     /// 嵌入消息页时组头已去掉（见 setEmbedded），布局回写表头时跳过。
     private var isEmbedded = false
     private var stateContainerTopConstraint: NSLayoutConstraint?
@@ -350,9 +350,9 @@ final class BearyNotificationsViewController: UIViewController {
     private lazy var readAllButton: UIButton = {
         // 初始外观须与 refreshReadAllButtonAppearance(for: .normal) 一致（对勾 14pt）。
         // R9-A：图标+文字小钮、高约 25（14 字 + 上下各 4 内边距）：换 Hit44 后
-        // 热区竖向扩向 44；header 高 48（见 headerView 高度约束），热区上下
+        // 热区竖向扩向 44；header 高 60（见 headerView 高度约束），热区上下
         // 均在框内、满 44 不裁（此前 header 41 时实际可达约 38）。
-        // 宽已超 44 不横扩；视觉不动（标题顶距不变，多余高度落到底部留白）。
+        // 宽已超 44 不横扩；标题与按钮在 60 行内垂直居中，多余高度上下均分。
         let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
@@ -376,17 +376,19 @@ final class BearyNotificationsViewController: UIViewController {
         let header = UIView()
         header.translatesAutoresizingMaskIntoConstraints = false
         header.backgroundColor = BearyColors.bg
-        // 行高改最小高度：默认仍为 48（按钮满 44 热区所需；标题顶距 14 不变），
-        // 大字号下标题长高时头部随之长高（fitting 高度由 viewDidLayoutSubviews
-        // 重算），标题不再被 30pt 卡死；标题仅两字不换行，右侧“全部已读”
+        // 行高改最小高度：默认 60（= BearyTopBarHeight；按钮满 44 热区所需），
+        // 标题与按钮在行内垂直居中（上下留白均分）；大字号下标题长高时头部随之
+        // 长高（fitting 高度由 viewDidLayoutSubviews 重算，上下各留 ≥14），
+        // 标题不再被 30pt 卡死；标题仅两字不换行，右侧“全部已读”
         // 宽度已有档位变化重算，不挤标题。
-        header.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+        header.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyTopBarHeight).isActive = true
         header.addSubview(titleLabel)
         header.addSubview(readAllButton)
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 16),
-            titleLabel.topAnchor.constraint(equalTo: header.topAnchor, constant: 14),
-            titleLabel.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -4),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: header.topAnchor, constant: 14),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: header.bottomAnchor, constant: -14),
             // 审计：标题加右侧限位，大字体时不与“全部已读”钮重叠（超长截断）。
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: readAllButton.leadingAnchor, constant: -8),
             readAllButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -16),
@@ -670,7 +672,8 @@ final class BearyNotificationsViewController: UIViewController {
         revalidateFollowCardStates()
     }
 
-    /// 表头高度实测：标题 19 + 上 14 下 4；实测后写回 tableHeaderView frame
+    /// 表头高度实测：默认 60（= BearyTopBarHeight），标题在行内垂直居中；
+    /// 大字号下为标题高 + 上下各 14；实测后写回 tableHeaderView frame
     /// 与态容器顶锚，宽度变化时同步下拉指示器宽。
     /// C-G14：底部留白随视口宽分档——宽 >=821 时 44。窄屏档实测底栏：
     /// SceneDelegate 底栏分段器高 58、底锚 safeArea 底 -6，即底栏占位
@@ -3355,7 +3358,7 @@ final class BearyLetterViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
 
-        // 顶栏：详情页同款（44 高、左上角返回 44×44、标题在内容区、不重复）。
+        // 顶栏：详情页同款（60 高 = BearyTopBarHeight、左上角返回 44×44、标题在内容区、不重复）。
         topBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(topBar)
         backButton.translatesAutoresizingMaskIntoConstraints = false
@@ -3480,7 +3483,7 @@ final class BearyLetterViewController: UIViewController {
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBar.heightAnchor.constraint(equalToConstant: 44),
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
             backButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             backButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),
@@ -5497,7 +5500,7 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBar.heightAnchor.constraint(equalToConstant: 44),
+            topBar.heightAnchor.constraint(equalToConstant: BearyTopBarHeight),
             backButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             backButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),
