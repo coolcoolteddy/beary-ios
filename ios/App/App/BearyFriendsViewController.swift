@@ -31,6 +31,9 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     // 新行首次出现透明度过渡的已播记账（按好友 id/handle 键，已有行更新不重播）。
     private var fadedRowKeys = Set<String>()
     private let titleLabel = UILabel()
+    /// 标题旁人数（展示审计 G6-H5）：人数是次要信息，弱色小字号单列，
+    /// 标题本身仍走 19 bold 墨字＋自动字号缩放（富文本会钉死字号，故不用 attributedText）。
+    private let titleCountLabel = UILabel()
     private var topBarTopConstraint: NSLayoutConstraint?
     private var backButton: UIButton?
     private var titleLeadingConstraint: NSLayoutConstraint?
@@ -62,6 +65,13 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = "好友"
         topBar.addSubview(titleLabel)
+        titleCountLabel.translatesAutoresizingMaskIntoConstraints = false
+        // 标题旁人数 14 regular 暂无语义入口：numberFont 是 12 semibold、secondaryFont 是 13 regular，换任一都会改视觉；buttonRegularFont 仅限按钮。
+        titleCountLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)) // beary-lint: allow
+        titleCountLabel.adjustsFontForContentSizeCategory = true
+        titleCountLabel.textColor = BearyColors.gray
+        titleCountLabel.isHidden = true
+        topBar.addSubview(titleCountLabel)
         // 从消息页打开时的返回钮（回消息页；底栏根页默认隐藏，见 setOpenedFromMessages）。
         let backButton = UIButton(type: .system)
         backButton.translatesAutoresizingMaskIntoConstraints = false
@@ -154,7 +164,9 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             titleLeading,
             titleLabel.topAnchor.constraint(equalTo: topBar.topAnchor, constant: 14),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -7),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBar.trailingAnchor, constant: -16),
+            titleCountLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 4),
+            titleCountLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            titleCountLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBar.trailingAnchor, constant: -16),
             refreshFailedBanner.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             refreshFailedBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             refreshFailedBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -374,10 +386,13 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     }
 
     private func updateTitleAndEmptyState() {
-        // 标题行带人数：只要列表非空就显人数，刷新失败也不退成光秃标题
-        //（旧口径 loadFailed 时一律只显“好友”，把失败画成人数丢失）；
-        // 只有空列表时只显“好友”，不把失败画成 0 人。
-        titleLabel.text = friends.isEmpty ? "好友" : "好友 · \(friends.count)人"
+        // 标题行带人数（人数另走弱色小字号 label，见 G6-H5）：只要列表非空
+        // 就显人数，刷新失败也不退成光秃标题（旧口径 loadFailed 时一律只显
+        // “好友”，把失败画成人数丢失）；只有空列表时只显“好友”，不把失败画成 0 人。
+        // 标题只留「好友」；人数为空时整段隐藏。
+        titleLabel.text = NSLocalizedString("friends.title", comment: "")
+        titleCountLabel.text = friends.isEmpty ? nil : String(format: NSLocalizedString("friends.title_count", comment: ""), friends.count)
+        titleCountLabel.isHidden = friends.isEmpty
         if loadFailed && friends.isEmpty {
             // 审计 U3：失败态给重试钮（与消息页同款）：点按即重拉；下拉手势仍可用。
             emptyStateView.configure(kind: .error, title: "加载失败", subtitle: "下拉重试", iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.refresh() })
