@@ -30,6 +30,23 @@ final class BearyTagEntriesViewController: UIViewController {
     private let loadingIndicator = UIActivityIndicatorView(style: .large)
     private let stateLabel = UILabel()
 
+    /// 展示审计 G5-15：加载失败重试给明确按钮样式（广场失败态同款
+    /// secondaryOutline 钮＋刷新图标），不再是一行纯文本点按。
+    private lazy var retryButton: BearyButton = {
+        let button = BearyButton(style: .secondaryOutline(.regular))
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 15), for: .normal)
+        button.setTitle("重试", for: .normal)
+        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        button.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        button.isHidden = true
+        return button
+    }()
+
     /// 自有顶栏（本页只进 SceneDelegate 的标签 modal nav，系统导航栏隐藏；
     /// 与个人页 modal 顶栏同款：44pt＋返回钮＋居中标题）。
     private let topBarView: UIView = {
@@ -99,10 +116,9 @@ final class BearyTagEntriesViewController: UIViewController {
         stateLabel.textAlignment = .center
         stateLabel.numberOfLines = 0
         stateLabel.isHidden = true
-        let retryTap = UITapGestureRecognizer(target: self, action: #selector(stateLabelTapped))
-        stateLabel.addGestureRecognizer(retryTap)
-        stateLabel.isUserInteractionEnabled = true
         view.addSubview(stateLabel)
+
+        view.addSubview(retryButton)
 
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
@@ -117,6 +133,10 @@ final class BearyTagEntriesViewController: UIViewController {
             stateLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             stateLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
             stateLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
+
+            retryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            retryButton.topAnchor.constraint(equalTo: stateLabel.bottomAnchor, constant: 16),
+            retryButton.heightAnchor.constraint(equalToConstant: retryButton.style.height),
         ])
 
         loadFirstPage()
@@ -176,6 +196,7 @@ final class BearyTagEntriesViewController: UIViewController {
         loading = true
         loadFailed = false
         stateLabel.isHidden = true
+        retryButton.isHidden = true
         loadingIndicator.startAnimating()
         BearyAPI.shared.fetchEntries(scope: .tag(tag), limit: Self.pageSize) { [weak self] result in
             guard let self = self else { return }
@@ -263,17 +284,20 @@ final class BearyTagEntriesViewController: UIViewController {
 
     private func refreshStateLabel() {
         if loadFailed && entries.isEmpty {
-            stateLabel.text = "加载失败，点按重试"
+            stateLabel.text = "加载失败"
             stateLabel.isHidden = false
+            retryButton.isHidden = false
         } else if entries.isEmpty {
             stateLabel.text = "这个标签下还没有日记"
             stateLabel.isHidden = false
+            retryButton.isHidden = true
         } else {
             stateLabel.isHidden = true
+            retryButton.isHidden = true
         }
     }
 
-    @objc private func stateLabelTapped() {
+    @objc private func retryTapped() {
         if loadFailed && entries.isEmpty {
             loadFirstPage()
         }
