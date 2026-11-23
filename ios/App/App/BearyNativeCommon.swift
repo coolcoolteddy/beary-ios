@@ -3751,6 +3751,9 @@ enum BearyVisibilityText {
         guard let ms = publishedAtMs, ms > 0 else { return nil }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
+        // 未来时间戳（> 5 秒）：不显示“刚刚”，改走绝对时间；5 秒内仍算时钟偏差、走“刚刚”。
+        // 与私信／会话／通知行本地守卫同口径（BearyText.timeString：今天 H:mm、昨天“昨天 H:mm”、其余绝对日期）。
+        if diff < -5 { return BearyText.timeString(ms: ms) }
         if diff < 60 { return "刚刚" }
         if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
         if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
