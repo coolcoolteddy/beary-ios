@@ -752,8 +752,9 @@ class BearyFeedViewController: UIViewController {
         blindBoxEntryView.onTap = { [weak self] in
             self?.presentBlindBoxFlow()
         }
-        // 盲盒改收轮播下方一行小卡（只留标题与今日计数，副文案去掉）。
+        // 盲盒改收轮播下方单行入口（展示审计 G1-04：轻量单行，无卡片底；只留标题与今日计数，副文案去掉）。
         blindBoxEntryView.compactMode = true
+        blindBoxEntryView.slimRowMode = true
         plazaCarouselView.onSelectFeatured = { [weak self] entry in
             self?.tryNavigateEntry(entry)
         }
@@ -2601,7 +2602,7 @@ class BearyFeedViewController: UIViewController {
                 entryTop,
             ])
         }
-        // 表头自上而下：轮播（卡片 + 小圆点）→ 盲盒一行小卡 → 空态。
+        // 表头自上而下：轮播（卡片 + 小圆点）→ 盲盒单行入口 → 空态。
         // 先把容器宽定到当前表宽，再算入口高：约束下的入口宽即 width - 32，
         // fitting 按此宽换行，副文案换行承担收缩，不压计数与 chevron。
         blindBoxHeaderWrap.frame.size.width = width
