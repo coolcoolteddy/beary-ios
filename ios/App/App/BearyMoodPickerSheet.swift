@@ -4,12 +4,11 @@ import UIKit
 // 原为编辑器心情选择器（默认 32 只＋节日组＋“自定义”组）；2026-11-18 Li 定
 // 日记无心情选择功能、心情改为正文键入 [mood:xxx]，心情组随之删除，本 sheet
 // 只剩“自定义”组（个人自定义心情图库，最新在前，上限 100，首格是 ＋ 添加格）。
-// 走共享底部弹窗容器 BearyBottomSheet（弹簧 0.38s 上升、背后缩 0.92、遮罩 0.45、
-// 下拖超 80pt 或速度 >600pt/s 关闭、否则 0.26s/damping 0.7 弹回；减动效瞬时）。
+// 走系统底部 sheet（UISheetPresentationController，见 BearySystemSheet）。
 // 高度上限 50% 容器高（2026-11-18 Li 定：半屏，弹出时正文仍可见；规范 §6 通用上限
 // 88%，本 sheet 例外；内容不足半屏时按内容高，不硬撑空白）。
 // 点选即插入（不收起，方便连着插多个）；删插进正文的图走键盘删除键。
-// 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
+// 部署目标 iOS 16.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 enum BearyMoodPickerSheet {
 
@@ -20,26 +19,16 @@ enum BearyMoodPickerSheet {
     @discardableResult
     static func show(from presenter: UIViewController, gifKeys: [String] = [], onSelectGIF: ((String) -> Void)? = nil, onUploadGIF: (() -> Void)? = nil) -> BearyMoodPickerSheetViewController {
         let sheet = BearyMoodPickerSheetViewController(gifKeys: gifKeys, onSelectGIF: onSelectGIF, onUploadGIF: onUploadGIF)
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
         // 进场前先算一次内容高，首帧不拿容器一半高回退、随后不再大跳变；
         // 安全区此时未进窗口为 0，落窗后 viewDidLayoutSubviews 按真实安全区跟帧补齐。
         sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
         sheet.containerHeight = presenter.view.bounds.height
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
         return sheet
     }
 }
 
-final class BearyMoodPickerSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, BearyBottomSheetVoiceOver {
+final class BearyMoodPickerSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, BearySystemSheetSizing {
 
     /// 表情组：只剩“自定义”组（个人自定义心情图库，打开时从服务端刷新，见 refreshLibrary）。
     private struct MoodGroup {
@@ -54,22 +43,15 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     private var selectedGroupIndex = 0
     private var libraryObserver: NSObjectProtocol?
 
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法），
-    /// 否则容器在呈现中途释放、进退场动画丢 delegate。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
     /// 容器高（进场前取 presenter 高，落窗后由 viewDidLayoutSubviews 按 window 高刷新）：
     /// 88% 高度上限的计算基准。
     var containerHeight: CGFloat = 800
 
-    private let grabberView = UIView()
     private let titleLabel = UILabel()
     private var emoteCollectionView: UICollectionView?
     private var collectionHeightConstraint: NSLayoutConstraint?
     private var lastLayoutWidth: CGFloat = 0
     private var lastLayoutContainerHeight: CGFloat = 0
-
-    /// BearyBottomSheetVoiceOver：出现时首焦点落标题。
-    var bottomSheetInitialAccessibilityElement: AnyObject? { titleLabel }
 
     init(gifKeys: [String], onSelectGIF: ((String) -> Void)? = nil, onUploadGIF: (() -> Void)? = nil) {
         self.onSelectGIF = onSelectGIF
@@ -117,11 +99,6 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
 
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        view.addSubview(grabberView)
-
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "自定义"
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
@@ -150,12 +127,8 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         let collectionHeight = collection.heightAnchor.constraint(equalToConstant: 400)
         collectionHeightConstraint = collectionHeight
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 14),
+            // 顶部留白与旧抓手区等高（抓手顶 10＋高 4＋标题间距 14）：系统抓手占顶区，标题位置不动。
+            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 14),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
             titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
 
@@ -192,8 +165,8 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         }
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档/分组变化时跟帧补齐。
-    /// 高 = 抓手＋标题＋网格（不超 50% 容器高）＋底部留白；网格超高时内部滚动。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高；宽/字号档/分组变化时跟帧补齐。
+    /// 高 = 顶留白＋标题＋网格（不超 50% 容器高）＋底部留白；网格超高时内部滚动。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
@@ -201,14 +174,15 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         let safeBottom = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
         let bottomPad = safeBottom + 16
         let titleHeight = titleLabel.intrinsicContentSize.height
-        let chrome = BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 14 + titleHeight + 12
+        let topHeight = BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 14 + titleHeight + 12
         let gridHeight = gridContentHeight(forWidth: width)
-        let collectionHeight = min(gridHeight, max(0, maxHeight - chrome - bottomPad))
+        let collectionHeight = min(gridHeight, max(0, maxHeight - topHeight - bottomPad))
         collectionHeightConstraint?.constant = collectionHeight
-        let height = chrome + collectionHeight + bottomPad
+        let height = topHeight + collectionHeight + bottomPad
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 

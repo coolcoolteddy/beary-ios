@@ -197,7 +197,7 @@ final class BearyInviteViewController: UIViewController {
             })
             return
         }
-        UIView.animate(withDuration: BearyBottomSheet.springDuration, delay: 0, usingSpringWithDamping: BearyBottomSheet.springDamping, initialSpringVelocity: 0, options: [.beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.screen, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [.beginFromCurrentState], animations: {
             self.view.superview?.layoutIfNeeded()
         })
     }

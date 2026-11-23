@@ -8,7 +8,7 @@ import UIKit
 // 「纯文本 · 保存成功」）；点行进预览层。右上「清空快照」删全部（含已加星标），先弹确认、不可撤销。
 // 字号照截图实测：标题 pageTitleFont 17 粗体、说明与副行 captionFont 12、行时间 17 半粗。
 
-final class BearySnapshotListViewController: UIViewController {
+final class BearySnapshotListViewController: UIViewController, BearySystemSheetSizing {
     /// 恢复到编辑器：预览层点「恢复到编辑器」后经本层透传给详情页
     /// （快照文字载入编辑器，手动保存；不调 POST restore、不直接写库）。
     var onRestoreSnapshotToEditor: ((BearyEntrySnapshot) -> Void)?
@@ -17,10 +17,6 @@ final class BearySnapshotListViewController: UIViewController {
     private var snapshots: [BearyEntrySnapshot] = []
     private var loadFailed = false
 
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页/公告同款做法）。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
-
-    private let grabberView = UIView()
     private let titleLabel = UILabel()
     private let clearButton = UIButton(type: .system)
     private let descriptionLabel = UILabel()
@@ -57,11 +53,6 @@ final class BearySnapshotListViewController: UIViewController {
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
-
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        view.addSubview(grabberView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "云端快照"
@@ -108,12 +99,8 @@ final class BearySnapshotListViewController: UIViewController {
         let tableHeight = tableView.heightAnchor.constraint(equalToConstant: Self.emptyTableHeight)
         tableHeightConstraint = tableHeight
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            // 顶部留白与旧抓手区等高（列表顶留白 6＋抓手高 4＋标题间距 16）：系统抓手占顶区，标题位置不动。
+            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding + BearySheetChrome.grabberHeight + 16),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
 
             clearButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
@@ -150,7 +137,7 @@ final class BearySnapshotListViewController: UIViewController {
         }
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高；宽/字号档变化时跟帧补齐。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     /// 卡顿根因：此前每轮 viewDidLayoutSubviews 都整树跑一遍
     /// systemLayoutSizeFitting；高度一变，容器 preferredContentSizeDidChange
@@ -176,6 +163,7 @@ final class BearySnapshotListViewController: UIViewController {
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 
@@ -255,18 +243,7 @@ extension BearySnapshotListViewController {
     static func show(from presenter: UIViewController, entry: Entry, onRestoreSnapshotToEditor: ((BearyEntrySnapshot) -> Void)?) {
         let sheet = BearySnapshotListViewController(entry: entry)
         sheet.onRestoreSnapshotToEditor = onRestoreSnapshotToEditor
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }
 

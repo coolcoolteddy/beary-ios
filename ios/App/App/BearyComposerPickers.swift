@@ -15,7 +15,7 @@ import UIKit
 // （网页 addrSetIconBusy 同款，不再用系统 spinner，也不再转放大镜）。
 // 引用选择不再是独立导航页：已改为编辑器内嵌展开面板（见 BearyComposerViewController），
 // 本文件旧的 BearyQuotePickerViewController 已删除。
-// 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
+// 约束：部署目标 iOS 16.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 // MARK: - @ 选人（底 sheet；单选、本人已过滤）
 

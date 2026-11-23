@@ -95,7 +95,7 @@
 		E1E2599A796247176C2B5E85 /* BearyIDCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D9A8D9327B0BD209B039B8F /* BearyIDCard.swift */; };
 		1A6A3DFC295DF7B7A6538DD4 /* BearyCityData.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA32A7524D97E03846DEBC21 /* BearyCityData.swift */; };
 		81ED0F919F0246F588721104 /* BearyLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D147AEDDB951407BBDE4160B /* BearyLoginSheet.swift */; };
-		4E5369457A4D4A839846FCF4 /* BearyBottomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 540207E89ABC460A9EFB91A4 /* BearyBottomSheet.swift */; };
+		5D6F18761DD3B28F41958D12 /* BearySystemSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDAE54C35FF157208366CA9B /* BearySystemSheet.swift */; };
 		0C4CF66727BD4C9EB76E5AF5 /* BearyConfirmSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C0F6F931D804131979C0AED /* BearyConfirmSheet.swift */; };
 		8C1ECC38A4D24D059CA83AF7 /* BearyAnnouncementCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA4119D2276143AC8EAC333C /* BearyAnnouncementCenter.swift */; };
 		749D3FB8B446615400722F30 /* BearyForceUpdate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3678651605B093A75AF8120 /* BearyForceUpdate.swift */; };
@@ -829,7 +829,7 @@
 		8D9A8D9327B0BD209B039B8F /* BearyIDCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyIDCard.swift; sourceTree = "<group>"; };
 		EA32A7524D97E03846DEBC21 /* BearyCityData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCityData.swift; sourceTree = "<group>"; };
 		D147AEDDB951407BBDE4160B /* BearyLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLoginSheet.swift; sourceTree = "<group>"; };
-		540207E89ABC460A9EFB91A4 /* BearyBottomSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBottomSheet.swift; sourceTree = "<group>"; };
+		FDAE54C35FF157208366CA9B /* BearySystemSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySystemSheet.swift; sourceTree = "<group>"; };
 		3C0F6F931D804131979C0AED /* BearyConfirmSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyConfirmSheet.swift; sourceTree = "<group>"; };
 		AA4119D2276143AC8EAC333C /* BearyAnnouncementCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAnnouncementCenter.swift; sourceTree = "<group>"; };
 		C3678651605B093A75AF8120 /* BearyForceUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyForceUpdate.swift; sourceTree = "<group>"; };
@@ -1574,7 +1574,7 @@
 				8D9A8D9327B0BD209B039B8F /* BearyIDCard.swift */,
 				EA32A7524D97E03846DEBC21 /* BearyCityData.swift */,
 				D147AEDDB951407BBDE4160B /* BearyLoginSheet.swift */,
-				540207E89ABC460A9EFB91A4 /* BearyBottomSheet.swift */,
+				FDAE54C35FF157208366CA9B /* BearySystemSheet.swift */,
 				3C0F6F931D804131979C0AED /* BearyConfirmSheet.swift */,
 				AA4119D2276143AC8EAC333C /* BearyAnnouncementCenter.swift */,
 				C3678651605B093A75AF8120 /* BearyForceUpdate.swift */,
@@ -2989,7 +2989,7 @@
 				E1E2599A796247176C2B5E85 /* BearyIDCard.swift in Sources */,
 				1A6A3DFC295DF7B7A6538DD4 /* BearyCityData.swift in Sources */,
 				81ED0F919F0246F588721104 /* BearyLoginSheet.swift in Sources */,
-				4E5369457A4D4A839846FCF4 /* BearyBottomSheet.swift in Sources */,
+				5D6F18761DD3B28F41958D12 /* BearySystemSheet.swift in Sources */,
 				0C4CF66727BD4C9EB76E5AF5 /* BearyConfirmSheet.swift in Sources */,
 				8C1ECC38A4D24D059CA83AF7 /* BearyAnnouncementCenter.swift in Sources */,
 				749D3FB8B446615400722F30 /* BearyForceUpdate.swift in Sources */,
@@ -3157,7 +3157,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
@@ -3208,7 +3208,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -3226,7 +3226,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 134;
 				INFOPLIST_FILE = App/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -3249,7 +3249,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 134;
 				INFOPLIST_FILE = App/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -3268,7 +3268,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.teddyhn.beary.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -3283,7 +3283,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.teddyhn.beary.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

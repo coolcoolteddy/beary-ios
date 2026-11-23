@@ -11,18 +11,15 @@ import UIKit
 // 故恢复前备份有兜底、不调 POST restore（它会直接写库，等于自动保存）。
 // 星标能力保留：右上角星形钮，点亮橙色＝已加星标，沿用原 star 接口。
 
-final class BearySnapshotPreviewViewController: UIViewController {
+final class BearySnapshotPreviewViewController: UIViewController, BearySystemSheetSizing {
     var onStarChanged: ((Int, Bool) -> Void)?
     var onRestoreToEditor: ((BearyEntrySnapshot) -> Void)?
 
     private let entryId: String
     private var snapshot: BearyEntrySnapshot
 
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页/公告同款做法）。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
     private var starRequestInFlight = false
 
-    private let grabberView = UIView()
     private let titleLabel = UILabel()
     private let starButton = UIButton(type: .system)
     private let subtitleLabel = UILabel()
@@ -58,11 +55,6 @@ final class BearySnapshotPreviewViewController: UIViewController {
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
-
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        view.addSubview(grabberView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "快照预览"
@@ -113,12 +105,8 @@ final class BearySnapshotPreviewViewController: UIViewController {
         let textHeight = contentTextView.heightAnchor.constraint(equalToConstant: Self.minTextHeight)
         textHeightConstraint = textHeight
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            // 顶部留白与旧抓手区等高（抓手顶 10＋高 4＋标题间距 16）：系统抓手占顶区，标题位置不动。
+            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
 
             starButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
@@ -178,7 +166,7 @@ final class BearySnapshotPreviewViewController: UIViewController {
         }
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高；宽/字号档变化时跟帧补齐。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     /// 同列表层：只有宽／正文高／底安全区变了才重算 systemLayoutSizeFitting，
     /// 其余布局轮次复用上次量到的高，不再每轮整树量一遍。
@@ -202,6 +190,7 @@ final class BearySnapshotPreviewViewController: UIViewController {
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 
@@ -251,17 +240,6 @@ extension BearySnapshotPreviewViewController {
         let sheet = BearySnapshotPreviewViewController(entryId: entryId, snapshot: snapshot)
         sheet.onStarChanged = onStarChanged
         sheet.onRestoreToEditor = onRestoreToEditor
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }

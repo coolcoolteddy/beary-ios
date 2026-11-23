@@ -1,49 +1,30 @@
 import UIKit
 
 // ===== App 公告底 sheet（2026-11-08）=====
-// 走共享底部弹窗容器 BearyBottomSheet（与登录弹窗/确认弹窗同款：弹簧 0.38s 上升、
-// 背后缩 0.92、遮罩 0.45、下拖关/弹回；右上角叉叉关闭由本 sheet 自己保留）。
+// 走系统底部 sheet（UISheetPresentationController，见 BearySystemSheet）。
 // 内容就是 admin 里写的那段原文，不自动拼 Release 说明。单“知道了”按钮。
 // 滚动结构照抄 BearyInputSheet：标题＋正文走 UIScrollView＋内容容器，
 // “知道了”按钮组固定在底部；内容短时 sheet 高跟内容走，内容长时容器按 0.88
 // 封顶、正文在滚动区内纵向滚动、按钮组贴底不动。
 // 字号走规范语义入口：标题 sheet 档 15 bold（smallActionFont），
 // 正文 15 regular（smallBodyFont）；按钮走 BearyButton 工厂（常规 16 semibold）。
-// 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
+// 部署目标 iOS 16.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 enum BearyAnnouncementSheet {
 
     /// 从 presenter 弹出公告底 sheet（presenter 即 chrome 容器）。
     static func show(from presenter: UIViewController, announcement: BearyAnnouncement) {
         let sheet = BearyAnnouncementSheetViewController(announcement: announcement)
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        // 进场前先算一次内容高，首帧不拿容器一半高回退、随后不再大跳变；
-        // 安全区此时未进窗口为 0，落窗后 viewDidLayoutSubviews 按真实安全区跟帧补齐。
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }
 
-final class BearyAnnouncementSheetViewController: UIViewController {
+final class BearyAnnouncementSheetViewController: UIViewController, BearySystemSheetSizing {
 
     private let announcement: BearyAnnouncement
 
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法），
-    /// 否则容器在呈现中途释放、进退场动画丢 delegate。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
-
     private let scrollView = UIScrollView()
     private let scrollContentView = UIView()
-    private let grabberView = UIView()
     private let titleLabel = UILabel()
     private let bodyLabel = UILabel()
     private let buttonStack = UIStackView()
@@ -64,20 +45,12 @@ final class BearyAnnouncementSheetViewController: UIViewController {
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
 
-        // 内容区滚动容器：抓手→标题→正文挂内容容器内纵向滚动，
+        // 内容区滚动容器：标题→正文挂内容容器内纵向滚动，
         // 按钮组留在 view 上固定底部（BearyInputSheet 同款）。
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrollView)
         scrollContentView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(scrollContentView)
-
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #F5F5F5）
-        // 对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        scrollContentView.addSubview(grabberView)
-
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = announcement.title
         titleLabel.font = BearyDynamicType.smallActionFont()
@@ -119,15 +92,9 @@ final class BearyAnnouncementSheetViewController: UIViewController {
             scrollContentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             scrollContentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             scrollContentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-
-            grabberView.topAnchor.constraint(equalTo: scrollContentView.topAnchor, constant: BearySheetChrome.grabberTop),
-            grabberView.centerXAnchor.constraint(equalTo: scrollContentView.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
-            titleLabel.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor, constant: 16),
-            titleLabel.trailingAnchor.constraint(equalTo: scrollContentView.trailingAnchor, constant: -16),
+            // 顶部留白与旧抓手区等高（抓手顶 10＋高 4＋标题间距 16）：系统抓手
+            // 占顶区，标题位置不动；一律不要 ×，标题右缘放回内容边 -16。
+            titleLabel.topAnchor.constraint(equalTo: scrollContentView.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16),
 
             bodyLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
             bodyLabel.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor, constant: 16),
@@ -145,7 +112,7 @@ final class BearyAnnouncementSheetViewController: UIViewController {
         updatePreferredContentSize()
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高；宽/字号档变化时跟帧补齐。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     /// 滚动区无固有高，整体系 fitting 算不出高：改为滚动内容高（已含内容底
     /// 16 留白）＋按钮组高＋底边 16＋安全区底边分别相加；与改前总高一致，
@@ -159,6 +126,7 @@ final class BearyAnnouncementSheetViewController: UIViewController {
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 
