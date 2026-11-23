@@ -3684,10 +3684,12 @@ enum BearyEphemeral {
         if minutes == 0 { return "还剩\(hours)小时" }
         return "还剩\(hours)小时\(minutes)分"
     }
-    /// 限时卡正文字号（预览口径）：短句（≤30 字）19pt、长文 16.5pt；非限时 16pt。
+    /// 限时卡正文字号：限时篇一律 16.5pt（不超过标题 16.5pt；展示审计 G4-06：
+    /// 旧短句 19pt 比标题大、主次倒置，已改）；非限时 16pt。content 入参保留
+    /// （调用点签名不变），字号不再按内容长短区分。
     static func bodyFontSize(content: String?, limited: Bool) -> CGFloat {
         guard limited else { return 16 }
-        return (content ?? "").count <= 30 ? 19 : 16.5
+        return 16.5
     }
 }
 

@@ -3684,8 +3684,8 @@ class BearyDiaryCardCell: UITableViewCell {
         bodyStack.insertArrangedSubview(entryTitleLabel, at: 0)
     }
 
-    /// 限时卡正文字号（预览口径）：短句 19pt、长文 16.5pt；非限时 16pt。
-    /// 仅表情放大（2026-11-18 Li 定）叠加其上：1–3 个纯表情时基准字号 ×2，
+    /// 限时卡正文字号：限时篇 16.5pt（展示审计 G4-06，旧短句 19pt 已改）、
+    /// 非限时 16pt。仅表情放大（2026-11-18 Li 定）叠加其上：1–3 个纯表情时基准字号 ×2，
     /// 显示与量算都走此处，行高倍数 1.6 跟字号走。
     private var currentBodyFontSize: CGFloat {
         guard let entry = currentEntry else { return 16 }
@@ -4791,7 +4791,7 @@ extension BearyDiaryCardCell {
     static func estimatedCardHeight(for entry: Entry, mode: BearyDiaryCardMode, expanded: Bool, firstRow: Bool, tableWidth: CGFloat) -> CGFloat {
         let contentWidth = max(0, tableWidth - 84)
         let text = entry.content ?? ""
-        // 限时正文字号（短句 19／长文 16.5）与仅表情放大（×2）叠加，
+        // 限时正文字号 16.5（展示审计 G4-06，旧短句 19 已改）与仅表情放大（×2）叠加，
         // 与显示（currentBodyFontSize 同口径）同字号量。
         let hasEphemeral = entry.ephemeralUntil != nil
         var bodyFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: BearyEphemeral.bodyFontSize(content: text, limited: hasEphemeral)))
