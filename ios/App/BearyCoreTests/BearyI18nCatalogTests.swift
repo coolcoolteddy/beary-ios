@@ -32,6 +32,12 @@ final class BearyI18nCatalogTests: XCTestCase {
         "app_lock.unlock": "解锁",
         "app_lock.unlock_beary_with_biometry": "使用%@解锁 beary",
         "app_lock.verification_failed": "验证未通过，请再试一次，也可用设备密码解锁",
+        // 样板模块 2：数据状态页后台刷新行（C3）
+        "settings.data_status.background_refresh.failed": "失败 · 上次 %@",
+        "settings.data_status.background_refresh.never_run": "未运行",
+        "settings.data_status.background_refresh.succeeded": "成功 · 上次 %@",
+        "settings.data_status.background_refresh.succeeded_with_new_headline": "成功 · 有新头条 · 上次 %@",
+        "settings.data_status.background_refresh.title": "后台刷新",
     ]
 
     private func catalogJSON() throws -> [String: Any] {
