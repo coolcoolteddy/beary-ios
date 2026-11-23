@@ -3713,6 +3713,15 @@ enum BearyVisibility {
         return BearyEphemeral.isEffectivelyPublic(entry) ? "public" : "private"
     }
 
+    /// 展示审计 G4-04：作者行可见性 pill 档位——存活限时篇为“限时”；否则
+    /// 显式 friends 为“仅好友”；否则有效公开为“公开”；否则“私密”。
+    /// 限时过期即私密（与 current(for:) 同口径）。
+    static func pillKind(for entry: Entry) -> String {
+        if BearyEphemeral.isLive(entry) { return "limited" }
+        if entry.isFriendsOnly { return "friends" }
+        return BearyEphemeral.isEffectivelyPublic(entry) ? "public" : "private"
+    }
+
     static func isPublicValue(_ visibility: String) -> Bool { visibility == "public" }
 
     /// 同档判定（四处“修改权限”入口共用）：目标档等于当前档即无变化，

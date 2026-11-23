@@ -314,7 +314,7 @@ final class BearyDetailViewController: UIViewController {
     }()
     private var moodEmoteView: BearyEmoteView?
     private lazy var authorRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameButton, crownWrapView, titleSpacerLabel, timeLabel, limitedPillView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameButton, crownWrapView, titleSpacerLabel, timeLabel, visibilityPillView, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         // 姓名→皇冠间距 6（2026-11-05 ChatGPT 间距跟进；徽章已下线摘掉，
@@ -688,7 +688,7 @@ final class BearyDetailViewController: UIViewController {
     }()
 
     /// 限时 pill（作者行时间后；13 semibold 蓝档，存活“限时”虚线边／到期“私密”实线边）。
-    private let limitedPillView = BearyLimitedPillView()
+    private let visibilityPillView = BearyVisibilityPillView()
 
     /// 限时倒计时 1 秒 tick：仅存活期限时篇在页时跑；离页／到期即停。
     private var limitedCountdownTimer: Timer?
@@ -2335,8 +2335,8 @@ final class BearyDetailViewController: UIViewController {
 
     /// 2026-10-31：⋯ 钮图标恒为三点；可见性切换走菜单“修改权限”，点按即时切换。
     /// 限时已到期按私密算（与卡片同口径，走 BearyEphemeral 有效态）。
-    /// 注意：旧详情的锁／地球双图标 + 盒装 pill 已随本批删除，私密态在视觉上
-    /// 不再有锁图标可认——与首页卡片一致，属有意对齐（待真机验确认 Li 接受）。
+    /// 注意：旧详情的锁／地球双图标 + 盒装 pill 已随本批删除；可见性改由
+    /// 作者行四档 pill 表达（展示审计 G4-04，规范 v28 §九），与首页卡片一致。
     private func refreshVisibilityViews() {
         // 2026-10-31：⋯ 钮图标恒为三点，不再按公开态换文案；可见性切换走菜单
         // “修改权限”，原小地球无障碍文案（“改回私密”／“公开”）随地球钮废止。
@@ -2344,17 +2344,17 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 限时详情（2026-11-19 预览定版，卡片同款）：限时篇（存活或已到期）正文包
-    /// 虚线气泡、倒计时贴点赞右边、作者行挂“限时”／“私密”pill；到期或非限时
-    /// 按普通详情（气泡与倒计时行均藏、底线显）。存活期底线藏（气泡代之）。
+    /// 虚线气泡、倒计时贴点赞右边、作者行挂可见性 pill（四档，展示审计 G4-04）；
+    /// 到期或非限时按普通详情（气泡与倒计时行均藏、底线显）。存活期底线藏（气泡代之）。
     private func refreshEphemeralViews() {
         let hasEphemeral = entry.ephemeralUntil != nil
         let live = BearyEphemeral.isLive(entry)
-        // pill：限时篇才显（存活“限时”／到期“私密”，蓝档）；其余不显。
-        if hasEphemeral {
-            limitedPillView.isHidden = false
-            limitedPillView.configure(text: live ? "限时" : "私密", expired: !live)
-        } else {
-            limitedPillView.isHidden = true
+        // 展示审计 G4-04：可见性 pill（规范 v28 §九）——作者全显四档，他人仅
+        // 存活限时显“限时”；其余他人视角不显。
+        let showPill = isAuthor || live
+        visibilityPillView.isHidden = !showPill
+        if showPill {
+            visibilityPillView.configure(kind: BearyVisibility.pillKind(for: entry))
         }
         // 气泡＋倒计时：限时篇（存活或到期）才显；其余按普通详情。
         if hasEphemeral, let until = entry.ephemeralUntil {

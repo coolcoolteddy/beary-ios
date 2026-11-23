@@ -1021,7 +1021,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var titleStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, crownWrapView, titleSpacerLabel, timeLabel, limitedPillView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameLabel, crownWrapView, titleSpacerLabel, timeLabel, visibilityPillView, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         // 姓名→皇冠间距 6（2026-11-05 ChatGPT 间距跟进；徽章已下线摘掉，
@@ -1365,7 +1365,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     /// 限时 pill（作者行时间后；13 semibold 蓝档，存活“限时”虚线边／到期“私密”实线边）。
-    private let limitedPillView = BearyLimitedPillView()
+    private let visibilityPillView = BearyVisibilityPillView()
 
     /// 限时倒计时 1 秒 tick：仅存活期限时篇在窗时跑；复用／离窗／到期即停。
     private var limitedCountdownTimer: Timer?
@@ -1963,7 +1963,7 @@ class BearyDiaryCardCell: UITableViewCell {
         limitedCountdownLabel.isHidden = true
         limitedCountdownLabel.text = nil
         limitedCountdownIconView.isHidden = true
-        limitedPillView.isHidden = true
+        visibilityPillView.isHidden = true
         limitedCountdownState = nil
         // 置顶标识行复位，防上一行置顶串位到下一行。
         pinRow.isHidden = true
@@ -3605,7 +3605,7 @@ class BearyDiaryCardCell: UITableViewCell {
         refreshMoreRow()
     }
     /// 限时卡渲染（2026-11-19 预览定版）：限时篇（存活或已到期）正文包虚线气泡、
-    /// 倒计时贴点赞右边、作者行挂“限时”／“私密”pill；其余一律按普通卡。
+    /// 倒计时贴点赞右边、作者行挂可见性 pill（四档，展示审计 G4-04）；其余一律按普通卡。
     /// 2026-10-31 107 真机报：首页限时篇下方没有分割线。旧口径是存活期
     /// “底线藏（边框代之）”，即 separatorView.isHidden = live，导致限时篇
     /// 下方与下一篇之间无实线。修法：首页模式（.feed）存活期底线也显，
@@ -3614,12 +3614,12 @@ class BearyDiaryCardCell: UITableViewCell {
     private func refreshEphemeralState(entry: Entry) {
         let hasEphemeral = entry.ephemeralUntil != nil
         let live = BearyEphemeral.isLive(entry)
-        // pill：限时篇才显（存活“限时”／到期“私密”，蓝档）；其余不显。
-        if hasEphemeral {
-            limitedPillView.isHidden = false
-            limitedPillView.configure(text: live ? "限时" : "私密", expired: !live)
-        } else {
-            limitedPillView.isHidden = true
+        // 展示审计 G4-04：可见性 pill（规范 v28 §九）——作者全显四档，他人仅
+        // 存活限时显“限时”；其余他人视角不显。
+        let showPill = isEntryAuthor(entry) || live
+        visibilityPillView.isHidden = !showPill
+        if showPill {
+            visibilityPillView.configure(kind: BearyVisibility.pillKind(for: entry))
         }
         // 气泡＋倒计时：限时篇（存活或到期）才显；其余按普通卡。
         if hasEphemeral, let until = entry.ephemeralUntil {
