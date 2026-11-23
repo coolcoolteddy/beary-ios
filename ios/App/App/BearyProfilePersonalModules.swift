@@ -804,17 +804,6 @@ final class BearyYearReviewViewController: UIViewController {
         renderSelectedYear()
     }
 
-    /// [24] 小项 5：年报脚注唯一出处（空年与非空年共用，防两处文案漂移）。
-    private func makeYearReviewFootnote() -> UILabel {
-        let footnote = UILabel()
-        footnote.numberOfLines = 0
-        footnote.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
-        footnote.adjustsFontForContentSizeCategory = true
-        footnote.textColor = BearyColors.gray
-        footnote.text = "词汇指纹只按当年正文统计，不展示正文。"
-        return footnote
-    }
-
     /// 当年聚合计算（摘要文案／心情分布）：纯计算，
     /// 结果进 yearAggregateCache，同一次打开内切回该年直接复用。
     private func yearAggregate(for yearEntriesValue: [Entry], year: Int, calendar: Calendar) -> YearReviewAggregate {
@@ -888,10 +877,6 @@ final class BearyYearReviewViewController: UIViewController {
             emptyLabel.textColor = BearyColors.gray
             emptyLabel.text = "这一年还没有日记"
             dynamicStack.addArrangedSubview(emptyLabel)
-            // [24] 小项 5：空年分支原先没有脚注，只剩口径徽标行；补与非空年
-            // 同一条脚注（同文案、同字号同灰色，见 makeYearReviewFootnote），
-            // 避免空年页丢了页脚口径说明。
-            dynamicStack.addArrangedSubview(makeYearReviewFootnote())
             // 空年同样恢复该年上次的位置（无聚合结果可缓存，只恢复偏移）。
             restoreYearScrollOffset()
             return
@@ -978,8 +963,6 @@ final class BearyYearReviewViewController: UIViewController {
                 dynamicStack.addArrangedSubview(row)
             }
         }
-
-        dynamicStack.addArrangedSubview(makeYearReviewFootnote())
 
         // 词汇指纹后台算：指纹与分词都在后台，命中 / 未命中一律回主线程
         // 一次性插回栈顶，最终顺序与同步版一致。代次 + 年份双重守卫，
