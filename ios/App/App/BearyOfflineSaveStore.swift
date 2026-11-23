@@ -261,6 +261,17 @@ enum BearyOfflineSaveStore {
         _ = removeAll(accountId: accountId)
     }
 
+    /// 软上限（A5）：单账号离线副本超 1 GB 即在设置页提示清理，不拦保存、
+    /// 不淘汰。取底稿 1–2 GB 的下限：原图字节单篇可几十 MB，1 GB 够存数百篇，
+    /// 又是真实的 tripwire。硬上限／淘汰与备份排除（isExcludedFromBackup）
+    /// 均未定，等 Li 定，不在此改。
+    static let softLimitBytes: Int64 = 1 * 1024 * 1024 * 1024
+
+    /// 超软上限即提示（边界：恰好等于阈值不提示）。
+    static func exceedsSoftLimit(bytes: Int64) -> Bool {
+        bytes > softLimitBytes
+    }
+
     /// 每账号占用：递归枚举整桶字节（文字 + 图片 + 清单）；篇数以清单为准，
     /// 清单缺失时退回 entries 目录文件数（不把清单损坏误报为 0 篇）。
     static func usage(accountId: Int) -> (bytes: Int64, entryCount: Int) {

@@ -769,6 +769,15 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
         }
         contentStack.addArrangedSubview(summary)
 
+        // A5：超软上限提示清理（只提示，不拦保存、不淘汰）；清理走逐篇
+        // “移除”与“清除全部离线保存”，不另加入口。备份口径写进文案：
+        // 离线内容会计入本机备份；是否排除备份未定，等 Li 定，不在此改。
+        if BearyOfflineSaveStore.exceedsSoftLimit(bytes: usage.bytes) {
+            let warning = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.deepOrangeText, lines: 0)
+            warning.text = String(format: NSLocalizedString("offline_save.over_soft_limit", comment: ""), BearyOfflineSaveStore.formattedBytes(BearyOfflineSaveStore.softLimitBytes))
+            contentStack.addArrangedSubview(warning)
+        }
+
         let saveAllButton = BearyButton(style: .secondaryOutline(.regular))
         saveAllButton.setTitle(isSaving ? "正在保存…" : "保存全部本人日记", for: .normal)
         saveAllButton.isEnabled = !isSaving
