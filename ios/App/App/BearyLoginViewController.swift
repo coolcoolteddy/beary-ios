@@ -12,7 +12,7 @@ import UIKit
 //     呈现一次（日期补全见 BearyReferralFeedback.toastText）；登录页内不再指望行内
 //     文案被读到（审计 2026-11-02 登录杂项）。
 //   - onCancelled：用户点关闭钮；容器负责 dismiss。
-//   - onGuestMode：用户点“先逛逛（游客模式）”；容器负责 dismiss 并进入游客态。
+//   - onGuestMode：用户点“先逛逛”；容器负责 dismiss 并进入游客态。
 // 容器侧待续写意图（SceneDelegate.pendingComposerAfterLogin）：写作入口在未登录
 // 时弹本页前记下意图，本页成功（onLoggedIn）后容器在 dismiss + refreshMe
 // 确认登录后自动开编辑器；取消（onCancelled）与游客模式（onGuestMode）均清除意图。
@@ -65,7 +65,7 @@ final class BearyLoginViewController: UIViewController {
     var loggedInIsNew = false
     /// 用户关闭。本页不自己 dismiss，容器负责关闭。
     var onCancelled: (() -> Void)?
-    /// 用户点“先逛逛（游客模式）”。本页不自己 dismiss，容器负责关闭并进入游客态。
+    /// 用户点“先逛逛”。本页不自己 dismiss，容器负责关闭并进入游客态。
     var onGuestMode: (() -> Void)?
     /// 法律文字页的 EdgeDismiss 强持有（transitioningDelegate 弱引用）。
     private var legalTextEdgeDismiss: BearyEdgeDismissController?
@@ -459,7 +459,7 @@ final class BearyLoginViewController: UIViewController {
         // .custom 类型避免 system 钮的点按标题变暗。
         guestButton.translatesAutoresizingMaskIntoConstraints = false
         guestButton.backgroundColor = UIColor.clear
-        guestButton.setTitle("先逛逛（游客模式）", for: .normal)
+        guestButton.setTitle("先逛逛", for: .normal)
         guestButton.setTitleColor(BearyColors.ink, for: .normal)
         guestButton.setTitleColor(BearyColors.ink, for: .disabled)
         guestButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
