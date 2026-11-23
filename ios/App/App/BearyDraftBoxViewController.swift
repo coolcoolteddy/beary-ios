@@ -1607,42 +1607,16 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
     }
 
-    /// 网页 dfTimeStr 移植：v3 updatedAt 为秒，网页 updated_at 为毫秒，此处按秒换算。
+    /// 草稿箱时间与全站统一：7 天口径走 BearyVisibilityText.publishedRelativeString
+    /// （7 天内相对时间，7 天外绝对时间；与时间线／卡片／详情同款）。
+    /// 旧口径是本地实现：无“刚刚”、小时前只认北京“今天”、2–7 天直接
+    /// 显示“M月d日”、7 天外无时刻与年份，与全站不一致。
+    /// v3 updatedAt 为秒，转毫秒后传入；无效值回落 feedTimeString，
+    /// 与卡片／详情同款兜底。签名与三处调用点不动。
     private func draftTimeText(updatedAtSeconds: TimeInterval) -> String {
-        let date = Date(timeIntervalSince1970: updatedAtSeconds)
-        let now = Date()
-        let diff = now.timeIntervalSince(date)
-        if diff < 3600 {
-            let minutes = max(1, Int(floor(diff / 60)))
-            return "\(minutes) 分钟前"
-        }
-        // 扫荡 B：今天/昨天判定走北京日历，与下方 formatter 的北京时区一致。
-        // 旧口径用 Calendar.current（设备时区）：设备时区非北京时，跨北京午夜
-        // 前后会把“昨天”误判成“今天”（或反之），而显示的 HH:mm/M月d日又是
-        // 北京时间，两处口径打架；回收站 TrashText.deletedLabel 已用北京日历，
-        // 本处与之对齐（本地构造，不依赖时间线文件的共享 helper，避免跨分支耦合）。
-        var beijingCalendar = Calendar(identifier: .gregorian)
-        beijingCalendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600) ?? TimeZone.current
-        let calendar = beijingCalendar
-        if calendar.isDateInToday(date) {
-            let hours = Int(floor(diff / 3600))
-            return "\(hours) 小时前"
-        }
-        let beijingZone = TimeZone(secondsFromGMT: 8 * 3600)
-        let timeFormatter = DateFormatter()
-        timeFormatter.locale = Locale(identifier: "zh_CN")
-        // G8（草稿箱部分）：时间显示 formatter 统一设北京时区，与服务端日界一致。
-        timeFormatter.timeZone = beijingZone
-        // W9：原生定版统一补零（HH:mm），不再以网页昨天 H:mm 口径为准。
-        timeFormatter.dateFormat = "HH:mm"
-        if calendar.isDateInYesterday(date) {
-            return "昨天 " + timeFormatter.string(from: date)
-        }
-        let dayFormatter = DateFormatter()
-        dayFormatter.locale = Locale(identifier: "zh_CN")
-        dayFormatter.timeZone = beijingZone
-        dayFormatter.dateFormat = "M月d日"
-        return dayFormatter.string(from: date)
+        let ms = Int(updatedAtSeconds * 1000)
+        return BearyVisibilityText.publishedRelativeString(publishedAtMs: ms)
+            ?? BearyDiaryCardCell.feedTimeString(ms: ms)
     }
 
     // MARK: - 入场/退场动效
