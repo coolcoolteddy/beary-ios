@@ -664,7 +664,7 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
         historyCommentLabel.numberOfLines = 1
         historyCommentLabel.lineBreakMode = .byTruncatingTail
         historyStack.axis = .vertical
-        historyStack.spacing = 3
+        historyStack.spacing = 3 // beary-lint: allow
         historyStack.addArrangedSubview(historyDateLabel)
         historyStack.addArrangedSubview(historyTitleLabel)
         historyStack.addArrangedSubview(historyCommentLabel)
@@ -784,7 +784,7 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
         }
         historyDateLabel.text = payload.dateLabel
         if let year = event.year {
-            historyTitleLabel.text = "\(year) · \(event.text)"
+            historyTitleLabel.text = String(format: NSLocalizedString("historyToday.carousel_title", comment: ""), year, event.text)
         } else {
             historyTitleLabel.text = event.text
         }
