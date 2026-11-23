@@ -64,6 +64,14 @@ enum BearyStarMapNight {
     /// [24] 小项 7：星图色精确值 #FFB333（255 / 179 / 51）。
     static let selected = UIColor(red: 255 / 255.0, green: 179 / 255.0, blue: 51 / 255.0, alpha: 1)
     static let star = UIColor(red: 255 / 255.0, green: 179 / 255.0, blue: 51 / 255.0, alpha: 1)
+    /// 三级节点色（2.5D 第 2 支；星图专用 token，不散写 hex）：
+    /// 锚点暖黄 #FFB333（与星体本色同值，独立 token 供锚点光晕用）；
+    /// 标签青蓝 #2EC8E6（偏青，与私密蓝 #007AFF/#0A84FF 拉开色相——
+    /// 预览 #5AC8FA 色相与私密蓝只差约 12°，本支改偏青约 190°）；
+    /// 普通日记淡紫 #C4B5F0（预览同值）。
+    static let anchor = UIColor(red: 255 / 255.0, green: 179 / 255.0, blue: 51 / 255.0, alpha: 1)
+    static let tagNode = UIColor(red: 46 / 255.0, green: 200 / 255.0, blue: 230 / 255.0, alpha: 1)
+    static let diary = UIColor(red: 196 / 255.0, green: 181 / 255.0, blue: 240 / 255.0, alpha: 1)
     static let edge = UIColor(red: 0.36, green: 0.48, blue: 0.71, alpha: 0.65)
     static let dust = UIColor(white: 0.25, alpha: 0.5)
     static let sheetBackground = UIColor(white: 1, alpha: 0.08)
@@ -161,7 +169,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var filteredEntries: [Entry] = []
     private var slice: StarMapSlice = .all
     private var edgeFilter: StarMapEdgeKind? = nil
-    private var model = StarMapModel(stars: [], edges: [], entryById: [:])
+    private var model = StarMapModel(stars: [], edges: [], entryById: [:], tagNodes: [])
     /// r17 M2：上一次已上屏的模型——applyModelToSky 每次拿它与新 model 做
     /// 差分，只让新星 / 新线入场；旧星保留位置与选中态。缓存模型换入
     /// （C5）同样走 applyModelToSky，差分照常生效。
@@ -301,6 +309,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         skyView.onStarTap = { [weak self] entry in self?.didTapStar(entry) }
         skyView.onOverlapTap = { [weak self] entries in self?.showOverlapSheet(entries) }
         skyView.onEdgeTap = { [weak self] edge in self?.didTapEdge(edge) }
+        skyView.onTagTap = { [weak self] tag in self?.openTagPage(tag) }
         skyView.onBackgroundTap = { [weak self] in self?.clearSelection() }
         recompute()
         fetchAllEntries()
@@ -787,7 +796,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     /// L3：图例入口——原常驻顶部的长图例文本改点按弹说明。
     @objc private func didTapLegend() {
-        BearyConfirmSheet.show(from: self, title: "图例", message: "星越大字越多；连线表示同地点或同词。点星进详情，点线看原因。", actions: [
+        BearyConfirmSheet.show(from: self, title: "图例", message: "暖黄星是置顶或关联最多的日记，青蓝点是标签，淡紫星是普通日记；星越大字越多。连线表示同地点、同词或同标签。点星进详情，点线看原因，点标签进标签页。", actions: [
             BearyConfirmSheet.Action(title: "知道了", style: .default),
         ])
     }
@@ -881,7 +890,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // 出空态会与加载态同锚点重叠）。在途时加载态已由 fetchAllEntries
         // 出示，待回包终态再由 applyModelToSky 定空／有内容／失败。
         if !isFetching, filteredEntries.isEmpty || sliceEntries.isEmpty {
-            model = StarMapModel(stars: [], edges: [], entryById: [:])
+            model = StarMapModel(stars: [], edges: [], entryById: [:], tagNodes: [])
             applyModelToSky()
         }
     }
@@ -899,13 +908,15 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
         let stars = cached.stars.map { star -> StarMapStar in
             guard let id = star.entry.id, let fresh = latestById[id] else { return star }
-            return StarMapStar(entry: fresh, x: star.x, y: star.y, radius: star.radius, brightness: star.brightness, wordCount: star.wordCount)
+            return StarMapStar(entry: fresh, x: star.x, y: star.y, radius: star.radius, brightness: star.brightness, wordCount: star.wordCount, kind: star.kind)
         }
         var entryById = cached.entryById
         for (id, fresh) in latestById where entryById[id] != nil {
             entryById[id] = fresh
         }
-        return StarMapModel(stars: stars, edges: cached.edges, entryById: entryById)
+        // 标签节点是建模输入（tags）的纯函数、随指纹失效，不必重绑；
+        // 命中时原样复用位置与篇数。
+        return StarMapModel(stars: stars, edges: cached.edges, entryById: entryById, tagNodes: cached.tagNodes)
     }
 
     private func applyModelToSky() {
@@ -965,6 +976,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
             guard let id = star.entry.id else { continue }
             pointsById[id] = (x: star.x, y: star.y)
         }
+        // 标签节点同样进点位表：日记–标签边两端都须有坐标（见 setStars）。
+        for node in model.tagNodes {
+            pointsById[node.id] = (x: node.x, y: node.y)
+        }
         var skyEdges: [StarMapSkyEdge] = []
         for edge in visibleEdges {
             guard pointsById[edge.firstId] != nil, pointsById[edge.secondId] != nil else { continue }
@@ -993,7 +1008,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
             }
             return StarMapEntrance(starDelays: delays, edgeIds: Set(diff.newEdgeIds))
         }()
-        skyView.setStars(model.stars, edges: skyEdges, pointsById: pointsById, selectedStarId: selectedStarId, selectedEdgeId: selectedEdgeId, entrance: entrance)
+        skyView.setStars(model.stars, tagNodes: model.tagNodes, edges: skyEdges, pointsById: pointsById, selectedStarId: selectedStarId, selectedEdgeId: selectedEdgeId, entrance: entrance)
         // P2-12：新范围、新画面与命中数据经 setStars 一起提交后，才恢复
         // 画布点按与无障碍激活；新月份为空时 recompute 的空态先行分支同步
         // 走到这里（空模型当即提交、旧星当即消失），同样恢复。
@@ -1075,7 +1090,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     /// 编辑/可见性变化按 id 原地更新，不重拉网络。
     /// 星图所用字段（标题/正文→字数、地点→连线、创建日→分片、
-    /// 可见性→出星资格、图片/引用→出星资格）变了 → 重建受影响的范围
+    /// 可见性→出星资格、图片/引用→出星资格、标签→标签节点、置顶→锚点）变了 → 重建受影响的范围
     /// （recompute，后台重算模型；分片与滚动位置不动，选中星仍在时底卡
     /// 即时按新 Entry 刷新）；其余字段（天气、互动数等）→ 只换模型里的
     /// 条目，不重算。只读返回不调本方法。
@@ -1090,7 +1105,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
             if model.entryById[entryId] != nil {
                 var entryById = model.entryById
                 entryById[entryId] = updated
-                model = StarMapModel(stars: model.stars, edges: model.edges, entryById: entryById)
+                model = StarMapModel(stars: model.stars, edges: model.edges, entryById: entryById, tagNodes: model.tagNodes)
             }
             return
         }
@@ -1130,6 +1145,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         if BearyVisibility.current(for: old) != BearyVisibility.current(for: updated) { return true }
         if (old.images ?? []) != (updated.images ?? []) { return true }
         if (old.quoteId ?? "") != (updated.quoteId ?? "") { return true }
+        // 2.5D 第 2 支：标签／置顶进模型（标签节点／锚点），变了即重算。
+        if (old.tags ?? []) != (updated.tags ?? []) { return true }
+        if old.pinned != updated.pinned { return true }
         return false
     }
 
@@ -1147,6 +1165,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
         target.locationLongitude = updated.locationLongitude
         target.quoteId = updated.quoteId
         target.quote = updated.quote
+        // 2.5D 第 2 支：标签／置顶进模型（见 starFieldsChanged），回传即同步。
+        target.tags = updated.tags
+        target.pinned = updated.pinned
+        target.pinnedAt = updated.pinnedAt
         if let v = updated.publishedAt { target.publishedAt = v }
         if let v = updated.editDeadline { target.editDeadline = v }
         if let v = updated.isPublic { target.isPublic = v }
@@ -1241,6 +1263,12 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     private func didTapEdge(_ edge: StarMapEdge) {
+        // 日记–标签连线（2.5D 第 2 支）：不走关系底卡，直接进该标签的聚合页
+        //（与点标签节点同一去向；连线列表不含标签边，见 listedEdges）。
+        if let tagReason = edge.reasons.first(where: { $0.kind == .tag }) {
+            openTagPage(tagReason.detail)
+            return
+        }
         invalidateReturnRestore()
         selectedEdgeId = edge.id
         selectedStarId = nil
@@ -1251,6 +1279,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
         showEdgeSheet(edge)
         // r17-m1：点下立即高亮（上行）并显示关系（上行底卡），再放光点往返。
         skyView.startEdgeRoundTrip(edge)
+    }
+
+    /// 标签聚合页（2.5D 第 2 支）：点标签节点／日记–标签连线进现有聚合页；
+    /// 推到本页导航栈上（个人页 push 路与两条 modal 路都在导航栈内），
+    /// 聚合页自有顶栏返回钮可 pop 回星图；行点按走 openEntry 进详情。
+    private func openTagPage(_ tag: String) {
+        guard let nav = navigationController else { return }
+        let page = BearyTagEntriesViewController(tag: tag)
+        page.onOpenEntry = { [weak self] entry in self?.openEntry(entry) }
+        nav.pushViewController(page, animated: BearyMotion.animated(true))
     }
 
     private func showOverlapSheet(_ entries: [Entry]) {
@@ -1583,6 +1621,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
             return "同地点：\(reason.detail)"
         case .word:
             return "同词：\(reason.tokens.prefix(3).joined(separator: "、"))"
+        case .tag:
+            return "同标签：\(reason.detail)"
         }
     }
 
@@ -1935,6 +1975,8 @@ private struct StarMapSkyStar {
     let brightness: CGFloat
     let dateText: String
     let wordCount: Int
+    /// 分级（2.5D 第 2 支）：锚点／普通日记；标签节点另走 tagNodes。
+    let kind: StarMapNodeKind
 }
 
 struct StarMapSkyEdge {
@@ -1955,10 +1997,14 @@ private final class StarMapSkyView: UIView {
     var onOverlapTap: (([Entry]) -> Void)?
     var onEdgeTap: ((StarMapEdge) -> Void)?
     var onBackgroundTap: (() -> Void)?
+    /// 标签节点点按（2.5D 第 2 支）：传标签名，调用方进现有标签聚合页。
+    var onTagTap: ((String) -> Void)?
 
     private var stars: [StarMapSkyStar] = []
     private var entriesById: [String: Entry] = [:]
     private var edges: [StarMapSkyEdge] = []
+    /// 标签节点（2.5D 第 2 支）：一标签一节点，渲染与点按另走 tagNodeLayers。
+    private var tagNodes: [StarMapTagNode] = []
     private var pointsById: [String: (x: Double, y: Double)] = [:]
     private var selectedStarId: String?
     private var selectedEdgeId: String?
@@ -2024,6 +2070,14 @@ private final class StarMapSkyView: UIView {
         let date: CATextLayer
     }
     private var starLayers: [String: StarLayers] = [:]
+    /// 每颗标签节点的一组图层（2.5D 第 2 支）：光晕 halo／星核 core／
+    /// 名字 label（9pt，"#标签名"，超 12 字截断，见 rebuildLayers）。
+    private struct StarMapTagNodeLayers {
+        let halo: CALayer
+        let core: CALayer
+        let label: CATextLayer
+    }
+    private var tagNodeLayers: [String: StarMapTagNodeLayers] = [:]
     /// 往返光点：独立图层，沿线走 transform.translation。
     private let dotLayer = CALayer()
     private var lastBuiltSize: CGSize = .zero
@@ -2107,7 +2161,7 @@ private final class StarMapSkyView: UIView {
         entranceDisplayLink?.invalidate()
     }
 
-    func setStars(_ stars: [StarMapStar], edges: [StarMapSkyEdge], pointsById: [String: (x: Double, y: Double)], selectedStarId: String?, selectedEdgeId: String?, entrance: StarMapEntrance? = nil) {
+    func setStars(_ stars: [StarMapStar], tagNodes: [StarMapTagNode] = [], edges: [StarMapSkyEdge], pointsById: [String: (x: Double, y: Double)], selectedStarId: String?, selectedEdgeId: String?, entrance: StarMapEntrance? = nil) {
         self.stars = stars.map { star in
             let dateText: String
             if let ms = star.entry.createdAt, ms > 0 {
@@ -2116,7 +2170,7 @@ private final class StarMapSkyView: UIView {
             } else {
                 dateText = ""
             }
-            return StarMapSkyStar(id: star.entry.id ?? "", x: star.x, y: star.y, radius: star.radius, brightness: star.brightness, dateText: dateText, wordCount: star.wordCount)
+            return StarMapSkyStar(id: star.entry.id ?? "", x: star.x, y: star.y, radius: star.radius, brightness: star.brightness, dateText: dateText, wordCount: star.wordCount, kind: star.kind)
         }
         // 循环覆盖，不用 uniqueKeysWithValues（重复 id 时 trap，见 VC 处同注）。
         var byId: [String: Entry] = [:]
@@ -2125,6 +2179,7 @@ private final class StarMapSkyView: UIView {
             byId[id] = star.entry
         }
         self.entriesById = byId
+        self.tagNodes = tagNodes
         self.edges = edges
         self.pointsById = pointsById
         self.selectedStarId = selectedStarId
@@ -2447,6 +2502,21 @@ private final class StarMapSkyView: UIView {
             }
             elements.append(element)
         }
+        // 标签节点（2.5D 第 2 支）：每节点一个 button，label 为“标签 #名，N 篇日记”，
+        // 激活走现有标签聚合页路径（经 onTagTap 回调，与点按同一条 openTagPage）。
+        for node in tagNodes {
+            let center = point(for: (x: node.x, y: node.y), in: bounds)
+            let hit = max(24, node.radius + 10)
+            let element = StarMapStarAccessibilityElement(accessibilityContainer: self)
+            element.accessibilityLabel = "标签 #\(node.name)，\(node.count) 篇日记"
+            element.accessibilityHint = "双击查看该标签的日记"
+            element.accessibilityTraits = [.button]
+            element.accessibilityFrameInContainerSpace = CGRect(x: center.x - hit, y: center.y - hit, width: hit * 2, height: hit * 2)
+            element.onActivate = { [weak self] in
+                self?.onTagTap?(node.name)
+            }
+            elements.append(element)
+        }
         // 只暴露画得出来的连线：建层与点按命中都走 displayedEdges（600 条预算），
         // 看不见的线也点不到，VoiceOver 里同样不出现。
         for edge in displayedEdges {
@@ -2521,6 +2591,8 @@ private final class StarMapSkyView: UIView {
             return "同地点：\(reason.detail)"
         case .word:
             return "同词：\(reason.tokens.prefix(3).joined(separator: "、"))"
+        case .tag:
+            return "同标签：\(reason.detail)"
         }
     }
 
@@ -2638,18 +2710,33 @@ private final class StarMapSkyView: UIView {
                 layers = StarLayers(halo: halo, flash: flash, core: core, ring: ring, date: date)
                 starLayers[star.id] = layers
             }
-            let haloRect = CGRect(x: center.x - radius - 7, y: center.y - radius - 7, width: (radius + 7) * 2, height: (radius + 7) * 2)
+            let haloRadius: CGFloat
+            let haloAlpha: CGFloat
+            let nodeColor: UIColor
+            if star.kind == .anchor {
+                // 锚点（2.5D 第 2 支）：暖黄强光晕——晕半径 28pt、透明度 0.34
+                //（预览 haloR r*4.6／haloA 0.34 的同口径落点，核半径 15 固定）。
+                nodeColor = BearyStarMapNight.anchor
+                haloRadius = 28
+                haloAlpha = 0.34
+            } else {
+                // 普通日记：淡紫，弱光晕（预览 haloA 0.13）。
+                nodeColor = BearyStarMapNight.diary
+                haloRadius = radius + 7
+                haloAlpha = 0.13
+            }
+            let haloRect = CGRect(x: center.x - haloRadius, y: center.y - haloRadius, width: haloRadius * 2, height: haloRadius * 2)
             layers.halo.frame = haloRect
-            layers.halo.cornerRadius = radius + 7
-            layers.halo.backgroundColor = BearyStarMapNight.star.withAlphaComponent(star.brightness * 0.12 * starAlpha).cgColor
+            layers.halo.cornerRadius = haloRadius
+            layers.halo.backgroundColor = nodeColor.withAlphaComponent(haloAlpha * starAlpha).cgColor
             layers.flash.frame = haloRect
-            layers.flash.cornerRadius = radius + 7
-            layers.flash.backgroundColor = BearyStarMapNight.star.withAlphaComponent(0.45).cgColor
+            layers.flash.cornerRadius = haloRadius
+            layers.flash.backgroundColor = nodeColor.withAlphaComponent(0.45).cgColor
             layers.flash.opacity = 0
             let coreRect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
             layers.core.frame = coreRect
             layers.core.cornerRadius = radius
-            layers.core.backgroundColor = BearyStarMapNight.star.withAlphaComponent(star.brightness * starAlpha).cgColor
+            layers.core.backgroundColor = nodeColor.withAlphaComponent(star.brightness * starAlpha).cgColor
             let ringRect = CGRect(x: center.x - radius - 3, y: center.y - radius - 3, width: (radius + 3) * 2, height: (radius + 3) * 2)
             layers.ring.frame = ringRect
             layers.ring.cornerRadius = radius + 3
@@ -2659,7 +2746,22 @@ private final class StarMapSkyView: UIView {
             layers.halo.isHidden = starHidden
             layers.flash.isHidden = starHidden
             layers.core.isHidden = starHidden
-            if star.dateText.isEmpty {
+            // 2.5D 第 2 支：名字只给锚点与标签节点（9px）——锚点星下标标题
+            //（超 12 字截断，预览同口径），普通日记仍标日期。
+            let labelText: String
+            let labelBaseColor: UIColor
+            let labelAlpha: CGFloat
+            if star.kind == .anchor {
+                let title = (entriesById[star.id]?.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                labelText = title.count > 12 ? String(title.prefix(12)) + "…" : title
+                labelBaseColor = BearyStarMapNight.anchor
+                labelAlpha = 0.8 * starAlpha
+            } else {
+                labelText = star.dateText
+                labelBaseColor = BearyStarMapNight.dateText
+                labelAlpha = starAlpha
+            }
+            if labelText.isEmpty {
                 layers.date.isHidden = true
             } else {
                 // 审计登录杂项：画布日期字不再写死 9pt，按当前字号档位缩放；
@@ -2667,9 +2769,9 @@ private final class StarMapSkyView: UIView {
                 let datePointSize = UIFontMetrics.default.scaledFont(for: UIFont.systemFont(ofSize: 9)).pointSize
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: UIFont.systemFont(ofSize: datePointSize),
-                    .foregroundColor: BearyStarMapNight.dateText.withAlphaComponent(starAlpha),
+                    .foregroundColor: labelBaseColor.withAlphaComponent(labelAlpha),
                 ]
-                layers.date.string = NSAttributedString(string: star.dateText, attributes: attributes)
+                layers.date.string = NSAttributedString(string: labelText, attributes: attributes)
                 layers.date.isHidden = starAlpha <= 0
                 layers.date.frame = CGRect(x: center.x - 30, y: center.y + radius + 3, width: 60, height: 14)
             }
@@ -2681,6 +2783,53 @@ private final class StarMapSkyView: UIView {
             layers.ring.removeFromSuperlayer()
             layers.date.removeFromSuperlayer()
             starLayers.removeValue(forKey: id)
+        }
+        // 标签节点（2.5D 第 2 支）：光晕 + 星核 + 名字（9pt "#标签名"，
+        // 超 12 字截断；预览 haloA 0.22 同口径）。节点无入场、无选中圈，
+        // 位置取挂载篇星位质心（见 buildModel），随模型重建。
+        var seenTagIds = Set<String>()
+        for node in tagNodes {
+            seenTagIds.insert(node.id)
+            let center = point(for: (x: node.x, y: node.y), in: bounds)
+            let radius = node.radius
+            let layers: StarMapTagNodeLayers
+            if let existing = tagNodeLayers[node.id] {
+                layers = existing
+            } else {
+                let halo = CALayer()
+                let core = CALayer()
+                let label = CATextLayer()
+                label.contentsScale = UIScreen.main.scale
+                label.alignmentMode = .center
+                halo.zPosition = 2
+                core.zPosition = 2.2
+                label.zPosition = 2.4
+                layer.addSublayer(halo)
+                layer.addSublayer(core)
+                layer.addSublayer(label)
+                layers = StarMapTagNodeLayers(halo: halo, core: core, label: label)
+                tagNodeLayers[node.id] = layers
+            }
+            let tagHaloRadius = radius + 8
+            layers.halo.frame = CGRect(x: center.x - tagHaloRadius, y: center.y - tagHaloRadius, width: tagHaloRadius * 2, height: tagHaloRadius * 2)
+            layers.halo.cornerRadius = tagHaloRadius
+            layers.halo.backgroundColor = BearyStarMapNight.tagNode.withAlphaComponent(0.22).cgColor
+            layers.core.frame = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+            layers.core.cornerRadius = radius
+            layers.core.backgroundColor = BearyStarMapNight.tagNode.withAlphaComponent(0.85).cgColor
+            let tagName = node.name.count > 12 ? String(node.name.prefix(12)) + "…" : node.name
+            let tagPointSize = UIFontMetrics.default.scaledFont(for: UIFont.systemFont(ofSize: 9)).pointSize
+            layers.label.string = NSAttributedString(string: "#" + tagName, attributes: [
+                .font: UIFont.systemFont(ofSize: tagPointSize),
+                .foregroundColor: BearyStarMapNight.tagNode.withAlphaComponent(0.7),
+            ])
+            layers.label.frame = CGRect(x: center.x - 40, y: center.y + radius + 3, width: 80, height: 14)
+        }
+        for (id, layers) in tagNodeLayers where !seenTagIds.contains(id) {
+            layers.halo.removeFromSuperlayer()
+            layers.core.removeFromSuperlayer()
+            layers.label.removeFromSuperlayer()
+            tagNodeLayers.removeValue(forKey: id)
         }
         updateSelectionVisuals(edgeFadeIn: false)
         // r17 M2 入场收尾：updateSelectionVisuals 把边 opacity 全置 1，
@@ -2704,6 +2853,20 @@ private final class StarMapSkyView: UIView {
 
     @objc private func didTap(_ gesture: UITapGestureRecognizer) {
         let tapPoint = gesture.location(in: self)
+        // 标签节点先行（2.5D 第 2 支）：命中半径内取最近一个，进标签聚合页；
+        // 标签节点是显式目标，不与重叠星抢点按。
+        var bestTag: (distance: CGFloat, node: StarMapTagNode)?
+        for node in tagNodes {
+            let center = point(for: (x: node.x, y: node.y), in: bounds)
+            let distance = hypot(tapPoint.x - center.x, tapPoint.y - center.y)
+            if distance <= max(24, node.radius + 10), bestTag == nil || distance < bestTag!.distance {
+                bestTag = (distance, node)
+            }
+        }
+        if let bestTag = bestTag {
+            onTagTap?(bestTag.node.name)
+            return
+        }
         // 先星：命中半径内按距离排序；多颗重叠时出列表，不让下层星点不到。
         var starHits: [(distance: CGFloat, entry: Entry)] = []
         for star in stars {

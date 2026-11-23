@@ -337,6 +337,39 @@ final class BearyStarMapTests: XCTestCase {
         XCTAssertEqual(model.stars[0].brightness, 0.70)
     }
 
+    func testGradedNodesAnchorsTagNodesAndTagEdges() throws {
+        // 2.5D 第 2 支：置顶 a1＋度数 top 3（a2=3、a3=3、a4=1）为锚点；
+        // a5 孤立为普通日记；标签节点按挂载篇数定大小；日记–标签边各 1 条。
+        // 注意词频抑制：每共享词只出现在 2 篇里（5 篇时上限 max(2, 5/2)=2），
+        // 超限的词不连线，所以 a1–a3 不共享词、只靠 a2 中转。
+        let a1 = try entry("{\"id\":\"b_a1\",\"content\":\"湖边桂花开了。\",\"is_public\":true,\"location_name\":\"示例咖啡馆\",\"location_district\":\"同区\",\"tags\":[\"桂花\"],\"pinned\":1}")
+        let a2 = try entry("{\"id\":\"b_a2\",\"content\":\"桂花香满路。\",\"is_public\":true,\"location_name\":\"示例咖啡馆\",\"location_district\":\"同区\",\"tags\":[\"桂花\"]}")
+        let a3 = try entry("{\"id\":\"b_a3\",\"content\":\"满路花香。\",\"is_public\":true,\"tags\":[\"桂花\",\"湖边\"]}")
+        let a4 = try entry("{\"id\":\"b_a4\",\"content\":\"雨后湖面很静。\",\"is_public\":true,\"tags\":[\"湖边\"]}")
+        let a5 = try entry("{\"id\":\"b_a5\",\"content\":\"独自散步。\",\"is_public\":true}")
+        let entries = [a1, a2, a3, a4, a5]
+        let model = BearyStarMap.buildModel(entries: entries, viewerIsAuthor: true)
+        let anchors = Set(model.stars.filter { $0.kind == .anchor }.compactMap { $0.entry.id })
+        XCTAssertEqual(anchors, ["b_a1", "b_a2", "b_a3", "b_a4"])
+        XCTAssertEqual(model.stars.first(where: { $0.entry.id == "b_a5" })?.kind, .diary)
+        XCTAssertEqual(model.stars.first(where: { $0.entry.id == "b_a1" })?.radius, 15)
+        let guiHua = model.tagNodes.first(where: { $0.name == "桂花" })
+        XCTAssertEqual(guiHua?.count, 3)
+        XCTAssertEqual(guiHua?.radius, 11)
+        let huBian = model.tagNodes.first(where: { $0.name == "湖边" })
+        XCTAssertEqual(huBian?.count, 2)
+        XCTAssertEqual(huBian?.radius, 10)
+        let tagEdges = model.edges.filter { $0.reasons.contains(where: { $0.kind == .tag }) }
+        XCTAssertEqual(tagEdges.count, 5)
+        XCTAssertTrue(tagEdges.allSatisfy { $0.reasons.count == 1 && $0.reasons[0].kind == .tag })
+        // 指纹对 tags／pinned 变化敏感：改任一字段即换版本。
+        let base = BearyStarMap.diaryVersion(entries: entries, viewerIsAuthor: true)
+        let retagged = try entry("{\"id\":\"b_a1\",\"content\":\"湖边桂花开了。\",\"is_public\":true,\"location_name\":\"示例咖啡馆\",\"location_district\":\"同区\",\"tags\":[\"桂花\",\"新标签\"],\"pinned\":1}")
+        XCTAssertNotEqual(BearyStarMap.diaryVersion(entries: [retagged, a2, a3, a4, a5], viewerIsAuthor: true), base)
+        let unpinned = try entry("{\"id\":\"b_a1\",\"content\":\"湖边桂花开了。\",\"is_public\":true,\"location_name\":\"示例咖啡馆\",\"location_district\":\"同区\",\"tags\":[\"桂花\"],\"pinned\":0}")
+        XCTAssertNotEqual(BearyStarMap.diaryVersion(entries: [unpinned, a2, a3, a4, a5], viewerIsAuthor: true), base)
+    }
+
     func testSlicingAndDefaultSlice() throws {
         let oct = try entry("{\"id\":\"b_oct\",\"content\":\"十月篇。\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 10, day: 3))}")
         let nov = try entry("{\"id\":\"b_nov\",\"content\":\"十一月篇。\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 11, day: 5))}")
