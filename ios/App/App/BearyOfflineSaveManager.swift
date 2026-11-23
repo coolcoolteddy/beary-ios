@@ -60,18 +60,73 @@ final class BearyOfflineSaveManager {
         return BearyOfflineSaveStore.record(accountId: accountId, entryId: entryId)
     }
 
+    /// 同步读清单：只在后台队列（写盘路径）或测试里调；主线程走下面的异步版。
     func isSaved(entryId: String) -> Bool {
         record(for: entryId)?.isComplete == true
     }
 
+    /// 同步读清单：只在后台队列或测试里调；主线程走下面的异步版。
     func savedRecords() -> [BearyOfflineSaveRecord] {
         guard let accountId = currentAccountId else { return [] }
         return BearyOfflineSaveStore.savedRecords(accountId: accountId)
     }
 
+    /// 同步算占用（递归枚举整桶字节＋读清单）：只在后台队列或测试里调；
+    /// 主线程走下面的异步版。
     func usage() -> (bytes: Int64, entryCount: Int) {
         guard let accountId = currentAccountId else { return (0, 0) }
         return BearyOfflineSaveStore.usage(accountId: accountId)
+    }
+
+    // MARK: - 清单异步读（第三轮 B 项：后台读＋标脏后异步重载）
+
+    /// 预热清单缓存（详情页／设置页进页时调）：后台读盘进缓存，主线程读清单
+    /// 时只命中内存；未登录时不读盘。
+    func warmManifestCache() {
+        guard let accountId = currentAccountId else { return }
+        BearyOfflineSaveStore.refreshManifestCache(accountId: accountId)
+    }
+
+    /// 内存里的保存态（缓存已加载且未标脏时才有值；nil = 未读到，调用方走
+    /// 异步版等回包，不以 false 冒充未保存）。
+    func cachedIsSaved(entryId: String) -> Bool? {
+        guard let accountId = currentAccountId else { return nil }
+        return BearyOfflineSaveStore.cachedManifest(accountId: accountId)?.record(for: entryId)?.isComplete
+    }
+
+    /// 异步版 isSaved：清单在后台读，结果回主线程；未登录回 false。
+    func isSaved(entryId: String, completion: @escaping (Bool) -> Void) {
+        guard let accountId = currentAccountId else {
+            DispatchQueue.main.async { completion(false) }
+            return
+        }
+        BearyOfflineSaveStore.loadManifestAsync(accountId: accountId) { manifest in
+            completion(manifest.record(for: entryId)?.isComplete == true)
+        }
+    }
+
+    /// 异步版 savedRecords：清单在后台读，结果回主线程；未登录回 []。
+    func savedRecords(completion: @escaping ([BearyOfflineSaveRecord]) -> Void) {
+        guard let accountId = currentAccountId else {
+            DispatchQueue.main.async { completion([]) }
+            return
+        }
+        BearyOfflineSaveStore.loadManifestAsync(accountId: accountId) { manifest in
+            completion(manifest.entries)
+        }
+    }
+
+    /// 异步版 usage：整桶字节枚举＋清单读都在本队列（后台）做，结果回主线程；
+    /// 读到之前调用方留旧文案，不先写“未保存”。未登录回 (0, 0)。
+    func usage(completion: @escaping ((bytes: Int64, entryCount: Int)) -> Void) {
+        guard let accountId = currentAccountId else {
+            DispatchQueue.main.async { completion((0, 0)) }
+            return
+        }
+        queue.async {
+            let result = BearyOfflineSaveStore.usage(accountId: accountId)
+            DispatchQueue.main.async { completion(result) }
+        }
     }
 
     // MARK: - 单篇保存
@@ -232,16 +287,43 @@ final class BearyOfflineSaveManager {
     // MARK: - 删除
 
     /// 删单篇离线副本（文字 + 图片 + 清单记录）；已同步的日记与 Caches 缓存不受影响。
+    /// 同步版：只在后台队列或测试里调；主线程走下面的异步版。
     @discardableResult
     func remove(entryId: String) -> Bool {
         guard let accountId = currentAccountId else { return false }
         return BearyOfflineSaveStore.removeEntry(accountId: accountId, entryId: entryId)
     }
 
+    /// 异步版 remove：删盘在本队列（后台）做，成败回主线程；未登录回 false。
+    /// 清单写盘成功后 Store 标脏并后台重载缓存，调用方重读即新值。
+    func remove(entryId: String, completion: @escaping (Bool) -> Void) {
+        guard let accountId = currentAccountId else {
+            DispatchQueue.main.async { completion(false) }
+            return
+        }
+        queue.async {
+            let removed = BearyOfflineSaveStore.removeEntry(accountId: accountId, entryId: entryId)
+            DispatchQueue.main.async { completion(removed) }
+        }
+    }
+
     /// 清除本账号全部离线保存；其他账号的桶不动，已同步的日记不受影响。
+    /// 同步版：只在后台队列或测试里调；主线程走下面的异步版。
     @discardableResult
     func removeAll() -> Bool {
         guard let accountId = currentAccountId else { return false }
         return BearyOfflineSaveStore.removeAll(accountId: accountId)
+    }
+
+    /// 异步版 removeAll：删盘在本队列（后台）做，成败回主线程；未登录回 false。
+    func removeAll(completion: @escaping (Bool) -> Void) {
+        guard let accountId = currentAccountId else {
+            DispatchQueue.main.async { completion(false) }
+            return
+        }
+        queue.async {
+            let cleared = BearyOfflineSaveStore.removeAll(accountId: accountId)
+            DispatchQueue.main.async { completion(cleared) }
+        }
     }
 }

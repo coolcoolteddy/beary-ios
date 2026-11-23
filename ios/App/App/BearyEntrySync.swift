@@ -114,7 +114,8 @@ final class BearyEntrySync {
     /// 数据状态页：两腿最近一次都 complete 的时间——各腿状态文件
     /// （BearySyncStateStore，complete/partial）里的 updatedAt，取较晚者；
     /// 任一腿缺失或为 partial 时，没有确认过的整合同步时间，返回 nil。
-    /// 只读磁盘状态文件，不碰内存同步态；主线程调用。
+    /// 只读磁盘状态文件，不碰内存同步态。同步读盘：只在后台队列或测试里调；
+    /// 主线程调用方走下面的异步版。
     func lastCombinedSyncDate() -> Date? {
         guard let accountId = SessionManager.shared.currentUser?.id else { return nil }
         guard let diary = BearySyncStateStore.load(stateURL: BearyEntrySyncStore.stateFileURL(accountId: accountId)),
@@ -122,6 +123,40 @@ final class BearyEntrySync {
               let trash = BearySyncStateStore.load(stateURL: BearyTrashSyncStore.stateFileURL(accountId: accountId)),
               trash.status == "complete" else { return nil }
         return Date(timeIntervalSince1970: max(diary.updatedAt, trash.updatedAt))
+    }
+
+    /// 异步版 lastCombinedSyncDate：两腿状态文件都在后台读，结果回主线程；
+    /// 任一腿缺失／partial／读失败即回 nil（与同步版同口径）。
+    /// 第三轮 B 项：数据状态页原来在主线程同步读两腿状态文件，改走本函数。
+    func lastCombinedSyncDate(completion: @escaping (Date?) -> Void) {
+        guard let accountId = SessionManager.shared.currentUser?.id else {
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+        let group = DispatchGroup()
+        var diaryDate: TimeInterval?
+        var trashDate: TimeInterval?
+        group.enter()
+        BearySyncStateStore.loadAsync(stateURL: BearyEntrySyncStore.stateFileURL(accountId: accountId)) { record in
+            if let record = record, record.status == "complete" {
+                diaryDate = record.updatedAt
+            }
+            group.leave()
+        }
+        group.enter()
+        BearySyncStateStore.loadAsync(stateURL: BearyTrashSyncStore.stateFileURL(accountId: accountId)) { record in
+            if let record = record, record.status == "complete" {
+                trashDate = record.updatedAt
+            }
+            group.leave()
+        }
+        group.notify(queue: .main) {
+            guard let diary = diaryDate, let trash = trashDate else {
+                completion(nil)
+                return
+            }
+            completion(Date(timeIntervalSince1970: max(diary, trash)))
+        }
     }
     /// 日记写盘代际：每次日记落盘写（发布/编辑 upsert、删帖、日加载写透）
     /// 都在同步串行队列上 +1；全量同步开始时记下基线，提交前比对——

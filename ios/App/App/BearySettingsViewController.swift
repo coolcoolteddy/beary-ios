@@ -3443,12 +3443,16 @@ final class BearySettingsViewController: UIViewController {
             offlineSaveDetailLabel.text = "未登录"
             return
         }
-        let usage = BearyOfflineSaveManager.shared.usage()
-        guard usage.entryCount > 0 else {
-            offlineSaveDetailLabel.text = "未保存"
-            return
+        // 占用枚举（整桶字节＋清单读盘）在后台跑，结果回主线程再写行尾；
+        // 读到之前留旧文案，不先写“未保存”。
+        BearyOfflineSaveManager.shared.usage { [weak self] usage in
+            guard let self = self else { return }
+            guard usage.entryCount > 0 else {
+                self.offlineSaveDetailLabel.text = "未保存"
+                return
+            }
+            self.offlineSaveDetailLabel.text = "\(usage.entryCount) 篇 · \(BearyOfflineSaveStore.formattedBytes(usage.bytes))"
         }
-        offlineSaveDetailLabel.text = "\(usage.entryCount) 篇 · \(BearyOfflineSaveStore.formattedBytes(usage.bytes))"
     }
 
     /// 第二批体验检查第 6 项：离线保存子页（逐篇状态、批量保存、清除）。
@@ -3819,6 +3823,8 @@ private final class BearyDataStatusViewController: UIViewController {
     private var contentColumnWidth: NSLayoutConstraint?
     private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private var topBarView: UIView?
+    /// 日记行说明文案（上次同步时间后台读到后补进本行，不重建页面）。
+    private var diaryDetailLabel: UILabel?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -3845,17 +3851,15 @@ private final class BearyDataStatusViewController: UIViewController {
 
         let sync = BearyEntrySync.shared
         let state = sync.currentSyncState
-        let lastSync = sync.lastCombinedSyncDate()
+        let stateText = state.displayText
         let failedLegs = sync.currentFailedLegTitles
         var rows: [UIView] = []
-        // 日记与回收站：状态文案＋上次同步时间（无确认过的整合同步时间时只显状态）。
-        let diaryDetail: String
-        if let lastSync {
-            diaryDetail = "\(state.displayText) · 上次同步 \(BearyText.monthDayHourMinuteFormatter.string(from: lastSync))"
-        } else {
-            diaryDetail = state.displayText
-        }
-        rows.append(makeStatusRow(title: "日记与回收站", detail: diaryDetail))
+        // 日记与回收站：状态文案先显，上次同步时间后台读到后再补进本行
+        // （两腿状态文件不在主线程读盘；无确认过的整合同步时间时只显状态，
+        // 与旧口径一致）。
+        let diaryRow = makeStatusRow(title: "日记与回收站", detail: stateText)
+        diaryDetailLabel = diaryRow.detailLabel
+        rows.append(diaryRow.row)
         // 留话：未同步条数（localOnly 行；含已撤回未同步行，撤回本身也未同步）。
         // 0 条即全部已同步；有未同步时提醒换设备前先打开个人页同步——留话
         // 同步只在个人页语料加载完成时触发，不走本页「重新同步」的日记/
@@ -3867,14 +3871,14 @@ private final class BearyDataStatusViewController: UIViewController {
         let pastSelfDetail = pastSelfUnsynced == 0
             ? "全部已同步"
             : "\(pastSelfUnsynced) 条未同步，换设备前请先打开个人页同步"
-        rows.append(makeStatusRow(title: "留话", detail: pastSelfDetail))
-        rows.append(makeStatusRow(title: "草稿", detail: "仅保存在本设备"))
-        rows.append(makeStatusRow(title: "私信", detail: "更早的记录保存在本设备"))
+        rows.append(makeStatusRow(title: "留话", detail: pastSelfDetail).row)
+        rows.append(makeStatusRow(title: "草稿", detail: "仅保存在本设备").row)
+        rows.append(makeStatusRow(title: "私信", detail: "更早的记录保存在本设备").row)
         // 失败行只在组合状态为失败时出现（失败腿标题与状态同批更新，
         // 状态非失败时不认残留标题，避免切号后的旧失败腿误显）。
         let isFailed = state == .failed && !failedLegs.isEmpty
         if isFailed {
-            rows.append(makeStatusRow(title: "同步失败", detail: "\(failedLegs.joined(separator: "、"))同步未完成"))
+            rows.append(makeStatusRow(title: "同步失败", detail: "\(failedLegs.joined(separator: "、"))同步未完成").row)
         }
 
         let cardStack = UIStackView(arrangedSubviews: rows)
@@ -3951,10 +3955,17 @@ private final class BearyDataStatusViewController: UIViewController {
         contentColumnWidth = scrollView.widthAnchor.constraint(equalToConstant: 0)
         contentColumnWidth?.isActive = true
         updateSubpageColumnWidths()
+        // 上次同步时间后台读：读到且两腿都 complete 时补进日记行，否则只显状态。
+        BearyEntrySync.shared.lastCombinedSyncDate { [weak self] lastSync in
+            guard let self = self, let lastSync = lastSync else { return }
+            guard let label = self.diaryDetailLabel else { return }
+            label.text = "\(stateText) · 上次同步 \(BearyText.monthDayHourMinuteFormatter.string(from: lastSync))"
+        }
     }
 
     /// 分项行：标题 15 左、说明 14 灰右（与设置行同款字号口径），多行自撑高。
-    private func makeStatusRow(title: String, detail: String) -> UIView {
+    /// 连同说明 label 一起返回，供调用方在后台数据到后只换文案、不重建行。
+    private func makeStatusRow(title: String, detail: String) -> (row: UIView, detailLabel: UILabel) {
         let titleLabelValue = UILabel()
         titleLabelValue.translatesAutoresizingMaskIntoConstraints = false
         titleLabelValue.font = BearyDynamicType.smallBodyFont()
@@ -3976,7 +3987,7 @@ private final class BearyDataStatusViewController: UIViewController {
         row.axis = .horizontal
         row.spacing = 12
         row.alignment = .center
-        return row
+        return (row, detailLabel)
     }
 
     @objc private func closeTapped() {

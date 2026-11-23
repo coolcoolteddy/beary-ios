@@ -721,6 +721,14 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
     private var saveProgressText: String?
     /// 当前屏上逐篇行的记录（与移除钮 tag 下标一一对应；每次 render 重建时同步更新）。
     private var currentRecords: [BearyOfflineSaveRecord] = []
+    /// 当前屏上占用（后台读到后才有真值；首次读到之前 render 不画内容，
+    /// 不以 (0, 0) 冒充“未保存”）。
+    private var currentUsage: (bytes: Int64, entryCount: Int) = (0, 0)
+    /// 清单与占用是否已后台读到过一次（读到后 render 直接用内存值；写后重载
+    /// 由 loadOfflineSaveData 再跑一次，不经本标志拦）。
+    private var offlineSaveLoaded = false
+    private var offlineSaveLoading = false
+    private var offlineSaveNeedsReload = false
 
     /// 子页标题收进类里（同 BearyDevicesViewController 各子页自带参数的口径）；
     /// 调用方直接 BearyOfflineSaveViewController()，不用再传标题。
@@ -745,6 +753,12 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
     }
 
     private func render() {
+        // 清单与占用首次进页时后台读，读到之前不画内容（不以空态冒充未保存）；
+        // 读到后重画一次。已加载时直接用内存里的 currentRecords／currentUsage。
+        if !offlineSaveLoaded {
+            loadOfflineSaveData()
+            return
+        }
         for view in contentStack.arrangedSubviews {
             contentStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -755,9 +769,8 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
             contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: [hint]))
             return
         }
-        let usage = BearyOfflineSaveManager.shared.usage()
-        let records = BearyOfflineSaveManager.shared.savedRecords()
-        currentRecords = records
+        let usage = currentUsage
+        let records = currentRecords
 
         let summary = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
         if let progress = saveProgressText {
@@ -836,12 +849,41 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
         }
     }
 
+    /// 后台读清单与占用（第三轮 B 项）：整桶字节枚举＋清单读盘都不在主线程；
+    /// 读到后记进 currentUsage／currentRecords 再重画。读盘在途时再调只记
+    /// needsReload，读完补跑一次，不丢改动。
+    private func loadOfflineSaveData() {
+        if offlineSaveLoading {
+            offlineSaveNeedsReload = true
+            return
+        }
+        offlineSaveLoading = true
+        BearyOfflineSaveManager.shared.usage { [weak self] usage in
+            guard let self = self else { return }
+            self.currentUsage = usage
+            BearyOfflineSaveManager.shared.savedRecords { [weak self] records in
+                guard let self = self else { return }
+                self.currentRecords = records
+                self.offlineSaveLoaded = true
+                self.offlineSaveLoading = false
+                if self.offlineSaveNeedsReload {
+                    self.offlineSaveNeedsReload = false
+                    self.loadOfflineSaveData()
+                    return
+                }
+                if self.isViewLoaded { self.render() }
+            }
+        }
+    }
+
     @objc private func removeTapped(_ sender: UIButton) {
         guard sender.tag >= 0, sender.tag < currentRecords.count else { return }
         let entryId = currentRecords[sender.tag].entryId
-        let removed = BearyOfflineSaveManager.shared.remove(entryId: entryId)
-        BearyToast.show(in: view, message: removed ? "已移除离线保存" : "移除失败，请重试")
-        render()
+        BearyOfflineSaveManager.shared.remove(entryId: entryId) { [weak self] removed in
+            guard let self = self else { return }
+            BearyToast.show(in: self.view, message: removed ? "已移除离线保存" : "移除失败，请重试")
+            self.loadOfflineSaveData()
+        }
     }
 
     @objc private func saveAllTapped() {
@@ -857,7 +899,7 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
             guard let self = self else { return }
             self.isSaving = false
             self.saveProgressText = nil
-            self.render()
+            self.loadOfflineSaveData()
             if result.saved == 0 && result.partial == 0 && result.skipped == 0 && result.failed == 0 {
                 BearyToast.show(in: self.view, message: "没有可保存的日记")
             } else if result.failed > 0 {
@@ -875,9 +917,11 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
         BearyConfirmSheet.show(from: self, title: "清除全部离线保存？", message: "已离线保存的日记文字与图片将从本设备删除，已同步的日记不受影响。", actions: [
             BearyConfirmSheet.Action(title: "清除全部", style: .destructive) { [weak self] in
                 guard let self = self else { return }
-                let cleared = BearyOfflineSaveManager.shared.removeAll()
-                BearyToast.show(in: self.view, message: cleared ? "已清除全部离线保存" : "清除失败，请重试")
-                self.render()
+                BearyOfflineSaveManager.shared.removeAll { [weak self] cleared in
+                    guard let self = self else { return }
+                    BearyToast.show(in: self.view, message: cleared ? "已清除全部离线保存" : "清除失败，请重试")
+                    self.loadOfflineSaveData()
+                }
             },
             BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])

@@ -174,13 +174,74 @@ enum BearyOfflineSaveStore {
     // MARK: - 清单（逐篇下载状态）
 
     /// 清单缺失/损坏即按空处理（文件本身仍在盘上，下次保存重建清单，不谎报丢失）。
+    /// 同步读盘：只在后台队列（清单缓存重载／编排层写盘路径）或测试里调；
+    /// 主线程读清单一律走 loadManifestAsync（后台读＋内存缓存），不直接调本函数。
+    /// 读到的清单同时写进内存缓存（损坏按空缓存，与本函数返回值同口径）。
     static func loadManifest(accountId: Int) -> BearyOfflineSaveManifest {
-        guard let url = manifestURL(accountId: accountId),
-              let data = try? Data(contentsOf: url),
-              let manifest = try? JSONDecoder().decode(BearyOfflineSaveManifest.self, from: data) else {
-            return BearyOfflineSaveManifest(entries: [])
+        let manifest: BearyOfflineSaveManifest
+        if let url = manifestURL(accountId: accountId),
+           let data = try? Data(contentsOf: url),
+           let decoded = try? JSONDecoder().decode(BearyOfflineSaveManifest.self, from: data) {
+            manifest = decoded
+        } else {
+            manifest = BearyOfflineSaveManifest(entries: [])
         }
+        manifestCacheLock.lock()
+        manifestCache[accountId] = manifest
+        manifestDirtyAccounts.remove(accountId)
+        manifestCacheLock.unlock()
         return manifest
+    }
+
+    // MARK: - 清单内存缓存（第三轮 B 项：后台读＋标脏后异步重载）
+    //
+    // 主线程读清单（详情页 ⋯ 菜单的已保存态、设置页离线保存列表与占用行）
+    // 只命中内存缓存，不碰磁盘；写盘路径成功后标脏，缓存由后台重载刷新。
+    // 清单文件本身很小，但占用行还要递归枚举整桶字节——两处都挪出主线程。
+
+    /// 清单读盘专用串行队列（与编排层 queue 分开：读缓存重载不插队写盘任务）。
+    private static let manifestQueue = DispatchQueue(label: "beary.offlineSave.manifest", qos: .utility)
+    private static let manifestCacheLock = NSLock()
+    private static var manifestCache: [Int: BearyOfflineSaveManifest] = [:]
+    private static var manifestDirtyAccounts: Set<Int> = []
+
+    /// 内存里的清单（已加载且未标脏时才有值；冷启动未读过、写后重载在途时
+    /// 为 nil——调用方走异步版等回包，不以空清单冒充未保存）。
+    static func cachedManifest(accountId: Int) -> BearyOfflineSaveManifest? {
+        manifestCacheLock.lock()
+        defer { manifestCacheLock.unlock() }
+        if manifestDirtyAccounts.contains(accountId) { return nil }
+        return manifestCache[accountId]
+    }
+
+    /// 标脏后异步重载：清单写盘成功后旧缓存失效，后台读回刚写的文件刷新缓存；
+    /// 重载失败时缓存仍空，调用方走异步版时 loadManifest 原样返回空清单——
+    /// 清单损坏本就按空处理（见 loadManifest），不丢内容、不拿旧清单冒充新状态。
+    private static func markManifestDirty(accountId: Int) {
+        manifestCacheLock.lock()
+        manifestCache.removeValue(forKey: accountId)
+        manifestDirtyAccounts.insert(accountId)
+        manifestCacheLock.unlock()
+        refreshManifestCache(accountId: accountId)
+    }
+
+    /// 后台重载清单进缓存（无回调版，供写盘路径标脏后与进页预热调用）。
+    static func refreshManifestCache(accountId: Int) {
+        manifestQueue.async {
+            _ = loadManifest(accountId: accountId)
+        }
+    }
+
+    /// 异步读清单：缓存干净时直接回包；否则后台读盘＋解码，结果回主线程并写缓存。
+    static func loadManifestAsync(accountId: Int, completion: @escaping (BearyOfflineSaveManifest) -> Void) {
+        if let cached = cachedManifest(accountId: accountId) {
+            DispatchQueue.main.async { completion(cached) }
+            return
+        }
+        manifestQueue.async {
+            let manifest = loadManifest(accountId: accountId)
+            DispatchQueue.main.async { completion(manifest) }
+        }
     }
 
     @discardableResult
@@ -190,6 +251,7 @@ enum BearyOfflineSaveStore {
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
+            markManifestDirty(accountId: accountId)
             return true
         } catch {
             return false
@@ -246,9 +308,13 @@ enum BearyOfflineSaveStore {
     @discardableResult
     static func removeAll(accountId: Int) -> Bool {
         guard let dir = accountDir(accountId: accountId) else { return false }
-        guard FileManager.default.fileExists(atPath: dir.path) else { return true }
+        guard FileManager.default.fileExists(atPath: dir.path) else {
+            markManifestDirty(accountId: accountId)
+            return true
+        }
         do {
             try FileManager.default.removeItem(at: dir)
+            markManifestDirty(accountId: accountId)
             return true
         } catch {
             return false
