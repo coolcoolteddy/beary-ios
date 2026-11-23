@@ -279,6 +279,8 @@ final class BearyChromeViewController: UIViewController {
     private var detailEdgeDismiss: BearyEdgeDismissController?
     /// 标签聚合页 modal 的 EdgeDismiss 强持有（见 presentTagPage）。
     private var tagPageEdgeDismiss: BearyEdgeDismissController?
+    /// 反向跳转（2.5D 第 1 支）：时间线某天打开的星图 modal 的 EdgeDismiss 强持有。
+    private var starMapEdgeDismiss: BearyEdgeDismissController?
     /// 详情只读返回的定位上下文：只记来源列表＋该篇在打开时的视口内位置；
     /// 关闭时仅恢复来源列表，不再向各来源列表广播 scrollToRow(.middle)。
     /// 来源不明（深链/引用卡/通知等）时为 nil，关闭时什么都不做。
@@ -2908,6 +2910,10 @@ final class BearyChromeViewController: UIViewController {
         vc.onOpenEntry = { [weak self] entry in
             self?.gotoEntryImmediately(entry: entry, source: .timeline)
         }
+        // 反向跳转（2.5D 第 1 支）：当日面板头「星图」入口——打开星图并聚焦这一天。
+        vc.onOpenStarMapForDay = { [weak self] date, entries in
+            self?.presentStarMapForDay(date: date, entries: entries)
+        }
         // 收尾接线：编辑（无详情宿主）、删除（网页确认流程）、引用定位、互动同步首页。
         vc.onEditEntry = { [weak self] entry in
             self?.presentComposerForEdit(entry: entry)
@@ -4059,6 +4065,34 @@ final class BearyChromeViewController: UIViewController {
         tagEdgeDismiss.attach(to: nav)
         nav.transitioningDelegate = tagEdgeDismiss
         self.tagPageEdgeDismiss = tagEdgeDismiss
+        topmostViewController().present(nav, animated: BearyMotion.animated(true))
+    }
+
+    /// 反向跳转（2.5D 第 1 支）：时间线某天 → 星图——星图自成一个全屏 modal
+    /// nav（与个人页 openStarMap 的 modal 路同款：系统导航栏＋EdgeDismiss
+    /// 边缘右滑 dismiss），带 focusDate 进页即聚焦那天节点群并打开底卡；
+    /// 点星／卡内篇名走 gotoEntryImmediately（source: .timeline），详情盖在
+    /// 星图之上、关闭后回到星图。未登录时走登录门，不进空星空。
+    private func presentStarMapForDay(date: Date, entries: [Entry]) {
+        guard SessionManager.shared.isLoggedIn, let authorId = SessionManager.shared.currentUser?.id else {
+            presentLoginGate()
+            return
+        }
+        let starVC = BearyDiaryStarMapViewController(
+            authorId: authorId,
+            viewerIsAuthor: true,
+            initialEntries: entries,
+            focusDate: date,
+            onOpenEntry: { [weak self] entry in
+                self?.gotoEntryImmediately(entry: entry, source: .timeline)
+            }
+        )
+        let nav = UINavigationController(rootViewController: starVC)
+        nav.modalPresentationStyle = .fullScreen
+        let starEdgeDismiss = BearyEdgeDismissController()
+        starEdgeDismiss.attach(to: nav)
+        nav.transitioningDelegate = starEdgeDismiss
+        self.starMapEdgeDismiss = starEdgeDismiss
         topmostViewController().present(nav, animated: BearyMotion.animated(true))
     }
 
