@@ -4017,14 +4017,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageToolButton.tintColor = BearyColors.ink
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
         imageToolButton.bearyAddPressFeedback()
-        // 批 E：定位钮插在图片钮右边、自定义钮之前（左组顺序：图片 → 定位 → 自定义 → @ → 引用 → #；天气钮已删，天气自动显示在底部元信息行）。
+        // 批 E：定位钮插在图片钮右边、表情钮之前（左组顺序：图片 → 定位 → 表情 → @ → 引用 → #；天气钮已删，天气自动显示在底部元信息行）。
         locationToolButton.setImage(BearyLocationIcon.image(pointSize: 24), for: .normal)
         locationToolButton.accessibilityLabel = "添加位置"
         locationToolButton.tintColor = BearyColors.ink
         locationToolButton.addTarget(self, action: #selector(didTapLocationTool), for: .touchUpInside)
         locationToolButton.bearyAddPressFeedback()
-        gifToolButton.setImage(BearyIconImages.image(named: "icon_image", pointSize: 24), for: .normal)
-        gifToolButton.accessibilityLabel = "自定义"
+        // 展示审计 G5-03：表情钮用官方单张熊脸 icon_mood（原 icon_image 与
+        // 图片钮完全重复，两个并排相同图标无法区分）；无障碍名同步改“表情”。
+        gifToolButton.setImage(BearyIconImages.image(named: "icon_mood", pointSize: 24), for: .normal)
+        gifToolButton.accessibilityLabel = "表情"
         gifToolButton.tintColor = BearyColors.ink
         gifToolButton.addTarget(self, action: #selector(didTapGIFTool), for: .touchUpInside)
         gifToolButton.bearyAddPressFeedback()
@@ -4589,11 +4591,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         fetchWeatherWith(latitude: latitude, longitude: longitude, generation: generation)
     }
 
-    /// 弹出自定义图片底部选择器（2026-11-18：心情组已删，只剩“自定义”组）：
+    /// 弹出表情底部选择器（展示审计 G5-04：“小熊”内置组＋“自定义”组；
+    /// 内置表情点选即按 [mood:xxx] 插进正文，自定义图走原 [gif:] 路径）：
     /// 引用面板打开时不弹出。
     private func presentGIFPickerSheet() {
         if quotePanelOpen { return }
-        gifPickerSheet = BearyMoodPickerSheet.show(from: self, gifKeys: BearyGIFLibrary.cachedKeys()) { [weak self] key in
+        gifPickerSheet = BearyMoodPickerSheet.show(from: self, gifKeys: BearyGIFLibrary.cachedKeys(), onSelectMood: { [weak self] key in
+            self?.didSelectMood(key)
+        }) { [weak self] key in
             self?.didSelectGIF(key)
         } onUploadGIF: { [weak self] in
             self?.didTapUploadGIF()
@@ -5637,6 +5642,69 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let rand = BearyGIF.randKey(from: key) else { return }
         prefetchGIFFirstFrame(key: key)
         insertGIFAttachmentAtCursor(key: key, randKey: rand)
+    }
+
+    /// “小熊”组点选（展示审计 G5-04）：内置表情 key 按 [mood:key] 插进
+    /// 光标处，走现有 [mood:] 内联路径（BearyText.inlineAttachment，
+    /// 与手打记号同一渲染、同一落库口径）；焦点口径与 GIF 同款
+    /// （见 insertGIFAttachmentAtCursor），sheet 不收起、可连着插多个。
+    private func didSelectMood(_ key: String) {
+        guard BearyText.bearMoodKeys.contains(key) else { return }
+        insertMoodAttachmentAtCursor(key: key)
+    }
+
+    /// 把一个内置心情附件插进当前光标处（标题/正文焦点口径与 GIF 同款：
+    /// 获焦插该框、两框都没焦点按上次焦点框兜底、都没焦点默认插正文末尾）。
+    private func insertMoodAttachmentAtCursor(key: String) {
+        let dark = traitCollection.userInterfaceStyle == .dark
+        if headlineField.isFirstResponder || lastFocusedComposerInput == .headline {
+            if !isGIFPickerOpen, !headlineField.isFirstResponder {
+                headlineField.becomeFirstResponder()
+                headlineField.selectedRange = NSRange(location: headlineField.attributedText.length, length: 0)
+            }
+            if headlineField.markedTextRange != nil {
+                headlineField.unmarkText()
+            }
+            insertMoodAttachment(into: headlineField, key: key, font: headlineFont, dark: dark)
+            headlineDidChange()
+            return
+        }
+        if textView.isFirstResponder || lastFocusedComposerInput == .body {
+            if !isGIFPickerOpen, !textView.isFirstResponder {
+                textView.becomeFirstResponder()
+            }
+            if textView.markedTextRange != nil {
+                textView.unmarkText()
+            }
+            insertMoodAttachment(into: textView, key: key, font: bodyFont, dark: dark)
+            textViewDidChange(textView)
+            return
+        }
+        if !isGIFPickerOpen {
+            textView.becomeFirstResponder()
+        }
+        textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)
+        insertMoodAttachment(into: textView, key: key, font: bodyFont, dark: dark)
+        textViewDidChange(textView)
+    }
+
+    /// 把一个心情附件插进指定 UITextView 的当前选区（有选区则替换选区），
+    /// 插完光标落在图后 1 格，并把 typingAttributes 复位回该框的正文字体
+    /// （免得图后打字跟了附件字体）；与 insertGIFAttachment 同款结构。
+    private func insertMoodAttachment(into textView: UITextView, key: String, font: UIFont, dark: Bool) {
+        guard let attachment = BearyText.inlineAttachment(for: key, font: font, dark: dark) else { return }
+        let range = textView.selectedRange
+        let mutable = NSMutableAttributedString(attributedString: textView.attributedText ?? NSAttributedString())
+        let safeLocation = min(range.location, mutable.length)
+        let safeLength = min(range.length, mutable.length - safeLocation)
+        mutable.replaceCharacters(in: NSRange(location: safeLocation, length: safeLength), with: attachment)
+        textView.attributedText = mutable
+        if textView === headlineField {
+            textView.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
+        } else {
+            textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
+        }
+        textView.selectedRange = NSRange(location: safeLocation + 1, length: 0)
     }
 
     /// 自定义心情图首帧预取（编辑器里只显首帧）：缩略图到站后记缓存，若该图仍在
