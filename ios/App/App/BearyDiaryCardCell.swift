@@ -1266,30 +1266,12 @@ class BearyDiaryCardCell: UITableViewCell {
         return st
     }()
 
-    /// 游客详情（作者主页展开态）：登录提示条，lazy 只创建一次，默认隐藏，
-    /// 仅由个人主页模式 configure 在游客展开态时显示（见该方法末尾的游客分支；
-    /// Feed 的 configure(with:) 从不碰它）。整行 44pt 可点，点按走 onRequireLogin
-    ///（容器接登录提示 Sheet，本 cell 不建 Sheet）；isGuestMode 由协调员在
-    /// SessionManager 加，只读、不在本文件定义。
-    private lazy var guestLoginPromptButton: UIButton = {
-        let btn = BearyHit44Button(type: .system)
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = UIFont.systemFont(ofSize: 15)
-        btn.setTitle("登录后可点赞、回应、收藏 ›", for: .normal)
-        btn.setTitleColor(BearyColors.gray, for: .normal)
-        btn.setTitleColor(BearyColors.gray, for: .highlighted)
-        btn.adjustsImageWhenHighlighted = false
-        btn.contentHorizontalAlignment = .left
-        btn.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        btn.isHidden = true
-        btn.addTarget(self, action: #selector(guestLoginPromptTapped), for: .touchUpInside)
-        btn.bearyAddPressFeedback()
-        return btn
-    }()
-
-    @objc private func guestLoginPromptTapped() {
-        onRequireLogin?()
-    }
+    /// 展示审计 G1-07：卡内游客提示整行已删（原「登录后可点赞、回应、收藏 ›」
+    /// 44 高一行，游客展开态替掉操作行＋回应行）。游客点按操作时各操作
+    /// 本身走 onRequireLogin 弹登录门，提示行重复，故整删；操作行与回应行
+    /// 在游客态下也正常显示（点按即弹登录门）。
+    /// 注意：该行实为个人主页展开游客态才出，Feed 的 configure 从不碰它——
+    /// 审计写的“首页广场卡片”位置有误，改法不变。
 
     /// 头行栈（2026-11-05 日记布局统一：头像 + 昵称行独占一行，标题/正文不再侵入）：
     /// 只放置顶行、写给行、作者行；左缘贴头像右缘（间距 12），右缩进 16。
@@ -1305,11 +1287,11 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     /// 正文栈（2026-11-05 日记布局统一）：标题、折叠正文、图片条、引用卡、
-    /// 位置行、操作行、游客提示条、回应行一律全宽——左缘与内容左缘齐平（16），
+    /// 位置行、操作行、回应行一律全宽——左缘与内容左缘齐平（16），
     /// 不再缩进到昵称位置；顶缘取头像底与头行底较大者 + 间距（见 setupConstraints）。
     private lazy var bodyStack: BearyPassThroughStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = BearyPassThroughStackView(arrangedSubviews: [entryTitleLabel, contentLabel, foldButton, imagesScrollView, nineGridWrapView, quoteView, locationStack, tagsScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = BearyPassThroughStackView(arrangedSubviews: [entryTitleLabel, contentLabel, foldButton, imagesScrollView, nineGridWrapView, quoteView, locationStack, tagsScrollView, actionStack, emoteFlowView])
         // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
         st.passThroughRoot = emoteFlowView
         st.translatesAutoresizingMaskIntoConstraints = false
@@ -2076,9 +2058,7 @@ class BearyDiaryCardCell: UITableViewCell {
         moreButton.isHidden = true
         titleMoreSpacer.isHidden = true
         headerStackTrailingConstraint?.constant = -16
-        // 游客详情复位：提示条默认藏、操作行与回应行默认显，防游客展开态
-        // 串位到复用的下一张卡；下一次 configure 的游客分支会重新定显隐。
-        guestLoginPromptButton.isHidden = true
+        // 游客态复位：操作行与回应行默认显（G1-07 提示条已删，游客点按操作即弹登录门）。
         actionStack.isHidden = false
         emoteFlowView.isHidden = false
         likeButtonWidthConstraint?.constant = 24
@@ -2742,14 +2722,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // 个人页一面）。此处补上，与广场 configure 同款。
         refreshMoreRow()
         renderEmotes()
-        // 游客详情（只读）：游客展开态藏操作行与回应行，改显登录提示条
-        //（提示条占操作行原位：操作行隐藏后 stack 将其压为 0，提示条紧接
-        // 图片条后、间距沿用图片条后的 10）；非展开、登录态一律恢复原样。
+        // 展示审计 G1-07：游客提示整行已删，游客展开态也不再藏操作行与回应行——
+        // 各操作点按本身走 onRequireLogin 弹登录门，行保持可见；非展开、登录态行为不动。
         // Feed 的 configure(with:) 不走本分支，行为不动。
-        let guestExpanded = SessionManager.shared.isGuestMode && isExpanded
-        actionStack.isHidden = guestExpanded
-        emoteFlowView.isHidden = guestExpanded
-        guestLoginPromptButton.isHidden = !guestExpanded
         refreshEphemeralState(entry: entry)
         updateDiaryStackSpacing()
     }
