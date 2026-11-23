@@ -1736,7 +1736,7 @@ final class BearyTimelineCell: UITableViewCell {
             metaStack.addArrangedSubview(moodRow)
         }
         if let mentionedName = entry.mentionedName, !mentionedName.isEmpty {
-            // 32 注销口径：被 @ 者已注销时显“@用户已注销”。
+            // 32 注销口径：被 @ 者已注销时显“@已注销用户”。
             recipientLabel.text = "@\(bearyDeletedAuthorDisplayName(mentionedName) ?? mentionedName)"
             metaStack.addArrangedSubview(recipientLabel)
         }

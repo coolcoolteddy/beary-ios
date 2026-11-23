@@ -3963,7 +3963,7 @@ class BearyProfileViewController: UIViewController {
             }
             profileDeleted = profileValue.isDeletedAccount
             if profileDeleted {
-                // 32 注销口径：已注销用户个人页只显“用户已注销”，不展示日记
+                // 32 注销口径：已注销用户个人页只显“已注销用户”，不展示日记
                 // 列表。关注态／私信态／标签列表／模块语料一律不拉；在途或
                 // 先到的标签数据一并清掉，不闪一下旧列表；举报／拉黑逻辑不动，
                 // 更多菜单保持原样。
@@ -4047,9 +4047,9 @@ class BearyProfileViewController: UIViewController {
 
     private func applyProfile() {
         guard let profileValue = profile else { return }
-        // 32 注销口径：已注销用户头显“用户已注销”，不用后端原名“已注销用户”。
+        // 32 注销口径：已注销用户头显“已注销用户”（后端原名，原样显示）。
         let isDeleted = profileValue.isDeletedAccount
-        let displayNameValue = isDeleted ? "用户已注销" : (profileValue.displayName
+        let displayNameValue = isDeleted ? NSLocalizedString("account.deleted_user_display_name", comment: "") : (profileValue.displayName
             ?? (profileValue.handle.map { "@" + $0 })
             ?? "TA")
         setLabelTextFaded(nameLabel, displayNameValue)
@@ -7485,7 +7485,7 @@ class BearyProfileViewController: UIViewController {
         let oldWallBottomY = footerTopOld + oldWallBottomInFooter
         let kind: String
         let stateView: UIView?
-        // 32 注销口径：已注销用户脚部只显“用户已注销”，不展示任何列表、
+        // 32 注销口径：已注销用户脚部只显“已注销用户”，不展示任何列表、
         // 不出空态／失败态／加载态（分支放首位，压过在途加载态）。
         if profileDeleted {
             stateView = makeDeletedFooter()
@@ -8132,7 +8132,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         return container
     }
 
-    /// 32 注销口径：已注销用户个人页脚部——只显“用户已注销”，无重试、
+    /// 32 注销口径：已注销用户个人页脚部——只显“已注销用户”，无重试、
     /// 无副标题；日记列表不展示（见 handleProfileResult 已注销分支）。
     private func makeDeletedFooter() -> UIView {
         let container = UIView()
@@ -8142,8 +8142,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.textAlignment = .center
-        label.text = "用户已注销"
-        label.accessibilityLabel = "用户已注销"
+        label.text = NSLocalizedString("account.deleted_user_display_name", comment: "")
+        label.accessibilityLabel = NSLocalizedString("account.deleted_user_display_name", comment: "")
         container.addSubview(label)
         NSLayoutConstraint.activate([
             label.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),

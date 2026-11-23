@@ -148,7 +148,7 @@ extension BearyAPI {
     /// POST /api/account/delete（注销发起；服务端返回 delete_at = 发起 + 7 天冷静期；
     /// 管理员 403 admin_cannot_delete，调用方须透传该判定，不得在客户端另造禁注销规则）。
     /// keepPublic：第 5 条定版显式勾选——默认 false（全部日记随注销删除）；true 时
-    /// 只保留公开过的日记、作者匿名显示为“用户已注销”，以 keep_public 下发服务端。
+    /// 只保留公开过的日记、作者匿名显示为“已注销用户”，以 keep_public 下发服务端。
     func requestAccountDelete(keepPublic: Bool = false, completion: @escaping (Result<BearyAccountDeleteResponse, APIError>) -> Void) {
         request("/api/account/delete", method: "POST", jsonBody: ["keep_public": keepPublic], completion: completion)
     }
@@ -2407,12 +2407,12 @@ final class BearySettingsViewController: UIViewController {
         guard !isDeleting else { return }
         // 第 5 条定版：默认删除全部日记；显式勾选（默认不勾）才保留公开过的日记。
         var keepPublicDiaries = false
-        BearyConfirmSheet.show(from: self, title: "注销账户", message: "7 天冷静期内登录可取消注销。7 天后账户正式注销，默认删除全部日记；注销时可勾选保留公开篇，保留的公开篇作者显示为“用户已注销”。\n\n注销后，你的 Plus、未到账的邀请奖励和收藏会一并作废。", actions: [
+        BearyConfirmSheet.show(from: self, title: NSLocalizedString("account.delete_confirm_title", comment: ""), message: NSLocalizedString("account.delete_confirm_message", comment: ""), actions: [
             BearyConfirmSheet.Action(title: "继续注销", style: .destructive, handler: { [weak self] in
                 self?.showDeleteSecondConfirm(keepPublicDiaries: keepPublicDiaries)
             }),
             BearyConfirmSheet.Action(title: "再想想", style: .cancel),
-        ], toggle: BearyConfirmSheet.Toggle(title: "保留我公开过的日记", subtitle: "供曾读过的人回看，作者显示为“用户已注销”", isOn: false, onChange: { isOn in
+        ], toggle: BearyConfirmSheet.Toggle(title: NSLocalizedString("account.delete_keep_public_title", comment: ""), subtitle: NSLocalizedString("account.delete_keep_public_subtitle", comment: ""), isOn: false, onChange: { isOn in
             keepPublicDiaries = isOn
         }))
     }
@@ -4277,7 +4277,7 @@ Cookie见 2.4过期自动失效
 
 私密日记与公开日记：均可自行删除，进回收站 30 天；
 
-账户注销：登录后在 /account 自助注销。注销有 7 天冷静期：期间登录可取消，7 天后正式生效。生效后你的邮箱将被清空，日记保留但作者显示为"用户已注销"；
+账户注销：登录后在 /account 自助注销。注销有 7 天冷静期：期间登录可取消，7 天后正式生效。生效后你的邮箱将被清空，日记保留但作者显示为"已注销用户"；
 
 注意：公开后仍可改回私密，但公开期间已被查看或转载的内容无法收回，发布前请确认。
 
@@ -4385,7 +4385,7 @@ Cookie见 2.4过期自动失效
 
 登录后在 /account 自助注销。注销设有 7 天冷静期：提交后立即退出登录，7 天内任意一次登录会弹出确认，选择登录即取消注销。
 
-7 天冷静期满未取消，注销正式生效：你的邮箱将被清空、所有设备退出登录，全部日记将被删除；仅当你注销时勾选了"保留我公开过的日记"，已公开的日记才会保留，作者显示为"用户已注销"。
+7 天冷静期满未取消，注销正式生效：你的邮箱将被清空、所有设备退出登录，全部日记将被删除；仅当你注销时勾选了"保留我公开过的日记"，已公开的日记才会保留，作者显示为"已注销用户"。
 
 1.5 账户封禁
 
