@@ -536,7 +536,7 @@ final class BearyPublishCenter {
             }
             draft.images[target].state = .uploaded
             if !BearyDraftStore.save(draft, forAccount: accountId) {
-                NSLog("[BearyPublishCenter] persistUploadedKey save failed account=%d draft=%@", accountId, draftId)
+                NSLog("[BearyPublishCenter] persistUploadedKey save failed account=\(accountId ?? -1) draft=\(draftId)")
             }
         }
     }

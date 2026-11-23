@@ -3959,7 +3959,7 @@ private final class BearyDataStatusViewController: UIViewController {
         BearyEntrySync.shared.lastCombinedSyncDate { [weak self] lastSync in
             guard let self = self, let lastSync = lastSync else { return }
             guard let label = self.diaryDetailLabel else { return }
-            label.text = "\(stateText) · 上次同步 \(BearyText.monthDayHourMinuteFormatter.string(from: lastSync))"
+            label.text = String(format: NSLocalizedString("settings.data_status.diary_last_sync", comment: ""), stateText, BearyText.monthDayHourMinuteFormatter.string(from: lastSync))
         }
     }
 
