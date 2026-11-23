@@ -1,4 +1,5 @@
 import UIKit
+import Network
 
 // ===== beary 原生列表页（广场）=====
 // 一张 UITableView：单 section 广场流（iCity：最近公开模块已删，主列表按 published_at 排序）。
@@ -376,6 +377,21 @@ class BearyFeedViewController: UIViewController {
     private var tableViewTopToViewTopConstraint: NSLayoutConstraint?
     private var tableViewTopToBannerConstraint: NSLayoutConstraint?
 
+    /// P0-2：缓存新鲜度＋离线横幅（广场／关注两段）：快照 savedAt 超 6h 即在列表顶标
+    /// “显示的是上次数据·X 前更新”（X 走全站相对时间口径）；离线时常驻“当前离线，显示缓存”。
+    /// 复用已有内容刷新失败条的轻横幅口径（全宽条、14pt ink 字、≥44 高），不另发明视觉；
+    /// 离线优先于过期（离线即缓存，过期文案不再叠加）。
+    private static let feedCacheStaleThreshold: TimeInterval = 6 * 60 * 60
+    private let feedCacheStatusBanner = UIView()
+    private let feedCacheStatusLabel = UILabel()
+    private var feedCacheStatusBannerTopConstraint: NSLayoutConstraint?
+    private var refreshFailedBannerTopToStatusConstraint: NSLayoutConstraint?
+    private var tableViewTopToStatusBannerConstraint: NSLayoutConstraint?
+    /// 弱网监听（私信聊天页同款：每页自持一个轻量 monitor，只读 path.status）。
+    /// 首报前默认有网，不拦首拉；monitor 只在页面存续期间跑，deinit 取消。
+    private var feedNetworkMonitor: NWPathMonitor?
+    private var isFeedNetworkSatisfied = true
+
     /// 空态（网页 .empty 口径）：图标 40×40 灰（NB.pencil 一次性描画）、标题 15 ink（图标→标题间距 8）、
     /// 副文案 13 灰、容器 padding 26/20/8。广场空态用 pencil（网页 beary.html:2187 的 nb-once 口径）。
     private weak var feedEmptyPencilView: BearyPencilView?
@@ -455,6 +471,7 @@ class BearyFeedViewController: UIViewController {
             restoreLiveFeedState()
             tableView.reloadData()
             updateOverlayState()
+            updateFeedCacheStatusBanner()
         } else if wantFollowing {
             // B1：正在关注段首次进段先读本段磁盘快照（只含有效公开篇），
             // 有内容即先显再静默刷新；快照为空/未覆盖整页时保持加载态，
@@ -469,6 +486,7 @@ class BearyFeedViewController: UIViewController {
             plazaReachedEnd = false
             plazaError = false
             tableView.reloadData()
+            updateFeedCacheStatusBanner()
             refreshAllBypassInFlight = true
             refreshAll()
         }
@@ -547,6 +565,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.tableView.reloadData()
                     strongSelf.updateOverlayState()
                     strongSelf.rebuildCarouselItems()
+                    strongSelf.updateFeedCacheStatusBanner()
                     // 快照未覆盖整页（hasMore）时仍须等网络结果再判空态：
                     // 静默刷新在途即置 plazaLoading，空态由回包后的
                     // updateOverlayState 决定；整页已覆盖时同样静默刷新
@@ -703,6 +722,21 @@ class BearyFeedViewController: UIViewController {
         refreshFailedBanner.addSubview(refreshFailedRetryButton)
         refreshFailedBannerTopConstraint = refreshFailedBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: (headerTopInsetVisible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset)
         refreshFailedBannerTopConstraint?.isActive = true
+        // P0-2：缓存状态横幅（刷新失败条同款轻横幅，中性底、不带重试钮）：
+        // 常驻于内容顶下方、失败条上方；离线／快照过期时显，文案见 updateFeedCacheStatusBanner。
+        feedCacheStatusBanner.translatesAutoresizingMaskIntoConstraints = false
+        feedCacheStatusBanner.backgroundColor = BearyColors.alpha(BearyColors.ink, 0.08)
+        feedCacheStatusBanner.isHidden = true
+        view.addSubview(feedCacheStatusBanner)
+        feedCacheStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        feedCacheStatusLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        feedCacheStatusLabel.adjustsFontForContentSizeCategory = true
+        feedCacheStatusLabel.textColor = BearyColors.ink
+        feedCacheStatusBanner.addSubview(feedCacheStatusLabel)
+        feedCacheStatusBannerTopConstraint = feedCacheStatusBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: (headerTopInsetVisible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset)
+        feedCacheStatusBannerTopConstraint?.isActive = true
+        refreshFailedBannerTopToStatusConstraint = refreshFailedBanner.topAnchor.constraint(equalTo: feedCacheStatusBanner.bottomAnchor)
+        tableViewTopToStatusBannerConstraint = tableView.topAnchor.constraint(equalTo: feedCacheStatusBanner.bottomAnchor)
         tableViewTopToViewTopConstraint = tableView.topAnchor.constraint(equalTo: view.topAnchor)
         tableViewTopToBannerConstraint = tableView.topAnchor.constraint(equalTo: refreshFailedBanner.bottomAnchor)
         tableViewTopToViewTopConstraint?.isActive = true
@@ -720,6 +754,12 @@ class BearyFeedViewController: UIViewController {
             refreshFailedBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             refreshFailedBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             refreshFailedBanner.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            feedCacheStatusBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            feedCacheStatusBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            feedCacheStatusBanner.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            feedCacheStatusLabel.leadingAnchor.constraint(equalTo: feedCacheStatusBanner.leadingAnchor, constant: 16),
+            feedCacheStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: feedCacheStatusBanner.trailingAnchor, constant: -16),
+            feedCacheStatusLabel.centerYAnchor.constraint(equalTo: feedCacheStatusBanner.centerYAnchor),
             refreshFailedLabel.leadingAnchor.constraint(equalTo: refreshFailedBanner.leadingAnchor, constant: 16),
             refreshFailedLabel.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
             refreshFailedRetryButton.trailingAnchor.constraint(equalTo: refreshFailedBanner.trailingAnchor, constant: -16),
@@ -771,9 +811,11 @@ class BearyFeedViewController: UIViewController {
         blindBoxHeaderWrap.addSubview(blindBoxEntryView)
         layoutFeedBlindBoxHeader()
         loadCachedFeedOrRefresh()
+        ensureFeedNetworkMonitor()
     }
 
     deinit {
+        feedNetworkMonitor?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -852,6 +894,7 @@ class BearyFeedViewController: UIViewController {
                 restoreLiveFeedState()
                 tableView.reloadData()
                 updateOverlayState()
+                updateFeedCacheStatusBanner()
             } else {
                 if loginFlipped {
                     // 身份已变：上面刚写回的关注段槽属于旧身份，直接丢弃，
@@ -868,6 +911,7 @@ class BearyFeedViewController: UIViewController {
                 plazaReachedEnd = false
                 plazaError = false
                 tableView.reloadData()
+                updateFeedCacheStatusBanner()
             }
         }
         if loginFlipped && isFirstLoad == false {
@@ -960,6 +1004,7 @@ class BearyFeedViewController: UIViewController {
         let safeTop = view.safeAreaInsets.top
         let top = safeTop + (visible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset
         refreshFailedBannerTopConstraint?.constant = (visible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset
+        feedCacheStatusBannerTopConstraint?.constant = (visible ? 108 : 0) + 8 + BearyDeveloperMode.shared.devBannerInset
         let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
         if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
             tableView.contentInset.top = top
@@ -1351,6 +1396,7 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaReachedEnd = true
                         strongSelf.plazaError = false
                         strongSelf.lastFeedLoadAt = Date()
+                        strongSelf.updateFeedCacheStatusBanner()
                         if !strongSelf.didShowSkeleton {
                             strongSelf.tableView.reloadData()
                         }
@@ -1385,6 +1431,9 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.applyFirstPageDiff(entries, hasMoreOverride: rawEntries.count >= strongSelf.firstPageLimit)
                         strongSelf.setRefreshFailedBannerVisible(false)
                         strongSelf.rebuildCarouselItems()
+                        // P0-2：静默刷新成功即数据已新鲜（与非 diff 首拉同口径记最近一次首拉成功时间），过期横幅随之收起。
+                        strongSelf.lastFeedLoadAt = Date()
+                        strongSelf.updateFeedCacheStatusBanner()
                         // 秒开-启动瘦身：首屏回包已终结，通知容器再发启动期 /me。
                         strongSelf.notifyFirstScreenDoneOnce()
                         return
@@ -1407,6 +1456,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.setRefreshFailedBannerVisible(false)
                     strongSelf.clearPlazaGapState()
                     strongSelf.lastFeedLoadAt = Date()
+                    strongSelf.updateFeedCacheStatusBanner()
                     // 审计 13：界面先应用（落表 + 状态），写盘异步在后、不卡首帧。
                     // 加载三件套·骨架淡出：骨架出过屏时不直接 reloadData，
                     // 由 finishFirstLoadIfNeeded 经 0.26s 交叉溶解换上真实行。
@@ -1443,6 +1493,8 @@ class BearyFeedViewController: UIViewController {
                     } else if !silent {
                         strongSelf.setRefreshFailedBannerVisible(true)
                     }
+                    // P0-2：失败也重算缓存横幅（离线时离线条压在失败条上方同显）。
+                    strongSelf.updateFeedCacheStatusBanner()
                     strongSelf.maybeEndRefreshing()
                     // 秒开-启动瘦身：首屏回包已终结（失败也算终结，/me 不被弱网首拉拖死；
                     // 容器侧另有 3 秒兜底，见 SceneDelegate scheduleDeferredStartupMe）。
@@ -1548,6 +1600,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaHasGap = false
                     strongSelf.plazaGapCursor = nil
                     strongSelf.lastFeedLoadAt = Date()
+                    strongSelf.updateFeedCacheStatusBanner()
                     BearyTimelinePrefetch.maybePrefetch()
                     // B1：段守卫写盘（同首拉守卫），仅好友篇不落盘。
                     strongSelf.saveCurrentFeedHead(entries: strongSelf.plazaRaw, hasMore: strongSelf.plazaHasMore)
@@ -1584,6 +1637,7 @@ class BearyFeedViewController: UIViewController {
         plazaFirstPageInFlight = false
         plazaFirstDone = true
         lastFeedLoadAt = Date()
+        updateFeedCacheStatusBanner()
         BearyTimelinePrefetch.maybePrefetch()
         // 行数变了（新行＋失败行）：不走插行批更新，直接整表重刷，防行数对不上。
         tableView.reloadData()
@@ -1921,6 +1975,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.tableView.reloadData()
                     strongSelf.updateOverlayState()
                     strongSelf.rebuildCarouselItems()
+                    strongSelf.updateFeedCacheStatusBanner()
                     strongSelf.silentRefreshFirstPage()
                     return
                 }
@@ -1994,6 +2049,7 @@ class BearyFeedViewController: UIViewController {
                 strongSelf.tableView.reloadData()
                 strongSelf.updateOverlayState()
                 strongSelf.rebuildCarouselItems()
+                strongSelf.updateFeedCacheStatusBanner()
                 strongSelf.silentRefreshFirstPage()
                 return
             }
@@ -2255,6 +2311,7 @@ class BearyFeedViewController: UIViewController {
             if generation != strongSelf.revalidateGeneration { return }
             guard let newPlaza = freshPlaza else { return }
             strongSelf.lastFeedLoadAt = Date()
+            strongSelf.updateFeedCacheStatusBanner()
             let oldPlazaHead = strongSelf.plazaEntries().first?.id
             let headChanged = (newPlaza.first?.id != nil && newPlaza.first?.id != oldPlazaHead)
             // 读到深处（相对位移 >600，即 y + contentInset.top，与滚动藏栏同口径）且头条变了：先挂 pill，点了才换（网页 showNewPill 同口径）；
@@ -2750,11 +2807,65 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// 已有内容刷新失败条显隐（私信会话列表同款）：只换表顶约束，不碰
-    /// contentOffset、不清列表，滚动位置不动。
+    /// contentOffset、不清列表，滚动位置不动。表顶约束换算统一走
+    /// updateFeedBannerLayout（与 P0-2 缓存状态条共用一套表顶口径）。
     private func setRefreshFailedBannerVisible(_ visible: Bool) {
         refreshFailedBanner.isHidden = !visible
-        tableViewTopToViewTopConstraint?.isActive = !visible
-        tableViewTopToBannerConstraint?.isActive = visible
+        updateFeedBannerLayout()
+    }
+
+    /// P0-2：两条横幅的表顶约束只由这里统一换算（按各自 isHidden 的当前值）：
+    /// 状态条显时失败条顶改挂状态条底；表顶挂最下方可见条的底，两条都藏时挂页顶。
+    /// 不碰 contentOffset、不清列表，滚动位置不动（刷新失败条同口径）。
+    private func updateFeedBannerLayout() {
+        let statusVisible = !feedCacheStatusBanner.isHidden
+        let failedVisible = !refreshFailedBanner.isHidden
+        refreshFailedBannerTopConstraint?.isActive = !statusVisible
+        refreshFailedBannerTopToStatusConstraint?.isActive = statusVisible
+        tableViewTopToViewTopConstraint?.isActive = !statusVisible && !failedVisible
+        tableViewTopToBannerConstraint?.isActive = failedVisible
+        tableViewTopToStatusBannerConstraint?.isActive = statusVisible && !failedVisible
+    }
+
+    /// P0-2：按当前段 lastFeedLoadAt（快照 load 时即 savedAt，网络首拉／since 成功后即 now）
+    /// 与网络状态重算缓存状态横幅：离线常驻“当前离线，显示缓存”；在线且缓存超 6h
+    /// 标“显示的是上次数据·X 前更新”（X 走 BearyVisibilityText.publishedRelativeString，
+    /// 7 天内相对、7 天外绝对）；其余情况收起。无内容时不标（空态／失败行自有文案）。
+    private func updateFeedCacheStatusBanner() {
+        if plazaRaw.isEmpty {
+            feedCacheStatusBanner.isHidden = true
+            updateFeedBannerLayout()
+            return
+        }
+        if !isFeedNetworkSatisfied {
+            feedCacheStatusLabel.text = NSLocalizedString("feed.cache.offline", comment: "")
+            feedCacheStatusBanner.isHidden = false
+        } else if let last = lastFeedLoadAt,
+                  Date().timeIntervalSince(last) > Self.feedCacheStaleThreshold,
+                  let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: Int(last.timeIntervalSince1970 * 1000)) {
+            feedCacheStatusLabel.text = String(format: NSLocalizedString("feed.cache.stale", comment: ""), relative)
+            feedCacheStatusBanner.isHidden = false
+        } else {
+            feedCacheStatusBanner.isHidden = true
+        }
+        updateFeedBannerLayout()
+    }
+
+    /// P0-2：弱网监听（私信聊天页同款口径）：首报前默认有网；断网即显离线横幅，
+    /// 恢复后按缓存年龄重算（过期仍标过期条、新鲜即收起），不自动重拉（重拉走
+    /// 下拉／60 秒门控／切段既有入口）。
+    private func ensureFeedNetworkMonitor() {
+        guard feedNetworkMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isFeedNetworkSatisfied = path.status == .satisfied
+                self.updateFeedCacheStatusBanner()
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.beary.feed.network"))
+        feedNetworkMonitor = monitor
     }
 
     @objc private func refreshFailedRetryTapped() {
