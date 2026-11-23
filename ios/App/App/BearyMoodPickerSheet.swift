@@ -1,9 +1,14 @@
 import UIKit
 
-// ===== 编辑器自定义图片选择器：底部弹窗（2026-11-18：心情组已删）=====
+// ===== 编辑器表情选择器：底部弹窗（2026-11-18：心情组已删；展示审计 G5-03/G5-04：
+// 内置组回来了）=====
 // 原为编辑器心情选择器（默认 32 只＋节日组＋“自定义”组）；2026-11-18 Li 定
 // 日记无心情选择功能、心情改为正文键入 [mood:xxx]，心情组随之删除，本 sheet
 // 只剩“自定义”组（个人自定义心情图库，最新在前，上限 100，首格是 ＋ 添加格）。
+// 展示审计 G5-03/G5-04：工具栏“自定义”钮改名“表情”，本 sheet 接回内置组
+// （回应选择器同款 32 只熊脸，点选即按 [mood:xxx] 插进正文）＋“自定义”组，
+// 两组用顶栏分段切换，默认内置组。点选即插入（不收起，方便连着插多个）；
+// 删插进正文的图走键盘删除键。
 // 走共享底部弹窗容器 BearyBottomSheet（弹簧 0.38s 上升、背后缩 0.92、遮罩 0.45、
 // 下拖超 80pt 或速度 >600pt/s 关闭、否则 0.26s/damping 0.7 弹回；减动效瞬时）。
 // 高度上限 50% 容器高（2026-11-18 Li 定：半屏，弹出时正文仍可见；规范 §6 通用上限
@@ -13,13 +18,14 @@ import UIKit
 
 enum BearyMoodPickerSheet {
 
-    /// 从 presenter 弹出自定义图片底 sheet；返回 sheet 实例（调用方弱持有）。
+    /// 从 presenter 弹出表情底 sheet；返回 sheet 实例（调用方弱持有）。
     /// gifKeys：个人自定义心情图库键（最新在前）；
+    /// onSelectMood：点“小熊”组里的内置表情时调（传 key，调用方按 [mood:key] 插正文）；
     /// onSelectGIF：点“自定义”组里的图时调（传完整 key）；onUploadGIF：点“自定义”
     /// 组首格 ＋ 添加格时调。
     @discardableResult
-    static func show(from presenter: UIViewController, gifKeys: [String] = [], onSelectGIF: ((String) -> Void)? = nil, onUploadGIF: (() -> Void)? = nil) -> BearyMoodPickerSheetViewController {
-        let sheet = BearyMoodPickerSheetViewController(gifKeys: gifKeys, onSelectGIF: onSelectGIF, onUploadGIF: onUploadGIF)
+    static func show(from presenter: UIViewController, gifKeys: [String] = [], onSelectMood: ((String) -> Void)? = nil, onSelectGIF: ((String) -> Void)? = nil, onUploadGIF: (() -> Void)? = nil) -> BearyMoodPickerSheetViewController {
+        let sheet = BearyMoodPickerSheetViewController(gifKeys: gifKeys, onSelectMood: onSelectMood, onSelectGIF: onSelectGIF, onUploadGIF: onUploadGIF)
         let delegate = BearyBottomSheetTransitioningDelegate()
         sheet.sheetDelegate = delegate
         sheet.transitioningDelegate = delegate
@@ -41,13 +47,16 @@ enum BearyMoodPickerSheet {
 
 final class BearyMoodPickerSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, BearyBottomSheetVoiceOver {
 
-    /// 表情组：只剩“自定义”组（个人自定义心情图库，打开时从服务端刷新，见 refreshLibrary）。
+    /// 表情组：展示审计 G5-04——“小熊”组（回应选择器同款 32 只熊脸，
+    /// BearyEmoteKeys.bearFaces 保序）＋“自定义”组（个人自定义心情图库，
+    /// 打开时从服务端刷新，见 refreshLibrary）。
     private struct MoodGroup {
         let id: String
         let title: String
         let keys: [String]
     }
 
+    private let onSelectMood: ((String) -> Void)?
     private let onSelectGIF: ((String) -> Void)?
     private let onUploadGIF: (() -> Void)?
     private var groups: [MoodGroup]
@@ -63,6 +72,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
     private let grabberView = UIView()
     private let titleLabel = UILabel()
+    private let groupSegmentedControl = BearyHit44SegmentedControl(items: ["小熊", "自定义"])
     private var emoteCollectionView: UICollectionView?
     private var collectionHeightConstraint: NSLayoutConstraint?
     private var lastLayoutWidth: CGFloat = 0
@@ -71,10 +81,12 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     /// BearyBottomSheetVoiceOver：出现时首焦点落标题。
     var bottomSheetInitialAccessibilityElement: AnyObject? { titleLabel }
 
-    init(gifKeys: [String], onSelectGIF: ((String) -> Void)? = nil, onUploadGIF: (() -> Void)? = nil) {
+    init(gifKeys: [String], onSelectMood: ((String) -> Void)? = nil, onSelectGIF: ((String) -> Void)? = nil, onUploadGIF: (() -> Void)? = nil) {
+        self.onSelectMood = onSelectMood
         self.onSelectGIF = onSelectGIF
         self.onUploadGIF = onUploadGIF
         self.groups = [
+            MoodGroup(id: "bear", title: "小熊", keys: BearyEmoteKeys.bearFaces),
             MoodGroup(id: "mygif", title: "自定义", keys: gifKeys),
         ]
         super.init(nibName: nil, bundle: nil)
@@ -90,18 +102,18 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
     private var selectedGroup: MoodGroup { groups[selectedGroupIndex] }
 
-    /// 网格行高（与回应 Sheet 同口径：46 槽位＋4 间隙＋8 底边距；“自定义”组
-    /// cell 无名签，名称行高为 0，行高恒 72）。
+    /// 网格行高（与回应 Sheet 同口径：46 槽位＋4 间隙＋名签行；“自定义”组
+    /// cell 无名签，名称行高为 0；“小熊”组名签 11pt 一行，行高恒 72）。
     private func cellHeight(forWidth width: CGFloat) -> CGFloat {
         _ = width
         return 72
     }
 
     /// 网格内容总高（sectionInset 上 4＋行高＋行距＋下 20）；“自定义”组首格
-    /// 是 ＋ 添加格，网格永不为空（keys 为空也有一行一格）。
+    /// 是 ＋ 添加格，网格永不为空（keys 为空也有一行一格）；“小熊”组无添加格。
     private func gridContentHeight(forWidth width: CGFloat) -> CGFloat {
-        // “自定义”组格数 = 库图数＋1（首格 ＋ 添加格）。
-        let itemCount = selectedGroup.keys.count + 1
+        // 格数：小熊组 = 内置数；自定义组 = 库图数＋1（首格 ＋ 添加格）。
+        let itemCount = selectedGroup.id == "mygif" ? selectedGroup.keys.count + 1 : selectedGroup.keys.count
         let columns: CGFloat = 4
         let totalSpacing: CGFloat = 18 * 2 + 6 * (columns - 1)
         let itemWidth = max(44, (width - totalSpacing) / columns)
@@ -123,11 +135,18 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         view.addSubview(grabberView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "自定义"
+        titleLabel.text = "表情"
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         view.addSubview(titleLabel)
+
+        // 展示审计 G5-04：两组分段切换（默认小熊组）；切组只刷网格＋重算 sheet 高。
+        groupSegmentedControl.translatesAutoresizingMaskIntoConstraints = false
+        groupSegmentedControl.selectedSegmentIndex = 0
+        groupSegmentedControl.accessibilityLabel = "表情分组"
+        groupSegmentedControl.addTarget(self, action: #selector(groupSegmentChanged(_:)), for: .valueChanged)
+        view.addSubview(groupSegmentedControl)
 
         let layout = UICollectionViewFlowLayout()
         layout.minimumInteritemSpacing = 6
@@ -159,7 +178,12 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
             titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
 
-            collection.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
+            groupSegmentedControl.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            groupSegmentedControl.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
+            groupSegmentedControl.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            groupSegmentedControl.heightAnchor.constraint(equalToConstant: Self.groupSwitcherHeight),
+
+            collection.topAnchor.constraint(equalTo: groupSegmentedControl.bottomAnchor, constant: 12),
             collection.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collection.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             collectionHeight,
@@ -182,6 +206,9 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         updatePreferredContentSize()
     }
 
+    /// 分组切换条固定高（标题下 8pt 间隙、条下 12pt 间隙，见 viewDidLoad 约束）。
+    private static let groupSwitcherHeight: CGFloat = 32
+
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         // 系统字号档变化时行高需重算（cellHeight 按实际文字高度计），只刷布局，
@@ -190,10 +217,22 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             emoteCollectionView?.collectionViewLayout.invalidateLayout()
             updatePreferredContentSize()
         }
+        // 深浅切换时小熊组静态图（BearyEmoteImages.image(for:dark:)）需按新
+        // 深浅重贴，GIF 组走 URL 图不受影响；整刷一遍网格即可。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            emoteCollectionView?.reloadData()
+        }
+    }
+
+    /// 分组切换：只刷网格＋重算 sheet 高（库内容不动）。
+    @objc private func groupSegmentChanged(_ sender: UISegmentedControl) {
+        selectedGroupIndex = sender.selectedSegmentIndex
+        emoteCollectionView?.reloadData()
+        updatePreferredContentSize()
     }
 
     /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档/分组变化时跟帧补齐。
-    /// 高 = 抓手＋标题＋网格（不超 50% 容器高）＋底部留白；网格超高时内部滚动。
+    /// 高 = 抓手＋标题＋分组条＋网格（不超 50% 容器高）＋底部留白；网格超高时内部滚动。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
@@ -201,7 +240,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         let safeBottom = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
         let bottomPad = safeBottom + 16
         let titleHeight = titleLabel.intrinsicContentSize.height
-        let chrome = BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 14 + titleHeight + 12
+        let chrome = BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 14 + titleHeight + 8 + Self.groupSwitcherHeight + 12
         let gridHeight = gridContentHeight(forWidth: width)
         let collectionHeight = min(gridHeight, max(0, maxHeight - chrome - bottomPad))
         collectionHeightConstraint?.constant = collectionHeight
@@ -302,13 +341,19 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     // MARK: - 网格
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        // 首格是 ＋ 添加格，格数 = 库图数＋1。
-        return selectedGroup.keys.count + 1
+        // 小熊组无添加格，格数 = 内置数；自定义组首格是 ＋ 添加格，格数 = 库图数＋1。
+        return selectedGroup.id == "mygif" ? selectedGroup.keys.count + 1 : selectedGroup.keys.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "bearyMoodPickerCell", for: indexPath) as? BearyMoodPickerCell else {
             return UICollectionViewCell()
+        }
+        // 小熊组：整格都是内置表情，无添加格，点选走 onSelectMood。
+        if selectedGroup.id == "bear" {
+            cell.configureMood(key: selectedGroup.keys[indexPath.item])
+            cell.onDeleteGIF = nil
+            return cell
         }
         // 首格（item 0）是 ＋ 添加格；其后格子依次对应库图 keys[i-1]。
         if indexPath.item == 0 {
@@ -331,9 +376,14 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     }
 
     /// 点选即回调（插入式：不收起，方便连着插多个）。
-    /// 首格 ＋ 添加格走 onUploadGIF；其余格走 onSelectGIF（传完整 key）。
+    /// 小熊组走 onSelectMood（传 key）；自定义组首格 ＋ 添加格走 onUploadGIF，
+    /// 其余格走 onSelectGIF（传完整 key）。
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: false)
+        if selectedGroup.id == "bear" {
+            onSelectMood?(selectedGroup.keys[indexPath.item])
+            return
+        }
         if indexPath.item == 0 {
             onUploadGIF?()
             return
@@ -445,6 +495,41 @@ final class BearyMoodPickerCell: UICollectionViewCell {
         addImageView?.isHidden = true
         accessibilityLabel = nil
         configureGIF(key: key, gifIndex: gifIndex)
+    }
+
+    /// “小熊”组 cell：内置表情只显静态图（编辑器里只显首帧，与自定义组常规图
+    /// 同款；动画不走附件）；名签取 BearyText.moodNames，读屏名即表情名。
+    /// 深浅按当前 trait 取图，深浅切换时 sheet 整刷网格重贴（见 traitCollectionDidChange）。
+    func configureMood(key: String) {
+        currentKey = key
+        addImageView?.isHidden = true
+        stopGIF()
+        let name = BearyText.moodNames[key] ?? key
+        nameLabel.text = name
+        nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
+        nameLabel.adjustsFontForContentSizeCategory = true
+        nameLabel.textColor = BearyColors.gray
+        isAccessibilityElement = true
+        accessibilityLabel = name
+        accessibilityTraits = [.button]
+        accessibilityHint = "点按插入到日记"
+        accessibilityCustomActions = nil
+        if gifImageView == nil {
+            let imageView = UIImageView()
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            imageView.contentMode = .scaleAspectFit
+            imageView.clipsToBounds = true
+            emoteSlot.addSubview(imageView)
+            NSLayoutConstraint.activate([
+                imageView.topAnchor.constraint(equalTo: emoteSlot.topAnchor),
+                imageView.bottomAnchor.constraint(equalTo: emoteSlot.bottomAnchor),
+                imageView.leadingAnchor.constraint(equalTo: emoteSlot.leadingAnchor),
+                imageView.trailingAnchor.constraint(equalTo: emoteSlot.trailingAnchor),
+            ])
+            gifImageView = imageView
+        }
+        gifImageView?.isHidden = false
+        gifImageView?.image = BearyEmoteImages.image(for: key, dark: traitCollection.userInterfaceStyle == .dark)
     }
 
     /// “自定义”组 cell：名签留空；先贴首帧 JPEG 缩略图（快），GIF 播时再取
