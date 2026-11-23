@@ -4343,7 +4343,7 @@ class BearyProfileViewController: UIViewController {
         }
         let statsRowTop = UIStackView(arrangedSubviews: [
             makeStatTile(valueLabel: statsTotalValueLabel, keyText: "总篇数"),
-            makeStatTile(valueLabel: statsCharsValueLabel, keyText: "总字数"),
+            makeStatTile(valueLabel: statsCharsValueLabel, keyText: "总字符数"),
         ])
         statsRowTop.axis = .horizontal
         statsRowTop.distribution = .fillEqually
@@ -4454,7 +4454,7 @@ class BearyProfileViewController: UIViewController {
 
     /// 超大字号单列：辅助功能字号档（accessibility sizes）下 2×2 网格改单列，
     /// 每格全宽、上下排布；常规字号档恢复两行 fillEqually。信息顺序（总篇数／
-    /// 总字数／最常写时段／当前连续写作）与 12pt 格圆角一字不动——圆角在
+    /// 总字符数／最常写时段／当前连续写作）与 12pt 格圆角一字不动——圆角在
     /// makeStatTile 里定，本函数只改两行 stack 的 axis / distribution。
     /// 字号档变化时由 traitCollectionDidChange 复核（见该函数内调用）。
     private func updateStatsGridLayout() {
@@ -4904,7 +4904,7 @@ class BearyProfileViewController: UIViewController {
         var readParts: [String] = [
             "写作统计",
             "总篇数 \(stats.total) 篇",
-            "总字数 \(charsText) 字",
+            "总字符数 \(charsText)",
         ]
         if let slot = stats.bestSlotStartHour {
             readParts.append("最常写时段 \(String(format: "%02d:00–%02d:00", slot, slot + 2))")
@@ -4959,7 +4959,7 @@ class BearyProfileViewController: UIViewController {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         let charsText = formatter.string(from: NSNumber(value: stats.totalChars)) ?? "\(stats.totalChars)"
-        statsCharsValueLabel.text = "\(charsText) 字"
+        statsCharsValueLabel.text = "\(charsText)"
         if let slot = stats.bestSlotStartHour {
             statsSlotValueLabel.text = String(format: "%02d:00–%02d:00", slot, slot + 2)
         } else {
