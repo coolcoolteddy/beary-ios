@@ -3478,20 +3478,20 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 同款口径见 BlindBox pillLabel（2026-11-04）、Composer statusPill。
         pill.setContentHuggingPriority(.required, for: .horizontal)
         pill.setContentCompressionResistancePriority(.required, for: .horizontal)
-        pill.backgroundColor = friendsOnly ? BearyColors.surface2 : BearyColors.alpha(BearyColors.blue, 0.13)
+        pill.backgroundColor = friendsOnly ? BearyColors.surface2 : (ephemeralLive ? BearyColors.alpha(BearyColors.limitedPurpleText, 0.13) : BearyColors.alpha(BearyColors.blue, 0.13))
         pill.layer.cornerRadius = 11
         pill.layer.masksToBounds = true
         // 黑白灰新标准：仅好友 pill 改墨字灰底（与编辑器 chip 同口径）；
-        // 私密/限时仍沿用蓝档（可见性语义，不动）。
+        // 私密沿用蓝档；限时走紫档（2026-11-20 Li 定，与私密蓝区分）。
         let lock = UIImageView(image: BearyIconImages.image(named: friendsOnly ? "icon_friends_lock" : (isPublic ? "icon_globe" : "icon_lock"), pointSize: 12))
         lock.translatesAutoresizingMaskIntoConstraints = false
-        lock.tintColor = friendsOnly ? BearyColors.ink : BearyColors.blue
+        lock.tintColor = friendsOnly ? BearyColors.ink : (ephemeralLive ? BearyColors.limitedPurpleText : BearyColors.blue)
         lock.contentMode = .scaleAspectFit
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold))
         label.adjustsFontForContentSizeCategory = true
-        label.textColor = friendsOnly ? BearyColors.ink : BearyColors.blue
+        label.textColor = friendsOnly ? BearyColors.ink : (ephemeralLive ? BearyColors.limitedPurpleText : BearyColors.blue)
         label.text = ephemeralLive ? "限时" : (friendsOnly ? "仅好友" : (isPublic ? "公开" : "私密"))
         pill.addSubview(lock)
         pill.addSubview(label)
