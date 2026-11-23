@@ -909,15 +909,15 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             failedStateView.translatesAutoresizingMaskIntoConstraints = false
             // 两种失败态文案分开：损坏态讲清清除结果（删坏 v3 文件、只留 .bak，
             // 清除后重读回空态）；非损坏态沿用原话 +“重新读取”，确认框口径不动。
-            // 审计四轮 13：损坏态不说“无法恢复”——只是本次读不出来，原始数据已保留；
-            // 也不提 .bak（用户不认这个词），清除的不可逆后果放在确认框里讲。
+            // Li 2026-11-23 定（第三批第 39 题）：损坏态按规范底子写——说清
+            // “无法恢复”、提 .bak 备份在手机里、补“清除后回到空态”一句。
+            // （此前审计四轮 13 刻意不提这两句的口径已废止。）
             if draftsLoadCorrupt {
                 // A1：损坏态副文案同样先确认 .bak 真的存在；没有备份时
-                // 不谎称备份保留在手机里，文案如实说。措辞沿审计四轮 13：
-                // 不说“无法恢复”，也不提 .bak（用户不认这个词）。
+                // 不谎称备份保留在手机里，文案如实说。
                 let corruptSubtitle = BearyDraftStore.hasCorruptBackup()
-                    ? "这些草稿读不出来。清除后 App 内找不回，手机里的备份仍在；新草稿不受影响。"
-                    : "这些草稿读不出来。清除后无法找回；新草稿不受影响。"
+                    ? "损坏的草稿无法恢复，.bak 备份保留在手机里。清除后重新读取会回到空态，新草稿可以正常保存。"
+                    : "损坏的草稿无法恢复。清除后重新读取会回到空态，新草稿可以正常保存。"
                 failedStateView.configure(kind: .error, title: "草稿库已损坏", subtitle: corruptSubtitle, iconName: nil, actionTitle: "清除损坏的草稿数据", actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
             } else {
                 failedStateView.configure(kind: .error, title: "草稿读取失败", subtitle: "原文件已保留，请稍后再试", iconName: nil, actionTitle: "重新读取", onAction: { [weak self] in self?.retryLoadDraftsTapped() })
