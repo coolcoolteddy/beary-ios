@@ -2161,6 +2161,10 @@ class BearyTimelineViewController: UIViewController {
     /// 秒开·首屏再瘦：首屏只拉 12 条，对齐广场 firstPageLimit=12（屏上只看 5-8 条，
     /// 12 条已覆盖当日 10 篇/天上限 + 翻页余量）；后续分页仍用 pageLimit=20，不多发请求。
     private let firstPageLimit = 12
+    /// E-P1-9 灰度开关：时间线行预取（prefetchRowsAt）默认开；关掉即回到
+    /// 仅 prefetchNextScreen（滚动停稳预热下一屏）的旧行为。仓库暂无统一
+    /// 远端开关基建，先用本文件内开关，待基建落地再接。
+    static var isTimelineRowPrefetchEnabled = true
 
     /// R15 P2-8：分区快照——currentSections() 的构建结果缓存。
     /// 表格数据源（numberOfSections/rows/cellForRow、组头/高度/滑动操作/
@@ -2541,6 +2545,9 @@ class BearyTimelineViewController: UIViewController {
         tv.register(BearyTimelineCell.self, forCellReuseIdentifier: BearyTimelineCell.reuseIdentifier)
         tv.delegate = self
         tv.dataSource = self
+        // E-P1-9：离屏 300px 预加载（见 tableView(_:prefetchRowsAt:)），
+        // 与 BearyFeedViewController :678 同口径。
+        tv.prefetchDataSource = self
         // 自定义下拉头（消息页同款，见 pullView）：表内子视图，平时藏在内容上方，
         // 不再用 UIRefreshControl——标准刷新头会把 32pt 图标钉在刷新头正中心，
         // 时间线表框贴页顶 + 收起顶距只有安全区本身时，小拉动图标中心落在
@@ -6980,7 +6987,7 @@ class BearyTimelineViewController: UIViewController {
 
 // MARK: - UITableViewDataSource / UITableViewDelegate
 
-extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegate {
+extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegate, UITableViewDataSourcePrefetching {
     func numberOfSections(in tableView: UITableView) -> Int {
         return currentSections().count
     }
@@ -7037,6 +7044,34 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         let sections = currentSections()
         guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else { return 180 }
         return estimatedTimelineRowHeight(for: sections[indexPath.section].entries[indexPath.row], tableWidth: estimationTableWidth(using: tableView))
+    }
+
+    // MARK: - E-P1-9·离屏 300px 预加载（与 BearyFeedViewController :3356 同口径）
+
+    func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
+        guard BearyTimelineViewController.isTimelineRowPrefetchEnabled else { return }
+        let sections = currentSections()
+        guard sections.isEmpty == false else { return }
+        // 行图预热：只暖行顶已进入“可视底 + 300px”的行（窗口与流量口径
+        // 由 BearyLoadingUX / BearyImagePrefetcher 定，与广场一致）。
+        BearyLoadingUX.prefetchNearViewport(tableView: tableView, indexPaths: indexPaths, entryForRow: { path in
+            guard path.section < sections.count, path.row < sections[path.section].entries.count else { return nil }
+            return sections[path.section].entries[path.row]
+        }, viewerId: SessionManager.shared.currentUser?.id)
+        // 邻近页数据：预取行所在日 ±1 天的日数据（只写日缓存，不动面板
+        // 与时间线行；去重、让路与失败静默均由 prefetchAdjacentDays 定）。
+        var seenDayKeys = Set<String>()
+        for path in indexPaths {
+            guard path.section < sections.count else { continue }
+            let key = sections[path.section].dayKey
+            guard seenDayKeys.contains(key) == false else { continue }
+            seenDayKeys.insert(key)
+            prefetchAdjacentDays(for: key)
+        }
+    }
+
+    func tableView(_ tableView: UITableView, cancelPrefetchingForRowsAt indexPaths: [IndexPath]) {
+        // 预取只暖缓存、无取消语义（在途预取由 BearyImagePrefetcher 预算管理），与广场 :3366 同口径。
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
