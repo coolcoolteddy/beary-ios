@@ -34,10 +34,30 @@ struct BearySyncStateRecord: Codable {
 }
 
 enum BearySyncStateStore {
+    /// 复用 coder（B-P1-4）：JSONEncoder/Decoder 非线程安全；本 enum 静态入口的
+    /// 调用方分属主线程、com.beary.entry-sync 同步队列与单测，不 confin 单一队列，
+    /// 故共享实例以一把锁守住（锁只包住编解码调用本身，不跨 IO、不嵌套其他锁）。
+    /// 策略与原来一致：默认（不设 key 策略），状态文件落盘仍为驼峰键。
+    private static let coderLock = NSLock()
+    private static let sharedEncoder = JSONEncoder()
+    private static let sharedDecoder = JSONDecoder()
+
+    private static func encodeShared<T: Encodable>(_ value: T) -> Data? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedEncoder.encode(value)
+    }
+
+    private static func decodeShared<T: Decodable>(_ type: T.Type, from data: Data) -> T? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedDecoder.decode(type, from: data)
+    }
+
     static func save(stateURL: URL?, status: String, itemCount: Int) -> Bool {
         guard let url = stateURL else { return false }
         let state = BearySyncStateRecord(status: status, updatedAt: Date().timeIntervalSince1970, itemCount: itemCount)
-        guard let data = try? JSONEncoder().encode(state) else { return false }
+        guard let data = encodeShared(state) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
@@ -49,7 +69,7 @@ enum BearySyncStateStore {
 
     static func load(stateURL: URL?) -> BearySyncStateRecord? {
         guard let url = stateURL, let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(BearySyncStateRecord.self, from: data)
+        return decodeShared(BearySyncStateRecord.self, from: data)
     }
 }
 
@@ -58,18 +78,54 @@ enum BearySyncStateStore {
 enum BearyEntrySyncStore {
     static let directoryPrefix = "beary_entry_sync"
 
-    private static func makeEncoder() -> JSONEncoder {
+    /// 复用 coder（B-P1-4）：JSONEncoder/Decoder 非线程安全；本 enum 静态入口的
+    /// 调用方分属主线程（时间线/个人页直调 saveDay/loadDay）、com.beary.entry-sync
+    /// 同步队列（runDiaryDiskWrite）、com.beary.shared-entry-archive 归档队列
+    /// （loadAllEntries）与单测，不 confin 单一队列，故不用“每队列一个实例”，
+    /// 改用一把锁守共享实例（锁只包住编解码调用本身，不跨 IO；coderLock 恒为
+    /// 叶锁，与 revisionLock / trashFileLock 无嵌套反向，不会死锁）。
+    /// 两套策略与原来逐点一致，不改落盘格式：
+    ///   - snake：日文件 [Entry]（与 BearyAPI 解码端配对，见下）；
+    ///   - plain（默认）：完整性标记 / 修订号 / 分批进度 / 补拉待办——旧版落盘与
+    ///     单测 legacy JSON 均为驼峰键，不可经 snake coder 重写（会改写落盘格式）。
+    private static let coderLock = NSLock()
+    private static let sharedSnakeEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
         // 与 BearyAPI 解码端配对：解码用 convertFromSnakeCase，编码用 convertToSnakeCase，
         // 落盘 JSON 与服务端字段口径一致，往返不丢字段。
         encoder.keyEncodingStrategy = .convertToSnakeCase
         return encoder
-    }
-
-    private static func makeDecoder() -> JSONDecoder {
+    }()
+    private static let sharedSnakeDecoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return decoder
+    }()
+    private static let sharedPlainEncoder = JSONEncoder()
+    private static let sharedPlainDecoder = JSONDecoder()
+
+    private static func encodeSnake<T: Encodable>(_ value: T) -> Data? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedSnakeEncoder.encode(value)
+    }
+
+    private static func decodeSnake<T: Decodable>(_ type: T.Type, from data: Data) -> T? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedSnakeDecoder.decode(type, from: data)
+    }
+
+    private static func encodePlain<T: Encodable>(_ value: T) -> Data? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedPlainEncoder.encode(value)
+    }
+
+    private static func decodePlain<T: Decodable>(_ type: T.Type, from data: Data) -> T? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedPlainDecoder.decode(type, from: data)
     }
 
     static func accountDir(accountId: Int) -> URL? {
@@ -125,7 +181,7 @@ enum BearyEntrySyncStore {
         guard let dir = directory else { return nil }
         let url = dir.appendingPathComponent("\(dayKey).json")
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? makeDecoder().decode([Entry].self, from: data)
+        return decodeSnake([Entry].self, from: data)
     }
 
     /// 读某日落盘：命中返回数组（含空数组文件），缺失/损坏返回 nil（调用方走网络）。
@@ -278,7 +334,7 @@ enum BearyEntrySyncStore {
     /// 标记只在发布成功后由 commitFullSync / finishDiaryRun 统一写）。
     private static func saveDayToDirectory(dayKey: String, entries: [Entry], directory: URL?) -> Bool {
         guard let dir = directory else { return false }
-        guard let data = try? makeEncoder().encode(entries) else { return false }
+        guard let data = encodeSnake(entries) else { return false }
         let url = dir.appendingPathComponent("\(dayKey).json")
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -369,7 +425,7 @@ enum BearyEntrySyncStore {
     static func loadCompletion(accountId: Int) -> EntrySyncCompletion? {
         guard let url = completionMarkerURL(accountId: accountId),
               let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(EntrySyncCompletion.self, from: data)
+        return decodePlain(EntrySyncCompletion.self, from: data)
     }
 
     /// 存档是否可确认为完整：标记存在且账号相符（篇数核对在 loadAllEntries 里做）。
@@ -390,7 +446,7 @@ enum BearyEntrySyncStore {
             entryCount: entryCount,
             syncedAtMs: Int(Date().timeIntervalSince1970 * 1000)
         )
-        guard let data = try? JSONEncoder().encode(marker) else { return false }
+        guard let data = encodePlain(marker) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
@@ -414,7 +470,7 @@ enum BearyEntrySyncStore {
         marker.entryCount = max(0, marker.entryCount + delta)
         marker.syncedAtMs = Int(Date().timeIntervalSince1970 * 1000)
         guard let url = completionMarkerURL(accountId: accountId),
-              let data = try? JSONEncoder().encode(marker) else { return }
+              let data = encodePlain(marker) else { return }
         try? data.write(to: url, options: .atomic)
     }
 
@@ -447,7 +503,7 @@ enum BearyEntrySyncStore {
     static func archiveRevision(accountId: Int) -> Int {
         guard let url = revisionMarkerURL(accountId: accountId),
               let data = try? Data(contentsOf: url),
-              let record = try? JSONDecoder().decode(ArchiveRevision.self, from: data) else { return 0 }
+              let record = decodePlain(ArchiveRevision.self, from: data) else { return 0 }
         return max(0, record.revision)
     }
 
@@ -460,7 +516,7 @@ enum BearyEntrySyncStore {
         defer { revisionLock.unlock() }
         let next = archiveRevision(accountId: accountId) + 1
         guard let url = revisionMarkerURL(accountId: accountId),
-              let data = try? JSONEncoder().encode(ArchiveRevision(revision: next)) else { return }
+              let data = encodePlain(ArchiveRevision(revision: next)) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
     }
@@ -691,7 +747,7 @@ enum BearyEntrySyncStore {
     static func loadDiaryProgress(accountId: Int) -> DiarySyncProgress? {
         guard let url = diaryProgressURL(accountId: accountId),
               let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(DiarySyncProgress.self, from: data)
+        return decodePlain(DiarySyncProgress.self, from: data)
     }
 
     /// 存日记分批进度（写失败返回 false；编排层只记日志、不因此失败同步——
@@ -699,7 +755,7 @@ enum BearyEntrySyncStore {
     @discardableResult
     static func saveDiaryProgress(accountId: Int, progress: DiarySyncProgress) -> Bool {
         guard let url = diaryProgressURL(accountId: accountId),
-              let data = try? JSONEncoder().encode(progress) else { return false }
+              let data = encodePlain(progress) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
@@ -743,7 +799,7 @@ enum BearyEntrySyncStore {
     static func loadPendingPublishRefetch(accountId: Int) -> [PendingPublishRefetch] {
         guard let url = publishRefetchURL(accountId: accountId),
               let data = try? Data(contentsOf: url),
-              let items = try? JSONDecoder().decode([PendingPublishRefetch].self, from: data) else { return [] }
+              let items = decodePlain([PendingPublishRefetch].self, from: data) else { return [] }
         return items
     }
 
@@ -751,7 +807,7 @@ enum BearyEntrySyncStore {
     @discardableResult
     static func savePendingPublishRefetch(accountId: Int, items: [PendingPublishRefetch]) -> Bool {
         guard let url = publishRefetchURL(accountId: accountId),
-              let data = try? JSONEncoder().encode(items) else { return false }
+              let data = encodePlain(items) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
@@ -838,16 +894,49 @@ enum BearyEntrySyncStore {
 enum BearyTrashSyncStore {
     static let directoryPrefix = "beary_trash_sync"
 
-    private static func makeEncoder() -> JSONEncoder {
+    /// 复用 coder（B-P1-4）：与 BearyEntrySyncStore 同款——调用方分属
+    /// com.beary.entry-sync 同步队列（runTrashDiskWrite / runDiskWrite / 同步提交）
+    /// 与单测，不 confin 单一队列，故共享实例以一把锁守住（锁只包住编解码调用
+    /// 本身，不跨 IO；coderLock 恒为叶锁，在 trashFileLock 内调用时锁序固定
+    /// trashFileLock → coderLock，无反向嵌套，不会死锁）。
+    /// 两套策略与原来逐点一致，不改落盘格式：snake 走 trash.json [TrashItem]，
+    /// plain（默认）走回收站分批进度（旧版落盘为驼峰键）。
+    private static let coderLock = NSLock()
+    private static let sharedSnakeEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         return encoder
-    }
-
-    private static func makeDecoder() -> JSONDecoder {
+    }()
+    private static let sharedSnakeDecoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return decoder
+    }()
+    private static let sharedPlainEncoder = JSONEncoder()
+    private static let sharedPlainDecoder = JSONDecoder()
+
+    private static func encodeSnake<T: Encodable>(_ value: T) -> Data? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedSnakeEncoder.encode(value)
+    }
+
+    private static func decodeSnake<T: Decodable>(_ type: T.Type, from data: Data) -> T? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedSnakeDecoder.decode(type, from: data)
+    }
+
+    private static func encodePlain<T: Encodable>(_ value: T) -> Data? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedPlainEncoder.encode(value)
+    }
+
+    private static func decodePlain<T: Decodable>(_ type: T.Type, from data: Data) -> T? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedPlainDecoder.decode(type, from: data)
     }
 
     static func accountDir(accountId: Int) -> URL? {
@@ -874,7 +963,7 @@ enum BearyTrashSyncStore {
 
     private static func loadAllFile(url: URL?) -> [TrashItem]? {
         guard let url = url, let data = try? Data(contentsOf: url) else { return nil }
-        return try? makeDecoder().decode([TrashItem].self, from: data)
+        return decodeSnake([TrashItem].self, from: data)
     }
 
     /// 读整桶：命中返回数组（含空数组），缺失/损坏返回 nil（调用方走网络）。
@@ -949,7 +1038,7 @@ enum BearyTrashSyncStore {
     private static func writeTrashFile(accountId: Int, items: [TrashItem], noteWrite: Bool) -> Bool {
         if noteWrite { noteTrashWrite() }
         guard let url = fileURL(accountId: accountId),
-              let data = try? makeEncoder().encode(items) else { return false }
+              let data = encodeSnake(items) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
@@ -969,7 +1058,7 @@ enum BearyTrashSyncStore {
     /// 中间写仍走直接写盘；提交/进桶/清桶走这里（与原来 saveAll 同款）。
     private static func publishTrashFileAtomically(accountId: Int, items: [TrashItem]) -> Bool {
         guard let url = fileURL(accountId: accountId),
-              let data = try? makeEncoder().encode(items) else { return false }
+              let data = encodeSnake(items) else { return false }
         let dir = url.deletingLastPathComponent()
         let tmpURL = dir.appendingPathComponent("trash.json.tmp.\(UUID().uuidString)")
         do {
@@ -981,7 +1070,7 @@ enum BearyTrashSyncStore {
         }
         // 写盘校验：回读 tmp 解码成功才发布。
         guard let checkData = try? Data(contentsOf: tmpURL),
-              (try? makeDecoder().decode([TrashItem].self, from: checkData)) != nil else {
+              (decodeSnake([TrashItem].self, from: checkData)) != nil else {
             try? FileManager.default.removeItem(at: tmpURL)
             return false
         }
@@ -1090,14 +1179,14 @@ enum BearyTrashSyncStore {
     static func loadTrashProgress(accountId: Int) -> TrashSyncProgress? {
         guard let url = trashProgressURL(accountId: accountId),
               let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(TrashSyncProgress.self, from: data)
+        return decodePlain(TrashSyncProgress.self, from: data)
     }
 
     /// 存回收站分批进度（写失败返回 false；编排层只记日志、不因此失败同步）。
     @discardableResult
     static func saveTrashProgress(accountId: Int, progress: TrashSyncProgress) -> Bool {
         guard let url = trashProgressURL(accountId: accountId),
-              let data = try? JSONEncoder().encode(progress) else { return false }
+              let data = encodePlain(progress) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
