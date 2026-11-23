@@ -89,6 +89,9 @@ final class BearyMessagesViewController: UIViewController {
 
     private let titleLabel = UILabel()
     private var topBarTopConstraint: NSLayoutConstraint?
+    /// 合并页「全部已读」钮（展示审计 G6-H2）：低调文字钮，仅通知未读 > 0 时显；
+    /// 独立通知页入口不存在（合并页内无去往独立通知页的入口），故只做批量已读。
+    private let markAllReadButton = BearyHit44Button(type: .system)
     /// 轻量刷新过期横条：通知未读数过期时显（文案＋“重试”），
     /// 失败不弹 toast，只在这里解释；成功后随通知自动收起。
     private let staleBanner = UIView()
@@ -138,6 +141,21 @@ final class BearyMessagesViewController: UIViewController {
         userListButton.addTarget(self, action: #selector(userListTapped), for: .touchUpInside)
         userListButton.bearyAddPressFeedback()
         topBar.addSubview(userListButton)
+        // 合并页「全部已读」（G6-H2）：独立通知页同款 14 semibold 灰字＋对勾，
+        // 贴好友钮左侧；未读为 0 时隐藏（显隐由 updateMergedRows 随快照重算）。
+        markAllReadButton.translatesAutoresizingMaskIntoConstraints = false
+        markAllReadButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
+        markAllReadButton.setTitle("全部已读", for: .normal)
+        markAllReadButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        markAllReadButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        markAllReadButton.setTitleColor(BearyColors.gray, for: .normal)
+        markAllReadButton.tintColor = BearyColors.gray
+        markAllReadButton.contentEdgeInsets = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
+        markAllReadButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
+        markAllReadButton.addTarget(self, action: #selector(markAllReadTapped), for: .touchUpInside)
+        markAllReadButton.bearyAddPressFeedback()
+        markAllReadButton.isHidden = true
+        topBar.addSubview(markAllReadButton)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.backgroundColor = BearyColors.bg
@@ -203,6 +221,9 @@ final class BearyMessagesViewController: UIViewController {
             userListButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             userListButton.widthAnchor.constraint(equalToConstant: 44),
             userListButton.heightAnchor.constraint(equalToConstant: 44),
+            // 「全部已读」贴好友钮左侧 12pt、与顶栏同中线（G6-H2）。
+            markAllReadButton.trailingAnchor.constraint(equalTo: userListButton.leadingAnchor, constant: -12),
+            markAllReadButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             tableView.topAnchor.constraint(equalTo: staleBanner.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -609,7 +630,15 @@ final class BearyMessagesViewController: UIViewController {
         } else {
             applyMergedRows(newRows)
         }
+        // 展示审计 G6-H2：通知未读 > 0 才显「全部已读」；已读后快照变化
+        // 即重算，未读清零时按钮随之收起。
+        markAllReadButton.isHidden = notifChild.notificationUnreadTotal <= 0
         onMessagesUnreadChanged?()
+    }
+
+    /// 合并页「全部已读」点按：走通知子页同名入口（乐观更新＋服务端批量已读）。
+    @objc private func markAllReadTapped() {
+        notifChild.markAllReadFromMergedList()
     }
 
     private func applyMergedRows(_ newRows: [MergedRow]) {

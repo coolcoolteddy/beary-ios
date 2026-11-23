@@ -132,6 +132,17 @@ final class BearyNotificationsViewController: UIViewController {
         return unreadCountStale
     }
 
+    /// 合并消息页「全部已读」钮的显隐依据：通知未读总数（G6-H2）。
+    var notificationUnreadTotal: Int {
+        return unreadTotal
+    }
+
+    /// 合并消息页「全部已读」入口：与本页 readAllTapped 同行为（乐观更新＋
+    /// 服务端批量已读），仅合并页调；本页自己的全部已读钮仍走 readAllTapped。
+    func markAllReadFromMergedList() {
+        readAllTapped()
+    }
+
     private let pageLimit = 30
     private let maxRefreshLimit = 200
 
