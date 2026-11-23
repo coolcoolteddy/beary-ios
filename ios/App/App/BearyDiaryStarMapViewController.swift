@@ -281,6 +281,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
             }
         }
         buildLayout()
+        // 2.5D 第 5 支：画布拖动优先于页面滚动——从画布上起拖即平移画布
+        //（带视差与倾斜）；页面改从画布外区域拖动滚动；点按不受影响。
+        if let canvasPan = skyView.canvasPanGesture {
+            scrollView.panGestureRecognizer.require(toFail: canvasPan)
+        }
         // push 路悬浮返回钮：push 进他人主页 modal 导航栈那路，该栈隐藏
         // 了系统导航栏，既无系统返回钮、也无自定义顶栏，只有边缘手势；
         // 补一个左上角悬浮左箭头钮（夜空深底，图标用夜空主文字浅色，不加
@@ -1992,7 +1997,7 @@ struct StarMapSkyEdge {
     let reasons: [StarMapEdgeReason]
 }
 
-private final class StarMapSkyView: UIView {
+private final class StarMapSkyView: UIView, UIGestureRecognizerDelegate {
 
     // r17-m1：draw(_:) 一遍画完无法做光点动效，拆成独立图层——
     // 星尘一层、每条边一层、每颗星一组（光晕／闪亮／星核／选中圈／日期），
@@ -2131,6 +2136,237 @@ private final class StarMapSkyView: UIView {
     private var flightGeneration = 0
     private static let flightLegDuration: CFTimeInterval = BearyMotion.normal
 
+    // MARK: - 2.5D 透视（第 5 支）：预览 project() 的 Swift 移植
+
+    /// 2.5D 视图态：平移（世界坐标 pt）、推近拉远倍率、绕 X/Y 轴倾斜角
+    ///（弧度）。初值全 0/1；静止态下透视系数本身仍按深度分层（见 project）。
+    private var panX: CGFloat = 0
+    private var panY: CGFloat = 0
+    private var dolly: CGFloat = 1
+    private var tiltX: CGFloat = 0
+    private var tiltY: CGFloat = 0
+    /// 节点深度表（setStars 时随 pointsById 一起建）：id → 深度，
+    /// 查不到走中面 0.5（星尘／占位星）。
+    private var depthById: [String: CGFloat] = [:]
+    /// 画布拖动手势（VC 侧以它挂 require(toFail:)，让画布拖动优先于页面滚动）。
+    var canvasPanGesture: UIPanGestureRecognizer?
+    private var canvasPinchGesture: UIPinchGestureRecognizer?
+    /// 松手惯性（预览 loop() 的 inertia 原样移植）：平移速度 pt/帧、
+    /// 倾斜角速度 rad/帧；displayLink 每帧推进，全部静止后停 link。
+    private var motionDisplayLink: CADisplayLink?
+    private var motionVelocity: (panX: CGFloat, panY: CGFloat, tiltX: CGFloat, tiltY: CGFloat) = (0, 0, 0, 0)
+    private var dragVelocity: (panX: CGFloat, panY: CGFloat, tiltX: CGFloat, tiltY: CGFloat) = (0, 0, 0, 0)
+    private var dragMoved = false
+    private var lastPanTranslation = CGPoint.zero
+    private var lastPinchScale: CGFloat = 1
+    private var lastPinchMid = CGPoint.zero
+
+    /// 预览常量原样移植：FOCAL 700、深度中面 0.5、深度跨度 300pt；
+    /// 倾斜钳制 ±0.34 rad、每 pt 拖动 0.0015 rad；推近拉远 0.5–2.6。
+    private static let perspectiveFocal: CGFloat = 700
+    private static let perspectiveDepthMid: CGFloat = 0.5
+    private static let perspectiveDepthSpan: CGFloat = 300
+    private static let tiltMax: CGFloat = 0.34
+    private static let tiltPerPoint: CGFloat = 0.0015
+    private static let dollyMin: CGFloat = 0.5
+    private static let dollyMax: CGFloat = 2.6
+    /// 三层深度（预览同值）：锚点最近 1、标签居中 0.55、普通日记最远 0.25；
+    /// 中面 0.5 供星尘／占位星与查不到深度的端点用。
+    private static let anchorDepth: CGFloat = 1
+    private static let tagDepth: CGFloat = 0.55
+    private static let diaryDepth: CGFloat = 0.25
+    private static let midDepth: CGFloat = 0.5
+
+    /// 2.5D 投影（预览 project() 逐行移植）：节点深度 → 世界 z（相对中面
+    /// 0.5 × 300pt × 深度增强 0.8+0.3×dolly）；先绕 Y 轴、再绕 X 轴倾斜，
+    /// 最后透视除法。近大远小；平移量也乘透视系数，前景层移动幅度天然
+    /// 大于背景层（视差）。静止态（无倾斜、dolly 1）透视系数：锚点约 1.31、
+    /// 日记约 0.90（预览实测同值）。返回屏幕点、综合倍率（节点半径用）、
+    /// 透视系数。无倾斜／无平移／dolly 1 且深度为中面时与旧平面换算逐点一致。
+    private func project(normalized: (x: Double, y: Double), depth: CGFloat, in bounds: CGRect) -> (point: CGPoint, scale: CGFloat, persp: CGFloat) {
+        let pad: CGFloat = 28
+        let worldX = (CGFloat(normalized.x) - 0.5) * max(0, bounds.width - pad * 2)
+        let worldY = (CGFloat(normalized.y) - 0.5) * max(0, bounds.height - pad * 2)
+        let depthBoost = 0.8 + 0.3 * dolly
+        let z = (depth - Self.perspectiveDepthMid) * Self.perspectiveDepthSpan * depthBoost
+        let cy = cos(tiltY)
+        let sy = sin(tiltY)
+        let cx = cos(tiltX)
+        let sx = sin(tiltX)
+        let x1 = worldX * cy + z * sy
+        let z1 = -worldX * sy + z * cy
+        let y2 = worldY * cx - z1 * sx
+        let z2 = worldY * sx + z1 * cx
+        let persp = Self.perspectiveFocal / (Self.perspectiveFocal - z2)
+        let scale = dolly * persp
+        let point = CGPoint(
+            x: bounds.midX + (x1 + panX) * scale,
+            y: bounds.midY + (y2 + panY) * scale
+        )
+        return (point, scale, persp)
+    }
+
+    /// 日记星深度：锚点 1、普通日记 0.25。
+    private func depth(forStarKind kind: StarMapNodeKind) -> CGFloat {
+        if kind == .anchor {
+            return Self.anchorDepth
+        }
+        return Self.diaryDepth
+    }
+
+    /// 端点投影（边／光点／点按／读屏共用）：按 id 查深度（星／标签节点），
+    /// 查不到走中面 0.5。
+    private func projectedPoint(for normalized: (x: Double, y: Double), id: String, in bounds: CGRect) -> CGPoint {
+        let depth = depthById[id] ?? Self.midDepth
+        return project(normalized: normalized, depth: depth, in: bounds).point
+    }
+
+    /// 拖动平移带视差＋倾斜（预览 pointermove 原样移植）：平移量除以当前
+    /// 倍率（世界坐标）；倾斜每 pt 0.0015 rad、钳制 ±0.34；速度平滑
+    /// 0.55/0.45 供松手惯性用。减动效：只平移，不倾斜、不惯性。
+    @objc private func didPan(_ gesture: UIPanGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            stopMotion()
+            endTravellingDot()
+            dragMoved = false
+            dragVelocity = (0, 0, 0, 0)
+            lastPanTranslation = .zero
+            gesture.setTranslation(.zero, in: self)
+        case .changed:
+            let translation = gesture.translation(in: self)
+            let dx = translation.x - lastPanTranslation.x
+            let dy = translation.y - lastPanTranslation.y
+            lastPanTranslation = translation
+            if hypot(translation.x, translation.y) > 7 {
+                dragMoved = true
+            }
+            guard dragMoved else { return }
+            let scale = max(0.01, dolly)
+            let worldX = dx / scale
+            let worldY = dy / scale
+            panX += worldX
+            panY += worldY
+            var tiltDeltaX: CGFloat = 0
+            var tiltDeltaY: CGFloat = 0
+            if BearyMotion.animated(true) {
+                tiltDeltaX = -dy * Self.tiltPerPoint
+                tiltDeltaY = dx * Self.tiltPerPoint
+                tiltX = max(-Self.tiltMax, min(Self.tiltMax, tiltX + tiltDeltaX))
+                tiltY = max(-Self.tiltMax, min(Self.tiltMax, tiltY + tiltDeltaY))
+            }
+            dragVelocity.panX = dragVelocity.panX * 0.55 + worldX * 0.45
+            dragVelocity.panY = dragVelocity.panY * 0.55 + worldY * 0.45
+            dragVelocity.tiltX = dragVelocity.tiltX * 0.55 + tiltDeltaX * 0.45
+            dragVelocity.tiltY = dragVelocity.tiltY * 0.55 + tiltDeltaY * 0.45
+            rebuildLayers()
+            syncAccessibilityElements()
+        case .ended, .cancelled:
+            if BearyMotion.animated(true), dragMoved || tiltX != 0 || tiltY != 0 {
+                motionVelocity = (
+                    panX: dragMoved ? max(-16, min(16, dragVelocity.panX)) : 0,
+                    panY: dragMoved ? max(-16, min(16, dragVelocity.panY)) : 0,
+                    tiltX: dragMoved ? dragVelocity.tiltX * 0.7 : 0,
+                    tiltY: dragMoved ? dragVelocity.tiltY * 0.7 : 0
+                )
+                startMotion()
+            }
+            dragMoved = false
+        default:
+            break
+        }
+    }
+
+    /// 捏合推近拉远（预览 pointermove 双指分支原样移植）：倍率走 dollyAt
+    ///（保持捏合中心下的世界点不动），捏合中心移动带平移。
+    @objc private func didPinch(_ gesture: UIPinchGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            stopMotion()
+            endTravellingDot()
+            lastPinchScale = gesture.scale
+            lastPinchMid = gesture.location(in: self)
+        case .changed:
+            let factor = gesture.scale / max(0.01, lastPinchScale)
+            lastPinchScale = gesture.scale
+            let mid = gesture.location(in: self)
+            dollyAt(mid, factor: factor)
+            let scale = max(0.01, dolly)
+            panX += (mid.x - lastPinchMid.x) / scale
+            panY += (mid.y - lastPinchMid.y) / scale
+            lastPinchMid = mid
+            rebuildLayers()
+            syncAccessibilityElements()
+        case .ended, .cancelled:
+            lastPinchScale = 1
+        default:
+            break
+        }
+    }
+
+    /// 推近拉远（预览 dollyAt 原样移植）：保持捏合中心下的世界点不动
+    ///（按深度中面近似）；倍率钳制 0.5–2.6。
+    private func dollyAt(_ point: CGPoint, factor: CGFloat) {
+        let scale = max(0.01, dolly)
+        let worldX = (point.x - bounds.midX) / scale - panX
+        let worldY = (point.y - bounds.midY) / scale - panY
+        let next = max(Self.dollyMin, min(Self.dollyMax, dolly * factor))
+        let nextScale = max(0.01, next)
+        panX = (point.x - bounds.midX) / nextScale - worldX
+        panY = (point.y - bounds.midY) / nextScale - worldY
+        dolly = next
+    }
+
+    /// 松手惯性＋倾斜弹簧回正（预览 loop() 的 inertia 分支原样移植）：
+    /// 平移速度每帧 ×0.93；倾斜角速度每帧向回正加速（−tilt×0.01）再 ×0.9；
+    /// 全部静止（平移 <0.02pt/帧、倾斜与角速度 <0.0015）后倾斜归零、停 link。
+    private func startMotion() {
+        stopMotion()
+        let link = CADisplayLink(target: self, selector: #selector(motionTick))
+        link.add(to: .main, forMode: .common)
+        motionDisplayLink = link
+    }
+
+    private func stopMotion() {
+        motionDisplayLink?.invalidate()
+        motionDisplayLink = nil
+        motionVelocity = (0, 0, 0, 0)
+    }
+
+    @objc private func motionTick() {
+        panX += motionVelocity.panX
+        panY += motionVelocity.panY
+        motionVelocity.panX *= 0.93
+        motionVelocity.panY *= 0.93
+        motionVelocity.tiltX += -tiltX * 0.01
+        motionVelocity.tiltY += -tiltY * 0.01
+        motionVelocity.tiltX *= 0.9
+        motionVelocity.tiltY *= 0.9
+        tiltX += motionVelocity.tiltX
+        tiltY += motionVelocity.tiltY
+        if abs(motionVelocity.panX) < 0.02, abs(motionVelocity.panY) < 0.02,
+           abs(tiltX) < 0.0015, abs(tiltY) < 0.0015,
+           abs(motionVelocity.tiltX) < 0.0015, abs(motionVelocity.tiltY) < 0.0015 {
+            tiltX = 0
+            tiltY = 0
+            stopMotion()
+        }
+        rebuildLayers()
+        syncAccessibilityElements()
+    }
+
+    /// 拖动与捏合同在画布上：两指捏合时单指拖动同时认出（捏合中心移动带平移）；
+    /// 点按不并行（点按靠 tap.require(toFail: pan) 排后）。
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === canvasPanGesture, otherGestureRecognizer === canvasPinchGesture {
+            return true
+        }
+        if gestureRecognizer === canvasPinchGesture, otherGestureRecognizer === canvasPanGesture {
+            return true
+        }
+        return false
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyStarMapNight.background
@@ -2154,6 +2390,18 @@ private final class StarMapSkyView: UIView {
         layer.addSublayer(dotLayer)
         let tap = UITapGestureRecognizer(target: self, action: #selector(didTap(_:)))
         addGestureRecognizer(tap)
+        // 2.5D 第 5 支：画布拖动（平移＋倾斜）与捏合（推近拉远）；点按
+        // 排在拖动之后（拖动失败才认点按），避免拖一半误触点按。
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(didPan(_:)))
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = self
+        addGestureRecognizer(pan)
+        canvasPanGesture = pan
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(didPinch(_:)))
+        pinch.delegate = self
+        addGestureRecognizer(pinch)
+        canvasPinchGesture = pinch
+        tap.require(toFail: pan)
         setupCollapseCapsule()
         setupStatsPill()
     }
@@ -2348,6 +2596,7 @@ private final class StarMapSkyView: UIView {
 
     deinit {
         entranceDisplayLink?.invalidate()
+        motionDisplayLink?.invalidate()
     }
 
     func setStars(_ stars: [StarMapStar], tagNodes: [StarMapTagNode] = [], edges: [StarMapSkyEdge], pointsById: [String: (x: Double, y: Double)], selectedStarId: String?, selectedEdgeId: String?, entrance: StarMapEntrance? = nil) {
@@ -2378,6 +2627,16 @@ private final class StarMapSkyView: UIView {
         }
         self.visibleNodeIds = visible
         self.pointsById = pointsById
+        // 2.5D 第 5 支：节点深度表（星按分级、标签节点 0.55），
+        // 供边／光点／点按／读屏的 projectedPoint 查深度。
+        var depths: [String: CGFloat] = [:]
+        for star in self.stars {
+            depths[star.id] = depth(forStarKind: star.kind)
+        }
+        for node in tagNodes {
+            depths[node.id] = Self.tagDepth
+        }
+        self.depthById = depths
         self.selectedStarId = selectedStarId
         self.selectedEdgeId = selectedEdgeId
         // 切范围即换模型：上一段光点立刻结束，不留旧线上的残影。
@@ -2546,8 +2805,8 @@ private final class StarMapSkyView: UIView {
         endTravellingDot()
         guard BearyMotion.animated(true) else { return }
         guard let a = pointsById[edge.firstId], let b = pointsById[edge.secondId] else { return }
-        let p1 = point(for: a, in: bounds)
-        let p2 = point(for: b, in: bounds)
+        let p1 = projectedPoint(for: a, id: edge.firstId, in: bounds)
+        let p2 = projectedPoint(for: b, id: edge.secondId, in: bounds)
         guard p1 != p2 else { return }
         flightEdgeId = edge.id
         flightFirstId = edge.firstId
@@ -2619,8 +2878,8 @@ private final class StarMapSkyView: UIView {
             endTravellingDot()
             return
         }
-        let p1 = point(for: a, in: bounds)
-        let p2 = point(for: b, in: bounds)
+        let p1 = projectedPoint(for: a, id: firstId, in: bounds)
+        let p2 = projectedPoint(for: b, id: secondId, in: bounds)
         guard p1 != p2 else {
             endTravellingDot()
             return
@@ -2695,8 +2954,9 @@ private final class StarMapSkyView: UIView {
                 element = StarMapStarAccessibilityElement(accessibilityContainer: self)
                 starAccessibilityElements[star.id] = element
             }
-            let center = point(for: (x: star.x, y: star.y), in: bounds)
-            let hit = max(24, star.radius + 10)
+            let projected = project(normalized: (x: star.x, y: star.y), depth: depth(forStarKind: star.kind), in: bounds)
+            let center = projected.point
+            let hit = max(24, star.radius * projected.scale + 10)
             let title = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let name = title.isEmpty ? "日记" : title
             let datePart = star.dateText.isEmpty ? "" : star.dateText + " "
@@ -2714,8 +2974,9 @@ private final class StarMapSkyView: UIView {
         // 标签节点（2.5D 第 2 支）：每节点一个 button，label 为“标签 #名，N 篇日记”，
         // 激活走现有标签聚合页路径（经 onTagTap 回调，与点按同一条 openTagPage）。
         for node in tagNodes {
-            let center = point(for: (x: node.x, y: node.y), in: bounds)
-            let hit = max(24, node.radius + 10)
+            let projected = project(normalized: (x: node.x, y: node.y), depth: Self.tagDepth, in: bounds)
+            let center = projected.point
+            let hit = max(24, node.radius * projected.scale + 10)
             let element = StarMapStarAccessibilityElement(accessibilityContainer: self)
             element.accessibilityLabel = "标签 #\(node.name)，\(node.count) 篇日记"
             element.accessibilityHint = "双击查看该标签的日记"
@@ -2731,8 +2992,8 @@ private final class StarMapSkyView: UIView {
         for edge in displayedEdges {
             guard let a = pointsById[edge.firstId], let b = pointsById[edge.secondId],
                   let first = entriesById[edge.firstId], let second = entriesById[edge.secondId] else { continue }
-            let p1 = point(for: a, in: bounds)
-            let p2 = point(for: b, in: bounds)
+            let p1 = projectedPoint(for: a, id: edge.firstId, in: bounds)
+            let p2 = projectedPoint(for: b, id: edge.secondId, in: bounds)
             var frame = CGRect(x: min(p1.x, p2.x), y: min(p1.y, p2.y),
                                width: abs(p2.x - p1.x), height: abs(p2.y - p1.y))
                 .insetBy(dx: -12, dy: -12)
@@ -2805,14 +3066,6 @@ private final class StarMapSkyView: UIView {
         }
     }
 
-    private func point(for normalized: (x: Double, y: Double), in bounds: CGRect) -> CGPoint {
-        let pad: CGFloat = 28
-        return CGPoint(
-            x: pad + CGFloat(normalized.x) * max(0, bounds.width - pad * 2),
-            y: pad + CGFloat(normalized.y) * max(0, bounds.height - pad * 2)
-        )
-    }
-
     // MARK: - 图层化渲染（r17-m1，替代原 draw(_:) 一遍画完）
 
     /// 按当前 bounds 重建全部图层：星尘、每条边、每颗星；不触发布局、
@@ -2828,9 +3081,13 @@ private final class StarMapSkyView: UIView {
         let dustPath = CGMutablePath()
         for i in 0..<40 {
             let h = UInt64(i) &* 2_862_933_555_777_037_127 &+ 11
-            let x = CGFloat(h % 1000) / 1000.0 * bounds.width
-            let y = CGFloat((h >> 16) % 1000) / 1000.0 * bounds.height
-            dustPath.addEllipse(in: CGRect(x: x, y: y, width: 1.5, height: 1.5))
+            // 2.5D 第 5 支：星尘走中面投影，跟随平移与倾斜（视差），
+            // 静止态与旧落点逐点一致。
+            let dustPoint = project(
+                normalized: (x: Double(h % 1000) / 1000.0, y: Double((h >> 16) % 1000) / 1000.0),
+                depth: Self.midDepth, in: bounds
+            ).point
+            dustPath.addEllipse(in: CGRect(x: dustPoint.x, y: dustPoint.y, width: 1.5, height: 1.5))
         }
         dustLayer.path = dustPath
         dustLayer.fillColor = BearyStarMapNight.dust.cgColor
@@ -2843,7 +3100,8 @@ private final class StarMapSkyView: UIView {
             let h = UInt64(i + 1000) &* 2_862_933_555_777_037_127 &+ 11
             let nx = CGFloat(h % 1000) / 1000.0
             let ny = CGFloat((h >> 16) % 1000) / 1000.0
-            let center = point(for: (x: Double(nx), y: Double(ny)), in: bounds)
+            // 2.5D 第 5 支：占位星走中面投影（同星尘）。
+            let center = project(normalized: (x: Double(nx), y: Double(ny)), depth: Self.midDepth, in: bounds).point
             let radius = 2.0 + CGFloat(h % 5) * 0.5
             placeholderPath.addEllipse(in: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
         }
@@ -2858,8 +3116,8 @@ private final class StarMapSkyView: UIView {
         for edge in displayedEdges {
             guard let a = pointsById[edge.firstId], let b = pointsById[edge.secondId] else { continue }
             seenEdgeIds.insert(edge.id)
-            let p1 = point(for: a, in: bounds)
-            let p2 = point(for: b, in: bounds)
+            let p1 = projectedPoint(for: a, id: edge.firstId, in: bounds)
+            let p2 = projectedPoint(for: b, id: edge.secondId, in: bounds)
             // r17 M2：新线在两端星可见后淡入；未到起播时刻（alpha 0）先藏起，
             // 每帧 rebuildLayers 时再按进度放出（入场收尾见本函数末尾）。
             edgeEntranceAlphas[edge.id] = entranceAlpha(forEdge: edge, now: now)
@@ -2887,11 +3145,15 @@ private final class StarMapSkyView: UIView {
         var seenStarIds = Set<String>()
         for star in stars {
             seenStarIds.insert(star.id)
-            let center = point(for: (x: star.x, y: star.y), in: bounds)
+            // 2.5D 第 5 支：星心与核半径走透视投影——近大远小（锚点约 1.31、
+            // 日记约 0.90）；光晕半径沿用第 2 支定值（锚点 28 固定、
+            // 日记 radius+7），只跟核半径走。
+            let projected = project(normalized: (x: star.x, y: star.y), depth: depth(forStarKind: star.kind), in: bounds)
+            let center = projected.point
             // r17 M2：新星入场——半径 0.6→1 + alpha 0→1；未到延后时刻
             //（alpha 0）整组图层先藏起，每帧 rebuildLayers 时再按进度放出。
             let (starAlpha, starScale) = entranceState(forStarId: star.id, now: now)
-            let radius = star.radius * starScale
+            let radius = max(star.radius * projected.scale, 1.6) * starScale
             let layers: StarLayers
             if let existing = starLayers[star.id] {
                 layers = existing
@@ -3000,8 +3262,11 @@ private final class StarMapSkyView: UIView {
         var seenTagIds = Set<String>()
         for node in tagNodes {
             seenTagIds.insert(node.id)
-            let center = point(for: (x: node.x, y: node.y), in: bounds)
-            let radius = node.radius
+            // 2.5D 第 5 支：标签节点走透视投影（深度 0.55，约 1.02），
+            // 核半径同款近大远小；名字 9px 不动。
+            let projected = project(normalized: (x: node.x, y: node.y), depth: Self.tagDepth, in: bounds)
+            let center = projected.point
+            let radius = max(node.radius * projected.scale, 1.6)
             let layers: StarMapTagNodeLayers
             if let existing = tagNodeLayers[node.id] {
                 layers = existing
@@ -3070,9 +3335,10 @@ private final class StarMapSkyView: UIView {
         // 标签节点是显式目标，不与重叠星抢点按。
         var bestTag: (distance: CGFloat, node: StarMapTagNode)?
         for node in tagNodes {
-            let center = point(for: (x: node.x, y: node.y), in: bounds)
+            let projected = project(normalized: (x: node.x, y: node.y), depth: Self.tagDepth, in: bounds)
+            let center = projected.point
             let distance = hypot(tapPoint.x - center.x, tapPoint.y - center.y)
-            if distance <= max(24, node.radius + 10), bestTag == nil || distance < bestTag!.distance {
+            if distance <= max(24, node.radius * projected.scale + 10), bestTag == nil || distance < bestTag!.distance {
                 bestTag = (distance, node)
             }
         }
@@ -3086,9 +3352,10 @@ private final class StarMapSkyView: UIView {
             // 2.5D 第 3 支：收起时藏起的日记星点不到（与视觉一致）。
             if isCollapsed && star.kind == .diary { continue }
             guard let entry = entriesById[star.id] else { continue }
-            let center = point(for: (x: star.x, y: star.y), in: bounds)
+            let projected = project(normalized: (x: star.x, y: star.y), depth: depth(forStarKind: star.kind), in: bounds)
+            let center = projected.point
             let distance = hypot(tapPoint.x - center.x, tapPoint.y - center.y)
-            if distance <= max(24, star.radius + 10) {
+            if distance <= max(24, star.radius * projected.scale + 10) {
                 starHits.append((distance, entry))
             }
         }
@@ -3105,8 +3372,8 @@ private final class StarMapSkyView: UIView {
         var best: (distance: CGFloat, edge: StarMapEdge)?
         for edge in displayedEdges {
             guard let a = pointsById[edge.firstId], let b = pointsById[edge.secondId] else { continue }
-            let p1 = point(for: a, in: bounds)
-            let p2 = point(for: b, in: bounds)
+            let p1 = projectedPoint(for: a, id: edge.firstId, in: bounds)
+            let p2 = projectedPoint(for: b, id: edge.secondId, in: bounds)
             let distance = distanceToSegment(point: tapPoint, p1: p1, p2: p2)
             if distance <= 16, best == nil || distance < best!.distance {
                 best = (distance, StarMapEdge(firstId: edge.firstId, secondId: edge.secondId, reasons: edge.reasons))
