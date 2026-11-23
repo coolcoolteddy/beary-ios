@@ -69,6 +69,9 @@ final class BearyLoginViewController: UIViewController {
     var onGuestMode: (() -> Void)?
     /// 法律文字页的 EdgeDismiss 强持有（transitioningDelegate 弱引用）。
     private var legalTextEdgeDismiss: BearyEdgeDismissController?
+    /// 左边缘右滑关闭的 EdgeDismiss 强持有（transitioningDelegate 弱引用，
+    /// 由 BearyLoginSheet.make() 接线）。
+    var edgeDismiss: BearyEdgeDismissController?
 
     private let scrollView = UIScrollView()
     private let contentView = UIView()
@@ -1044,6 +1047,15 @@ final class BearyLoginViewController: UIViewController {
         appleLoginTask?.cancel()
         appleLoginTask = nil
         onCancelled?()
+    }
+
+    /// 展示审计 G7-08：左边缘右滑关闭——与 closeTapped 同一退出流程。
+    /// 容器未接 onCancelled 时返回 false，页滑回原位、不清任务（与 × 点按后页仍在一致，
+    /// 否则倒计时会在页还在时先停掉）。
+    func handleEdgeSwipeClose() -> Bool {
+        guard onCancelled != nil else { return false }
+        closeTapped()
+        return true
     }
 
     /// 第 25 轮 21-26（项25）：邀请码出错时自动展开字段——收起态下 showMessage
