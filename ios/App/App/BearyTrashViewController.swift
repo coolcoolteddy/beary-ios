@@ -87,12 +87,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private let contentWrap = UIView()
     private let contentStack = UIStackView()
     private let headerRow = UIStackView()
-    // noteRow is a property (not a buildViews local) so renderStateViews can
-    // change the spacing after it for the empty state (see B-G14 below).
-    private let noteRow = UIStackView()
     private let titleLabel = UILabel()
     private let closeButton = BearyHit44Button(type: .custom)
-    private let noteLabel = UILabel()
     private let listStack = UIStackView()
     private let loadingView = BearyRefreshIconView()
     // 空态走 BearyStateView（与失败态 failureStateView 同为 contentStack 的 arranged subview）。
@@ -259,44 +255,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
 
-        noteLabel.font = BearyDynamicType.captionFont()
-        noteLabel.adjustsFontForContentSizeCategory = true
-        noteLabel.textColor = BearyColors.gray
-        noteLabel.numberOfLines = 0
-        noteLabel.attributedText = TrashText.lineSpaced(
-            text: "删除的日记在这里保留 30 天，到期自动彻底删除。",
-            font: BearyDynamicType.captionFont(),
-            lineHeightMultiple: 1.6,
-            color: BearyColors.gray
-        )
-        // I12：说明行前加 13px 时钟图标（beary.html 官方 beary-clock symbol，
-        // 已按 icon_* 管线渲染为 icon_clock 资产；取不到时只留文字，不自拼字形）。
-        // (noteRow is now a property; configured here as before.)
-        noteRow.axis = .horizontal
-        noteRow.spacing = 4
-        noteRow.alignment = .top
-        noteRow.isLayoutMarginsRelativeArrangement = true
-        noteRow.layoutMargins = .zero
-        if let clockImage = BearyIconImages.image(named: "icon_clock", pointSize: 13) {
-            let clockView = UIImageView(image: clockImage)
-            clockView.translatesAutoresizingMaskIntoConstraints = false
-            clockView.tintColor = BearyColors.gray
-            clockView.contentMode = .scaleAspectFit
-            // 光学居中：12.5pt×1.6 行框内字墨中心在行顶下约 16.5pt（10/28 截图实测），
-            // 13pt 图标半高 6.5，故图标顶 = 行顶 + 10；图标不进 stack 布局
-            //（stack .top 会把它顶到行顶，即截图里高出 10pt 的样子），改普通子视图
-            // + 显式约束，label 经 layoutMargins 左让 17（图标 13 + 间距 4）。
-            noteRow.addSubview(clockView)
-            NSLayoutConstraint.activate([
-                clockView.leadingAnchor.constraint(equalTo: noteRow.leadingAnchor),
-                clockView.topAnchor.constraint(equalTo: noteRow.topAnchor, constant: 10),
-                clockView.widthAnchor.constraint(equalToConstant: 13),
-                clockView.heightAnchor.constraint(equalToConstant: 13),
-            ])
-            noteRow.layoutMargins = UIEdgeInsets(top: 0, left: BearySpace.lg, bottom: 0, right: 0)
-        }
-        noteRow.addArrangedSubview(noteLabel)
-
         listStack.axis = .vertical
         listStack.spacing = 10
         listStack.translatesAutoresizingMaskIntoConstraints = false
@@ -304,7 +262,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
         loadingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
         emptyStateView.translatesAutoresizingMaskIntoConstraints = false
-        emptyStateView.configure(kind: .empty, title: "回收站是空的", subtitle: nil, iconName: "icon_trash", actionTitle: nil)
+        // Li 2026-11-23 定（第三批第 48 题）：页顶说明行删掉，保留期（30 天）
+        // 信息改写进空态副文案，不常驻页顶。
+        emptyStateView.configure(kind: .empty, title: "回收站是空的", subtitle: "删除的日记在这里保留 30 天，到期自动彻底删除。", iconName: "icon_trash", actionTitle: nil)
         emptyStateView.isHidden = true
 
         failureWrap.axis = .vertical
@@ -367,7 +327,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         headerRow.addArrangedSubview(titleLabel)
         headerRow.addArrangedSubview(headerSpacer)
         contentStack.addArrangedSubview(headerRow)
-        contentStack.addArrangedSubview(noteRow)
         contentStack.addArrangedSubview(listStack)
         contentStack.addArrangedSubview(loadingView)
         emptyTopSpacer.backgroundColor = .clear
@@ -382,7 +341,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         contentStack.addArrangedSubview(loadMoreRetryWrap)
         failureWrap.addArrangedSubview(failureStateView)
         contentStack.setCustomSpacing(6, after: headerRow)
-        contentStack.setCustomSpacing(4, after: noteRow)
         contentStack.setCustomSpacing(10, after: listStack)
     }
 
@@ -806,10 +764,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         }
         emptyStateView.isHidden = hasItems || trashLoading || trashFirstLoadFailed || trashLoginEmpty
         emptyTopSpacer.isHidden = emptyStateView.isHidden
-        // B-G14: in empty state the 4pt spacing after noteRow would stack on top
-        // of the 40pt pad (44 total), so empty state uses 0 there and the pad
-        // alone gives exactly 40; non-empty state restores 4.
-        contentStack.setCustomSpacing(emptyStateView.isHidden ? 4 : 0, after: noteRow)
+        // B-G14（页顶说明行已删，Li 2026-11-23 定）：空态下 headerRow 后的 6pt
+        // 间距会叠在 40pt 垫上（46pt），故空态用 0、只剩垫的 40pt；非空态恢复 6。
+        contentStack.setCustomSpacing(emptyStateView.isHidden ? 6 : 0, after: headerRow)
         failureWrap.isHidden = trashFirstLoadFailed == false || trashLoginEmpty
         loginWrap.isHidden = trashLoginEmpty == false
         if UIAccessibility.isReduceMotionEnabled == false {
