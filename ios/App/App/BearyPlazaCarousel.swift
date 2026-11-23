@@ -119,7 +119,8 @@ enum BearyPlazaFeaturedPicker {
     /// 7 天内 +10），分高在前，同分按发布时间倒序、id 升序兜底，全天同一批。
     /// 当日选中 id 顺序按身份 + 日期缓存（只存 id，不存正文）；缓存 id 若
     /// 不全在当前列表里（删篇/翻私密），就地按分数重挑，不渲染旧内容。
-    static func pick(from entries: [Entry]) -> [Entry] {
+    /// count 由轮播配置下发（缺省 pickCount）；缓存比 count 少时就地重挑。
+    static func pick(from entries: [Entry], count: Int = pickCount) -> [Entry] {
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         let candidates = entries.filter { entry in
             guard let id = entry.id, !id.isEmpty else { return false }
@@ -133,8 +134,8 @@ enum BearyPlazaFeaturedPicker {
                 return (id, entry)
             })
             let restored = cached.compactMap { byId[$0] }
-            if restored.count == cached.count {
-                return restored
+            if restored.count == cached.count && restored.count >= count {
+                return Array(restored.prefix(count))
             }
         }
         let ranked = candidates.sorted { a, b in
@@ -146,7 +147,7 @@ enum BearyPlazaFeaturedPicker {
             if pa != pb { return pa > pb }
             return (a.id ?? "") < (b.id ?? "")
         }
-        let picks = Array(ranked.prefix(pickCount))
+        let picks = Array(ranked.prefix(max(0, count)))
         savePickIds(picks.compactMap { $0.id })
         return picks
     }
@@ -205,6 +206,8 @@ enum BearyPlazaCarouselItem {
     case featured(Entry)
     case historyToday(BearyHistoryToday?)
     case blindBox
+    /// 公告页（服务端配置下发；取最新一条有效公告，无公告时不建页）。
+    case announcement(BearyAnnouncement)
 }
 
 enum BearyPlazaCarouselText {
@@ -267,6 +270,23 @@ enum BearyPlazaCarouselText {
         }
         return count
     }
+
+    /// 公告页眉（String Catalog：carousel.announcement.eyebrow）。
+    static func announcementEyebrow() -> String {
+        return NSLocalizedString("carousel.announcement.eyebrow", comment: "")
+    }
+
+    /// 公告页副行：发布日期（跟 App 语言走的本地化日期，不写死格式）。
+    static func dateText(ms: Int) -> String {
+        return announcementDateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(ms) / 1000))
+    }
+
+    private static let announcementDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
 }
 
 // MARK: - 轮播视图
@@ -282,6 +302,7 @@ final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollec
     var onSelectFeatured: ((Entry) -> Void)?
     var onSelectHistory: (() -> Void)?
     var onSelectBlindBox: (() -> Void)?
+    var onSelectAnnouncement: ((BearyAnnouncement) -> Void)?
 
     private var items: [BearyPlazaCarouselItem] = []
     private var pageVisible = false
@@ -381,6 +402,7 @@ final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollec
             case .featured(let entry): return "f:\(entry.id ?? "")"
             case .historyToday(let payload): return "h:\(payload?.date ?? ""):\(payload?.firstEvent ?? "")"
             case .blindBox: return "b:\(SessionManager.shared.isLoggedIn):\(BlindBoxState.shared.countText())"
+            case .announcement(let ann): return "a:\(ann.id)"
             }
         }.joined(separator: ",")
     }
@@ -449,6 +471,7 @@ final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollec
             case .featured(let entry): self.onSelectFeatured?(entry)
             case .historyToday: self.onSelectHistory?()
             case .blindBox: self.onSelectBlindBox?()
+            case .announcement(let ann): self.onSelectAnnouncement?(ann)
             }
         }
         return cell
@@ -580,6 +603,13 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
             titleLabel.text = NSLocalizedString("blindbox.exchange.title", comment: "")
             metaLabel.text = BearyPlazaCarouselText.blindBoxMetaText()
             bodyButton.accessibilityLabel = (titleLabel.text ?? "") + " " + (metaLabel.text ?? "")
+        case .announcement(let ann):
+            // 盲盒页隐藏了眉标行；cell 复用时须显式恢复，否则公告页眉标被藏。
+            eyebrowLabel.isHidden = false
+            eyebrowLabel.text = BearyPlazaCarouselText.announcementEyebrow()
+            titleLabel.text = ann.title
+            metaLabel.text = BearyPlazaCarouselText.dateText(ms: ann.createdAt)
+            bodyButton.accessibilityLabel = "\(BearyPlazaCarouselText.announcementEyebrow())：\(ann.title)"
         }
     }
 

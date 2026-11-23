@@ -8,6 +8,11 @@ import UIKit
 // 每条公告只弹一次（已展示 id 记 UserDefaults）；拉取失败静默，不拦启动。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await。
 
+extension Notification.Name {
+    /// 公告列表拉到（首拉或重拉）：轮播公告页据此重建。
+    static let bearyAnnouncementListDidChange = Notification.Name("bearyAnnouncementListDidChange")
+}
+
 struct BearyAnnouncement: Decodable {
     let id: Int
     let title: String
@@ -39,9 +44,61 @@ final class BearyAnnouncementCenter {
     private let shownIdsKey = "beary_announcement_shown_ids"
 
     private var fetchInFlight = false
+    private var fetchWaiters: [([BearyAnnouncement]?) -> Void] = []
     private var cachedList: [BearyAnnouncement]?
 
     private init() {}
+
+    /// 轮播公告页用：缓存里的最新一条有效公告（服务端已按时间窗过滤、按 created_at 倒序）。
+    /// 未拉取过时返回 nil（调用方不建公告页，由 fetchList 补拉后重建）。
+    func latestAnnouncement() -> BearyAnnouncement? {
+        return cachedList?.first
+    }
+
+    /// 拉取公告列表（只填缓存，不弹 sheet）：轮播重建时用；失败静默。
+    /// 拉到后发 .bearyAnnouncementListDidChange；回调一律主线程。
+    /// 在途去重：多次调用只发一条请求，回包分发给所有等在途者。
+    func fetchList(completion: (([BearyAnnouncement]?) -> Void)? = nil) {
+        if let list = cachedList {
+            if let completion = completion {
+                DispatchQueue.main.async { completion(list) }
+            }
+            return
+        }
+        if fetchInFlight {
+            if let completion = completion {
+                fetchWaiters.append(completion)
+            }
+            return
+        }
+        fetchInFlight = true
+        if let completion = completion {
+            fetchWaiters.append(completion)
+        }
+        BearyAPI.shared.request("/beary/api/app-announcements", suppressUnauthorized: true) { [weak self] (result: Result<BearyAnnouncementListResponse, APIError>) in
+            guard let self = self else { return }
+            // BearyAPI 回调不在主线程：缓存读写统一走主线程，免得与主线程
+            // 的调用抢 cachedList/fetchInFlight。
+            DispatchQueue.main.async {
+                self.fetchInFlight = false
+                let waiting = self.fetchWaiters
+                self.fetchWaiters = []
+                switch result {
+                case .success(let response):
+                    guard response.ok else {
+                        waiting.forEach { $0(nil) }
+                        return
+                    }
+                    self.cachedList = response.list
+                    NotificationCenter.default.post(name: .bearyAnnouncementListDidChange, object: nil)
+                    waiting.forEach { $0(response.list) }
+                case .failure:
+                    // 弱网/失败静默：不记状态，下次再拉。
+                    waiting.forEach { $0(nil) }
+                }
+            }
+        }
+    }
 
     /// 启动时调用（chrome viewDidAppear veil 已去时、veil 揭开完成时各一处；
     /// 拉取每进程只发一次，重复调用直接用缓存再试呈现）。
@@ -51,24 +108,9 @@ final class BearyAnnouncementCenter {
             tryPresent(list: list, from: presenter)
             return
         }
-        guard !fetchInFlight else { return }
-        fetchInFlight = true
-        BearyAPI.shared.request("/beary/api/app-announcements", suppressUnauthorized: true) { [weak self] (result: Result<BearyAnnouncementListResponse, APIError>) in
-            guard let self = self else { return }
-            // BearyAPI 回调不在主线程：缓存读写统一走主线程，免得与主线程
-            // 的 checkOnLaunch 抢 cachedList/fetchInFlight。
-            DispatchQueue.main.async {
-                self.fetchInFlight = false
-                switch result {
-                case .success(let response):
-                    guard response.ok else { return }
-                    self.cachedList = response.list
-                    self.tryPresent(list: response.list, from: presenter)
-                case .failure:
-                    // 弱网/失败静默：不弹、不记状态，下次启动再拉。
-                    break
-                }
-            }
+        fetchList { [weak self, weak presenter] list in
+            guard let self = self, let presenter = presenter, let list = list else { return }
+            self.tryPresent(list: list, from: presenter)
         }
     }
 
