@@ -34,12 +34,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     /// 标题旁人数（展示审计 G6-H5）：人数是次要信息，弱色小字号单列，
     /// 标题本身仍走 19 bold 墨字＋自动字号缩放（富文本会钉死字号，故不用 attributedText）。
     private let titleCountLabel = UILabel()
-        titleCountLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleCountLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        titleCountLabel.adjustsFontForContentSizeCategory = true
-        titleCountLabel.textColor = BearyColors.gray
-        titleCountLabel.isHidden = true
-        topBar.addSubview(titleCountLabel)
     private var topBarTopConstraint: NSLayoutConstraint?
     private var backButton: UIButton?
     private var titleLeadingConstraint: NSLayoutConstraint?
@@ -71,6 +65,12 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = "好友"
         topBar.addSubview(titleLabel)
+        titleCountLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleCountLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        titleCountLabel.adjustsFontForContentSizeCategory = true
+        titleCountLabel.textColor = BearyColors.gray
+        titleCountLabel.isHidden = true
+        topBar.addSubview(titleCountLabel)
         // 从消息页打开时的返回钮（回消息页；底栏根页默认隐藏，见 setOpenedFromMessages）。
         let backButton = UIButton(type: .system)
         backButton.translatesAutoresizingMaskIntoConstraints = false
