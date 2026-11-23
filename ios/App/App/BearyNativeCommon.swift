@@ -3102,6 +3102,37 @@ final class BearyRefreshIconView: UIImageView {
     }
 }
 
+/// 合并列表类型小标识（展示审计 G6-H1）：通知行「通知」／私信行「私信」，
+/// 11pt semibold 灰字、surface2 底、圆角 5；两字等宽，时间列不对位移。
+/// 只在合并消息页出现（独立页只有一类行，不画）。
+final class BearyTypeTagLabel: UILabel {
+
+    init(text: String) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        self.text = text
+        font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .semibold))
+        adjustsFontForContentSizeCategory = true
+        textColor = BearyColors.gray
+        backgroundColor = BearyColors.surface2
+        layer.cornerRadius = 5
+        clipsToBounds = true
+        textAlignment = .center
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let size = super.intrinsicContentSize
+        // 横向各 5pt 内边距（UILabel 自身无内边距，靠尺寸外扩实现）。
+        return CGSize(width: size.width + 10, height: size.height + 4)
+    }
+}
+
 // MARK: - NB 动态图标（网页 beary.html:1340 的 NB 定义 + :75-:99 关键帧口径）
 //
 // 48 盒、描边 2.2、圆头圆角；路径坐标均为 48 盒单位，buildLayers 时等比缩放到框宽。

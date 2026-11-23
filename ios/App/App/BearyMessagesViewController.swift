@@ -946,6 +946,8 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
                 return UITableViewCell()
             }
             cell.configure(conversation: conv)
+            // 展示审计 G6-H1：合并列表会话行标题行末加「私信」类型小标识。
+            cell.showsTypeTag = true
             // 复用残留复位；未播过的行由 willDisplay 淡入（与私信子页原口径一致）。
             cell.alpha = 1
             cell.transform = .identity

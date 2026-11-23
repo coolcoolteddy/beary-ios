@@ -4031,6 +4031,9 @@ class BearyNotificationCell: UITableViewCell {
         return label
     }()
 
+    /// 合并列表类型小标识（展示审计 G6-H1）：标题行末「通知」小 pill，
+    /// 只在合并消息页出现（独立通知页只有通知行，不画）。
+    private let typeTagLabel = BearyTypeTagLabel(text: "通知")
     /// 标题行：标题 label + 时间 label（表情改用 NSTextAttachment 内联进标题文本，
     /// 见 configure；标题多行完整显示、时间跟标题首行基线对齐，落在第一排）。
     private let titleRowStack: UIStackView = {
@@ -4175,6 +4178,8 @@ class BearyNotificationCell: UITableViewCell {
         bodyStack.addArrangedSubview(titleRowStack)
         bodyStack.addArrangedSubview(excerptRowStack)
         titleRowStack.addArrangedSubview(titleLabel)
+        // 类型小标识插标题与时间之间（G6-H1）：隐藏时栈自动塌零，不占位。
+        titleRowStack.insertArrangedSubview(typeTagLabel, at: 1)
         titleRowStack.addArrangedSubview(timeLabel)
         excerptRowStack.addArrangedSubview(excerptLabel)
         excerptRowStack.addArrangedSubview(unreadDotView)
@@ -4318,6 +4323,7 @@ class BearyNotificationCell: UITableViewCell {
         avatarImageView.image = nil
         avatarFallbackLabel.text = nil
         avatarFallbackLabel.isHidden = true
+        typeTagLabel.isHidden = true
         avatarIconView.image = nil
         avatarIconView.isHidden = true
         avatarIconView.tintColor = BearyColors.orange
@@ -4496,6 +4502,8 @@ class BearyNotificationCell: UITableViewCell {
     ///   且不显示右三角；独立通知页传 false（默认），下箭头展开行为不变。
     func configureAsCard(title: String, excerpt: String, timeMs: Int?, anyUnread: Bool, isSystem: Bool, expanded: Bool, highlight: Bool, mergedList: Bool = false) {
         applyAvatarVerticalStyle(mergedList: mergedList)
+        // 展示审计 G6-H1：合并页卡面行标题行末显「通知」小标识。
+        typeTagLabel.isHidden = !mergedList
         bodyStack.spacing = mergedList ? 4 : 2
         cancelAvatarLoad()
         hideFollowAction()
@@ -4618,6 +4626,8 @@ class BearyNotificationCell: UITableViewCell {
         hideFollowAction()
         resetAvatarStack()
         applyAvatarVerticalStyle(mergedList: mergedList)
+        // 展示审计 G6-H1：合并页通知行标题行末显「通知」小标识。
+        typeTagLabel.isHidden = !mergedList
         bodyStack.spacing = mergedList ? 4 : 2
         let itemType = item.type ?? ""
         let isSystemStyle = itemType == "system" || itemType == "letter"
@@ -4762,6 +4772,8 @@ class BearyNotificationCell: UITableViewCell {
     /// 注：后端已在通知里补 e.title（2026-11-18 Li 定），代表条有标题时动词后加《标题》，
     /// 无标题（null/空/旧缓存）仍用现行动词（「赞了你的日记」）。
     func configureAsGroup(representative: NotificationItem, members: [NotificationItem], nested: Bool, highlight: Bool, expanded: Bool, onToggle: @escaping () -> Void) {
+        // 聚合行只在独立通知页出现（G6-H1）：类型标识恒藏。
+        typeTagLabel.isHidden = true
         hideFollowAction()
         resetAvatarStack()
         cancelAvatarLoad()

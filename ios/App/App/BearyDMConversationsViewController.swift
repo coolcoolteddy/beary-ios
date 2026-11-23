@@ -918,6 +918,11 @@ final class BearyDMConversationCell: UITableViewCell {
     private let timeLabel = UILabel()
     private let unreadBadge = UILabel()
     private let separatorView = UIView()
+    /// 合并列表类型小标识（展示审计 G6-H1）：标题行末「私信」小 pill，
+    /// 只在合并消息页出现（独立会话页只有私信行，不画）。
+    private let typeTagLabel = BearyTypeTagLabel(text: "私信")
+    private var typeTagLeadingConstraint: NSLayoutConstraint?
+    private var typeTagTrailingConstraint: NSLayoutConstraint?
     private var unreadBadgeMinWidthConstraint: NSLayoutConstraint?
     private var unreadBadgeZeroWidthConstraint: NSLayoutConstraint?
     private var unreadBadgeHeightConstraint: NSLayoutConstraint?
@@ -925,6 +930,16 @@ final class BearyDMConversationCell: UITableViewCell {
     private var nameLabelTopToAvatarConstraint: NSLayoutConstraint?
     /// 新一轮 01：本行会话的最后消息时间（毫秒），供页面分钟边界刷新时重算时间标签。
     private var lastAtMs: Int?
+
+    /// 合并列表类型标识开关（G6-H1）：true 时标题行末显「私信」pill，
+    /// 约束随之激活；false 时约束停用、标题宽度不受影响。
+    var showsTypeTag = false {
+        didSet {
+            typeTagLabel.isHidden = !showsTypeTag
+            typeTagLeadingConstraint?.isActive = showsTypeTag
+            typeTagTrailingConstraint?.isActive = showsTypeTag
+        }
+    }
 
     /// 新一轮 01：只刷新本行的时间标签（页面分钟边界定时器调），不触其他内容。
     func refreshTimeLabel() {
@@ -984,6 +999,17 @@ final class BearyDMConversationCell: UITableViewCell {
         contentView.addSubview(timeLabel)
         contentView.addSubview(unreadBadge)
         contentView.addSubview(separatorView)
+        contentView.addSubview(typeTagLabel)
+        // 类型标识约束（G6-H1）：标题与时间之间，显隐随 showsTypeTag 切；
+        // 隐藏时低优先级 trailing 兜底定位（不挤名字），显时 required 约束接管。
+        typeTagLeadingConstraint = typeTagLabel.leadingAnchor.constraint(greaterThanOrEqualTo: nameLabel.trailingAnchor, constant: 6)
+        typeTagTrailingConstraint = typeTagLabel.trailingAnchor.constraint(equalTo: timeLabel.leadingAnchor, constant: -8)
+        let typeTagFallbackTrailing = typeTagLabel.trailingAnchor.constraint(equalTo: timeLabel.leadingAnchor, constant: -8)
+        typeTagFallbackTrailing.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            typeTagLabel.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            typeTagFallbackTrailing,
+        ])
         // 标题＋摘要整块相对头像垂直居中：块顶 = 头像顶 + (头像高 − 块高) / 2，
         // 块高 = 标题行高 + 4 + 摘要行高（摘要隐藏时只算标题）；常数由
         // updateNameLabelTopOffset 按当前字号与摘要显隐重算（init 与 configure 都调）。
@@ -1064,6 +1090,7 @@ final class BearyDMConversationCell: UITableViewCell {
         super.prepareForReuse()
         avatarView.reset()
         lastAtMs = nil
+        showsTypeTag = false
     }
 
     /// 标题＋摘要整块相对头像垂直居中：块顶偏移 = (44 − 块高) / 2，
