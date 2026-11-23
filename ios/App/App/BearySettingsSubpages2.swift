@@ -943,7 +943,7 @@ final class BearyNotificationSettingsViewController: BearySettingsSubpageViewCon
             view.removeFromSuperview()
         }
         let items: [(kind: BearyLocalNotifications.Kind, title: String, detail: String)] = [
-            (.dailyReminder, "写日记提醒", "每天 21:00（北京时间），还没写才提醒"),
+            (.dailyReminder, "写日记提醒", "每天 21:00（当地时间），还没写才提醒"),
             (.limitedExpiry, "限时日记到期", "限时结束、转回私密时提醒"),
             (.pastDay, "那年今日", "早上 9:00（北京时间），往年今天有日记才提醒"),
             (.pastSelfDelivery, "留给明年的自己", "留言送达当天早上 9:00（北京时间）提醒"),
