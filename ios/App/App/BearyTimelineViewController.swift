@@ -6572,7 +6572,8 @@ class BearyTimelineViewController: UIViewController {
         return "\(comps.month) 月 \(comps.day) 日"
     }
 
-    private func emptyView(title: String, subtitle: String, actionTitle: String?, action: (() -> Void)?, iconName: String = "icon_tray", kind: BearyStateKind = .empty) -> UIView {
+    /// 展示审计 G1-12／G1-13／G1-14：副标题可选（nil 即隐藏，见 BearyStateView.configure）。
+    private func emptyView(title: String, subtitle: String?, actionTitle: String?, action: (() -> Void)?, iconName: String = "icon_tray", kind: BearyStateKind = .empty) -> UIView {
         // 空／失败／登录态统一走 BearyStateView（54 圆图标＋15 粗标题＋12.5 副文案＋常规描边动作钮）；
         // 背景视图居中承载（此前 bespoke 栈顶距 40，统一后居中；动作闭包直通 onAction，不再经 emptyActionHandler 中转）。
         let container = UIView()
@@ -6624,8 +6625,8 @@ class BearyTimelineViewController: UIViewController {
                 }, iconName: "icon_calendar", kind: .login)
                 newBackgroundKind = "login"
             } else {
-                // W10：加载失败空态副标题为中性文案“加载失败，请重试”。
-                tableView.backgroundView = emptyView(title: "加载失败", subtitle: "加载失败，请重试", actionTitle: "重试", action: { [weak self] in
+                // 展示审计 G1-12：副标题只留「请重试」（标题「加载失败」已说过，不再逐字重复）。
+                tableView.backgroundView = emptyView(title: "加载失败", subtitle: "请重试", actionTitle: "重试", action: { [weak self] in
                     self?.reloadTimeline()
                 }, iconName: "icon_wifi_off", kind: .error)
                 newBackgroundKind = "failed"
@@ -6635,7 +6636,8 @@ class BearyTimelineViewController: UIViewController {
                 // 筛子档空态：不是“没有日记”，是该档无篇；给“回到全部”
                 // 快捷键（走同一切换路径，错峰口径一致），不用“写一篇”
                 // 误导（新篇默认私密，未必落进当前档）。
-                tableView.backgroundView = emptyView(title: "该分类下还没有日记", subtitle: "切回全部看看，或者写一篇新的", actionTitle: "回到全部", action: { [weak self] in
+                // 展示审计 G1-13：删副标题，「回到全部」按钮已自解释。
+                tableView.backgroundView = emptyView(title: "该分类下还没有日记", subtitle: nil, actionTitle: "回到全部", action: { [weak self] in
                     self?.applyVisFilter(.all)
                 }, iconName: "icon_tray")
                 newBackgroundKind = "empty-filter"
@@ -6643,7 +6645,8 @@ class BearyTimelineViewController: UIViewController {
                 // B-G9: web renderTimeline empty state uses beary-diary, not tray.
                 // Q5：时间线空态加“写一篇”按钮（走 onCompose 回调，容器接线打开编辑器；
                 // 回收站空态不在本文件，不动）。
-                tableView.backgroundView = emptyView(title: "把日子留在这里", subtitle: "写下第一篇，它会出现在这里", actionTitle: "写一篇", action: { [weak self] in
+                // 展示审计 G1-14：删副标题，标题「把日子留在这里」＋「写一篇」按钮已够。
+                tableView.backgroundView = emptyView(title: "把日子留在这里", subtitle: nil, actionTitle: "写一篇", action: { [weak self] in
                     self?.onCompose?()
                 }, iconName: "icon_diary")
                 newBackgroundKind = "empty"
