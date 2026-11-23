@@ -4752,7 +4752,7 @@ extension BearyDiaryCardCell {
 
     /// 正文纯文本高度：与 attributedBody 同款字体 + 行高倍数，只量文字本身，
     /// 不含心情缀尾附件（附件只占末行尾部，可忽略）。
-    /// font 为 nil 时按 diaryBodyFont（16）量；时间线行（1.75 倍）不传，保持原口径。
+    /// font 为 nil 时按 diaryBodyFont（16）量；行高倍数由调用方传（时间线与卡片同为 1.6，见 G1-11）。
     static func estimatedTextHeight(_ text: String, width: CGFloat, lineHeightMultiple: CGFloat, font: UIFont? = nil) -> CGFloat {
         guard !text.isEmpty, width > 0 else { return 0 }
         let paragraph = NSMutableParagraphStyle()

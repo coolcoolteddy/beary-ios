@@ -803,7 +803,7 @@ final class BearyCalendarCardView: UIView {
     }
 }
 
-// MARK: - 时间线行（网页 .tl-card：边框 1 line、圆角 14、padding 12/14；正文 16.5/1.75）
+// MARK: - 时间线行（网页 .tl-card：边框 1 line、圆角 14、padding 12/14；正文 16.5/1.6）
 
 final class BearyTimelineCell: UITableViewCell {
     static let reuseIdentifier = "BearyTimelineCell"
@@ -1750,11 +1750,10 @@ final class BearyTimelineCell: UITableViewCell {
         // 2026-10-29 改版：⋯ 菜单钮在卡片顶行右端——meta 行末 spacer 之后追加，
         // 即顶到右端（原地球钮已摘除，位置由 ⋯ 接替；时间线行均为本人行，菜单常驻）。
         metaStack.addArrangedSubview(moreButton)
-        // 8-13 保留 1.75（不统一 1.6）：网页版时间线正文 .tl-text 即
-        // 16.5px/1.75（worker.js 前端快照 :435，2026-10-27 版，与本行
-        // 16.5/1.75 同值；首页卡片 1.6 是另一口径，不混用）。
+        // 展示审计 G1-11：正文行高与卡片统一为 1.6（原 1.75，注释称与网页
+        // .tl-text 同值；App 内统一 1.6，与网页口径分叉，见 PR 说明）。
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.75
+        paragraph.lineHeightMultiple = 1.6
         paragraph.lineBreakMode = .byCharWrapping
         let body = entry.content ?? ""
         // 审计 P2-12：标题行（卡片同款，空标题不占位；stack 里隐藏行不占高）。
@@ -6991,13 +6990,13 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         return sections[section].entries.count
     }
 
-    /// 时间线行高估算（正文行高倍数 1.75、不折叠，与卡片 1.6/6 行封顶不同口径，
-    /// 见 configure 内 8-13 注释）。正文列宽按约束取：内容列左 36 + 栈左右各 16，
+    /// 时间线行高估算（正文行高倍数 1.6，与卡片统一，见 G1-11；不折叠）。
+    /// 正文列宽按约束取：内容列左 36 + 栈左右各 16，
     /// 右 16，共 84。引用卡/足行等可变行取固定近似值，允许几十 pt 误差。
     private func estimatedTimelineRowHeight(for entry: Entry, tableWidth: CGFloat) -> CGFloat {
         let contentWidth = max(0, tableWidth - 84)
         let text = entry.content ?? ""
-        let textHeight = BearyDiaryCardCell.estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.75)
+        let textHeight = BearyDiaryCardCell.estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.6)
         let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && !BearyGIF.isInlineImageKey($0, content: text) }
         let hasImages = !imageKeys.isEmpty
         let hasTitle = !(entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
