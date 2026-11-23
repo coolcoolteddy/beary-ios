@@ -408,14 +408,18 @@ enum BearyEntrySyncStore {
 
     /// 标记计数增量维护（saveDay 的日计数差、删帖空日文件的减数都走这里）：
     /// 无标记时不建标记（不完整存档不因局部写盘变成“完整”）；写回失败时
-    /// 计数可能滞后，读侧的总数核对会挡下，不会误认完整。
+    /// 计数可能滞后，读侧的总数核对会挡下，不会误认完整；写回失败记一次诊断。
     private static func adjustCompletionCount(accountId: Int, delta: Int) {
         guard var marker = loadCompletion(accountId: accountId), delta != 0 else { return }
         marker.entryCount = max(0, marker.entryCount + delta)
         marker.syncedAtMs = Int(Date().timeIntervalSince1970 * 1000)
         guard let url = completionMarkerURL(accountId: accountId),
               let data = try? JSONEncoder().encode(marker) else { return }
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            NSLog("[BearyEntrySync] adjustCompletionCount write failed: accountId=%@ delta=%@ error=%@", "\(accountId)", "\(delta)", "\(error)")
+        }
     }
 
     // MARK: - 归档修订号（搜索增量更新的快查门）
@@ -453,8 +457,8 @@ enum BearyEntrySyncStore {
 
     private static let revisionLock = NSLock()
 
-    /// 活盘日内容变化后记一次修订号（只增不减；写失败静默——修订号滞后
-    /// 时搜索侧指纹门仍会挡下，不会误认未变）。
+    /// 活盘日内容变化后记一次修订号（只增不减；写失败记一次诊断，
+    /// 修订号滞后时搜索侧指纹门仍会挡下，不会误认未变）。
     private static func bumpRevision(accountId: Int) {
         revisionLock.lock()
         defer { revisionLock.unlock() }
@@ -462,7 +466,11 @@ enum BearyEntrySyncStore {
         guard let url = revisionMarkerURL(accountId: accountId),
               let data = try? JSONEncoder().encode(ArchiveRevision(revision: next)) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            NSLog("[BearyEntrySync] bumpRevision write failed: accountId=%@ revision=%@ error=%@", "\(accountId)", "\(next)", "\(error)")
+        }
     }
 
     /// 按北京日分组的结果。skippedCount = 无法归日的条目数（缺 createdAt、
