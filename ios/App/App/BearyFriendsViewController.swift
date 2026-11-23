@@ -66,7 +66,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         titleLabel.text = "好友"
         topBar.addSubview(titleLabel)
         titleCountLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleCountLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        // 标题旁人数 14 regular 暂无语义入口：numberFont 是 12 semibold、secondaryFont 是 13 regular，换任一都会改视觉；buttonRegularFont 仅限按钮。
+        titleCountLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)) // beary-lint: allow
         titleCountLabel.adjustsFontForContentSizeCategory = true
         titleCountLabel.textColor = BearyColors.gray
         titleCountLabel.isHidden = true
