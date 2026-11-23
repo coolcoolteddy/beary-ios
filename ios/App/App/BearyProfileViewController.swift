@@ -443,6 +443,10 @@ class BearyProfileViewController: UIViewController {
     private var customPullStartTime: Date?
     private var pullEngageTranslation: CGFloat?
     private var customPullEndScheduled = false
+    /// F1/F2：限时到期 live 复核——他人页日记 tab 的 1 秒 tick（时间线
+    /// sweep 同款）；只在有存活限时篇时才跑，到期即整表重载撤行；
+    /// 本人页不跑（作者视角到期篇仍按私密显示，不撤）。
+    private var limitedExpiryTimer: Timer?
 
     /// 本人判定：viewer 已登录且 profile id 与 viewer 一致；handle 目标在 profile
     /// 解析前按 id 预判（id 目标且与 viewer 相同）先行显示本人元素，解析后复核。
@@ -492,6 +496,11 @@ class BearyProfileViewController: UIViewController {
     static func isProfileDiaryDisplayable(entry: Entry, isOwnProfile: Bool, isMutualFriend: Bool = false) -> Bool {
         if entry.placeholder == true { return false }
         if isOwnProfile == false {
+            // F1：限时到期按私密算——服务端列表查询已滤过期篇（读时判定），
+            // 此处守内存里先拉后过期的旧行：到期后非作者视角一律不显示
+            // （日记 tab 最新 3 篇、照片区、照片墙共用本口径；isExpired 只在
+            // ephemeralUntil 非空时为真，普通篇不受影响）。
+            if BearyEphemeral.isExpired(entry) { return false }
             if entry.isFriendsOnly {
                 if !isMutualFriend { return false }
             } else if entry.isPublic != true {
@@ -553,6 +562,55 @@ class BearyProfileViewController: UIViewController {
     private var diaryMoreButtonVisible: Bool {
         return currentTab == .diary && isOwnProfile
             && !BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend).isEmpty
+    }
+
+    /// F1 live：进页／切回／切 tab 时重评估到期复核计时器——只在他人页
+    /// 日记 tab 且有存活限时篇时起表；其余情况停表，不空转。
+    private func updateLimitedExpiryTimer() {
+        guard !isOwnProfile, currentTab == .diary, isViewLoaded else {
+            stopLimitedExpiryTimer()
+            return
+        }
+        if displayedEntries.contains(where: { BearyEphemeral.isLive($0) }) {
+            startLimitedExpiryTimer()
+        } else {
+            stopLimitedExpiryTimer()
+        }
+    }
+
+    private func startLimitedExpiryTimer() {
+        guard limitedExpiryTimer == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.sweepExpiredLimitedEntries()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        limitedExpiryTimer = timer
+    }
+
+    private func stopLimitedExpiryTimer() {
+        limitedExpiryTimer?.invalidate()
+        limitedExpiryTimer = nil
+    }
+
+    /// F1 live：他人页日记 tab 内限时篇到期即撤行——displayedEntries 经
+    /// isProfileDiaryDisplayable 重算，reloadData 后过期篇不再出 tab；
+    /// 撤行后若无存活限时篇则停表。照片墙缩略图网格不在此次重载范围
+    /// （footer 签名缓存另行重建；点按已由照片页守卫拦住，不进详情全文）。
+    private func sweepExpiredLimitedEntries() {
+        guard !isOwnProfile, currentTab == .diary, isViewLoaded else {
+            stopLimitedExpiryTimer()
+            return
+        }
+        guard displayedEntries.contains(where: { BearyEphemeral.isExpired($0) }) else {
+            if !displayedEntries.contains(where: { BearyEphemeral.isLive($0) }) {
+                stopLimitedExpiryTimer()
+            }
+            return
+        }
+        tableView.reloadData()
+        if !displayedEntries.contains(where: { BearyEphemeral.isLive($0) }) {
+            stopLimitedExpiryTimer()
+        }
     }
 
     // MARK: - 113 照片墙独立分页
@@ -2176,6 +2234,7 @@ class BearyProfileViewController: UIViewController {
     // MARK: - 生命周期
 
     deinit {
+        limitedExpiryTimer?.invalidate()
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         // 审计-个人页设置：补注销 bearyFriendsChanged（viewDidLoad 注册、
@@ -2340,6 +2399,7 @@ class BearyProfileViewController: UIViewController {
         if festivalTheme.coverTheme != nil {
             profileCoverView?.restartVisit()
         }
+        updateLimitedExpiryTimer()
     }
 
     /// 批 C 回页钩子：容器切页只改 isHidden、不触发 appearance 回调时，
@@ -2357,6 +2417,7 @@ class BearyProfileViewController: UIViewController {
         profileCoverScrolling = false
         updateFestivalWallpaperVisibility()
         updateProfileCoverVisibility()
+        updateLimitedExpiryTimer()
     }
 
     /// 审计四轮增量 07：切 tab 离页钩子，与 pageDidReturn 对称——容器在
@@ -2367,6 +2428,7 @@ class BearyProfileViewController: UIViewController {
     func pageDidLeave() {
         updateProfileCoverVisibility()
         updateFestivalWallpaperVisibility()
+        stopLimitedExpiryTimer()
     }
 
     /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 tableView。
@@ -7157,6 +7219,7 @@ class BearyProfileViewController: UIViewController {
             } else {
                 scrollProfileToTop()
             }
+            updateLimitedExpiryTimer()
             return
         }
         if tab == .saved && !isOwnProfile { return }
@@ -7174,6 +7237,7 @@ class BearyProfileViewController: UIViewController {
             refreshFooter()
             loadTabBackground()
         }
+        updateLimitedExpiryTimer()
     }
 
     /// 后台回填：失败只保留缓存，不改失败态；切走后回包直接丢弃。

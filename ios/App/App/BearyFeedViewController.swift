@@ -105,6 +105,9 @@ class BearyFeedViewController: UIViewController {
     /// 成功或全量首拉后清掉。随切段槽走，不跨段复用。
     private var plazaHasGap = false
     private var plazaGapCursor: (key: Int, id: String)?
+    /// F2：限时到期 live 复核——广场/关注列表的 1 秒 tick（时间线 sweep
+    /// 同款）；进页起表、离页停表，到期即摘行。
+    private var limitedExpiryTimer: Timer?
     /// 切段缓存（Li 2026-11-02 定：切段直接显缓存，不重拉；刷新走下拉）：
     /// 每段各存一份内存列表与分页态；plazaRaw 与分页变量恒为“当前段”的
     /// live 镜像，切段时先把 live 写回出段槽、再把入段槽读回 live。
@@ -774,6 +777,7 @@ class BearyFeedViewController: UIViewController {
     }
 
     deinit {
+        limitedExpiryTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -885,6 +889,7 @@ class BearyFeedViewController: UIViewController {
             revalidateIfNeeded()
         }
         // else：modal 返回且登录态未变——直接回显缓存，不重拉、不重置滚动位。
+        startLimitedExpiryTimer()
     }
 
     /// P1-5：与时间线 pageDidEnter 同款钩子——容器切页只改 isHidden、不触发
@@ -905,6 +910,7 @@ class BearyFeedViewController: UIViewController {
     /// 容器切 tab 离页钩子（与消息页 pageDidLeave 同口径）：停轮播自动换页。
     func pageDidLeave() {
         plazaCarouselView.setPageVisible(false)
+        stopLimitedExpiryTimer()
     }
 
     override func viewDidLayoutSubviews() {
@@ -1709,6 +1715,59 @@ class BearyFeedViewController: UIViewController {
     /// 客户端不自排，否则打断 before 分页游标）。
     private func plazaEntries() -> [Entry] {
         return plazaRaw
+    }
+
+    private func startLimitedExpiryTimer() {
+        guard limitedExpiryTimer == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.sweepExpiredLimitedEntries()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        limitedExpiryTimer = timer
+    }
+
+    private func stopLimitedExpiryTimer() {
+        limitedExpiryTimer?.invalidate()
+        limitedExpiryTimer = nil
+    }
+
+    /// F2：限时到期 live 复核（时间线 sweep 同款 1 秒 tick）——广场/关注
+    /// 列表内限时篇到期即撤行：服务端列表查询已滤过期篇（读时判定），
+    /// 此处守内存里先拉后过期的旧行；摘行口径与 removeDeletedEntry 同款
+    /// （双段槽位同步清、引用缓存失效、行数对不上整表重载）。作者本人
+    /// 的到期篇同样撤（广场是公开面，首拉过滤亦不分作者）。
+    private func sweepExpiredLimitedEntries() {
+        guard isViewLoaded else { return }
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let expiredIds = Set(plazaRaw.compactMap { entry -> String? in
+            guard let id = entry.id, entry.isPublic == true, let until = entry.ephemeralUntil, until <= nowMs else { return nil }
+            return id
+        })
+        guard !expiredIds.isEmpty else { return }
+        // 先取行号再摘模型（与 applyEditedEntry 同款）；多 id 时行号重排，
+        // 删行批更新要求同一 section 内升序。
+        var paths: [IndexPath] = []
+        for id in expiredIds { paths.append(contentsOf: indexPaths(for: id)) }
+        paths.sort { $0.row < $1.row }
+        let oldCount = plazaRaw.count
+        for id in expiredIds {
+            plazaSegmentCache.entries.removeAll { $0.id == id }
+            plazaSegmentCache.firstPageIds.removeAll { $0 == id }
+            followingSegmentCache.entries.removeAll { $0.id == id }
+            followingSegmentCache.firstPageIds.removeAll { $0 == id }
+            BearyDiaryCardCell.invalidateQuote(forQuoteId: id)
+        }
+        plazaRaw.removeAll { $0.id.map { expiredIds.contains($0) } ?? false }
+        firstPageIds.removeAll { expiredIds.contains($0) }
+        persistFeedHead()
+        guard !paths.isEmpty else { return }
+        if tableView.numberOfRows(inSection: 0) == oldCount {
+            tableView.beginUpdates()
+            tableView.deleteRows(at: paths, with: .fade)
+            tableView.endUpdates()
+        } else {
+            tableView.reloadData()
+        }
     }
 
     // MARK: - 互动/编辑定向刷新（不整表刷新）
