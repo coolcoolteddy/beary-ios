@@ -1536,7 +1536,7 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
             return CGSize(width: collectionView.bounds.width, height: 44)
         }
         let widthValue = collectionView.bounds.width > 0 ? collectionView.bounds.width : view.bounds.width
-        let side = floor((widthValue - 40 - 16) / 3)
+        let side = floor((widthValue - 48) / 3)
         return CGSize(width: side, height: side)
     }
 
