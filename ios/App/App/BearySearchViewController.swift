@@ -2113,6 +2113,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 原屏幕位置（旧 B2 横幅同款口径，见 adjustContentOffsetForBannerHeightDelta）。
     /// 三处旧 update*/remove* 入口保留作转发，供既有调用点与注释引用。
     private var resultStatusBanner: UIView?
+    private var partialArchiveNotice = false
 
     /// 当前应亮的一条状态文案；无则 nil（横幅摘掉）。
     private func resultStatusText() -> String? {
@@ -2183,6 +2184,17 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         guard preserveAnchor else { return }
         view.layoutIfNeeded()
         adjustContentOffsetForBannerHeightDelta(-height)
+    }
+
+    /// 横幅高度变化量反向修正滚动偏移：插条/换文案变高时多滚差量，
+    /// 摘条时少滚差量，可见结果行屏幕位置不变。偏移钳制在合法范围，
+    /// 内容短到滚不动时无法全额补偿（原地顶移不可避免）。
+    /// 调用方须先 layoutIfNeeded 再量高度、再算 contentSize 上限。
+    private func adjustContentOffsetForBannerHeightDelta(_ delta: CGFloat) {
+        guard delta != 0 else { return }
+        let minY = -scrollView.contentInset.top
+        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
+        scrollView.contentOffset.y = min(max(scrollView.contentOffset.y + delta, minY), maxY)
     }
 
     /// 旧入口转发：三条横幅已合并为一条状态行，调用点只刷新共享横幅。
