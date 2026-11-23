@@ -77,6 +77,18 @@ enum BearyDMStore {
         return ioQueue.sync(execute: work)
     }
 
+    /// 复用 coder（B-P1-4）：JSONDecoder 非线程安全；本 enum 的解码只在 ioQueue 内
+    /// （同步入口经 syncOnIO）与单测里发生——生产侧单队列可直接复用一个静态实例，
+    /// 单测直调可能与 ioQueue 并发，故仍以一把锁守住；锁只包住解码调用本身，不跨 IO。
+    private static let coderLock = NSLock()
+    private static let sharedDecoder = JSONDecoder()
+
+    private static func decodeShared<T: Decodable>(_ type: T.Type, from data: Data) -> T? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedDecoder.decode(type, from: data)
+    }
+
     private static func baseDirectory() -> URL? {
         if let test = testBaseDirectory { return test }
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -239,7 +251,7 @@ enum BearyDMStore {
         guard let url = fileURL(forAccount: accountId),
               FileManager.default.fileExists(atPath: url.path) else { return false }
         guard let data = try? Data(contentsOf: url),
-              (try? JSONDecoder().decode([String: StoredConversation].self, from: data)) != nil else { return true }
+              (decodeShared([String: StoredConversation].self, from: data)) != nil else { return true }
         return false
     }
 
@@ -687,15 +699,34 @@ enum BearyDMStoreCore {
         case corrupt
     }
 
+    /// 复用 coder（B-P1-4）：本 enum 是无队列的纯函数核，生产侧经 ioQueue 调、
+    /// 单测直调——不 confin 单一队列，故共享实例以一把锁守住（锁只包住编解码
+    /// 调用本身）；策略与原来一致：默认（不设 key 策略），落盘 JSON 仍为驼峰键。
+    private static let coderLock = NSLock()
+    private static let sharedEncoder = JSONEncoder()
+    private static let sharedDecoder = JSONDecoder()
+
+    private static func encodeShared<T: Encodable>(_ value: T) -> Data? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedEncoder.encode(value)
+    }
+
+    private static func decodeShared<T: Decodable>(_ type: T.Type, from data: Data) -> T? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedDecoder.decode(type, from: data)
+    }
+
     /// nil → .missing；解码失败 → .corrupt；成功 → .loaded。
     static func decode(_ data: Data?) -> LoadOutcome {
         guard let data = data else { return .missing }
-        guard let decoded = try? JSONDecoder().decode([String: BearyDMStore.StoredConversation].self, from: data) else { return .corrupt }
+        guard let decoded = decodeShared([String: BearyDMStore.StoredConversation].self, from: data) else { return .corrupt }
         return .loaded(decoded)
     }
 
     static func encode(_ store: [String: BearyDMStore.StoredConversation]) -> Data? {
-        try? JSONEncoder().encode(store)
+        encodeShared(store)
     }
 
     /// 按 id 去重并入：服务端回包与本地旧行同 id 时服务端为准，对方展示信息同步最新。
@@ -727,11 +758,11 @@ enum BearyDMStoreCore {
     /// 待发编解码：nil/坏 JSON → nil（调用方复制备份、登记损坏态，不阻塞主库）。
     static func decodePendings(_ data: Data?) -> [BearyDMStore.PendingSend]? {
         guard let data = data else { return nil }
-        return try? JSONDecoder().decode([BearyDMStore.PendingSend].self, from: data)
+        return decodeShared([BearyDMStore.PendingSend].self, from: data)
     }
 
     static func encodePendings(_ list: [BearyDMStore.PendingSend]) -> Data? {
-        try? JSONEncoder().encode(list)
+        encodeShared(list)
     }
 
     static func upsertPending(_ list: [BearyDMStore.PendingSend], _ pending: BearyDMStore.PendingSend) -> [BearyDMStore.PendingSend] {

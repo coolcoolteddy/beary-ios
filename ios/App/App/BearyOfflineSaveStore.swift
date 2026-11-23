@@ -52,16 +52,35 @@ struct BearyOfflineSaveManifest: Codable {
 enum BearyOfflineSaveStore {
     static let directoryPrefix = "beary_offline_save"
 
-    private static func makeEncoder() -> JSONEncoder {
+    /// 复用 coder（B-P1-4 补充）：与 BearyEntrySyncStore 同款——调用方分属
+    /// manager 串行队列（com.beary.offline-save）、设置页主线程与单测，
+    /// 不 confin 单一队列，故不用“每队列一个实例”，改用一把锁守共享实例
+    /// （锁只包住编解码调用本身，不跨 IO；coderLock 恒为叶锁，不嵌套其他锁）。
+    /// 策略与原来逐点一致，不改落盘格式：snake 走 entries 文字 JSON；
+    /// 清单 manifest 仍走 plain 直建（loadManifest / saveManifest，驼峰键
+    /// 旧落盘），不在本次范围。
+    private static let coderLock = NSLock()
+    private static let sharedSnakeEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         return encoder
-    }
-
-    private static func makeDecoder() -> JSONDecoder {
+    }()
+    private static let sharedSnakeDecoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return decoder
+    }()
+
+    private static func encodeSnake<T: Encodable>(_ value: T) -> Data? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedSnakeEncoder.encode(value)
+    }
+
+    private static func decodeSnake<T: Decodable>(_ type: T.Type, from data: Data) -> T? {
+        coderLock.lock()
+        defer { coderLock.unlock() }
+        return try? sharedSnakeDecoder.decode(type, from: data)
     }
 
     /// 展示用标题：标题非空即用标题，否则取正文首行（≤24 字），再无即“无标题日记”。
@@ -117,7 +136,7 @@ enum BearyOfflineSaveStore {
     static func saveEntryJSON(accountId: Int, entry: Entry) -> Bool {
         guard let id = entry.id, !id.isEmpty,
               let url = entryFileURL(accountId: accountId, entryId: id),
-              let data = try? makeEncoder().encode(entry) else { return false }
+              let data = encodeSnake(entry) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
@@ -130,7 +149,7 @@ enum BearyOfflineSaveStore {
     static func loadEntry(accountId: Int, entryId: String) -> Entry? {
         guard let url = entryFileURL(accountId: accountId, entryId: entryId),
               let data = try? Data(contentsOf: url) else { return nil }
-        return try? makeDecoder().decode(Entry.self, from: data)
+        return decodeSnake(Entry.self, from: data)
     }
 
     /// 写完回读的字节数（0 = 写盘失败或文件不可读）；供调用方累计本篇占用。
