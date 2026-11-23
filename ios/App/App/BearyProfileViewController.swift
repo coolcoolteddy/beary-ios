@@ -8011,6 +8011,27 @@ class BearyProfileViewController: UIViewController {
 let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.imageKey }, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex)
         viewer.initialThumbnail = thumbnail
         viewer.originFrameInWindow = originFrame
+        // 展示审计 G7-07：关场回当前照片——凭 imageKey 在实时墙里定位（后台回包重排后下标会串到别篇）；
+        // 只墙上前 6 张有格，格在缓存脚部里才给矩形与焦点视图，否则返回 nil、走淡出兜底。
+        // 「更多」钮是 BearyHit44Button、与照片格同级且默认 tag 0，须按类排除，免得撞上第 0 张。
+        viewer.dismissOriginKeyProvider = { [weak self] _, imageKey in
+            guard let self = self,
+                  let flatIndex = self.photoWallPhotosValue.firstIndex(where: { $0.imageKey == imageKey }),
+                  flatIndex < self.photosWallItems.count,
+                  let footer = self.cachedPhotosFooterView else { return nil }
+            var stack: [UIView] = [footer]
+            var target: UIButton?
+            while let view = stack.popLast() {
+                if let button = view as? UIButton, type(of: button) == UIButton.self,
+                   button.tag == flatIndex, !button.isHidden {
+                    target = button
+                    break
+                }
+                stack.append(contentsOf: view.subviews)
+            }
+            guard let button = target else { return nil }
+            return (frame: button.convert(button.bounds, to: nil), element: button)
+        }
         viewer.modalPresentationStyle = .fullScreen
         viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
             guard let strongSelf = self, let viewerValue = viewer else { return }
@@ -9788,6 +9809,14 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
 let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: entryValue.liveVideos, startIndex: index)
             viewer.initialThumbnail = thumbnail
             viewer.originFrameInWindow = originFrame
+            // 展示审计 G7-07：关场回当前图——按 entryId 实时取可见行卡片的槽位原处；
+            // 行已滚出视口或被复用时返回 nil、走淡出兜底。
+            viewer.dismissOriginProvider = { [weak self] index in
+                guard let self = self, let entryId = entryValue.id,
+                      let row = self.displayedEntries.firstIndex(where: { $0.id == entryId }),
+                      let cell = self.tableView.cellForRow(at: IndexPath(row: row, section: 0)) as? BearyDiaryCardCell else { return nil }
+                return cell.imageSlotOrigin(at: index)
+            }
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: BearyMotion.animated(true), completion: nil)
         }

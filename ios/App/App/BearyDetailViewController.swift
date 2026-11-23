@@ -3728,6 +3728,17 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideo
         viewer.originFrameInWindow = sender.view.map { $0.convert($0.bounds, to: nil) }
         // 无障碍：关闭后焦点回被点的缩略图。
         viewer.focusReturnElement = sender.view
+        // 展示审计 G7-07：关场回当前图——按下标取本页图片槽位原处；翻页后同样缩回当前图原位，
+        // 槽位被图片条横向滚出视口时返回 nil、走淡出兜底。
+        viewer.dismissOriginProvider = { [weak self] index in
+            guard let self = self, index >= 0, index < self.imageSlots.count else { return nil }
+            let slot = self.imageSlots[index]
+            guard !slot.isHidden else { return nil }
+            let frame = slot.convert(slot.bounds, to: nil)
+            let visible = self.imagesScrollView.convert(self.imagesScrollView.bounds, to: nil)
+            guard frame.intersects(visible) else { return nil }
+            return (frame: frame, element: slot)
+        }
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }

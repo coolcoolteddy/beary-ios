@@ -1444,6 +1444,18 @@ class BearyDiaryCardCell: UITableViewCell {
         for slot in imageSlots { slot.layer.cornerRadius = radius }
     }
 
+    /// 展示审计 G7-07：灯箱关场回当前图——按下标取槽位在 window 下的矩形与焦点视图；
+    /// 槽位隐藏（未用）或被图片条横向滚出视口时返回 nil，走淡出兜底。
+    func imageSlotOrigin(at index: Int) -> (frame: CGRect, element: UIView?)? {
+        guard index >= 0, index < imageSlots.count else { return nil }
+        let slot = imageSlots[index]
+        guard !slot.isHidden else { return nil }
+        let frame = slot.convert(slot.bounds, to: nil)
+        let visible = imagesScrollView.convert(imagesScrollView.bounds, to: nil)
+        guard frame.intersects(visible) else { return nil }
+        return (frame: frame, element: slot)
+    }
+
     @objc private func imageStripPinched(_ gesture: UIPinchGestureRecognizer) {
         // 单图时无间距可收，不接管手势（也不禁滚动）。
         let visibleCount = imageSlots.filter { !$0.isHidden }.count

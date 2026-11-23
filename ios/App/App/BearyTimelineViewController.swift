@@ -1943,6 +1943,18 @@ final class BearyTimelineCell: UITableViewCell {
         }
     }
 
+    /// 展示审计 G7-07：灯箱关场回当前图——按下标取缩略图在 window 下的矩形与焦点视图；
+    /// 下标越界（格已复用）或被图片条横向滚出视口时返回 nil，走淡出兜底。
+    func thumbOrigin(at index: Int) -> (frame: CGRect, element: UIView?)? {
+        guard index >= 0, index < thumbImageViews.count else { return nil }
+        let thumb = thumbImageViews[index]
+        guard !thumb.isHidden else { return nil }
+        let frame = thumb.convert(thumb.bounds, to: nil)
+        let visible = thumbsScrollView.convert(thumbsScrollView.bounds, to: nil)
+        guard frame.intersects(visible) else { return nil }
+        return (frame: frame, element: thumb)
+    }
+
     /// N7 主图条点按：下标取自 imageView.tag，keys 从 currentEntry 按
     /// configure 同一过滤口径（去空）重算；复用后手势随旧 imageView 一并移除，
     /// configure 重建时重新挂接，不留跨条目残留回调。
@@ -7068,6 +7080,19 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: viewerEntry.liveVideos, startIndex: index)
             viewer.initialThumbnail = thumbnail
             viewer.originFrameInWindow = originFrame
+            // 展示审计 G7-07：关场回当前图——实时取可见行缩略图的原处（按 entryId 定位行、按下标取格）；
+            // 行已滚出视口或被复用时返回 nil、走淡出兜底。
+            viewer.dismissOriginProvider = { [weak self] index in
+                guard let self = self else { return nil }
+                let sections = self.currentSections()
+                for (sectionIndex, section) in sections.enumerated() {
+                    if let row = section.entries.firstIndex(where: { $0.id == viewerEntry.id }),
+                       let cell = self.tableView.cellForRow(at: IndexPath(row: row, section: sectionIndex)) as? BearyTimelineCell {
+                        return cell.thumbOrigin(at: index)
+                    }
+                }
+                return nil
+            }
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
         }
