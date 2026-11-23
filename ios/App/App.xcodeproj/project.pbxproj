@@ -121,6 +121,7 @@
 		DE8D64F180D2F1B435EBC1A8 /* BearyBlindBoxEntryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709353AF36E7A13EDE025E55 /* BearyBlindBoxEntryView.swift */; };
 		8390766731A0B87B6A936AFC /* BearyBlindBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0475BEA97002D2AB77651F /* BearyBlindBox.swift */; };
 		1A6523B85DF64FC6A2358EBA /* BearyPlazaCarousel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 902E861F8F7547FF8D69877E /* BearyPlazaCarousel.swift */; };
+		CDEC579F003184DCAC04BECA /* BearyCarouselConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69C321578216480DF4F5181A /* BearyCarouselConfig.swift */; };
 		F69CC632FC3065F79C9B7E2A /* BearyLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F16DC0C4C6653B57C7C1D435 /* BearyLocation.swift */; };
 		B7E32DF13B854DBB86598255 /* BearyLivePhoto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27461924454044F9833DF938 /* BearyLivePhoto.swift */; };
 		89C3C81A21AAA90C750829DC /* BearyLocationPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02763A6E9B117474CCEE8630 /* BearyLocationPickerSheet.swift */; };
@@ -848,6 +849,7 @@
 		709353AF36E7A13EDE025E55 /* BearyBlindBoxEntryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBlindBoxEntryView.swift; sourceTree = "<group>"; };
 		CC0475BEA97002D2AB77651F /* BearyBlindBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBlindBox.swift; sourceTree = "<group>"; };
 		902E861F8F7547FF8D69877E /* BearyPlazaCarousel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPlazaCarousel.swift; sourceTree = "<group>"; };
+		69C321578216480DF4F5181A /* BearyCarouselConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCarouselConfig.swift; sourceTree = "<group>"; };
 		F16DC0C4C6653B57C7C1D435 /* BearyLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLocation.swift; sourceTree = "<group>"; };
 		27461924454044F9833DF938 /* BearyLivePhoto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLivePhoto.swift; sourceTree = "<group>"; };
 		02763A6E9B117474CCEE8630 /* BearyLocationPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLocationPickerSheet.swift; sourceTree = "<group>"; };
@@ -1589,6 +1591,7 @@
 				709353AF36E7A13EDE025E55 /* BearyBlindBoxEntryView.swift */,
 				CC0475BEA97002D2AB77651F /* BearyBlindBox.swift */,
 				902E861F8F7547FF8D69877E /* BearyPlazaCarousel.swift */,
+				69C321578216480DF4F5181A /* BearyCarouselConfig.swift */,
 				F16DC0C4C6653B57C7C1D435 /* BearyLocation.swift */,
 				27461924454044F9833DF938 /* BearyLivePhoto.swift */,
 				02763A6E9B117474CCEE8630 /* BearyLocationPickerSheet.swift */,
@@ -3000,6 +3003,7 @@
 				DE8D64F180D2F1B435EBC1A8 /* BearyBlindBoxEntryView.swift in Sources */,
 				8390766731A0B87B6A936AFC /* BearyBlindBox.swift in Sources */,
 				1A6523B85DF64FC6A2358EBA /* BearyPlazaCarousel.swift in Sources */,
+				CDEC579F003184DCAC04BECA /* BearyCarouselConfig.swift in Sources */,
 				F69CC632FC3065F79C9B7E2A /* BearyLocation.swift in Sources */,
 				B7E32DF13B854DBB86598255 /* BearyLivePhoto.swift in Sources */,
 				89C3C81A21AAA90C750829DC /* BearyLocationPickerSheet.swift in Sources */,

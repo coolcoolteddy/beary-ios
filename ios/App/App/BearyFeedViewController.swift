@@ -744,6 +744,7 @@ class BearyFeedViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlindBoxStateChanged), name: .bearyBlindBoxDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleAnnouncementListChanged), name: .bearyAnnouncementListDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleFeedUserChanged), name: .bearyUserDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleFriendsChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
         // 开发者模式变化：假日记 / 字号（见 handleDevModeChanged）。
@@ -756,6 +757,9 @@ class BearyFeedViewController: UIViewController {
         }
         plazaCarouselView.onSelectBlindBox = { [weak self] in
             self?.presentBlindBoxFlow()
+        }
+        plazaCarouselView.onSelectAnnouncement = { [weak self] ann in
+            self?.presentAnnouncement(ann)
         }
         // 首帧先出盲盒页与历史卡；精选卡等广场首屏数据到了再补（见 rebuildCarouselItems）。
         plazaCarouselView.setItems([.blindBox, .historyToday(BearyHistoryTodayLoader.cached())])
@@ -2703,22 +2707,57 @@ class BearyFeedViewController: UIViewController {
         present(vc, animated: BearyMotion.animated(true), completion: nil)
     }
 
-    /// 轮播内容重建：盲盒页恒为第一页（两段都有）；精选卡取当前段广场首屏数据就地挑
-    /// （正在关注段不挑，只留盲盒页与历史卡），历史卡恒为当日一条（未加载到先占位、到了再补）。
+    /// 公告页（轮播公告卡点按）：打开公告底 sheet（与启动时公告弹窗同一入口）。
+    private func presentAnnouncement(_ announcement: BearyAnnouncement) {
+        plazaCarouselView.setPageVisible(false)
+        BearyAnnouncementSheet.show(from: self, announcement: announcement)
+    }
+
+    /// 轮播内容重建：广场段按服务端配置组装页面（盲盒 / 精选 / 历史上的今天 / 公告，
+    /// 顺序即配置顺序；服务端已按 enabled + 时间规则过滤）。
+    /// 正在关注段不走配置，仍是盲盒页与历史卡（#2499 定版）。
+    /// 配置拉不到时用缓存或内置默认（见 BearyCarouselConfigLoader），轮播不空白。
     /// 内容不变时不重置滚动位（见 BearyPlazaCarouselView.setItems）。
     private func rebuildCarouselItems() {
-        // 盲盒页恒为第一页；精选只在广场段挑，历史卡恒为当日一条。
-        var items: [BearyPlazaCarouselItem] = [.blindBox]
-        if !feedFollowingSegment {
-            let picks = BearyPlazaFeaturedPicker.pick(from: plazaRaw)
-            items.append(contentsOf: picks.map { .featured($0) })
+        if feedFollowingSegment {
+            let history = BearyHistoryTodayLoader.cached()
+            plazaCarouselView.setItems([.blindBox, .historyToday(history)])
+            if history == nil {
+                BearyHistoryTodayLoader.load { [weak self] _ in
+                    self?.rebuildCarouselItems()
+                }
+            }
+            return
         }
-        let history = BearyHistoryTodayLoader.cached()
-        items.append(.historyToday(history))
-        plazaCarouselView.setItems(items)
-        if history == nil {
-            BearyHistoryTodayLoader.load { [weak self] _ in
-                self?.rebuildCarouselItems()
+        BearyCarouselConfigLoader.load { [weak self] config in
+            guard let self = self else { return }
+            var items: [BearyPlazaCarouselItem] = []
+            for page in config.pages {
+                switch page.type {
+                case .featured:
+                    let picks = BearyPlazaFeaturedPicker.pick(from: self.plazaRaw, count: page.count ?? BearyPlazaFeaturedPicker.pickCount)
+                    items.append(contentsOf: picks.map { .featured($0) })
+                case .history:
+                    items.append(.historyToday(BearyHistoryTodayLoader.cached()))
+                case .blindbox:
+                    items.append(.blindBox)
+                case .announcement:
+                    if let ann = BearyAnnouncementCenter.shared.latestAnnouncement() {
+                        items.append(.announcement(ann))
+                    }
+                }
+            }
+            self.plazaCarouselView.setItems(items)
+            if BearyHistoryTodayLoader.cached() == nil {
+                BearyHistoryTodayLoader.load { [weak self] _ in
+                    self?.rebuildCarouselItems()
+                }
+            }
+            // 公告页在配置里、但公告列表还没拉到：补拉后重建。
+            if config.pages.contains(where: { $0.type == .announcement }) && BearyAnnouncementCenter.shared.latestAnnouncement() == nil {
+                BearyAnnouncementCenter.shared.fetchList { [weak self] _ in
+                    self?.rebuildCarouselItems()
+                }
             }
         }
     }
@@ -2728,6 +2767,11 @@ class BearyFeedViewController: UIViewController {
         // 不顶走正在看的页；状态变了会回第一页，正好是盲盒页）。
         rebuildCarouselItems()
         layoutFeedBlindBoxHeader()
+    }
+
+    /// 公告列表拉到：轮播里有公告页时重建（取最新一条有效公告）。
+    @objc private func handleAnnouncementListChanged() {
+        rebuildCarouselItems()
     }
 
     /// 审计-广场（引用缓存无上限）：内存警告即清空引用缓存（正文重拉即可恢复，
