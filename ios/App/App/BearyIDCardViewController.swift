@@ -90,6 +90,8 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // ID 卡正面纯白是设计：钉浅色，深色外观下样貌不变。
+        overrideUserInterfaceStyle = .light
         view.backgroundColor = .white
         view.layer.cornerRadius = 26
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -710,6 +712,8 @@ final class BearyIDCardSheetViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // ID 卡正面纯白是设计：钉浅色，深色外观下样貌不变。
+        overrideUserInterfaceStyle = .light
         view.backgroundColor = .white
         view.layer.cornerRadius = 26
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
