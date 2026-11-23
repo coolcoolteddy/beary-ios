@@ -84,17 +84,6 @@ final class BearyPlusPageViewController: UIViewController {
         return labelValue
     }()
 
-    private let subLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        labelValue.adjustsFontForContentSizeCategory = true
-        labelValue.textColor = BearyColors.gray
-        labelValue.textAlignment = .center
-        labelValue.numberOfLines = 0
-        labelValue.text = "基础功能免费使用。"
-        return labelValue
-    }()
 
     private lazy var mainButton: UIButton = {
         let buttonValue = UIButton(type: .custom)
@@ -205,7 +194,6 @@ final class BearyPlusPageViewController: UIViewController {
         hero.translatesAutoresizingMaskIntoConstraints = false
         hero.addSubview(crownView)
         hero.addSubview(statusLabel)
-        hero.addSubview(subLabel)
         statusLabel.text = isPlusValue ? "已开通" : "尚未开通"
         NSLayoutConstraint.activate([
             crownView.topAnchor.constraint(equalTo: hero.topAnchor, constant: 20),
@@ -216,11 +204,7 @@ final class BearyPlusPageViewController: UIViewController {
             statusLabel.centerXAnchor.constraint(equalTo: hero.centerXAnchor),
             statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: hero.leadingAnchor, constant: 16),
             statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: hero.trailingAnchor, constant: -16),
-            subLabel.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8),
-            subLabel.centerXAnchor.constraint(equalTo: hero.centerXAnchor),
-            subLabel.leadingAnchor.constraint(equalTo: hero.leadingAnchor, constant: 16),
-            subLabel.trailingAnchor.constraint(equalTo: hero.trailingAnchor, constant: -16),
-            subLabel.bottomAnchor.constraint(equalTo: hero.bottomAnchor, constant: -8),
+            statusLabel.bottomAnchor.constraint(equalTo: hero.bottomAnchor, constant: -8),
         ])
         contentStack.addArrangedSubview(hero)
     }
