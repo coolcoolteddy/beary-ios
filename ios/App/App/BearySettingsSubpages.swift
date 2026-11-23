@@ -792,7 +792,9 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
 
     private func recordRow(_ record: BearyOfflineSaveRecord, index: Int) -> UIView {
         let titleLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink, lines: 0)
-        titleLabel.text = record.title
+        // 标题走转换器：记号转回熊脸附件。存量标题在保存时已按原文截 24 字，
+        // 尾部半截记号先去掉（否则原文露出）；读屏标签保持纯文本。
+        titleLabel.attributedText = BearyText.inlineAttributedText(from: BearyText.stripTrailingPartialInlineToken(record.title), font: titleLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         let statusLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
         statusLabel.text = Self.statusText(for: record)
         let dateLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray)

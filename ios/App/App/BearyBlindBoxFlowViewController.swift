@@ -118,10 +118,21 @@ private final class BlindBoxPoolRowView: UIView {
     func configure(entry: Entry, selected: Bool) {
         let title = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if title.isEmpty == false {
-            mainLabel.text = title
+            mainLabel.attributedText = BearyText.inlineAttributedText(from: title, font: mainLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
         } else {
             let flat = (entry.content ?? "").replacingOccurrences(of: "\n", with: " ")
-            mainLabel.text = flat.isEmpty ? "（无正文）" : String(flat.prefix(40))
+            if flat.isEmpty {
+                mainLabel.text = "（无正文）"
+            } else {
+                // 先全文渲染再取前 40 字：记号已是单个附件格，不会被切一半。
+                let rendered = BearyText.inlineAttributedText(from: flat, font: mainLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
+                if rendered.string.count > 40 {
+                    let prefixLength = rendered.string.prefix(40).utf16.count
+                    mainLabel.attributedText = rendered.attributedSubstring(from: NSRange(location: 0, length: prefixLength))
+                } else {
+                    mainLabel.attributedText = rendered
+                }
+            }
         }
         let dateText = BlindBoxDate.displayString(ms: entry.publishedAt ?? entry.createdAt)
         let eligibility = BlindBoxPool.eligibility(for: entry)
@@ -1308,7 +1319,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         self.received = received
         receivedEmotes = received.emotes ?? []
         let title = (received.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        receivedTitleLabel.text = title.isEmpty ? nil : title
+        receivedTitleLabel.attributedText = title.isEmpty ? nil : BearyText.inlineAttributedText(from: title, font: receivedTitleLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: received.images)
         receivedTitleLabel.isHidden = title.isEmpty
         receivedDateLabel.text = BlindBoxDate.displayString(ms: received.publishedAt)
         receivedDateLabel.isHidden = receivedDateLabel.text?.isEmpty != false

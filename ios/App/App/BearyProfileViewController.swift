@@ -4789,21 +4789,28 @@ class BearyProfileViewController: UIViewController {
         return "\(year) 年 \(month) 月 \(day) 日"
     }
 
-    private func personalExcerpt(entry: Entry, limit: Int) -> String {
+    /// 正文摘要的 attributed 版：先全文渲染成 attributed（记号变单个附件格），
+    /// 再按字素簇取前 limit 字——不要先对原文截断再渲染，记号会被切一半。
+    /// 超限补 "…"，与原 personalExcerpt 口径一致。
+    private func personalExcerptAttributed(entry: Entry, limit: Int, font: UIFont) -> NSAttributedString {
         let content = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !content.isEmpty else { return "" }
-        return content.count > limit ? String(content.prefix(limit)) + "…" : content
+        guard !content.isEmpty else { return NSAttributedString(string: "") }
+        let rendered = BearyText.inlineAttributedText(from: content, font: font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
+        guard rendered.string.count > limit else { return rendered }
+        let prefixLength = rendered.string.prefix(limit).utf16.count
+        let result = NSMutableAttributedString(attributedString: rendered.attributedSubstring(from: NSRange(location: 0, length: prefixLength)))
+        result.append(NSAttributedString(string: "…", attributes: [.font: font, .foregroundColor: BearyColors.ink]))
+        return result
     }
 
-    /// 行文案回退（非标题行）：那年今日展开列表行、去年的对话原篇栏在正文为空时
-    /// 仍需一句行文案才可点/可读，故空标题时退正文摘要；109：无标题又无正文时
-    /// 不再退“日记”占位，返回空串（行只剩日期/副文案可读，不编造文案）。
-    private func personalTitle(entry: Entry) -> String {
+    /// 行文案回退的 attributed 版（非标题行）：那年今日展开列表行、去年的对话
+    /// 原篇栏在正文为空时仍需一句行文案才可点/可读，故空标题时退正文摘要；
+    /// 109：无标题又无正文时返回空串（行只剩日期/副文案可读，不编造文案）。
+    private func personalTitleAttributed(entry: Entry, font: UIFont) -> NSAttributedString {
         if let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
-            return title
+            return BearyText.inlineAttributedText(from: title, font: font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
         }
-        let excerpt = personalExcerpt(entry: entry, limit: 40)
-        return excerpt.isEmpty ? "" : excerpt
+        return personalExcerptAttributed(entry: entry, limit: 40, font: font)
     }
 
     // MARK: 批 D —— 写作统计
@@ -5133,13 +5140,13 @@ class BearyProfileViewController: UIViewController {
         thisDayMetaLabel.text = meta
         // 标题行已去掉口径：空标题时整行标题不渲染（不再用 personalTitle 的正文
         // 摘要回退充当标题、与下方正文摘要重复）；有标题的旧日记照常显示。
-        // 展开列表行与去年的对话原篇栏仍用 personalTitle 作行文案（见该函数注释）。
+        // 展开列表行与去年的对话原篇栏仍用 personalTitleAttributed 作行文案（见该函数注释）。
         let thisDayTitle = (main.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        thisDayTitleLabel.text = thisDayTitle.isEmpty ? nil : thisDayTitle
+        thisDayTitleLabel.attributedText = thisDayTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: thisDayTitle, font: thisDayTitleLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: main.images)
         thisDayTitleLabel.isHidden = thisDayTitle.isEmpty
-        let body = personalExcerpt(entry: main, limit: 120)
-        thisDayBodyLabel.text = body
-        thisDayBodyLabel.isHidden = body.isEmpty
+        let body = personalExcerptAttributed(entry: main, limit: 120, font: thisDayBodyLabel.font)
+        thisDayBodyLabel.attributedText = body
+        thisDayBodyLabel.isHidden = body.length == 0
         // 展开态按年列出：有记录的年份先标年份、其下再列当年篇；无记录的
         // 年份单行说明——语料到齐标「这一年没有」，未到齐标「尚未检查完」。
         // 单篇单年且无其他往年时不展开（与旧口径同：无可展开内容不露钮）。
@@ -5161,7 +5168,7 @@ class BearyProfileViewController: UIViewController {
                     // Hit44：行高 ≥32、栈间距 8，上下各扩 6 不及间距，不抢邻行热区；视觉不动。
                     let rowButton = BearyHit44Button(type: .system)
                     rowButton.translatesAutoresizingMaskIntoConstraints = false
-                    rowButton.setTitle(personalTitle(entry: entry), for: .normal)
+                    rowButton.setAttributedTitle(personalTitleAttributed(entry: entry, font: UIFont.systemFont(ofSize: 14)), for: .normal)
                     rowButton.setTitleColor(BearyColors.ink, for: .normal)
                     rowButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
                     rowButton.titleLabel?.numberOfLines = 1
@@ -5669,7 +5676,7 @@ class BearyProfileViewController: UIViewController {
         pastSelfRefreshLayout()
     }
 
-    private func pastSelfSideColumn(title: String, body: String, barColor: UIColor) -> UIView {
+    private func pastSelfSideColumn(title: String, body: NSAttributedString, barColor: UIColor) -> UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.backgroundColor = BearyColors.surface2
@@ -5693,7 +5700,7 @@ class BearyProfileViewController: UIViewController {
         bodyLabel.font = UIFont.systemFont(ofSize: 13)
         bodyLabel.textColor = BearyColors.ink
         bodyLabel.numberOfLines = 0
-        bodyLabel.text = body
+        bodyLabel.attributedText = body
         stack.addArrangedSubview(titleLabel)
         stack.addArrangedSubview(bodyLabel)
         container.addSubview(stack)
@@ -5783,13 +5790,13 @@ class BearyProfileViewController: UIViewController {
         sideRow.distribution = .fillEqually
         sideRow.alignment = .top
         let originDate = origin.map { personalDateString(timestampMs: $0.createdAt) }
-        let originBody = origin.map { personalExcerpt(entry: $0, limit: 200) }
-        let originText = (originBody ?? "").isEmpty ? (origin.map { personalTitle(entry: $0) } ?? "") : (originBody ?? "")
+        let originBody = origin.map { personalExcerptAttributed(entry: $0, limit: 200, font: UIFont.systemFont(ofSize: 13)) } ?? NSAttributedString(string: "")
+        let originText = originBody.length == 0 ? (origin.map { personalTitleAttributed(entry: $0, font: UIFont.systemFont(ofSize: 13)) } ?? NSAttributedString(string: "")) : originBody
         sideRow.addArrangedSubview(pastSelfSideColumn(
             title: "去年原篇 · \(originDate ?? "")", body: originText, barColor: BearyColors.gray))
         let writtenDate = pastSelfDisplayDate(PastSelfLogic.localDateString(fromMs: latestDelivered.createdAtMs, calendar: Self.beijingCalendar))
         sideRow.addArrangedSubview(pastSelfSideColumn(
-            title: "今年留话 · 写于 \(writtenDate)", body: latestDelivered.body, barColor: BearyColors.gray))
+            title: "今年留话 · 写于 \(writtenDate)", body: BearyText.inlineAttributedText(from: latestDelivered.body, font: UIFont.systemFont(ofSize: 13), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark), barColor: BearyColors.gray))
         section.addArrangedSubview(sideRow)
         // 年份链：原篇年 + 每条留话的送达年（已撤回行已在 liveChainMessages 里排除）。
         var chainParts: [String] = []
@@ -6221,11 +6228,11 @@ class BearyProfileViewController: UIViewController {
         randomMetaLabel.text = meta
         // 空标题时整行标题不渲染（同那年今日主卡；不再用摘要回退充当标题）。
         let randomTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        randomTitleLabel.text = randomTitle.isEmpty ? nil : randomTitle
+        randomTitleLabel.attributedText = randomTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: randomTitle, font: randomTitleLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
         randomTitleLabel.isHidden = randomTitle.isEmpty
-        let body = personalExcerpt(entry: entry, limit: 120)
-        randomBodyLabel.text = body
-        randomBodyLabel.isHidden = body.isEmpty
+        let body = personalExcerptAttributed(entry: entry, limit: 120, font: randomBodyLabel.font)
+        randomBodyLabel.attributedText = body
+        randomBodyLabel.isHidden = body.length == 0
     }
 
     private func renderRandom(visible: [Entry]) {

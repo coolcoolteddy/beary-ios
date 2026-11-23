@@ -2286,7 +2286,18 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
         if pendingUndos.count == 1, let only = pendingUndos.first {
             let short = summaryText(for: only.draft)
-            undoLabel.text = short.count > 20 ? "已删除草稿“\(String(short.prefix(20)))…”" : "已删除草稿“\(short)”"
+            // 撤销条文案走转换器：先全文渲染再取前 20 字，记号变单个附件格。
+            let rendered = BearyText.inlineAttributedText(from: short, font: undoLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: only.draft.images.compactMap { $0.serverKey })
+            let result = NSMutableAttributedString(string: "已删除草稿“", attributes: [.font: undoLabel.font, .foregroundColor: BearyColors.ink])
+            if rendered.string.count > 20 {
+                let prefixLength = rendered.string.prefix(20).utf16.count
+                result.append(rendered.attributedSubstring(from: NSRange(location: 0, length: prefixLength)))
+                result.append(NSAttributedString(string: "…”", attributes: [.font: undoLabel.font, .foregroundColor: BearyColors.ink]))
+            } else {
+                result.append(rendered)
+                result.append(NSAttributedString(string: "”", attributes: [.font: undoLabel.font, .foregroundColor: BearyColors.ink]))
+            }
+            undoLabel.attributedText = result
         } else {
             undoLabel.text = "\(pendingUndos.count) 份草稿已删除"
         }

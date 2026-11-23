@@ -224,6 +224,27 @@ enum BearyPlazaCarouselText {
         return "一篇日记"
     }
 
+    /// 标题的 attributed 版（今日推荐卡）：先全文渲染再取前 30 字——
+    /// 记号已是单个附件格，不会在记号中间截断。标题原样全量渲染（卡片
+    /// 单行尾部截断）；无标题取正文首行；都没有给中性占位。
+    static func displayTitleAttributed(for entry: Entry, font: UIFont, dark: Bool) -> NSAttributedString {
+        if let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            return BearyText.inlineAttributedText(from: title, font: font, color: BearyColors.ink, paragraphStyle: nil, dark: dark, gifImageKeys: entry.images)
+        }
+        if let content = entry.content {
+            for line in content.components(separatedBy: .newlines) {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    let rendered = BearyText.inlineAttributedText(from: trimmed, font: font, color: BearyColors.ink, paragraphStyle: nil, dark: dark, gifImageKeys: entry.images)
+                    guard rendered.string.count > 30 else { return rendered }
+                    let prefixLength = rendered.string.prefix(30).utf16.count
+                    return rendered.attributedSubstring(from: NSRange(location: 0, length: prefixLength))
+                }
+            }
+        }
+        return NSAttributedString(string: "一篇日记", attributes: [.font: font, .foregroundColor: BearyColors.ink])
+    }
+
     /// 副行：作者名 · 赞数（无作者名时只显赞数）。
     static func metaText(for entry: Entry) -> String {
         var parts: [String] = []
@@ -542,9 +563,9 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
         switch item {
         case .featured(let entry):
             eyebrowLabel.text = "今日推荐"
-            titleLabel.text = BearyPlazaCarouselText.displayTitle(for: entry)
+            titleLabel.attributedText = BearyPlazaCarouselText.displayTitleAttributed(for: entry, font: titleLabel.font, dark: traitCollection.userInterfaceStyle == .dark)
             metaLabel.text = BearyPlazaCarouselText.metaText(for: entry)
-            bodyButton.accessibilityLabel = "今日推荐：\(titleLabel.text ?? "")"
+            bodyButton.accessibilityLabel = "今日推荐：\(BearyPlazaCarouselText.displayTitle(for: entry))"
         case .historyToday(let payload):
             eyebrowLabel.text = "历史上的今天"
             if let event = payload?.firstEvent {
