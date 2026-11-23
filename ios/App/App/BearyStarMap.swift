@@ -17,9 +17,12 @@ import Foundation
 //   是近似匹配不是分词，原因文案只展示共享词本身，不展示正文。
 
 /// 星图边的原因种类（过滤 chips 与原因文案共用）。
+/// tag = 日记–标签边（2.5D 第 2 支）：detail 为标签名，一端是日记 id、
+/// 一端是标签节点 id（"tag:" + 标签名），不进连线列表（见 VC listedEdges）。
 enum StarMapEdgeKind: String {
     case place
     case word
+    case tag
 }
 
 /// 一条连线原因。detail 的含义按 kind 而定：place = 地点键，
@@ -33,20 +36,46 @@ struct StarMapEdgeReason: Equatable {
     let tokens: [String]
 }
 
+/// 节点分级（2.5D 第 2 支）：锚点（置顶＋连接数前 3）／标签节点／普通日记。
+/// 锚点仍是日记星（StarMapStar.kind），标签节点另建 StarMapTagNode。
+enum StarMapNodeKind: String {
+    case anchor
+    case tag
+    case diary
+}
+
 /// 一颗星：位置是 0...1 归一化坐标（渲染层按 sky bounds + 边距换算成 pt，
 /// 同一篇在任何尺寸、任何分片里都落在同一相对位置，不随机飘）。
 struct StarMapStar {
     let entry: Entry
     let x: Double
     let y: Double
-    /// 半径 pt：6...20，见 radius(forWordCount:)。
+    /// 半径 pt：普通日记 6...20（字数），锚点固定 15（见 anchorRadius）。
     let radius: CGFloat
     /// 亮度固定 0.70（心情已去掉，不再按心情分档）。
     let brightness: CGFloat
     let wordCount: Int
+    /// 分级：锚点／普通日记（标签节点不在此 struct，见 StarMapTagNode）。
+    let kind: StarMapNodeKind
 }
 
-/// 一条边：连接两篇（firstId < secondId 字典序，作稳定边 id 用）。
+/// 一个标签节点（2.5D 第 2 支）：一标签一节点，位置取挂载篇的星位质心，
+/// 大小按挂载篇数（见 radius(forTagCount:)）。id 固定 "tag:" + 标签名，
+/// 与日记–标签边的端点、渲染层 pointsById 共用同一命名。
+struct StarMapTagNode {
+    let name: String
+    let count: Int
+    let x: Double
+    let y: Double
+    /// 半径 pt：9...18，见 radius(forTagCount:)。
+    let radius: CGFloat
+
+    var id: String { "tag:" + name }
+}
+
+/// 一条边：连接两篇（firstId < secondId 字典序，作稳定边 id 用），
+/// 或一篇日记与一个标签节点（tag 边：firstId < secondId 同样字典序，
+/// 一端是日记 id、一端是 "tag:" + 标签名）。
 struct StarMapEdge {
     let firstId: String
     let secondId: String
@@ -56,10 +85,13 @@ struct StarMapEdge {
 }
 
 /// 星空模型：stars 与 edges 只含过滤后的篇；entryById 供点星/点线后取详情用。
+/// tagNodes 是过滤后集合的标签节点（2.5D 第 2 支）；edges 含日记–日记边
+/// （地点／同词）与日记–标签边（tag 原因）。
 struct StarMapModel {
     let stars: [StarMapStar]
     let edges: [StarMapEdge]
     let entryById: [String: Entry]
+    let tagNodes: [StarMapTagNode]
 }
 
 /// 分片选择：全部（只在篇数少时出现）/ 某年全年 / 某年某月 / 未标日期。
@@ -97,13 +129,16 @@ enum BearyStarMap {
 
     /// 建模算法版本：buildModel / 过滤 / 关键词 / 地点键任一口径改了即 +1，
     /// 旧缓存键随之失效，不用手动清盘。缓存键里只认本值，不认 App 版本号。
-    static let algorithmVersion = 2
+    /// 3（2.5D 第 2 支）：指纹加 tags＋pinned，节点三级分化＋标签节点。
+    static let algorithmVersion = 3
 
     /// 日记版本指纹：分片内可见篇的建模输入摘要。覆盖 buildModel 消费的
     /// 全部字段——过滤（id / 占位 / 公开态 / 限时到期 / 标题 / 正文 /
     /// 图片 / 引用）、字数（标题 / 正文）、地点键
     /// （精确名 / 区级）、同词（标题 / 正文）与分片归属（createdAt），
-    /// 另含 viewer 角色（本人 / 他人地点键与过滤口径不同）。
+    /// 另含 viewer 角色（本人 / 他人地点键与过滤口径不同），
+    /// 以及 2.5D 第 2 支新增的标签（tags，排序后拼串）与置顶（pinned，
+    /// 锚点判定输入）。标签／置顶变了即整片重建。
     /// 改正文会改整片的词频与文档频率上限，故指纹按整片算，不按单篇失效：
     /// 片内任一篇改了即整片重建。篇按 id 排序后再拼串，同一集合换顺序
     /// 指纹不变；空片指纹固定（空串哈希），不与任何有篇片撞键。
@@ -131,6 +166,8 @@ enum BearyStarMap {
                 + "\u{1}" + (entry.images ?? []).joined(separator: ",")
                 + "\u{1}" + (entry.quoteId ?? "")
                 + "\u{1}" + (entry.placeholder == true ? "1" : "0")
+                + "\u{1}" + (entry.tags ?? []).sorted().joined(separator: ",")
+                + "\u{1}" + String(entry.pinned ?? 0)
                 + "\u{2}"
         }
         return String(format: "%016llx", fnv1a(joined))
@@ -183,6 +220,15 @@ enum BearyStarMap {
     /// 放大一档以保证小屏上最小星仍可点；字数 0 → 6）。
     static func radius(forWordCount count: Int) -> CGFloat {
         6 + min(14, CGFloat(max(0, count)) / 40)
+    }
+
+    /// 锚点半径 pt：固定 15（预览锚点 r=15，约 30pt 直径；光晕另见渲染层 28pt）。
+    static let anchorRadius: CGFloat = 15
+
+    /// 标签节点半径 pt：8 + 挂载篇数，上限 18（1 篇 → 9，10 篇及以上 → 18；
+    /// 预览标签固定 12，本支按任务口径改为随篇数长大）。
+    static func radius(forTagCount count: Int) -> CGFloat {
+        8 + min(10, CGFloat(max(0, count)))
     }
 
     // MARK: - 星位：FNV-1a 64 位确定性哈希（不用 Swift Hasher）
@@ -486,23 +532,100 @@ enum BearyStarMap {
         // 力导向布局（2.5D 第 1 支）：星位不再是纯哈希定点——以哈希位为初值、
         // 以连线为弹簧做确定性松弛（后台队列内整段跑完，主线程只渲染终态）。
         // 星位仍由 id 与连线决定、不随机飘；同输入同输出（见 relaxedPositions）。
+        // 松弛只用日记–日记边：标签节点尚未定位，不进弹簧。
         let relaxed = relaxedPositions(for: visible, edges: edges, viewerIsAuthor: viewerIsAuthor)
+        // 标签节点（2.5D 第 2 支）：一标签一节点，位置取挂载篇的星位质心，
+        // 大小按挂载篇数；无标签的篇不产生节点，空标签（0 篇）不进模型。
+        var tagMembers: [String: [String]] = [:]
+        for entry in visible {
+            guard let id = entry.id else { continue }
+            // 同篇内重复标签只记一次（服务端 tags 正常不重复，此处防脏数据）。
+            var seenNames = Set<String>()
+            for tag in entry.tags ?? [] {
+                let name = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty, seenNames.insert(name).inserted else { continue }
+                tagMembers[name, default: []].append(id)
+            }
+        }
+        var tagNodes: [StarMapTagNode] = []
+        for name in tagMembers.keys.sorted() {
+            guard let memberIds = tagMembers[name], !memberIds.isEmpty else { continue }
+            var sumX = 0.0
+            var sumY = 0.0
+            var counted = 0
+            for id in memberIds {
+                guard let p = relaxed[id] else { continue }
+                sumX += p.x
+                sumY += p.y
+                counted += 1
+            }
+            guard counted > 0 else { continue }
+            tagNodes.append(StarMapTagNode(
+                name: name,
+                count: memberIds.count,
+                x: sumX / Double(counted),
+                y: sumY / Double(counted),
+                radius: radius(forTagCount: memberIds.count)
+            ))
+        }
+        // 日记–标签连线（2.5D 第 2 支）：每篇连向自己的每个标签节点；
+        // 端点字典序（firstId < secondId），与日记–日记边同一 id 口径。
+        for entry in visible {
+            guard let id = entry.id else { continue }
+            var seenNames = Set<String>()
+            for tag in entry.tags ?? [] {
+                let name = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty, tagMembers[name] != nil, seenNames.insert(name).inserted else { continue }
+                let tagId = "tag:" + name
+                let (first, second) = id < tagId ? (id, tagId) : (tagId, id)
+                edges.append(StarMapEdge(
+                    firstId: first,
+                    secondId: second,
+                    reasons: [StarMapEdgeReason(kind: .tag, detail: name, tokens: [])]
+                ))
+            }
+        }
+        // 锚点（2.5D 第 2 支；与预览同口径）：置顶篇（单槽位，取首篇）＋
+        // 连接数前 3（不含置顶）；无置顶退纯 top 3。度数算全部边（地点／
+        // 同词／标签边）的日记端点，同度数按 id 排序，稳定。只在可见篇里取。
+        let visibleIds = Set(visible.compactMap { $0.id })
+        var degree: [String: Int] = [:]
+        for edge in edges {
+            for endpoint in [edge.firstId, edge.secondId] where visibleIds.contains(endpoint) {
+                degree[endpoint, default: 0] += 1
+            }
+        }
+        let pinnedId = visible.first(where: { $0.isPinned })?.id
+        let ranked = visible.compactMap { $0.id }.sorted { a, b in
+            let da = degree[a] ?? 0
+            let db = degree[b] ?? 0
+            if da != db { return da > db }
+            return a < b
+        }
+        var anchorIds: [String] = []
+        if let pinnedId = pinnedId, !anchorIds.contains(pinnedId) { anchorIds.append(pinnedId) }
+        for id in ranked where anchorIds.count < 4 && id != pinnedId {
+            anchorIds.append(id)
+        }
+        let anchorSet = Set(anchorIds)
         var stars: [StarMapStar] = []
         for entry in visible {
             guard let id = entry.id else { continue }
             let count = wordCount(entry)
             let pos = relaxed[id] ?? position(forEntryId: id)
+            let isAnchor = anchorSet.contains(id)
             stars.append(StarMapStar(
                 entry: entry,
                 x: pos.x,
                 y: pos.y,
-                radius: radius(forWordCount: count),
+                radius: isAnchor ? anchorRadius : radius(forWordCount: count),
                 brightness: 0.70,
-                wordCount: count
+                wordCount: count,
+                kind: isAnchor ? .anchor : .diary
             ))
             entryById[id] = entry
         }
-        return StarMapModel(stars: stars, edges: edges, entryById: entryById)
+        return StarMapModel(stars: stars, edges: edges, entryById: entryById, tagNodes: tagNodes)
     }
 
     // MARK: - 差分（r17 M2；纯逻辑，可进测试 target）
