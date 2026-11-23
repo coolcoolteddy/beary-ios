@@ -41,7 +41,8 @@ struct BearyOfflineSaveBatchResult {
 final class BearyOfflineSaveManager {
     static let shared = BearyOfflineSaveManager()
 
-    /// 清单与写盘只走这条串行队列；网络取图回调回本队列再写盘，不跨线程碰清单。
+    /// 清单与写盘只走这条串行队列；网络取图回调回本队列再写盘，删除也走本队列，
+    /// 不跨线程碰清单。
     private let queue = DispatchQueue(label: "com.beary.offline-save")
 
     private init() {}
@@ -129,11 +130,16 @@ final class BearyOfflineSaveManager {
                 BearyImageLoader.shared.fetchRawData(url: url) { [weak self] data in
                     guard let self = self else { group.leave(); return }
                     self.queue.async {
-                        if let data = data, BearyOfflineSaveStore.saveImageData(accountId: accountId, entryId: entryId, key: key, data: data) {
-                            downloadedKeys.append(key)
-                        } else {
+                        // 入口 JSON 已被中途的移除删掉即本次保存已作废：不再写图，
+                        // 否则移除刚删掉的目录会被回包的图片写盘重新建出来，留孤儿文件。
+                        guard BearyOfflineSaveStore.entryJSONByteCount(accountId: accountId, entryId: entryId) > 0,
+                              let data = data,
+                              BearyOfflineSaveStore.saveImageData(accountId: accountId, entryId: entryId, key: key, data: data) else {
                             failedKeys.append(key)
+                            group.leave()
+                            return
                         }
+                        downloadedKeys.append(key)
                         group.leave()
                     }
                 }
@@ -152,6 +158,12 @@ final class BearyOfflineSaveManager {
             return BearyOfflineSaveOutcome(savedImages: 0, failedKeys: failedKeys, totalBytes: 0, status: "partial")
         }
         let keys = entry.images ?? []
+        // 串行队列只串行清单读-改-写：保存中途的移除仍可能落在两次队列块之间
+        // （图片下载的网络空档）。入口 JSON 已被删即本次保存已作废，不再把记录
+        // 写回清单，避免“清单称 complete、磁盘上却没有文件”的孤儿记录。
+        guard BearyOfflineSaveStore.entryJSONByteCount(accountId: accountId, entryId: entryId) > 0 else {
+            return BearyOfflineSaveOutcome(savedImages: 0, failedKeys: keys, totalBytes: 0, status: "partial")
+        }
         var totalBytes = BearyOfflineSaveStore.entryJSONByteCount(accountId: accountId, entryId: entryId)
         for key in downloadedKeys {
             totalBytes += BearyOfflineSaveStore.imageByteCount(accountId: accountId, entryId: entryId, key: key)
@@ -232,16 +244,31 @@ final class BearyOfflineSaveManager {
     // MARK: - 删除
 
     /// 删单篇离线副本（文字 + 图片 + 清单记录）；已同步的日记与 Caches 缓存不受影响。
-    @discardableResult
-    func remove(entryId: String) -> Bool {
-        guard let accountId = currentAccountId else { return false }
-        return BearyOfflineSaveStore.removeEntry(accountId: accountId, entryId: entryId)
+    /// 与 save/finalize 共用同一条串行队列：清单读-改-写不在主线程与批量保存交错，
+    /// 移除读到的旧清单不会覆盖批量刚写入的记录。完成回调回主线程。
+    func remove(entryId: String, completion: ((Bool) -> Void)? = nil) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            guard let accountId = self.currentAccountId else {
+                DispatchQueue.main.async { completion?(false) }
+                return
+            }
+            let removed = BearyOfflineSaveStore.removeEntry(accountId: accountId, entryId: entryId)
+            DispatchQueue.main.async { completion?(removed) }
+        }
     }
 
     /// 清除本账号全部离线保存；其他账号的桶不动，已同步的日记不受影响。
-    @discardableResult
-    func removeAll() -> Bool {
-        guard let accountId = currentAccountId else { return false }
-        return BearyOfflineSaveStore.removeAll(accountId: accountId)
+    /// 同样走串行队列：批量保存进行中清除会排队，等本批在队里的写盘块跑完再删整桶。
+    func removeAll(completion: ((Bool) -> Void)? = nil) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            guard let accountId = self.currentAccountId else {
+                DispatchQueue.main.async { completion?(false) }
+                return
+            }
+            let cleared = BearyOfflineSaveStore.removeAll(accountId: accountId)
+            DispatchQueue.main.async { completion?(cleared) }
+        }
     }
 }
