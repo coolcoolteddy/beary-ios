@@ -1259,7 +1259,7 @@ class BearyFeedViewController: UIViewController {
     /// F1：图片查看器统一复用 BearyEntryImageViewerViewController（自定义
     /// pinch＋双击、失败重试），不再用本文件内旧版。
     /// presented 守卫 + 本动作导航节流（0.8 秒，独立时钟，不与进详情共用），防连点叠页（E4）。
-    private func presentImageViewer(imageKeys: [String], startIndex: Int, liveVideos: [String: String]? = nil, originFrame: CGRect? = nil, thumbnail: UIImage? = nil) {
+    private func presentImageViewer(imageKeys: [String], startIndex: Int, liveVideos: [String: String]? = nil, originFrame: CGRect? = nil, thumbnail: UIImage? = nil, entryId: String? = nil) {
         if imageKeys.isEmpty { return }
         if presentedViewController != nil { return }
         let now = Date()
@@ -1268,6 +1268,14 @@ class BearyFeedViewController: UIViewController {
         let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: liveVideos, startIndex: startIndex)
         viewer.initialThumbnail = thumbnail
         viewer.originFrameInWindow = originFrame
+        // 展示审计 G7-07：关场回当前图——按 entryId 实时取可见行卡片的槽位原处；
+        // 行已滚出视口或被复用时返回 nil、走淡出兜底。
+        viewer.dismissOriginProvider = { [weak self] index in
+            guard let self = self, let entryId = entryId,
+                  let path = self.indexPath(for: entryId),
+                  let cell = self.tableView.cellForRow(at: path) as? BearyDiaryCardCell else { return nil }
+            return cell.imageSlotOrigin(at: index)
+        }
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
     }
@@ -2803,7 +2811,7 @@ class BearyFeedViewController: UIViewController {
         // F1：点图进本文件内图片查看器（带起始下标），不再进详情。
         cell.onImageTapped = { [weak self] index, originFrame, thumbnail in
             let keys = entry.images ?? []
-            self?.presentImageViewer(imageKeys: keys, startIndex: index, liveVideos: entry.liveVideos, originFrame: originFrame, thumbnail: thumbnail)
+            self?.presentImageViewer(imageKeys: keys, startIndex: index, liveVideos: entry.liveVideos, originFrame: originFrame, thumbnail: thumbnail, entryId: entry.id)
         }
         cell.onNineGridTapped = { [weak self] button in
             guard let strongSelf = self else { return }
