@@ -347,16 +347,6 @@ final class BearyPlusPageViewController: UIViewController {
         descLabel.numberOfLines = 0
         descLabel.text = "好友绑定邀请码后，双方各得 30 天 Plus"
         row.addSubview(descLabel)
-        let inviteButton = UIButton(type: .custom)
-        inviteButton.translatesAutoresizingMaskIntoConstraints = false
-        inviteButton.setTitle("去邀请", for: .normal)
-        inviteButton.setTitleColor(BearyColors.ink, for: .normal)
-        inviteButton.titleLabel?.font = BearyDynamicType.smallSemiboldFont()
-        inviteButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        inviteButton.setContentHuggingPriority(.required, for: .horizontal)
-        inviteButton.addTarget(self, action: #selector(inviteButtonTapped), for: .touchUpInside)
-        inviteButton.bearyAddPressFeedback()
-        row.addSubview(inviteButton)
         let bottomLine = hairline()
         row.addSubview(bottomLine)
         NSLayoutConstraint.activate([
@@ -368,11 +358,8 @@ final class BearyPlusPageViewController: UIViewController {
             descLabel.topAnchor.constraint(equalTo: titleLabelValue.bottomAnchor, constant: 4),
             descLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
             descLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -16),
-            inviteButton.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            inviteButton.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
-            inviteButton.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabelValue.trailingAnchor, constant: 12),
-            inviteButton.leadingAnchor.constraint(greaterThanOrEqualTo: descLabel.trailingAnchor, constant: 12),
-            inviteButton.heightAnchor.constraint(equalToConstant: 44),
+            titleLabelValue.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -16),
+            descLabel.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -16),
             bottomLine.bottomAnchor.constraint(equalTo: row.bottomAnchor),
             bottomLine.leadingAnchor.constraint(equalTo: row.leadingAnchor),
             bottomLine.trailingAnchor.constraint(equalTo: row.trailingAnchor),
