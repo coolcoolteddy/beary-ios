@@ -905,7 +905,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
                 return UITableViewCell()
             }
             // 卡面不再原地展开：expanded 恒 false，不显示箭头（点按进详情页）；
-            // 行高 72、分隔线缩进 16、头像垂直居中、标题／摘要间距 5，与私信行统一（mergedList）。
+            // 行高 72、分隔线缩进 16、头像垂直居中、标题／摘要间距 4，与私信行统一（mergedList）。
             cell.configureAsCard(
                 title: card.title,
                 excerpt: card.excerpt,
@@ -931,7 +931,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
                 return UITableViewCell()
             }
             // 信件行是顶层行（非卡片内嵌套）：头像 x=16、分隔线缩进 16、
-            // 行高 72、头像垂直居中、标题／摘要间距 5，与私信行统一（mergedList）。
+            // 行高 72、头像垂直居中、标题／摘要间距 4，与私信行统一（mergedList）。
             cell.configure(with: item, nested: false, highlight: notifChild.highlightForDetail(item), mergedList: true)
             if knownNotifKeys.contains(key(for: row)) {
                 cell.alpha = 1
