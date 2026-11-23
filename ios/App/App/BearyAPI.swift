@@ -642,6 +642,118 @@ final class BearyAPI {
     private var inFlightFollowStates: [Int: [(Result<FollowStateResponse, APIError>) -> Void]] = [:]
     private let followStateQueue = DispatchQueue(label: "beary.followState")
 
+    // MARK: - A-P0-2 全局 GET 去重 + 短 TTL 缓存（新建薄层）
+    //
+    // 核对（2026-11-23，对当前 main 573fc7cc）：
+    // - 唯一共享出口是本文件的 request<T>（共享 cookie 路径，带重试）；
+    //   requestVoid 只看状态码、requestWithToken 是隔离路径（切换预检／
+    //   移除／导出，凭据固定为目标账号 token，绝不共享本层状态）。
+    // - 既有零散去重只有两处：fetchFollowState 的在途 map（只去重在途，
+    //   不缓存，关系是实时态）与搜索首屏 60s 内存缓存（只首屏、无游标，
+    //   账号一致才命中）；没有通用 GET 层。本层沿用这两处的口径
+    //   （NSLock 守表、账号＋代次隔离、失败不缓存、缓存命中异步回包）。
+    // - 适用：method == "GET" 且走 request 的只读请求。
+    //   不适用：写请求（POST／PUT／DELETE，幂等性各异，发布另有 clientReq）、
+    //   隔离 requestWithToken、直调 perform 的登录／发码／验码／fetchMe
+    //   （各有专属 401 语义，不进本层）。
+    // - 在途去重对全部 GET 生效（并发同 key 只发 1 个请求，回包分发给
+    //   所有等在途者，失败同样分发、各调用方按自己的失败态处理）；
+    //   TTL 缓存是 opt-in：调用方传 cacheTTL 才缓存（只接首屏列表读，
+    //   见 fetchEntries／fetchEntry／fetchNotifications／好友三表）。
+    // - TTL 45s（文档 30~60s 区间中值；搜索首屏既有 60s 为先例）。
+    //   切 tab 重进命中缓存直接回（Li 定“切 tab 不重拉”）；下拉刷新
+    //   传 forceRefresh 强制穿透（跳缓存读、不并入在途、自己发请求，
+    //   成功仍写缓存）；写请求成功即清全部 GET 缓存。
+    // - 键含账号 id＋鉴权代次＋响应类型名＋path＋排序后 query：切号／
+    //   退出／重登后旧缓存命中不了（代次已变），同 path 不同类型／
+    //   不同 query 也不串。同一 path＋query＋T 若解码器不同（现只有
+    //   PastSelf 端点用专属解码器，且 path 与通用解码调用无重叠），
+    //   本键不区分解码器——新增同 path 异解码器调用方时须先补键。
+    // - 取消语义（与既有搜索缓存命中回 nil 同款）：并入在途的调用方
+    //   拿不到 task（返回 nil，无可取消的任务）；首发方取消任务时，
+    //   在途全体收到 .cancelled（不静默吞掉，失败必须可见）。
+    // - 开关：本项 feature flag，进程内静态开关，默认开；置 false
+    //   即恢复旧行为（每次 GET 都走网络，仅保留既有的 fetchFollowState
+    //   在途去重与搜索首屏 60s 缓存）。仓库内无远程 flag 基建，
+    //   故本开关为本地可回退开关，不冒充远程灰度。
+    // - 时间口径：TTL 只量“发出后经过的秒数”，不涉日界／日期，
+    //   不用 BearyBeijingDay（本项无日界计算）。
+    /// A-P0-2 总开关（默认开；置 false 即回退到旧行为）。
+    static var getDedupCacheEnabled = true
+    /// A-P0-2 短 TTL（秒）：只读首屏列表读的缓存有效期。
+    static let getCacheTTL: TimeInterval = 45
+    private static let getCacheMaxEntries = 50
+    private var getCache: [String: (at: Date, ttl: TimeInterval, value: Any)] = [:]
+    private var getInFlight: [String: [(Result<Any, APIError>) -> Void]] = [:]
+    private let getDedupLock = NSLock()
+
+    /// A-P0-2 去重／缓存键（纯函数，可单测复现）。
+    static func getDedupKey(path: String, query: [String: String], accountId: Int?, epoch: Int, responseTypeName: String) -> String {
+        let sortedQuery = query.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
+        let accountPart = accountId.map { "\($0)" } ?? "guest"
+        return "\(accountPart)|\(epoch)|\(responseTypeName)|\(path)|\(sortedQuery)"
+    }
+
+    /// A-P0-2 缓存读：命中须在 TTL 内；过期即删、按未命中处理。
+    /// 类型擦除后存 Any，读出时 as? 校验——类型对不上按未命中
+    /// 处理（键已含响应类型名，正常路径不会走到这支）。
+    private func cachedGetValue<T>(forKey key: String) -> T? {
+        getDedupLock.lock()
+        defer { getDedupLock.unlock() }
+        guard let entry = getCache[key], Date().timeIntervalSince(entry.at) < entry.ttl else {
+            getCache.removeValue(forKey: key)
+            return nil
+        }
+        return entry.value as? T
+    }
+
+    /// A-P0-2 缓存写：只由网络回包调用，写入前凭发起时捕获的
+    /// （账号，代次）复核——发起后已切号的晚到回包不落盘（与
+    /// storeSearchFirstPage 同口径）；写入时先清过期、再按容量
+    /// 上限淘最旧（与搜索首屏缓存同款 50 条上限）。
+    private func storeGetValue<T>(_ value: T, forKey key: String, ttl: TimeInterval, accountId: Int?, epoch: Int) {
+        getDedupLock.lock()
+        defer { getDedupLock.unlock() }
+        guard !Self.isStaleAccountLoad(requestAccountId: accountId, requestEpoch: epoch, currentAccountId: authAccountId, currentEpoch: authEpoch) else { return }
+        let now = Date()
+        let expiredKeys = getCache.filter { now.timeIntervalSince($0.value.at) >= $0.value.ttl }.map { $0.key }
+        for expiredKey in expiredKeys {
+            getCache.removeValue(forKey: expiredKey)
+        }
+        while getCache.count >= Self.getCacheMaxEntries,
+              let oldestKey = getCache.min(by: { $0.value.at < $1.value.at })?.key {
+            getCache.removeValue(forKey: oldestKey)
+        }
+        getCache[key] = (at: now, ttl: ttl, value: value)
+    }
+
+    /// A-P0-2 写后失效：写请求成功即清全部 GET 缓存（服务端已变，
+    /// 旧缓存不得再 serve）。只清缓存，不碰在途表——在途回包是
+    /// 发起前的数据，调用方凭自己的代际／序号守卫处理。
+    private func invalidateGetCache() {
+        getDedupLock.lock()
+        defer { getDedupLock.unlock() }
+        getCache.removeAll()
+    }
+
+    /// A-P0-2 类型擦除：把具名 completion 包成 Any 回包的等在途者。
+    /// 擦除后类型对不上（键已含类型名，正常路径不会发生）时按解码
+    /// 失败回传，不静默吞掉、不 crash。
+    private func erasedGetWaiter<T>(for completion: @escaping (Result<T, APIError>) -> Void) -> (Result<Any, APIError>) -> Void {
+        return { result in
+            switch result {
+            case .success(let value):
+                if let typed = value as? T {
+                    completion(.success(typed))
+                } else {
+                    completion(.failure(.decoding(NSError(domain: "BearyAPI", code: -1, userInfo: nil))))
+                }
+            case .failure(let error):
+                completion(.failure(error))
+            }
+        }
+    }
+
     /// 秒开-网络层：API 专用会话（不再用 URLSession.shared）。
     /// 同一会话对象全 App 复用，同一 host（teddyhn.com）上的请求共享
     /// keep-alive 连接池与 HTTP/2 多路复用，不再每类请求各建连接；
@@ -1070,6 +1182,8 @@ final class BearyAPI {
         timeout: TimeInterval? = nil,
         payloadDecoder: JSONDecoder? = nil,
         uploadProgress: ((Int64, Int64) -> Void)? = nil,
+        cacheTTL: TimeInterval? = nil,
+        forceRefresh: Bool = false,
         completion: @escaping (Result<T, APIError>) -> Void
     ) -> URLSessionDataTask? {
         let epoch = authEpoch
@@ -1107,13 +1221,89 @@ final class BearyAPI {
         // mapStatus 仍走全局 decoder，不受本参数影响。
         let isPublish = (method == "POST" && path == "/beary/api/entries")
         let retriesLeft = isPublish ? 3 : (method == "GET" ? 1 : 0)
+        // A-P0-2：写请求不进在途去重／缓存（POST／PUT／DELETE 幂等性
+        // 各异，发布另有 clientReq）；成功即清 GET 缓存（见 invalidateGetCache）。
+        if method != "GET" {
+            let writeCompletion: (Result<T, APIError>) -> Void = { [weak self] result in
+                if case .success = result { self?.invalidateGetCache() }
+                completion(result)
+            }
+            return requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
+                                  suppressUnauthorized: suppressUnauthorized, timeout: timeout,
+                                  epoch: epoch, accountId: accountId,
+                                  retriesLeft: retriesLeft, retryBackoff: isPublish, retryDelay: 0,
+                                  payloadDecoder: payloadDecoder,
+                                  uploadProgress: uploadProgress,
+                                  completion: writeCompletion)
+        }
+        // A-P0-2：开关关时恢复旧行为（每次 GET 都走网络）。
+        guard Self.getDedupCacheEnabled else {
+            return requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
+                                  suppressUnauthorized: suppressUnauthorized, timeout: timeout,
+                                  epoch: epoch, accountId: accountId,
+                                  retriesLeft: retriesLeft, retryBackoff: isPublish, retryDelay: 0,
+                                  payloadDecoder: payloadDecoder,
+                                  uploadProgress: uploadProgress,
+                                  completion: completion)
+        }
+        let dedupKey = Self.getDedupKey(path: path, query: query, accountId: accountId, epoch: epoch, responseTypeName: String(describing: T.self))
+        if forceRefresh == false {
+            // 缓存命中：与搜索首屏缓存同一异步口径——调用方在回调里切主线程
+            // 并凭序号守卫丢弃旧回包，同步回包会打乱该时序，故仍异步回包；
+            // 无在途任务可取消，返回 nil（与搜索缓存命中同款）。
+            if let cached: T = cachedGetValue(forKey: dedupKey) {
+                DispatchQueue.global(qos: .userInitiated).async { completion(.success(cached)) }
+                return nil
+            }
+            // 在途去重：已在途则并入等在途者（无 task 可取消，返回 nil）；
+            // 否则登记为首发，首发方拿真实 task。
+            var joined = false
+            getDedupLock.lock()
+            if getInFlight[dedupKey] != nil {
+                getInFlight[dedupKey]?.append(erasedGetWaiter(for: completion))
+                joined = true
+            } else {
+                getInFlight[dedupKey] = [erasedGetWaiter(for: completion)]
+            }
+            getDedupLock.unlock()
+            if joined { return nil }
+        }
+        // A-P0-2 首发／强制刷新回包：成功才写缓存（cacheTTL 为 nil
+        // 时只去重不缓存；失败不写缓存，下次调用重新发网络请求）。
+        // 本闭包强持 self 直到回包——在途组须在回包时分发给全体等在途者，
+        // weak 丢弃会把等在途者永远挂住；循环随任务完成即解（与
+        // URLSession 任务持有 completion 同款临时持有），非永久循环。
+        // （Swift 5.0 口径：不用 [self] 捕获写法，默认强捕获即可。）
+        // forceRefresh 不碰在途表（自己发请求、不并入在途，成功仍写缓存）。
+        let dedupCompletion: (Result<T, APIError>) -> Void = { result in
+            if forceRefresh == false {
+                var waiters: [(Result<Any, APIError>) -> Void] = []
+                self.getDedupLock.lock()
+                waiters = self.getInFlight.removeValue(forKey: dedupKey) ?? []
+                self.getDedupLock.unlock()
+                if case .success(let value) = result, let ttl = cacheTTL {
+                    self.storeGetValue(value, forKey: dedupKey, ttl: ttl, accountId: accountId, epoch: epoch)
+                }
+                let boxed: Result<Any, APIError>
+                switch result {
+                case .success(let value): boxed = .success(value)
+                case .failure(let error): boxed = .failure(error)
+                }
+                for waiter in waiters { waiter(boxed) }
+            } else {
+                if case .success(let value) = result, let ttl = cacheTTL {
+                    self.storeGetValue(value, forKey: dedupKey, ttl: ttl, accountId: accountId, epoch: epoch)
+                }
+                completion(result)
+            }
+        }
         return requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
                               suppressUnauthorized: suppressUnauthorized, timeout: timeout,
                               epoch: epoch, accountId: accountId,
                               retriesLeft: retriesLeft, retryBackoff: isPublish, retryDelay: 0,
                               payloadDecoder: payloadDecoder,
                               uploadProgress: uploadProgress,
-                              completion: completion)
+                              completion: dedupCompletion)
     }
 
     private func requestAttempt<T: Decodable>(
@@ -1222,6 +1412,9 @@ final class BearyAPI {
                 completion(.failure(apiErr))
                 return
             }
+            // A-P0-2：写请求（本方法现有调用方全为 POST／PUT／DELETE）
+            // 成功即清 GET 缓存；GET 若以后走本方法，同样只在非 GET 时清。
+            if method != "GET" { self.invalidateGetCache() }
             completion(.success(()))
         }
     }
@@ -1236,6 +1429,7 @@ final class BearyAPI {
         since: Int? = nil,
         sinceId: String? = nil,
         vis: String? = nil,
+        forceRefresh: Bool = false,
         completion: @escaping (Result<EntryList, APIError>) -> Void
     ) {
         var q: [String: String] = ["scope": scope.rawValue, "limit": "\(min(max(limit, 1), 50))"]
@@ -1255,7 +1449,11 @@ final class BearyAPI {
         }
         if let aid = scope.authorId { q["author_id"] = "\(aid)" }
         if let t = scope.tagValue { q["tag"] = t }
-        request("/beary/api/entries", query: q, completion: completion)
+        // A-P0-2：只缓存无游标、无 since 的首页（切 tab 重进命中）；
+        // 翻页（before）、增量同步（since）、gap-fill 一律走网络，
+        // 同步完整性不受缓存影响。
+        let firstPageTTL: TimeInterval? = (before == nil && beforeId == nil && since == nil) ? Self.getCacheTTL : nil
+        request("/beary/api/entries", query: q, cacheTTL: firstPageTTL, forceRefresh: forceRefresh, completion: completion)
     }
 
     /// 我的标签：GET /beary/api/tags → [BearyTag]（登录；失败原样回传，调用方按无旧标签处理）。
@@ -1371,7 +1569,8 @@ final class BearyAPI {
 
     func fetchEntry(id: String, completion: @escaping (Result<Entry, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        request("/beary/api/entries/\(safe)", completion: completion)
+        // A-P0-2：单篇详情 45s 缓存（编辑／删帖等写请求成功即清缓存）。
+        request("/beary/api/entries/\(safe)", cacheTTL: Self.getCacheTTL, completion: completion)
     }
 
     // MARK: - 通知与搜索
@@ -1380,11 +1579,13 @@ final class BearyAPI {
         limit: Int = 30,
         before: String? = nil,
         suppressUnauthorized: Bool = false,
+        forceRefresh: Bool = false,
         completion: @escaping (Result<NotificationList, APIError>) -> Void
     ) {
         var q: [String: String] = ["limit": "\(min(max(limit, 1), 200))"]
         if let b = before { q["before"] = b }
-        request("/beary/api/notifications", query: q, suppressUnauthorized: suppressUnauthorized, completion: completion)
+        // A-P0-2：只缓存首页（before == nil）；翻页走网络。
+        request("/beary/api/notifications", query: q, suppressUnauthorized: suppressUnauthorized, cacheTTL: before == nil ? Self.getCacheTTL : nil, forceRefresh: forceRefresh, completion: completion)
     }
 
     /// id 为 nil = 全部标已读。
@@ -1831,18 +2032,21 @@ final class BearyAPI {
     }
 
     /// 互关好友：GET /beary/api/friends/list（两个方向都有行）。
-    func fetchFriends(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
-        request("/beary/api/friends/list", completion: completion)
+    /// A-P0-2：45s 缓存（关注／取关等写请求成功即清缓存）。
+    func fetchFriends(forceRefresh: Bool = false, completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
+        request("/beary/api/friends/list", cacheTTL: Self.getCacheTTL, forceRefresh: forceRefresh, completion: completion)
     }
 
     /// 我关注的人：GET /beary/api/friends/following。
-    func fetchFollowing(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
-        request("/beary/api/friends/following", completion: completion)
+    /// A-P0-2：45s 缓存（关注／取关等写请求成功即清缓存）。
+    func fetchFollowing(forceRefresh: Bool = false, completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
+        request("/beary/api/friends/following", cacheTTL: Self.getCacheTTL, forceRefresh: forceRefresh, completion: completion)
     }
 
     /// 关注我的人：GET /beary/api/friends/followers。
-    func fetchFollowers(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
-        request("/beary/api/friends/followers", completion: completion)
+    /// A-P0-2：45s 缓存（关注／取关等写请求成功即清缓存）。
+    func fetchFollowers(forceRefresh: Bool = false, completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
+        request("/beary/api/friends/followers", cacheTTL: Self.getCacheTTL, forceRefresh: forceRefresh, completion: completion)
     }
 
     /// B2：同会话在途去重——主页、通知卡等各处同时查同一人时只发一条
