@@ -259,6 +259,7 @@ enum BearyPlazaFeaturedPicker {
 enum BearyPlazaCarouselItem {
     case featured(Entry)
     case historyToday(BearyHistoryToday?)
+    case historyTodayEvent(payload: BearyHistoryToday, index: Int)
     case blindBox
     /// 公告页（服务端配置下发；取最新一条有效公告，无公告时不建页）。
     case announcement(BearyAnnouncement)
@@ -342,19 +343,16 @@ enum BearyPlazaCarouselText {
         return formatter
     }()
 
-    /// 历史卡日期行："11月23日 · 农历十月十五"；农历缺省时只显公历日期。
-    static func historyDateLine(for payload: BearyHistoryToday) -> String {
-        guard let lunar = payload.lunarDay else { return payload.dateLabel }
-        return String(format: NSLocalizedString("historyToday.carousel_date_lunar", comment: ""), payload.dateLabel, lunar)
-    }
+    // 历史卡日期行已拆进事件卡（左列竖排农历＋右列公历小字），不再拼
+    // “公历 · 农历”单行；historyDateLine 随拆卡删掉。
 }
 
 // MARK: - 轮播视图
 
 final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UIScrollViewDelegate {
 
-    // 卡高保持 76（Li 2026-11-23 定：轮播不加高）：历史卡收成 4 行
-    // （日期行＋2 条事件速览＋第一句小熊评论），76 排得下；精选／盲盒卡不动。
+    // 卡高保持 76（Li 2026-11-23 定：轮播不加高）：历史上的今天拆成
+    // 3 张独立卡，每张 1 个事件（日期＋事件＋评论），76 排得下；精选／盲盒卡不动。
     static let cardHeight: CGFloat = 76
     static let preferredHeight: CGFloat = 100
 
@@ -451,11 +449,32 @@ final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollec
             return
         }
         items = newItems
-        pageControl.numberOfPages = items.count
+        pageControl.numberOfPages = displayItems.count
         pageControl.currentPage = 0
         collectionView.reloadData()
         collectionView.setContentOffset(.zero, animated: false)
         startAutoAdvanceIfNeeded()
+    }
+
+    /// 展示用 items：历史上的今天 1 个 payload 拆成 3 张独立卡（每张 1 个事件）；
+    /// 未加载或无事件时仍为 1 张加载卡。原始 items 不动，签名比对仍走原始 items。
+    private var displayItems: [BearyPlazaCarouselItem] {
+        var expanded: [BearyPlazaCarouselItem] = []
+        for item in items {
+            switch item {
+            case .historyToday(let payload):
+                if let payload = payload, !payload.displayEvents.isEmpty {
+                    for index in payload.displayEvents.prefix(3).indices {
+                        expanded.append(.historyTodayEvent(payload: payload, index: index))
+                    }
+                } else {
+                    expanded.append(item)
+                }
+            default:
+                expanded.append(item)
+            }
+        }
+        return expanded
     }
 
     private func itemsSignature(_ list: [BearyPlazaCarouselItem]) -> String {
@@ -463,6 +482,7 @@ final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollec
             switch item {
             case .featured(let entry): return "f:\(entry.id ?? "")"
             case .historyToday(let payload): return "h:\(payload?.date ?? ""):\(payload?.firstEvent ?? "")"
+            case .historyTodayEvent(let payload, let index): return "h:\(payload.date):\(index)"
             case .blindBox: return "b:\(SessionManager.shared.isLoggedIn):\(BlindBoxState.shared.countText())"
             case .announcement(let ann): return "a:\(ann.id)"
             }
@@ -481,7 +501,7 @@ final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollec
 
     private func startAutoAdvanceIfNeeded() {
         stopAutoAdvance()
-        guard pageVisible, !userDragging, items.count > 1, window != nil else { return }
+        guard pageVisible, !userDragging, displayItems.count > 1, window != nil else { return }
         guard UIAccessibility.isReduceMotionEnabled == false else { return }
         let timer = Timer(timeInterval: BearyPlazaCarouselView.autoAdvanceInterval, repeats: true) { [weak self] _ in
             self?.advanceOnePage()
@@ -496,8 +516,8 @@ final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollec
     }
 
     private func advanceOnePage() {
-        guard pageVisible, !userDragging, items.count > 1, window != nil else { return }
-        let next = (currentPage() + 1) % items.count
+        guard pageVisible, !userDragging, displayItems.count > 1, window != nil else { return }
+        let next = (currentPage() + 1) % displayItems.count
         collectionView.scrollToItem(at: IndexPath(item: next, section: 0), at: .centeredHorizontally, animated: BearyMotion.animated(true))
         pageControl.currentPage = next
     }
@@ -505,33 +525,34 @@ final class BearyPlazaCarouselView: UIView, UICollectionViewDataSource, UICollec
     /// 点小圆点切页：停表、跳到该页、再起表（与手动滑动同一口径）。
     @objc private func pageControlTapped() {
         let page = pageControl.currentPage
-        guard page >= 0, page < items.count else { return }
+        guard page >= 0, page < displayItems.count else { return }
         stopAutoAdvance()
         collectionView.scrollToItem(at: IndexPath(item: page, section: 0), at: .centeredHorizontally, animated: BearyMotion.animated(true))
         startAutoAdvanceIfNeeded()
     }
 
     private func currentPage() -> Int {
-        guard collectionView.bounds.width > 0, !items.isEmpty else { return 0 }
+        guard collectionView.bounds.width > 0, !displayItems.isEmpty else { return 0 }
         let page = Int(round(collectionView.contentOffset.x / collectionView.bounds.width))
-        return max(0, min(items.count - 1, page))
+        return max(0, min(displayItems.count - 1, page))
     }
 
     // MARK: - UICollectionViewDataSource
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return items.count
+        return displayItems.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "BearyPlazaCarouselCell", for: indexPath) as! BearyPlazaCarouselCell
-        let item = items[indexPath.item]
+        let item = displayItems[indexPath.item]
         cell.configure(item: item)
         cell.onSelect = { [weak self] in
             guard let self = self else { return }
             switch item {
             case .featured(let entry): self.onSelectFeatured?(entry)
             case .historyToday: self.onSelectHistory?()
+            case .historyTodayEvent: self.onSelectHistory?()
             case .blindBox: self.onSelectBlindBox?()
             case .announcement(let ann): self.onSelectAnnouncement?(ann)
             }
@@ -575,6 +596,15 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
     private let titleLabel = UILabel()
     private let metaLabel = UILabel()
     private let bodyButton = BearyHit44Button(type: .custom)
+    private let textStack = UIStackView()
+
+    // 历史事件卡专用：左列竖排农历＋右列（公历小字／事件／评论），与 textStack 二选一。
+    private let historyContainer = UIStackView()
+    private let historyRailStack = UIStackView()
+    private let historyStack = UIStackView()
+    private let historyDateLabel = UILabel()
+    private let historyTitleLabel = UILabel()
+    private let historyCommentLabel = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -602,12 +632,50 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
         metaLabel.numberOfLines = 1
         metaLabel.lineBreakMode = .byTruncatingTail
 
-        let textStack = UIStackView(arrangedSubviews: [eyebrowLabel, titleLabel, metaLabel])
         textStack.axis = .vertical
         textStack.spacing = 3
         textStack.translatesAutoresizingMaskIntoConstraints = false
+        textStack.addArrangedSubview(eyebrowLabel)
+        textStack.addArrangedSubview(titleLabel)
+        textStack.addArrangedSubview(metaLabel)
         contentView.addSubview(textStack)
         textStack.isUserInteractionEnabled = false
+
+        // 历史事件卡专用布局：左列竖排农历（逐字竖排栈，复用时重建）＋
+        // 右列三行（公历小字／年份＋标题／小熊评论）。默认隐藏，与 textStack 二选一。
+        historyRailStack.axis = .vertical
+        historyRailStack.alignment = .center
+        historyRailStack.spacing = 0
+        historyDateLabel.translatesAutoresizingMaskIntoConstraints = false
+        historyDateLabel.font = BearyDynamicType.captionFont()
+        historyDateLabel.adjustsFontForContentSizeCategory = true
+        historyDateLabel.textColor = BearyColors.gray
+        historyDateLabel.numberOfLines = 1
+        historyTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        historyTitleLabel.font = BearyDynamicType.smallSemiboldFont()
+        historyTitleLabel.adjustsFontForContentSizeCategory = true
+        historyTitleLabel.textColor = BearyColors.ink
+        historyTitleLabel.numberOfLines = 1
+        historyTitleLabel.lineBreakMode = .byTruncatingTail
+        historyCommentLabel.translatesAutoresizingMaskIntoConstraints = false
+        historyCommentLabel.font = BearyDynamicType.captionFont()
+        historyCommentLabel.adjustsFontForContentSizeCategory = true
+        historyCommentLabel.textColor = BearyColors.gray
+        historyCommentLabel.numberOfLines = 1
+        historyCommentLabel.lineBreakMode = .byTruncatingTail
+        historyStack.axis = .vertical
+        historyStack.spacing = 3
+        historyStack.addArrangedSubview(historyDateLabel)
+        historyStack.addArrangedSubview(historyTitleLabel)
+        historyStack.addArrangedSubview(historyCommentLabel)
+        historyContainer.axis = .horizontal
+        historyContainer.alignment = .center
+        historyContainer.spacing = BearySpace.sm
+        historyContainer.translatesAutoresizingMaskIntoConstraints = false
+        historyContainer.addArrangedSubview(historyRailStack)
+        historyContainer.addArrangedSubview(historyStack)
+        historyContainer.isHidden = true
+        contentView.addSubview(historyContainer)
 
         // 卡片主体点按（整张卡）。
         bodyButton.translatesAutoresizingMaskIntoConstraints = false
@@ -620,6 +688,9 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
             textStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 14),
             textStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             textStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -14),
+            historyContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 14),
+            historyContainer.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            historyContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -14),
             bodyButton.topAnchor.constraint(equalTo: contentView.topAnchor),
             bodyButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             bodyButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
@@ -634,43 +705,43 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         eyebrowLabel.isHidden = false
-        // 历史卡改了标题行数／字重／副行显隐，复用前一律复位（精选／盲盒卡是单行）。
-        titleLabel.numberOfLines = 1
-        titleLabel.font = BearyDynamicType.smallSemiboldFont()
         metaLabel.isHidden = false
+        textStack.isHidden = false
+        historyContainer.isHidden = true
         onSelect = nil
     }
 
     func configure(item: BearyPlazaCarouselItem) {
         switch item {
         case .featured(let entry):
+            textStack.isHidden = false
+            historyContainer.isHidden = true
             eyebrowLabel.isHidden = false
             eyebrowLabel.text = "今日推荐"
             titleLabel.attributedText = BearyPlazaCarouselText.displayTitleAttributed(for: entry, font: titleLabel.font, dark: traitCollection.userInterfaceStyle == .dark)
             metaLabel.text = BearyPlazaCarouselText.metaText(for: entry)
             bodyButton.accessibilityLabel = "今日推荐：\(BearyPlazaCarouselText.displayTitle(for: entry))"
         case .historyToday(let payload):
-            eyebrowLabel.isHidden = false
-            if let payload = payload {
-                // 日期行：公历＋农历（农历缺省只显公历）。
-                eyebrowLabel.text = BearyPlazaCarouselText.historyDateLine(for: payload)
-                // 2 条事件速览：前 2 条各一行；副行是第一句小熊评论（没有不显示）。
-                titleLabel.numberOfLines = 2
-                titleLabel.font = BearyDynamicType.smallBodyFont()
-                let previewEvents = payload.displayEvents.prefix(2)
-                let previewText = previewEvents.map { $0.text }.joined(separator: "\n")
-                titleLabel.text = previewText.isEmpty ? payload.dateLabel : previewText
-                let firstComment: String? = previewEvents.first.flatMap { $0.comment }
-                metaLabel.text = firstComment
-                metaLabel.isHidden = firstComment == nil
+            if let payload = payload, let event = payload.displayEvents.first {
+                // 防御：展示层已把有事件的 payload 拆成 historyTodayEvent，
+                // 正常走不到这里；万一走到，按首个事件卡渲染。
+                showHistoryEvent(payload: payload, event: event)
             } else {
-                // 还在加载：眉标给标题、标题给日期、副行明说正在加载，不编一条假事件。
+                // 未加载：眉标给标题、标题给日期、副行明说正在加载，不编一条假事件。
+                textStack.isHidden = false
+                historyContainer.isHidden = true
+                eyebrowLabel.isHidden = false
                 eyebrowLabel.text = NSLocalizedString("historyToday.title", comment: "")
                 titleLabel.text = BearyHistoryToday.dateLabel(for: BlindBoxDate.todayKey())
-                metaLabel.text = "正在加载…"
+                metaLabel.isHidden = false
+                metaLabel.text = NSLocalizedString("historyToday.loading", comment: "")
+                bodyButton.accessibilityLabel = String(format: NSLocalizedString("historyToday.carousel_a11y", comment: ""), NSLocalizedString("historyToday.title", comment: ""), titleLabel.text ?? "")
             }
-            bodyButton.accessibilityLabel = String(format: NSLocalizedString("historyToday.carousel_a11y", comment: ""), NSLocalizedString("historyToday.title", comment: ""), titleLabel.text ?? "")
+        case .historyTodayEvent(let payload, let index):
+            showHistoryEvent(payload: payload, event: payload.displayEvents[index])
         case .blindBox:
+            textStack.isHidden = false
+            historyContainer.isHidden = true
             // 盲盒页不用眉标行（标题本身就是“盲盒交换”）；副行是今日计数，
             // 已换完追加原小卡已换态文案，未登录追加登录提示。
             eyebrowLabel.isHidden = true
@@ -685,6 +756,45 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
             metaLabel.text = BearyPlazaCarouselText.dateText(ms: ann.createdAt)
             bodyButton.accessibilityLabel = BearyPlazaCarouselText.announcementEyebrow() + "：" + ann.title
         }
+    }
+
+    /// 历史事件卡：左列竖排农历（缺省不显示竖列）＋右列公历小字／年份＋标题／小熊评论。
+    /// 竖列 11pt 粗体逐字排：农历最多 5 字约 66pt，塞得进 76 卡高；无农历时竖列隐藏、
+    /// 公历日期进右列首行。字号与行距只走语义入口，不动规范。
+    private func showHistoryEvent(payload: BearyHistoryToday, event: BearyHistoryTodayEventDetail) {
+        textStack.isHidden = true
+        historyContainer.isHidden = false
+        for view in historyRailStack.arrangedSubviews {
+            historyRailStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        if let lunarDay = payload.lunarDay {
+            for character in lunarDay {
+                let label = UILabel()
+                label.font = BearyDynamicType.liveBadgeFont()
+                label.adjustsFontForContentSizeCategory = true
+                label.textColor = BearyColors.ink
+                label.textAlignment = .center
+                label.text = String(character)
+                historyRailStack.addArrangedSubview(label)
+            }
+            historyRailStack.isHidden = false
+        } else {
+            historyRailStack.isHidden = true
+        }
+        historyDateLabel.text = payload.dateLabel
+        if let year = event.year {
+            historyTitleLabel.text = "\(year) · \(event.text)"
+        } else {
+            historyTitleLabel.text = event.text
+        }
+        if let comment = event.comment, !comment.isEmpty {
+            historyCommentLabel.text = comment
+            historyCommentLabel.isHidden = false
+        } else {
+            historyCommentLabel.isHidden = true
+        }
+        bodyButton.accessibilityLabel = String(format: NSLocalizedString("historyToday.carousel_a11y", comment: ""), NSLocalizedString("historyToday.title", comment: ""), historyTitleLabel.text ?? "")
     }
 
     @objc private func bodyTapped() {
