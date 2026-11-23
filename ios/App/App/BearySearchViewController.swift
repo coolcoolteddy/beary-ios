@@ -98,6 +98,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let onOpenEntryHandler: (String) -> Void
 
     private var searchTimer: Timer?
+    /// F2：限时到期 live 复核（时间线 sweep 同款 1 秒 tick）——搜索结果内
+    /// 限时篇到期即撤行；renderResults 本就按有效态过滤两组，此处只在
+    /// 有篇刚过期时触发一次重渲（同关键词重渲复用行节点、不动滚动位）。
+    private var limitedExpiryTimer: Timer?
     private var lastNavigationAt: Date?
     /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
     private var headerTopInsetVisible = false
@@ -520,6 +524,31 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         renderResults(data: data, query: query)
     }
 
+    private func startLimitedExpiryTimer() {
+        guard limitedExpiryTimer == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.sweepExpiredLimitedEntries()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        limitedExpiryTimer = timer
+    }
+
+    private func stopLimitedExpiryTimer() {
+        limitedExpiryTimer?.invalidate()
+        limitedExpiryTimer = nil
+    }
+
+    /// F2：搜索结果内限时篇到期即撤行——renderResults 按有效态过滤两组
+    /// （公开组 !isExpired、我的组 isMineSearchEntry 先挡过期），有篇刚
+    /// 过期时触发一次重渲即撤行；无过期篇时不重渲、不动滚动位。
+    private func sweepExpiredLimitedEntries() {
+        guard showingResults, let data = lastRenderedData, let query = lastRenderedQuery else { return }
+        let hasExpired = (data.entries ?? []).contains { BearyEphemeral.isExpired($0) }
+            || (data.mine ?? []).contains { BearyEphemeral.isExpired($0) }
+        guard hasExpired else { return }
+        renderResults(data: data, query: query)
+    }
+
     /// 详情内点赞/收藏/回应变化：行上不显示这些数，只改模型（点行进
     /// 详情用的卡片数据即新值），不重渲、不重播入场。
     func applyInteraction(entryId: String, likeCount: Int?, likedByMe: Bool?, bookmarkedByMe: Bool?, emotes: [EmoteCount]?) {
@@ -712,6 +741,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 loadMore()
             }
         }
+        startLimitedExpiryTimer()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -738,6 +768,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateSearchFooter()
         // 审计 26-21：停框内圈与状态区转圈（旧回包被序号守卫丢弃，不会收尾）。
         stopSearchSpinnersForLeave()
+        stopLimitedExpiryTimer()
     }
 
     /// 切页生命周期 7 号（最小化）：容器切页只改 isHidden，本回调不触发，
@@ -763,6 +794,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateSearchFooter()
         // 审计 26-21：停框内圈与状态区转圈（旧回包被序号守卫丢弃，不会收尾）。
         stopSearchSpinnersForLeave()
+        stopLimitedExpiryTimer()
     }
 
     /// T3：切回结果页——搜索词（searchField.text）与结果行离页时原样保留，
@@ -771,6 +803,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 容器 showPage 在切回搜索页时调（与个人页 pageDidReturn 同口径）。
     func pageDidReturn() {
         guard showingResults, let savedY = savedResultsOffsetY else { return }
+        startLimitedExpiryTimer()
         scrollView.layoutIfNeeded()
         let minY = -scrollView.contentInset.top
         let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
@@ -794,6 +827,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     deinit {
         searchTimer?.invalidate()
+        limitedExpiryTimer?.invalidate()
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
