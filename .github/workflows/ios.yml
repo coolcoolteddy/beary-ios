@@ -166,3 +166,16 @@ jobs:
           fetch-depth: 0
       - name: Check no new hardcoded Chinese copy
         run: python3 scripts/check-i18n-hardcoded.py --base ${{ github.event.pull_request.base.sha }}
+
+  # 样式 token 增量 lint（H-P1-19，PR #2481）：只查本 PR diff 新增行里的裸字号／
+  # 裸间距／裸圆角／裸时长／裸日界（86400），不扫存量——存量不因此变红。
+  # 脚本见 tools/beary-lint.sh。只在 pull_request 跑，push 到 main 不跑。
+  style-lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Lint new style-token violations only
+        run: bash tools/beary-lint.sh --base ${{ github.event.pull_request.base.sha }}
