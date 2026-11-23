@@ -2106,25 +2106,41 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateLocalOnlyBanner()
     }
 
-    /// B2：旧结果保留提示横幅——换词搜索失败、旧结果仍在屏时，列表头写清
-    /// 旧结果所属的词（“下方是「旧词」的结果”）。横幅是 resultsStack 的首个
-    /// arranged 子视图，与分区头同字号/同灰；成功重渲/清结果时随
-    /// clearResultRows 一并摘掉（引用见 removeStaleResultsBanner）。
+    /// G3-S4：结果区只留一条状态行——旧结果／本地／部分归档三条横幅合并，
+    /// 只亮最重要一条，不再叠加把结果往下顶。优先级：旧结果（结果与当前词
+    /// 不符，最误导）＞本地（只搜到本设备）＞部分归档（本地归档不全）。
     /// 插/摘/换文案时按横幅高度变化量同步修正滚动偏移，可见结果行停在
-    /// 原屏幕位置（见 adjustContentOffsetForBannerHeightDelta）。
-    private var staleResultsBanner: UIView?
+    /// 原屏幕位置（旧 B2 横幅同款口径，见 adjustContentOffsetForBannerHeightDelta）。
+    /// 三处旧 update*/remove* 入口保留作转发，供既有调用点与注释引用。
+    private var resultStatusBanner: UIView?
+    private var partialArchiveNotice = false
 
-    private func updateStaleResultsBanner() {
-        // 旧结果所属词与当前搜索词不同时才亮横幅；同词重试失败不亮（结果即当前词的）。
-        guard showingResults,
-              let rendered = lastRenderedQuery, !rendered.isEmpty,
-              rendered != lastQuery else {
-            // 结果行原样保留时摘条：按横幅高度反向修正偏移，可见行不顶上来。
-            removeStaleResultsBanner(preserveAnchor: !resultsStack.isHidden)
+    /// 当前应亮的一条状态文案；无则 nil（横幅摘掉）。
+    private func resultStatusText() -> String? {
+        guard showingResults else { return nil }
+        // 旧结果：换词搜索失败、旧结果仍在屏时，列表头写清旧结果所属的词。
+        if let rendered = lastRenderedQuery, !rendered.isEmpty, rendered != lastQuery {
+            return "下方是「\(rendered)」的结果"
+        }
+        // 本地：当前结果只来自本设备 FTS；服务端仍在路上时追加“加载中”。
+        if searchMineLocalOnly {
+            return searchServerPending
+                ? "当前搜索本设备已有的日记，公开与用户结果加载中"
+                : "当前搜索本设备已有的日记"
+        }
+        // 部分归档：断网兜底只渲本地「我的」组、且本地归档只是部分可读时。
+        if partialArchiveNotice {
+            return "仅搜索已下载的部分日记"
+        }
+        return nil
+    }
+
+    private func updateResultStatusBanner() {
+        guard let text = resultStatusText() else {
+            removeResultStatusBanner(preserveAnchor: !resultsStack.isHidden)
             return
         }
-        let text = "下方是「\(rendered)」的结果"
-        if let banner = staleResultsBanner, banner.superview == resultsStack,
+        if let banner = resultStatusBanner, banner.superview == resultsStack,
            let label = banner.subviews.first as? UILabel {
             // 同横幅只换文案：高度可能随词长/字号变化，按差量补偏移。
             let oldHeight = banner.frame.height
@@ -2133,8 +2149,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             adjustContentOffsetForBannerHeightDelta(banner.frame.height - oldHeight)
             return
         }
-        let oldHeight = staleResultsBanner?.frame.height ?? 0
-        removeStaleResultsBanner()
+        let oldHeight = resultStatusBanner?.frame.height ?? 0
+        removeResultStatusBanner()
         let wrap = UIView()
         wrap.translatesAutoresizingMaskIntoConstraints = false
         let label = UILabel()
@@ -2147,11 +2163,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         wrap.addSubview(label)
         NSLayoutConstraint.activate([
             label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
-            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -16),
             label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
         ])
-        staleResultsBanner = wrap
+        resultStatusBanner = wrap
         resultsStack.insertArrangedSubview(wrap, at: 0)
         // 横幅插在栈首位会把其下所有结果行整体顶下去：按新旧横幅高度差
         // 同步修正偏移，让当前可见结果行停在原屏幕位置。
@@ -2159,10 +2175,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         adjustContentOffsetForBannerHeightDelta(wrap.frame.height - oldHeight)
     }
 
-    private func removeStaleResultsBanner(preserveAnchor: Bool = false) {
-        guard let banner = staleResultsBanner else { return }
+    private func removeResultStatusBanner(preserveAnchor: Bool = false) {
+        guard let banner = resultStatusBanner else { return }
         let height = banner.frame.height
-        staleResultsBanner = nil
+        resultStatusBanner = nil
         resultsStack.removeArrangedSubview(banner)
         banner.removeFromSuperview()
         guard preserveAnchor else { return }
@@ -2181,103 +2197,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         scrollView.contentOffset.y = min(max(scrollView.contentOffset.y + delta, minY), maxY)
     }
 
-    /// 离线搜索第 3 项：本地先到／断网兜底提示横幅——当前结果只来自本设备
-    /// FTS，列表头写清“当前搜索本设备已有的日记”；服务端仍在路上时追加
-    /// “公开与用户结果加载中”。服务端回包成功即摘掉（renderResults 末尾
-    /// 的 updateLocalOnlyBanner）；清结果时随 clearResultRows 摘掉。
-    private var localOnlyBanner: UIView?
+    /// 旧入口转发：三条横幅已合并为一条状态行，调用点只刷新共享横幅。
+    private func updateStaleResultsBanner() { updateResultStatusBanner() }
+    private func removeStaleResultsBanner(preserveAnchor: Bool = false) { removeResultStatusBanner(preserveAnchor: preserveAnchor) }
+    private func updateLocalOnlyBanner() { updateResultStatusBanner() }
+    private func removeLocalOnlyBanner() { removeResultStatusBanner() }
+    private func updatePartialArchiveBanner() { updateResultStatusBanner() }
+    private func removePartialArchiveBanner() { removeResultStatusBanner() }
 
-    private func updateLocalOnlyBanner() {
-        guard showingResults, searchMineLocalOnly else {
-            removeLocalOnlyBanner()
-            return
-        }
-        let text = searchServerPending
-            ? "当前搜索本设备已有的日记，公开与用户结果加载中"
-            : "当前搜索本设备已有的日记"
-        if let banner = localOnlyBanner, banner.superview == resultsStack,
-           let label = banner.subviews.first as? UILabel {
-            label.text = text
-            return
-        }
-        removeLocalOnlyBanner()
-        let wrap = UIView()
-        wrap.translatesAutoresizingMaskIntoConstraints = false
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        label.adjustsFontForContentSizeCategory = true
-        label.textColor = BearyColors.gray
-        label.numberOfLines = 0
-        label.text = text
-        wrap.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
-            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
-            label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
-        ])
-        localOnlyBanner = wrap
-        resultsStack.insertArrangedSubview(wrap, at: 0)
-    }
-
-    private func removeLocalOnlyBanner() {
-        guard let banner = localOnlyBanner else { return }
-        localOnlyBanner = nil
-        resultsStack.removeArrangedSubview(banner)
-        banner.removeFromSuperview()
-    }
-
-    /// 部分归档提示横幅——断网兜底只渲本地「我的」组、且本地归档只是部分
-    /// 可读时，列表头亮「仅搜索已下载的部分日记」。与 B2 旧结果横幅同样式、
-    /// 同位置（都是 resultsStack 的首个 arranged 子视图），同由
-    /// clearResultRows 摘掉；renderResults 与 showFailedStateKeepingResults
-    /// 末尾随 updateStaleResultsBanner 一并刷新（两条同时亮时本横幅在上）。
-    /// partialArchiveNotice 只在两处改：服务端成功回包时清掉，断网本地
-    /// 兜底时按本轮 FTS 腿的 partialArchive 置起——新搜索加载中旧结果仍在
-    /// 屏时不碰它（屏上仍是上一轮的部分子集，横幅留着才对）；拉黑／举报
-    /// 重渲同批部分数据时横幅照旧留着（数据仍是部分子集）。
-    private var partialArchiveBanner: UIView?
-    private var partialArchiveNotice = false
-
-    private func updatePartialArchiveBanner() {
-        guard showingResults, partialArchiveNotice else {
-            removePartialArchiveBanner()
-            return
-        }
-        let text = "仅搜索已下载的部分日记"
-        if let banner = partialArchiveBanner, banner.superview == resultsStack,
-           let label = banner.subviews.first as? UILabel {
-            label.text = text
-            return
-        }
-        removePartialArchiveBanner()
-        let wrap = UIView()
-        wrap.translatesAutoresizingMaskIntoConstraints = false
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        label.adjustsFontForContentSizeCategory = true
-        label.textColor = BearyColors.gray
-        label.numberOfLines = 0
-        label.text = text
-        wrap.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 12),
-            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -6),
-            label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -4),
-        ])
-        partialArchiveBanner = wrap
-        resultsStack.insertArrangedSubview(wrap, at: 0)
-    }
-
-    private func removePartialArchiveBanner() {
-        guard let banner = partialArchiveBanner else { return }
-        partialArchiveBanner = nil
-        resultsStack.removeArrangedSubview(banner)
-        banner.removeFromSuperview()
-    }
 
     /// 尾行四态（与时间线/个人主页尾行同形态；搜索进行时不显示尾行，只转框内圈）：
     /// 未出结果时隐藏；出结果后：翻页进行中 → 转圈；翻页失败 → 重试钮
@@ -2399,10 +2326,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             resultsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        // B2：旧结果提示横幅与部分归档横幅随结果区一并摘掉（视图已在上循环里移除）。
-        staleResultsBanner = nil
-        partialArchiveBanner = nil
-        localOnlyBanner = nil
+        // G3-S4：三条横幅已合并为一条状态行，随结果区一并摘掉（视图已在上循环里移除）。
+        resultStatusBanner = nil
         mineSectionHeader = nil
         publicSectionHeader = nil
         usersSectionHeader = nil
