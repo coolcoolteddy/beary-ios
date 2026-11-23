@@ -14,6 +14,18 @@ enum BearyLoginSheet {
     static func make() -> BearyLoginViewController {
         let vc = BearyLoginViewController()
         vc.modalPresentationStyle = .fullScreen
+        // 展示审计 G7-08：补左边缘右滑返回，与 × 关闭走同一退出流程
+        //（停倒计时、清任务、调 onCancelled；容器负责 dismiss）。
+        // EdgeDismiss 的 transitioningDelegate 是弱引用，控制器须由本页强持有。
+        // 设了 delegate 后 present 动画由默认上滑改成自右滑入，与其他全屏页一致。
+        let edgeDismiss = BearyEdgeDismissController()
+        edgeDismiss.attach(to: vc)
+        edgeDismiss.onEdgeSwipeCompleted = { [weak vc] in
+            guard let vc = vc else { return false }
+            return vc.handleEdgeSwipeClose()
+        }
+        vc.transitioningDelegate = edgeDismiss
+        vc.edgeDismiss = edgeDismiss
         return vc
     }
 }
