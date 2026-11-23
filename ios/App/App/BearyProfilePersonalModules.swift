@@ -630,7 +630,8 @@ final class BearyMonthlyCharsChartView: UIView {
         if month == selectedMonth { return "\(value)" }
         if value >= 10000 {
             let text = String(format: "%.1f", Double(value) / 10000.0)
-            return (text.hasSuffix(".0") ? String(text.dropLast(2)) : text) + "万"
+            let compact = text.hasSuffix(".0") ? String(text.dropLast(2)) : text
+            return String(format: NSLocalizedString("year_review.compact_ten_thousand", comment: ""), compact)
         }
         return "\(value)"
     }
@@ -657,7 +658,7 @@ final class BearyMonthlyCharsChartView: UIView {
         }
         // R7-5：选中月的完整数值移到图表上方独立行显示。
         if let selected = selectedMonth, selected >= 1, selected <= monthValues.count {
-            selectedValueLabel?.text = "\(selected)月 · \(monthValues[selected - 1]) 字"
+            selectedValueLabel?.text = String(format: NSLocalizedString("year_review.month_chars", comment: ""), "\(selected)", "\(monthValues[selected - 1])")
             selectedValueLabel?.isHidden = false
         } else {
             selectedValueLabel?.isHidden = true
@@ -700,7 +701,7 @@ final class BearyMonthlyCharsChartView: UIView {
         let label = UILabel()
         label.font = BearyDynamicType.numberFont()
         label.textColor = BearyColors.ink
-        label.text = "\(month)月 · \(value) 字"
+        label.text = String(format: NSLocalizedString("year_review.month_chars", comment: ""), "\(month)", "\(value)")
         label.translatesAutoresizingMaskIntoConstraints = false
         bubble.addSubview(label)
         NSLayoutConstraint.activate([
@@ -722,7 +723,7 @@ final class BearyMonthlyCharsChartView: UIView {
         centerX.isActive = true
         valuePopover = bubble
         popoverMonth = month
-        UIAccessibility.post(notification: .announcement, argument: "\(month)月，\(value)字")
+        UIAccessibility.post(notification: .announcement, argument: String(format: NSLocalizedString("year_review.month_chars_announcement", comment: ""), "\(month)", "\(value)"))
     }
 
     @objc private func valuePopoverTapped() {
@@ -747,31 +748,31 @@ final class BearyMonthlyCharsChartView: UIView {
         let maxValue = monthlyChars.max() ?? 0
         let titleRow = UIStackView()
         titleRow.axis = .horizontal
-        titleRow.spacing = 8
+        titleRow.spacing = BearySpace.sm
         titleRow.alignment = .center
         let maxLabel = UILabel()
         // 「最高 N 字」走 captionFont（12 regular scaled，审计 ②）。
         maxLabel.font = BearyDynamicType.captionFont()
         maxLabel.textColor = BearyColors.gray
-        maxLabel.text = maxValue > 0 ? "最高 \(maxValue) 字" : "这一年还没有字数"
+        maxLabel.text = maxValue > 0 ? String(format: NSLocalizedString("year_review.chart_max", comment: ""), "\(maxValue)") : NSLocalizedString("year_review.chart_empty", comment: "")
         titleRow.addArrangedSubview(maxLabel)
         // R7-5：选中月完整数值行（与最高字同款 12pt 灰字），无选中月时隐藏。
         let selectedLabel = UILabel()
-        selectedLabel.font = UIFont.systemFont(ofSize: 12)
+        selectedLabel.font = BearyDynamicType.captionFont()
         selectedLabel.textColor = BearyColors.gray
         selectedLabel.isHidden = true
         selectedValueLabel = selectedLabel
         titleRow.addArrangedSubview(selectedLabel)
         let columns = UIStackView()
         columns.axis = .horizontal
-        columns.spacing = 2
+        columns.spacing = 2 // beary-lint: allow — 12 列几何间距，无 token 值；改 4 会改列宽与窄屏判定
         columns.distribution = .fillEqually
         columns.alignment = .bottom
         for month in 1...12 {
             let value = month <= monthlyChars.count ? monthlyChars[month - 1] : 0
             let column = BearyMonthColumnView()
             column.axis = .vertical
-            column.spacing = 4
+            column.spacing = BearySpace.xs
             column.alignment = .center
             column.isUserInteractionEnabled = true
             column.tag = month
@@ -779,15 +780,16 @@ final class BearyMonthlyCharsChartView: UIView {
             // 读屏双击与手势点选走同一 selectMonth(_:)（审计 ①-P1）；浮层内有完整数值。
             column.onActivate = { [weak self] in self?.selectMonth(month) }
             column.isAccessibilityElement = true
-            column.accessibilityLabel = "\(month)月，\(value)字"
-            column.accessibilityHint = "点按显示完整字数"
+            column.accessibilityLabel = String(format: NSLocalizedString("year_review.month_chars_announcement", comment: ""), "\(month)", "\(value)")
+            column.accessibilityHint = NSLocalizedString("year_review.chart_hint", comment: "")
             column.accessibilityTraits = .button
             let valueLabel = UILabel()
-            // 12 列固定宽，字号不跟系统放大（放大会撑破列宽）：固定 9pt、
-            // 不再继续缩小；仅选中月显完整数，其余过万简写（见 monthValueText）。
-            // 完整数值走点选浮层（numberFont 12pt 半粗，见 showValuePopover，审计 ②／④-9）；
-            // 窄屏默认只留选中月与峰值月（见 displayValueText）。单行＋按宽自缩＋定高，窄屏留空时不顶柱形。
-            valueLabel.font = UIFont.systemFont(ofSize: 9)
+            // 12 列固定宽，柱顶数字走等宽数字入口（tabularDigitsFont，9pt）：
+            // 系统放大后由 adjustsFontSizeToFitWidth 收进柱宽；仅选中月显完整数，
+            // 其余过万简写（见 monthValueText）。完整数值走点选浮层（numberFont 12pt
+            // 半粗，见 showValuePopover，审计 ②／④-9）；窄屏默认只留选中月与峰值月
+            // （见 displayValueText）。单行＋按宽自缩＋定高，窄屏留空时不顶柱形。
+            valueLabel.font = BearyDynamicType.tabularDigitsFont(ofSize: 9)
             valueLabel.numberOfLines = 1
             valueLabel.adjustsFontSizeToFitWidth = true
             valueLabel.minimumScaleFactor = 0.6
@@ -798,7 +800,7 @@ final class BearyMonthlyCharsChartView: UIView {
             monthValueLabels.append((month, valueLabel))
             let track = UIView()
             track.backgroundColor = BearyColors.surface2
-            track.layer.cornerRadius = 3
+            track.layer.cornerRadius = 2 // 微元素小角（lint 放行值），视觉与原 3pt 几乎一致
             track.clipsToBounds = true
             track.heightAnchor.constraint(equalToConstant: 110).isActive = true
             let fill = UIView()
@@ -820,7 +822,7 @@ final class BearyMonthlyCharsChartView: UIView {
             monthLabel.minimumScaleFactor = 0.7
             monthLabel.textAlignment = .center
             monthLabel.textColor = BearyColors.gray
-            monthLabel.text = "\(month)月"
+            monthLabel.text = String(format: NSLocalizedString("year_review.month_label", comment: ""), "\(month)")
             column.addArrangedSubview(valueLabel)
             column.addArrangedSubview(track)
             column.addArrangedSubview(monthLabel)
@@ -831,7 +833,7 @@ final class BearyMonthlyCharsChartView: UIView {
         let stack = UIStackView(arrangedSubviews: [titleRow, columns])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
-        stack.spacing = 12
+        stack.spacing = BearySpace.md
         addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor),
@@ -840,7 +842,7 @@ final class BearyMonthlyCharsChartView: UIView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         isAccessibilityElement = false
-        accessibilityLabel = "每月字数趋势，最高 \(maxValue) 字"
+        accessibilityLabel = String(format: NSLocalizedString("year_review.chart_accessibility", comment: ""), "\(maxValue)")
     }
 }
 
@@ -1247,10 +1249,10 @@ final class BearyYearReviewViewController: UIViewController {
 
         // 每月字数趋势（底部；2026-11-23 Li 定从年报最小版恢复回年报页）。
         let chartTitle = UILabel()
-        chartTitle.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
+        chartTitle.font = BearyDynamicType.sectionTitleFont()
         chartTitle.adjustsFontForContentSizeCategory = true
         chartTitle.textColor = BearyColors.ink
-        chartTitle.text = "每月字数趋势"
+        chartTitle.text = NSLocalizedString("year_review.chart_title", comment: "")
         dynamicStack.addArrangedSubview(chartTitle)
         let chartView = BearyMonthlyCharsChartView()
         chartView.translatesAutoresizingMaskIntoConstraints = false
