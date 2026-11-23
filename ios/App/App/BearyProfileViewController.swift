@@ -4049,7 +4049,7 @@ class BearyProfileViewController: UIViewController {
         guard let profileValue = profile else { return }
         // 32 注销口径：已注销用户头显“已注销用户”（后端原名，原样显示）。
         let isDeleted = profileValue.isDeletedAccount
-        let displayNameValue = isDeleted ? "已注销用户" : (profileValue.displayName
+        let displayNameValue = isDeleted ? NSLocalizedString("account.deleted_user_display_name", comment: "") : (profileValue.displayName
             ?? (profileValue.handle.map { "@" + $0 })
             ?? "TA")
         setLabelTextFaded(nameLabel, displayNameValue)
@@ -8142,8 +8142,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.textAlignment = .center
-        label.text = "已注销用户"
-        label.accessibilityLabel = "已注销用户"
+        label.text = NSLocalizedString("account.deleted_user_display_name", comment: "")
+        label.accessibilityLabel = NSLocalizedString("account.deleted_user_display_name", comment: "")
         container.addSubview(label)
         NSLayoutConstraint.activate([
             label.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),

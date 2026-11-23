@@ -10,6 +10,9 @@
   那是格式串不是文案；
 - 白名单文件：ios/App/BearyCoreTests/BearyI18nCatalogTests.swift——
   它以中文原文作期望值断言，中文是测试数据本身。
+- 法律全文豁免：BearyAccountText.privacy／.terms 两处整篇法律字面量内的新增行不拦——
+  法律全文是文档不是界面文案；服务端下发、包内兜底；英文版待隐私政策 v2 审定后再做。
+  只按这两个字面量的起止行豁免（legal_text_ranges），不放宽到整个文件或整类文件。
 
 两项检查（同一行只报一处，中文优先）：
 1. 中文：新增行里 NSLocalizedString key 参数之外的中文字符串字面量即失败。
@@ -38,6 +41,11 @@ SWIFT_PATHS = ["ios/App/App/*.swift", "ios/App/BearyCoreTests/*.swift"]
 ALLOWLIST_FILES = {
     "ios/App/BearyCoreTests/BearyI18nCatalogTests.swift",
 }
+
+# 法律全文豁免：只豁免 BearyAccountText.privacy／.terms 两个整篇法律字面量内的
+# 新增行（见 legal_text_ranges，按字面量起止行锚定）。不放宽到整个文件。
+LEGAL_TEXT_FILE = "ios/App/App/BearySettingsViewController.swift"
+LEGAL_TEXT_LITERALS = ("privacy", "terms")
 
 # 品牌词 allowlist：字面量本身（去空白、不分大小写）就是品牌词时放行。
 # 含品牌词的文案（如 "beary is locked"）不是品牌词本身，照样拦。
@@ -102,7 +110,40 @@ def is_swift_path(path: str) -> bool:
     return any(fnmatch.fnmatch(path, pat) for pat in SWIFT_PATHS)
 
 
-def scan_diff(diff_text: str):
+def legal_text_ranges():
+    """返回 {文件: [(起始行, 结束行), ...]}：HEAD 版文件里两个法律字面量的行范围。
+
+    按 `static let privacy/terms = \"\"\"` 起止锚定；取不到范围时返回空——
+    fail-closed，豁免不生效，guard 照常拦。
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "show", f"HEAD:{LEGAL_TEXT_FILE}"],
+            capture_output=True, text=True, check=True,
+        )
+    except subprocess.CalledProcessError:
+        return {}
+    opener = re.compile(
+        r"\s*static let (" + "|".join(LEGAL_TEXT_LITERALS) + r') = """\s*$'
+    )
+    ranges = []
+    lines = proc.stdout.splitlines()
+    i = 0
+    while i < len(lines):
+        if opener.match(lines[i]):
+            start = i + 1  # 1-based 行号
+            j = i + 1
+            while j < len(lines) and lines[j].strip() != '"""':
+                j += 1
+            if j < len(lines):
+                ranges.append((start, j + 1))
+            i = j + 1
+        else:
+            i += 1
+    return {LEGAL_TEXT_FILE: ranges} if ranges else {}
+
+
+def scan_diff(diff_text: str, exempt_ranges=None):
     """扫一段 git diff 文本（-U0），返回 [(文件, 行号, 种类, 字面量, 代码行)]。
     种类为 "中文" 或 "英文文案"。纯函数，便于单测（不跑 git）。"""
     violations = []
@@ -149,7 +190,14 @@ def scan_diff(diff_text: str):
                     break
         if hit is not None:
             kind, lit = hit
-            violations.append((cur_file, cur_line, kind, lit, added.strip()))
+            exempt = False
+            if exempt_ranges:
+                for s, e in exempt_ranges.get(cur_file, []):
+                    if s <= cur_line <= e:
+                        exempt = True
+                        break
+            if not exempt:
+                violations.append((cur_file, cur_line, kind, lit, added.strip()))
         cur_line += 1
     return violations
 
@@ -160,7 +208,7 @@ def check_diff(base: str):
     if proc.returncode != 0:
         print(f"取 diff 失败（base={base}）：{proc.stderr.strip()}", file=sys.stderr)
         return None
-    return scan_diff(proc.stdout)
+    return scan_diff(proc.stdout, legal_text_ranges())
 
 
 def main() -> int:
