@@ -156,7 +156,7 @@ final class BearyLocalNotifications: NSObject {
                     }
                     return
                 }
-                BearyConfirmSheet.show(from: presenter, title: "晚上 9 点提醒你写一句", message: "开启后会提醒这四类（都可在设置里单独开关）：每晚 21:00（北京时间）写日记提醒、限时日记到期、早上 9:00（北京时间）那年今日、留给明年的自己送达提醒。", actions: [
+                BearyConfirmSheet.show(from: presenter, title: "晚上 9 点提醒你写一句", message: "开启后会提醒这四类（都可在设置里单独开关）：每晚 21:00（当地时间）写日记提醒、限时日记到期、早上 9:00（北京时间）那年今日、留给明年的自己送达提醒。", actions: [
                     BearyConfirmSheet.Action(title: "好", style: .default) { [weak self, weak presenter] in
                         guard let self = self, let presenter = presenter else { return }
                         self.requestAuthorizationIfNeeded {
@@ -289,7 +289,6 @@ final class BearyLocalNotifications: NSObject {
         let now = Date()
         let nowMs = Int(now.timeIntervalSince1970 * 1000)
         let calendar = BearyBeijingDay.calendar
-        let todayKey = BearyBeijingDay.dayKey(ofMs: nowMs) ?? ""
         // 存档读盘失败则本轮不重算（保留已排提醒，下次重算补上）；
         // 主线 loadAllEntries 自 #1069 起返回可选（读盘失败为 nil）。
         // 注意：已关种类的取消在上面已做完，不受这次 return 影响（第 4 项）。
@@ -309,17 +308,21 @@ final class BearyLocalNotifications: NSObject {
         }
         var desired: [DesiredRequest] = []
 
-        // 1. 每晚写日记提醒：下一个 21:00（北京）；今天已写则排明晚 21:00，不留空窗——
+        // 1. 每晚写日记提醒：下一个 21:00（设备当前时区，Li 2026-11-23 定：
+        // 不管人在哪儿，都是当地晚上 9 点响；无日记时也一样）；今天已写则排明晚 21:00，不留空窗——
         // 单次触发不重复，差分删了今晚的就没人补明晚的，不再依赖之后 rebuild。
+        // “今天”同样按设备当前时区算（deviceDayKey），不按北京日界。
         if enabled[.dailyReminder] == true {
-            var nextEvening = Self.nextOccurrence(hour: Self.dailyHour, after: now, calendar: calendar)
-            let isToday = calendar.isDate(nextEvening, inSameDayAs: now)
+            let deviceCalendar = Self.deviceCalendar
+            var nextEvening = Self.nextOccurrence(hour: Self.dailyHour, after: now, calendar: deviceCalendar)
+            let isToday = deviceCalendar.isDate(nextEvening, inSameDayAs: now)
+            let deviceTodayKey = Self.deviceDayKey(ofMs: nowMs) ?? ""
             let hasEntryToday = entries.contains { entry in
                 guard let createdAt = entry.createdAt else { return false }
-                return BearyBeijingDay.dayKey(ofMs: createdAt) == todayKey
+                return Self.deviceDayKey(ofMs: createdAt) == deviceTodayKey
             }
             if isToday && hasEntryToday {
-                nextEvening = calendar.date(byAdding: .day, value: 1, to: nextEvening) ?? nextEvening
+                nextEvening = deviceCalendar.date(byAdding: .day, value: 1, to: nextEvening) ?? nextEvening
             }
             desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没写日记", kind: .dailyReminder, userInfo: ["kind": Kind.dailyReminder.rawValue, "accountId": accountId]))
         }
@@ -466,6 +469,24 @@ final class BearyLocalNotifications: NSObject {
     }
 
     // MARK: - 日期
+
+    /// 设备当前时区的公历（每日 21:00 提醒专用）：Li 2026-11-23 定，提醒按设备
+    /// 当前时区——不管人在哪儿，都是当地晚上 9 点响；无日记时也一样。
+    /// 只给每日提醒用；那年今日 / 留话送达仍按北京 9:00。
+    /// autoupdatingCurrent：用户跨时区后下次重算即按新时区排（每次取现值，不缓存）。
+    private static var deviceCalendar: Calendar {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone.autoupdatingCurrent
+        return cal
+    }
+
+    /// 毫秒时间戳 → 设备当前时区的年月日 key（与 BearyBeijingDay.dayKey 同格式 "yyyy-MM-dd"）。
+    private static func deviceDayKey(ofMs ms: Int) -> String? {
+        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let comps = deviceCalendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = comps.year, let month = comps.month, let day = comps.day else { return nil }
+        return BearyBeijingDay.dayKey(year: year, month: month, day: day)
+    }
 
     /// 当天 hour:00 已过则取明天同一时刻（北京日历）。
     private static func nextOccurrence(hour: Int, after date: Date, calendar: Calendar) -> Date {
