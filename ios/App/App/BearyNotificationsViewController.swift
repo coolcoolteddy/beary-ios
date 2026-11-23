@@ -3124,7 +3124,7 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
             if let latestIndex = actIndices.first {
                 let latest = items[latestIndex]
                 let anyUnread = actIndices.contains(where: { (items[$0].read ?? true) == false })
-                // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“用户已注销”。
+                // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“已注销用户”。
                 // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，不落空串。
                 let deletedName = bearyDeletedAuthorDisplayName(latest.actorName) ?? ""
                 let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
@@ -4697,9 +4697,9 @@ class BearyNotificationCell: UITableViewCell {
                 kindIconName = "icon_mood"
             }
             kindIconView.image = BearyIconImages.image(named: kindIconName, pointSize: 11)
-            // 32 注销口径：通知行对方已注销时，标题与头像首字母显“用户已注销／用”。
+            // 32 注销口径：通知行对方已注销时，标题与头像首字母显“已注销用户／已”。
             // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，
-            // 与已注销（“用户已注销”）是两种状态，不混淆。
+            // 与已注销（“已注销用户”）是两种状态，不混淆。
             let deletedName = bearyDeletedAuthorDisplayName(item.actorName) ?? ""
             let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
             if let avatarURL = BearyImageURLs.avatarURL(item.actorAvatar) {
@@ -5326,7 +5326,7 @@ extension BearyNotificationsViewController {
         let actIndices = items.indices.filter({ Self.isInteractionType(items[$0].type) })
         if let latestIndex = actIndices.first {
             let latest = items[latestIndex]
-            // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“用户已注销”。
+            // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“已注销用户”。
             // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，不落空串。
             let deletedName = bearyDeletedAuthorDisplayName(latest.actorName) ?? ""
             let actorName = deletedName.isEmpty ? "beary 用户" : deletedName

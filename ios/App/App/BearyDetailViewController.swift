@@ -1782,7 +1782,7 @@ final class BearyDetailViewController: UIViewController {
     /// button 元素（VoiceOver 双击走 accessibilityActivate，与点按同调
     /// openMentionedUser）；无有效 ID 时仅作静态文本呈现，不宣称可点，
     /// 手势亦关闭（有名无 ID 时行可见但点按静默 no-op 的缺口一并收敛）。
-    /// 已注销者仍显“@用户已注销”，ID 在时仍可点（不在审计范围内，不动）。
+    /// 已注销者仍显“@已注销用户”，ID 在时仍可点（不在审计范围内，不动）。
     private func setRecipientRowAccessibility(tappable: Bool) {
         recipientRow.isAccessibilityElement = tappable
         recipientRow.accessibilityTraits = tappable ? .button : []
@@ -1791,7 +1791,7 @@ final class BearyDetailViewController: UIViewController {
     }
 
     private func renderHeaderMeta() {
-        // 32 注销口径：作者已注销时显“用户已注销”，头像首字母同步为“用”。
+        // 32 注销口径：作者已注销时显“已注销用户”，头像首字母同步为“已”。
         let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? "beary 用户"
         nameButton.setTitle(authorNameValue, for: .normal)
         avatarInitialLabel.text = String(authorNameValue.prefix(1)).uppercased()
@@ -1829,7 +1829,7 @@ final class BearyDetailViewController: UIViewController {
         }
         if let mentioned = entry.mentionedName, !mentioned.isEmpty {
             recipientRow.isHidden = false
-            // 32 注销口径：被 @ 者已注销时显“@用户已注销”。
+            // 32 注销口径：被 @ 者已注销时显“@已注销用户”。
             recipientLabel.text = "@" + (bearyDeletedAuthorDisplayName(mentioned) ?? mentioned)
             setRecipientRowAccessibility(tappable: hasValidMentionedUserId)
         } else {
