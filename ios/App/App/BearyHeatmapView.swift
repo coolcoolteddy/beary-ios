@@ -5,7 +5,7 @@ import UIKit
 /// 布局：列 = 周（最左为 26 周前的周一，最右为本周）、行 = 星期一到星期日；
 /// 今天在最右列，未来的格子不画、不可点。颜色橙色五档（0 篇为空格，
 /// 1 / 2 / 3 / 4+ 篇逐档加深）；右上角月份名、左侧星期名、右下“少 → 多”
-/// 图例、底部“点某一天，看那天的日记”提示；模块内不写篇数/天数/连续天。
+/// 图例；模块内不写篇数/天数/连续天。
 /// 模块本身 surface1 底、无描边，与同页其他模块（写作统计等）统一。
 ///
 /// HorizonCalendar 核实结论（2026-11-06，见 PR 描述）：该库按月分块布局，
@@ -60,17 +60,6 @@ final class BearyHeatmapView: UIView {
         return stack
     }()
 
-    private let hintLabel: UILabel = {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.secondaryFont()
-        label.adjustsFontForContentSizeCategory = true
-        label.textColor = BearyColors.gray
-        label.textAlignment = .center
-        label.text = "点某一天，看那天的日记"
-        return label
-    }()
-
     override init(frame: CGRect) {
         super.init(frame: frame)
         setup()
@@ -88,7 +77,6 @@ final class BearyHeatmapView: UIView {
         gridArea.translatesAutoresizingMaskIntoConstraints = false
         addSubview(gridArea)
         addSubview(legendStack)
-        addSubview(hintLabel)
 
         // 月份名（每列首日换月时一个，最多 7 个，位置在 layoutSubviews 里按列算）。
         for _ in 0..<8 {
@@ -178,10 +166,7 @@ final class BearyHeatmapView: UIView {
             gridHeight,
             legendStack.topAnchor.constraint(equalTo: gridArea.bottomAnchor, constant: 8),
             legendStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            hintLabel.topAnchor.constraint(equalTo: legendStack.bottomAnchor, constant: 6),
-            hintLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            hintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            hintLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            legendStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
         ])
     }
 
