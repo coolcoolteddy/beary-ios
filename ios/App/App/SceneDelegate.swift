@@ -1108,14 +1108,14 @@ final class BearyChromeViewController: UIViewController {
         offlineBannerView = banner
 
         let label = UILabel()
-        label.text = "当前离线，显示缓存"
+        label.text = NSLocalizedString("offline.banner_showing_cached", comment: "")
         label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         label.translatesAutoresizingMaskIntoConstraints = false
         banner.addSubview(label)
         banner.isAccessibilityElement = true
-        banner.accessibilityLabel = "当前离线，显示缓存"
+        banner.accessibilityLabel = NSLocalizedString("offline.banner_showing_cached", comment: "")
 
         let top = banner.topAnchor.constraint(equalTo: view.topAnchor, constant: view.safeAreaInsets.top + (headerVisible ? 108 : 0) + BearyDeveloperMode.shared.devBannerInset)
         offlineBannerTopConstraint = top
