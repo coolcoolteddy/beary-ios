@@ -111,6 +111,12 @@ final class BearyOfflineSaveStoreTests: XCTestCase {
         XCTAssertEqual(usage.entryCount, 0)
     }
 
+    func testExceedsSoftLimitBoundary() {
+        XCTAssertFalse(BearyOfflineSaveStore.exceedsSoftLimit(bytes: 0))
+        XCTAssertFalse(BearyOfflineSaveStore.exceedsSoftLimit(bytes: BearyOfflineSaveStore.softLimitBytes))
+        XCTAssertTrue(BearyOfflineSaveStore.exceedsSoftLimit(bytes: BearyOfflineSaveStore.softLimitBytes + 1))
+    }
+
     // MARK: - 删除与账号隔离
 
     func testRemoveEntryDeletesFilesAndRecord() {
