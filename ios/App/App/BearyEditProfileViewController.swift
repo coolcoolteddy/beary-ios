@@ -1568,7 +1568,14 @@ class BearyEditProfileViewController: UIViewController {
             }
             let birthdayConfirmed: Bool
             if snapshot.birthdayChanged, let response = profileResponse {
-                birthdayConfirmed = response.birthdayKeyPresent && response.birthdayYear == snapshot.birthdayYear && response.birthdayMonth == snapshot.birthdayMonth && response.birthdayDay == snapshot.birthdayDay
+                if !response.birthdayKeyPresent {
+                    // P4 回退：老服务端 PUT 回包不 echo 生日字段；HTTP 2xx 即成功，
+                    // 用本次发送的快照值更新初值与本地卡（与 echo 收到时同一更新路径）。
+                    // 有 echo 时仍以 echo 为准：echo 与快照不一致时保持未确认。
+                    birthdayConfirmed = true
+                } else {
+                    birthdayConfirmed = response.birthdayYear == snapshot.birthdayYear && response.birthdayMonth == snapshot.birthdayMonth && response.birthdayDay == snapshot.birthdayDay
+                }
             } else {
                 birthdayConfirmed = !snapshot.birthdayChanged
             }
