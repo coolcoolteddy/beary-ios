@@ -8,7 +8,8 @@ import Foundation
 //   - 取图：原图字节走 BearyImageLoader.fetchRawData（磁盘命中即复用、不重复下载，
 //     未命中走一次网络下载并按图片口径验 HTTP 2xx + image/* MIME + 可解码探针）；
 //   - 续传：已在盘上的图片不再下载，只补缺失的；中途退出残留 pending 记录，
-//     下次保存续传；
+//     进离线保存页时扫一遍自动续传一次（resumePendingEntries，M1.5 B2），
+//     续传失败的落盘结算为 partial（失败态），不再靠再次手动保存才续传；
 //   - 批量：以本地已同步的日记归档（BearyEntrySyncStore.loadAllEntries）为源，
 //     只取本人篇、跳过已 complete 的篇，逐篇顺序保存并报进度。
 //
@@ -226,6 +227,76 @@ final class BearyOfflineSaveManager {
                 }
             }
             saveNext(index: 0)
+        }
+    }
+
+    // MARK: - 续传 pending（M1.5 B2）
+
+    /// 续传开关：默认开；遇问题可一键关掉，回到“只靠手动保存／批量才续传”。
+    /// 本仓无远程 flag 基建，故为编译期静态开关，不走服务端下发。
+    static var isPendingResumeEnabled = true
+
+    /// 扫一遍 pending 记录逐篇续传：入口在离线保存页首次出现时调一次（只扫
+    /// status == "pending" 的篇；complete/partial 不动）。
+    /// 每篇复用单篇 save：已在盘图片靠 hasImageData 跳过、只补缺失的，
+    /// 结算仍走 finalize（成功变 complete/partial——即失败态），
+    /// 不改 save 的并发与原子写语义；逐篇顺序跑，清单写盘不交错。
+    /// 离线文字 JSON 与同步归档里都找不到该篇时，记录留 pending、计 failed
+    /// （下次进页再试，用户也可点“移除”），不静默删记录。
+    /// progress(done,total) 与 completion 一律回主线程；无 pending 时
+    /// completion 立即回全 0，调用方不弹任何提示。
+    func resumePendingEntries(progress: ((Int, Int) -> Void)? = nil, completion: @escaping (BearyOfflineSaveBatchResult) -> Void) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            guard BearyOfflineSaveManager.isPendingResumeEnabled,
+                  let accountId = self.currentAccountId else {
+                DispatchQueue.main.async { completion(BearyOfflineSaveBatchResult(saved: 0, partial: 0, failed: 0, skipped: 0)) }
+                return
+            }
+            let pending = BearyOfflineSaveStore.savedRecords(accountId: accountId).filter { $0.status == "pending" }
+            let total = pending.count
+            var result = BearyOfflineSaveBatchResult(saved: 0, partial: 0, failed: 0, skipped: 0)
+            var done = 0
+            let group = DispatchGroup()
+            // 顺序链：一次只跑一篇，saveAllOwnEntries 同款写法；
+            // save 的完成回调在主线程，等它回来再继续下一篇。
+            func resumeNext(index: Int) {
+                guard index < pending.count else {
+                    DispatchQueue.main.async { completion(result) }
+                    return
+                }
+                let record = pending[index]
+                // 续传源：先认离线存的文字 JSON（正是中断那篇的快照）；
+                // JSON 丢了再退回同步归档找同一篇；两处都没有才留 pending。
+                var entry = BearyOfflineSaveStore.loadEntry(accountId: accountId, entryId: record.entryId)
+                if entry == nil,
+                   let archived = BearyEntrySyncStore.loadAllEntries(accountId: accountId)?.first(where: { $0.id == record.entryId }) {
+                    entry = archived
+                }
+                guard let entry = entry else {
+                    result.failed += 1
+                    done += 1
+                    DispatchQueue.main.async { progress?(done, total) }
+                    resumeNext(index: index + 1)
+                    return
+                }
+                group.enter()
+                self.save(entry: entry) { single in
+                    switch single {
+                    case .success(let outcome):
+                        if outcome.status == "complete" { result.saved += 1 } else { result.partial += 1 }
+                    case .failure:
+                        result.failed += 1
+                    }
+                    done += 1
+                    DispatchQueue.main.async { progress?(done, total) }
+                    group.leave()
+                }
+                group.notify(queue: self.queue) {
+                    resumeNext(index: index + 1)
+                }
+            }
+            resumeNext(index: 0)
         }
     }
 

@@ -713,12 +713,16 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
 //     不走 24h/200MB 的 Caches 缓存、不参与淘汰）；
 //   - 逐篇行：标题＋状态（已保存／部分保存／未完成）＋张数＋占用，附“移除”；
 //   - 批量：保存全部本人日记（以本地已同步归档为源，只取本人篇、跳过已完成篇）；
+//   - 续传：进页时扫一遍 pending 记录自动续传一次（M1.5 B2），
+//     续传失败的结算为部分保存，不再长期挂“未完成”；
 //   - 清除：全部清除只删本账号离线副本，已同步的日记与 Caches 缓存不受影响。
 // 未登录只显登录提示，不拉数据、不建目录。
 
 final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
     private var isSaving = false
     private var saveProgressText: String?
+    /// pending 续传每页实例只跑一次（M1.5 B2）：返回本页不重跑。
+    private var didResumePending = false
     /// 当前屏上逐篇行的记录（与移除钮 tag 下标一一对应；每次 render 重建时同步更新）。
     private var currentRecords: [BearyOfflineSaveRecord] = []
 
@@ -742,6 +746,7 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
         // 子页内改动（批量保存/清除）后返回仍是本页：每次出现都重刷，
         // 行尾占用与逐篇状态不滞后。
         if isViewLoaded { render() }
+        resumePendingIfNeeded()
     }
 
     private func render() {
@@ -842,6 +847,32 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
         let removed = BearyOfflineSaveManager.shared.remove(entryId: entryId)
         BearyToast.show(in: view, message: removed ? "已移除离线保存" : "移除失败，请重试")
         render()
+    }
+
+    /// M1.5 B2：进页时扫一遍 pending 做一次续传——中途崩溃残留的 pending
+    /// 否则只靠再次手动保存／批量才会续传，列表长期挂“未完成”。
+    /// 无 pending 时静默不弹提示；续传中复用 isSaving 门控，保存全部按钮
+    /// 置灰、进度走同一行文案；失败的篇仍留 pending，toast 只报失败数。
+    private func resumePendingIfNeeded() {
+        guard !didResumePending, !isSaving,
+              BearyOfflineSaveManager.shared.currentAccountId != nil else { return }
+        didResumePending = true
+        isSaving = true
+        saveProgressText = "正在续传…"
+        render()
+        BearyOfflineSaveManager.shared.resumePendingEntries(progress: { [weak self] done, total in
+            guard let self = self else { return }
+            self.saveProgressText = "正在续传 \(done)/\(total)…"
+            self.render()
+        }, completion: { [weak self] result in
+            guard let self = self else { return }
+            self.isSaving = false
+            self.saveProgressText = nil
+            self.render()
+            if result.failed > 0 {
+                BearyToast.show(in: self.view, message: "有 \(result.failed) 篇离线保存续传失败，下次打开再试")
+            }
+        })
     }
 
     @objc private func saveAllTapped() {
