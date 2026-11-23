@@ -65,6 +65,9 @@ private final class BearyBodyTextView: UITextView {
     /// 正文编辑器恒定的行高倍数，由 Composer 在 buildTextArea 里与 typingAttributes
     /// 用同一个 bodyParagraph 一并设定；本类只用于正文编辑器，倍数恒定。
     var fixedLineHeightMultiple: CGFloat?
+    /// 粘贴到无记号图片时 Composer 的回调：TextView 自身不弹 UI，
+    /// 由 Composer 在 buildTextArea 里接上，弹 toast 提示。
+    var onPasteImageRejected: (() -> Void)?
     /// 光标行实际渲染字体：优先取光标处 attributedText 的字体属性（粘贴/
     /// 回填后该处字体可能与 typingAttributes 不一致时，以渲染字体为准），
     /// 取不到时回退 typingAttributes，再回退 textView.font。
@@ -98,6 +101,29 @@ private final class BearyBodyTextView: UITextView {
             return style.lineHeightMultiple
         }
         return nil
+    }
+
+    /// 粘贴拦截（规范 v28 :172）：粘贴内容含无记号图片时拒绝插入并回调提示，
+    /// 不留到保存时再静默丢掉；带记号的表情附件照常走 super 插入。
+    /// 记号是挂在附件字符 range 上的自定义属性（BearyInlineMoodKey /
+    /// BearyInlineGifKey），过 RTF 会丢，贴板侧验不出记号——故只拦
+    /// “只有图”的纯外部图片粘贴：有图、无富文本表示、无文字时才拦；
+    /// App 内复制的表情附件（带 flat-RTF，纯文本里含 U+FFFC 附件占位）
+    /// 与图文混贴一律放行，保存时仍走旧逻辑处理。
+    override func paste(_ sender: Any?) {
+        if Self.pasteboardHasOnlyUnmarkedImage(UIPasteboard.general) {
+            onPasteImageRejected?()
+            return
+        }
+        super.paste(sender)
+    }
+
+    /// 纯外部图片粘贴：贴板有图，且既无 RTF/富文本表示、也无任何文字。
+    private static func pasteboardHasOnlyUnmarkedImage(_ board: UIPasteboard) -> Bool {
+        guard board.hasImages else { return false }
+        if board.contains(pasteboardTypes: ["public.rtf", "com.apple.flat-rtf", "public.rtfd", "com.apple.flat-rtfd"]) { return false }
+        if let string = board.string, !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
+        return true
     }
 
     override func caretRect(for position: UITextPosition) -> CGRect {
@@ -2135,6 +2161,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // caret 锚定同用该倍数（见 BearyBodyTextView.fixedLineHeightMultiple）：光标处
         // 属性 lookup 在输入法提交文本上不可靠，固定倍数优先，防回退居中致光标偏上。
         textView.fixedLineHeightMultiple = bodyLineMultiple
+        textView.onPasteImageRejected = { [weak self] in
+            guard let self = self else { return }
+            self.showToast(message: NSLocalizedString("composer.paste_image_use_image_button", comment: ""))
+        }
         textView.backgroundColor = UIColor.clear
         textView.layer.cornerRadius = 0
         textView.isScrollEnabled = true
