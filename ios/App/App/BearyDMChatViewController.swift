@@ -2096,14 +2096,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         if tableView == searchResultsTableView {
-            let cell = tableView.dequeueReusableCell(withIdentifier: "dmSearchResultCell", for: indexPath) as! BearyDMChatSearchResultCell
+            let cell: BearyDMChatSearchResultCell = tableView.dequeue("dmSearchResultCell", for: indexPath)
             let message = searchResults[indexPath.row]
             let isMine = message.senderId != nil && message.senderId == storeAccountId
             let peerName = (peer.displayName?.isEmpty == false) ? peer.displayName! : "对方"
             cell.configure(message: message, isMine: isMine, peerName: peerName, query: searchField.text ?? "")
             return cell
         }
-        let cell = tableView.dequeueReusableCell(withIdentifier: "dmMessageCell", for: indexPath) as! BearyDMMessageCell
+        let cell: BearyDMMessageCell = tableView.dequeue("dmMessageCell", for: indexPath)
         let message = messages[indexPath.row]
         let isMine = message.senderId != nil && message.senderId == storeAccountId
         // 2026-11-04 乐观发送：仅本人待发行可带失败态；失败时叹号点按重发该条。
