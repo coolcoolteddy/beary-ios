@@ -1522,6 +1522,93 @@ final class BearyImageLoader {
     }
 }
 
+// MARK: - App 级网络可达性（P0-3：从 BearyImagePrefetcher 抽取的共享入口）
+
+/// App 级网络可达性：全 App 共用的一份 NWPathMonitor（此前只活在
+/// BearyImagePrefetcher 里；各处自起 monitor 会重复监听、首报口径分裂）。
+/// 唯一事实源：isOnline、isPathKnown、isConstrained、isWiFi 均由同一份
+/// path 快照导出；变化时主队列发 bearyReachabilityDidChange，
+/// userInfo 带 isOnline。
+/// 首报前口径：isOnline 初值 true——未确认前不报离线，离线横幅只在首报
+/// 确认不通后才出现，不闪一下；预取预算仍按“未知即零”算（见
+/// BearyImagePrefetcher，与抽取前一致），两者不共用初值。
+/// retryOnceWhenOnline 是“失败首拉联网重试一次”的唯一入口：已在线且
+/// 首报已到时下一 runloop 跑一次；离线或首报未到时排队，等下一次回到
+/// 在线才跑一次，跑完即弃，永不重复。
+final class BearyReachability {
+    static let shared = BearyReachability()
+
+    private let lock = NSLock()
+    private var monitor: NWPathMonitor?
+    private var monitorStarted = false
+    private var pendingRetries: [() -> Void] = []
+    private let queue = DispatchQueue(label: "com.beary.reachability", qos: .utility)
+
+    /// 首报未到前为 true：不误报离线。首报后按 path.status 实况。
+    private(set) var isOnline = true
+    /// 首报是否已到。首报前预取预算为零、重试排队，均以此为准。
+    private(set) var isPathKnown = false
+    /// 低数据模式：仍算在线（横幅不出现），只影响预取预算。
+    private(set) var isConstrained = false
+    /// 当前路径是否走 Wi-Fi（预取预算分档用）。
+    private(set) var isWiFi = false
+
+    private init() {}
+
+    /// 幂等启动：App 启动（SceneDelegate）与首次预取（BearyImagePrefetcher）
+    /// 谁先到谁启动，只起一份 monitor。
+    func start() {
+        lock.lock()
+        let started = monitorStarted
+        lock.unlock()
+        if started { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self = self else { return }
+            self.lock.lock()
+            self.isPathKnown = true
+            let online = path.status == .satisfied
+            self.isOnline = online
+            self.isConstrained = path.isConstrained
+            self.isWiFi = path.usesInterfaceType(.wifi)
+            // 回到在线才放行排队重试：离线期间的排队项至此一次清掉，
+            // 不再留到下一次；在线首报同样触发（冷启动首报未到前排队的重试）。
+            let retries = online ? self.pendingRetries : []
+            if online { self.pendingRetries = [] }
+            self.lock.unlock()
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .bearyReachabilityDidChange, object: self, userInfo: ["isOnline": online])
+                for retry in retries { retry() }
+            }
+        }
+        monitor.start(queue: queue)
+        lock.lock()
+        self.monitor = monitor
+        monitorStarted = true
+        lock.unlock()
+    }
+
+    /// 失败首拉的联网重试一次（P0-3）：work 恒在主队列跑一次。
+    /// 已在线（且首报已到）时下一 runloop 即跑；离线或首报未到时排队，
+    /// 等下一次回到在线才跑，跑完即弃；多次注册各跑一次，调用方自己
+    /// 用标志位保证每轮失败只注册一次。
+    func retryOnceWhenOnline(_ work: @escaping () -> Void) {
+        lock.lock()
+        let known = isPathKnown
+        let online = isOnline
+        if known && online {
+            lock.unlock()
+            DispatchQueue.main.async { work() }
+            return
+        }
+        pendingRetries.append(work)
+        lock.unlock()
+        // 首报未到也可能 monitor 尚未启动（极早期调用）：补启动，
+        // 否则排队项永远等不到首报。
+        start()
+    }
+}
+
 // MARK: - 图片预热（秒开批：只预热缩略图）
 
 /// 预热窗口口径（纯值类型，与 NWPathMonitor 解耦，便于按口径复核）：
@@ -1572,8 +1659,11 @@ struct BearyImagePrefetchBudget {
 final class BearyImagePrefetcher {
     static let shared = BearyImagePrefetcher()
     private let lock = NSLock()
-    private var monitor: NWPathMonitor?
-    private var monitorStarted = false
+    /// P0-3：monitor 已抽到 BearyReachability.shared（App 级唯一一份），
+    /// 此处只订阅其变化广播、不再自起 monitor；token 由单例长期持有，
+    /// 释放即停订（单例不释放）。
+    private var reachabilityObserver: NSObjectProtocol?
+    private var reachabilitySubscribed = false
     private var pathKnown = false
     private var pathSatisfied = false
     private var pathConstrained = false
@@ -1625,44 +1715,54 @@ final class BearyImagePrefetcher {
         }
     }
 
+    /// P0-3：接共享 reachability（抽取后 monitor 唯一归属 BearyReachability，
+    /// 此处只读快照、不再自起 monitor）。订阅前先按共享快照同步一次：
+    /// monitor 可能已由 SceneDelegate 在启动时起好、首报已到，订阅后
+    /// 再等变化会永远拿不到首报。
     private func ensureMonitor() {
         lock.lock()
-        let started = monitorStarted
+        let subscribed = reachabilitySubscribed
         lock.unlock()
-        if started { return }
-        let monitor = NWPathMonitor()
-        monitor.pathUpdateHandler = { [weak self] path in
-            guard let self = self else { return }
-            self.lock.lock()
-            let firstReport = !self.pathKnown
-            self.pathKnown = true
-            self.pathSatisfied = path.status == .satisfied
-            self.pathConstrained = path.isConstrained
-            self.pathWiFi = path.usesInterfaceType(.wifi)
-            let intent = firstReport ? self.pendingIntent : nil
-            self.pendingIntent = nil
-            self.lock.unlock()
-            // 首报到达：若首报前有一次预取因预算为零被跳过，重放一次。
-            // 重放走正常 prefetch 入口，按当时实际预算执行（仍为零则
-            // 其内守卫直接返回），绝不因等待而放量；代次已变说明意
-            // 图已离屏或被新触发取代，直接丢弃。主队列重放：prefetch
-            // 的收集阶段读 UIScreen.main.scale，与调用方同线程。
-            if let intent = intent {
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    self.lock.lock()
-                    let stillCurrent = self.generation == intent.generation
-                    self.lock.unlock()
-                    guard stillCurrent else { return }
-                    self.prefetch(entries: intent.entries, lastVisibleIndex: intent.lastVisibleIndex, viewerId: intent.viewerId)
-                }
+        if subscribed { return }
+        BearyReachability.shared.start()
+        syncSnapshotFromShared()
+        let observer = NotificationCenter.default.addObserver(forName: .bearyReachabilityDidChange, object: BearyReachability.shared, queue: .main) { [weak self] _ in
+            self?.syncSnapshotFromShared()
+        }
+        lock.lock()
+        reachabilityObserver = observer
+        reachabilitySubscribed = true
+        lock.unlock()
+    }
+
+    /// 从共享 reachability 同步路径快照。首报前 BearyReachability.isOnline
+    /// 恒为 true（不误报离线），预算口径须按“未知即不通”算：只有已知
+    /// 且在线才算 satisfied，与抽取前 pathSatisfied 初值 false 一致。
+    /// 首报到达（未知→已知）且此前有因首报未到被跳过的预取意图时，
+    /// 按旧口径在主队列重放一次；代次已变说明意图已离屏或被新触发取代，
+    /// 直接丢弃。
+    private func syncSnapshotFromShared() {
+        lock.lock()
+        let wasKnown = pathKnown
+        let shared = BearyReachability.shared
+        pathKnown = shared.isPathKnown
+        pathSatisfied = shared.isPathKnown && shared.isOnline
+        pathConstrained = shared.isConstrained
+        pathWiFi = shared.isWiFi
+        let firstReport = !wasKnown && pathKnown
+        let intent = firstReport ? pendingIntent : nil
+        if firstReport { pendingIntent = nil }
+        lock.unlock()
+        if let intent = intent {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.lock.lock()
+                let stillCurrent = self.generation == intent.generation
+                self.lock.unlock()
+                guard stillCurrent else { return }
+                self.prefetch(entries: intent.entries, lastVisibleIndex: intent.lastVisibleIndex, viewerId: intent.viewerId)
             }
         }
-        monitor.start(queue: queue)
-        lock.lock()
-        self.monitor = monitor
-        monitorStarted = true
-        lock.unlock()
     }
 
     private func currentBudget() -> BearyImagePrefetchBudget {
@@ -3996,6 +4096,10 @@ extension Notification.Name {
     /// 本 VC 生命周期内只发一次；容器据此再发启动期 /me，不与首屏请求挤同一窗口。
     /// 注意：有缓存时缓存渲染本身不发——等静默刷新首拉终结再发，/me 恒在首屏回包之后。
     static let bearyFeedFirstScreenDone = Notification.Name("bearyFeedFirstScreenDone")
+    /// P0-3：App 级可达性变化广播（object = BearyReachability.shared，
+    /// userInfo["isOnline"] 为 Bool；恒在主队列发出）：离线横幅、预取器
+    /// 与联网重试均据此驱动，不再各起 monitor。
+    static let bearyReachabilityDidChange = Notification.Name("BearyReachabilityDidChange")
 }
 
 /// 举报理由：复用封禁五类（服务端 reasons 枚举同款文案）。
