@@ -100,6 +100,11 @@ class BearyFeedViewController: UIViewController {
     private var pullEngageTranslation: CGFloat?
     private var customPullEndScheduled = false
     private var plazaError = false
+    /// P0-3：失败首拉的联网重试只用一次（见 loadPlazaFirstPage 失败分支）；
+    /// 成功或用户主动刷新（refreshAllInternal）后复位，下一轮失败可再用一次。
+    /// 注意：不在 loadPlazaFirstPage 入口复位——重试本身调同一入口，
+    /// 入口复位会让失败重注册、无限重拉。
+    private var plazaFirstLoadAutoRetried = false
     /// since 补拉缺口态：hasGap 回包后置位，游标钉在缺口前的旧表头
     /// （plazaGapCursor），重试/再刷新仍从它起拉、不越过缺口；无缺口
     /// 成功或全量首拉后清掉。随切段槽走，不跨段复用。
@@ -1108,6 +1113,8 @@ class BearyFeedViewController: UIViewController {
         plazaReachedEnd = false
         plazaHasMore = true
         plazaError = false
+        // P0-3：用户主动刷新开新一轮，失败重试额度复位。
+        plazaFirstLoadAutoRetried = false
         // feedfast：刷新不再同步重建可见行（旧代码这里 reloadData 把可见行
         // 全部重建一遍——图片重取、表情播放器重启——再叠加中央菊花）。
         // 新数据回来前旧行原样展示，回包后走 diff 定向更新；只有确实无内容
@@ -1327,6 +1334,8 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.maybeEndRefreshing()
                     return
                 }
+                // P0-3：首拉成功，本轮失败重试额度复位（下一轮失败可再用一次）。
+                strongSelf.plazaFirstLoadAutoRetried = false
                 // 切段缓存：代际守卫通过即算该段拉过（成功／失败都算；
                 // 失败重试走失败行点按，不靠切段重拉）。
                 if strongSelf.feedFollowingSegment {
@@ -1447,6 +1456,15 @@ class BearyFeedViewController: UIViewController {
                     // 秒开-启动瘦身：首屏回包已终结（失败也算终结，/me 不被弱网首拉拖死；
                     // 容器侧另有 3 秒兜底，见 SceneDelegate scheduleDeferredStartupMe）。
                     strongSelf.notifyFirstScreenDoneOnce()
+                    // P0-3：失败首拉联网重试一次——只一次，与全站“失败静默自动重试
+                    // 一次”同口径。已在线时下一 runloop 即重拉；离线时等回到在线
+                    // 才重拉一次；重拉再失败不再注册（标志位已置），不循环。
+                    if !strongSelf.plazaFirstLoadAutoRetried {
+                        strongSelf.plazaFirstLoadAutoRetried = true
+                        BearyReachability.shared.retryOnceWhenOnline { [weak self] in
+                            self?.loadPlazaFirstPage(diffMode: diffMode, silent: silent)
+                        }
+                    }
                 }
             }
         }

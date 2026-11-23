@@ -36,6 +36,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         window?.backgroundColor = BearyColors.bg
         window?.rootViewController = BearyChromeViewController()
         window?.makeKeyAndVisible()
+        // P0-3：App 级 reachability 随场景启动（唯一一份 NWPathMonitor；
+        // 预取器复用同一份，不再自起。离线横幅由容器订阅变化驱动，
+        // 见 BearyChromeViewController.buildOfflineBanner）。
+        BearyReachability.shared.start()
         // 冷启动生物识别锁（2026-10-31）：开关开着时在建窗后立即挂窗口级锁屏，
         // 同 runloop 内盖住首帧内容；解锁后补跑被推迟的 veil 起播（见容器）。
         if let chrome = window?.rootViewController as? BearyChromeViewController, let window = window {
@@ -326,6 +330,13 @@ final class BearyChromeViewController: UIViewController {
     /// 顶栏显示时贴顶栏下方（安全区顶 + 108），收起时贴安全区顶；位置跟 headerVisible 走。
     private var devBannerView: UIView?
     private var devBannerTopConstraint: NSLayoutConstraint?
+    /// 离线横幅（P0-3）：App 级轻横幅，文案“当前离线，显示缓存”，与 P0-2
+    /// 广场离线横幅同款式样（红底 12%＋墨字 14pt，见 BearyFeedViewController
+    /// refreshFailedBanner）；P0-2 未合入时本支先按同款实现占位，合流时
+    /// 以后合者为准。挂点与开发者横幅同款（buildDevBanner）：顶栏显示时贴
+    /// 顶栏下方，收起时贴安全区顶；开发者横幅开着时再往下叠 36pt。
+    private var offlineBannerView: UIView?
+    private var offlineBannerTopConstraint: NSLayoutConstraint?
     /// 顶栏玻璃顶边推出屏外的量（见上）：只推顶边，不动 tint、高度内容区与 Plan A 显隐。
     private let topGlassTopOvershoot: CGFloat = 12
     private var topTopConstraint: NSLayoutConstraint?
@@ -1078,6 +1089,73 @@ final class BearyChromeViewController: UIViewController {
         ])
         // 开发者模式横幅（2026-11-08 新增）：36pt 橙条，平时隐藏；见 buildDevBanner。
         buildDevBanner()
+        // P0-3：离线横幅与开发者横幅同挂点，见 buildOfflineBanner。
+        buildOfflineBanner()
+    }
+
+    /// 离线横幅（P0-3）：36pt 全宽轻条，文案“当前离线，显示缓存”，无按钮
+    ///（联网后自动重拉一次，见 BearyFeedViewController 失败首拉重试，
+    /// 不用人手点）。样式复用广场失败条（BearyFeedViewController
+    /// refreshFailedBanner）：红底 12%＋墨字 14pt，非弹框、非 toast；
+    /// 显隐只由 handleReachabilityChanged 按 isOnline 驱动，首报前不出现。
+    /// 全屏 modal（如设置页）会盖住它，与开发者横幅同口径、可接受。
+    private func buildOfflineBanner() {
+        let banner = UIView()
+        banner.backgroundColor = BearyColors.alpha(BearyColors.red, 0.12)
+        banner.isHidden = true
+        banner.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(banner)
+        offlineBannerView = banner
+
+        let label = UILabel()
+        label.text = "当前离线，显示缓存"
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.ink
+        label.translatesAutoresizingMaskIntoConstraints = false
+        banner.addSubview(label)
+        banner.isAccessibilityElement = true
+        banner.accessibilityLabel = "当前离线，显示缓存"
+
+        let top = banner.topAnchor.constraint(equalTo: view.topAnchor, constant: view.safeAreaInsets.top + (headerVisible ? 108 : 0) + BearyDeveloperMode.shared.devBannerInset)
+        offlineBannerTopConstraint = top
+        NSLayoutConstraint.activate([
+            top,
+            banner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            banner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            banner.heightAnchor.constraint(equalToConstant: 36),
+            label.leadingAnchor.constraint(equalTo: banner.leadingAnchor, constant: 16),
+            label.centerYAnchor.constraint(equalTo: banner.centerYAnchor),
+        ])
+    }
+
+    /// 离线横幅位置：顶栏显示时贴顶栏下方，收起时贴安全区顶；开发者横幅
+    /// 开着时再往下叠 36pt（与各页 devBannerInset 同值，不与橙条重叠）。
+    private func updateOfflineBannerPosition(animated: Bool = false) {
+        guard let top = offlineBannerTopConstraint else { return }
+        let offset = view.safeAreaInsets.top + (headerVisible ? 108 : 0) + BearyDeveloperMode.shared.devBannerInset
+        guard top.constant != offset else { return }
+        if animated && !UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+                top.constant = offset
+                self.view.layoutIfNeeded()
+            }
+        } else {
+            top.constant = offset
+            view.layoutIfNeeded()
+        }
+    }
+
+    /// 离线横幅显隐（P0-3）：只由 handleReachabilityChanged 按 isOnline 驱动。
+    private func setOfflineBannerVisible(_ visible: Bool) {
+        offlineBannerView?.isHidden = !visible
+    }
+
+    /// P0-3：离线横幅跟 App 级 reachability 走；广播恒在主队列发出，
+    /// 此处直接改显隐。首报前 isOnline 为 true，不误报。
+    @objc private func handleReachabilityChanged(_ note: Notification) {
+        let online = note.userInfo?["isOnline"] as? Bool ?? BearyReachability.shared.isOnline
+        setOfflineBannerVisible(!online)
     }
 
     /// 开发者模式横幅：36pt 全宽橙条，文案「开发者模式已开启」＋「进入」按钮＋关闭 ×。
@@ -1137,6 +1215,7 @@ final class BearyChromeViewController: UIViewController {
     @objc private func handleDevModeChanged(_ note: Notification) {
         devBannerView?.isHidden = !BearyDeveloperMode.shared.isEnabled
         updateDevBannerPosition()
+        updateOfflineBannerPosition()
         applyHeaderTopInsets()
     }
 
@@ -1306,6 +1385,11 @@ final class BearyChromeViewController: UIViewController {
         buildChrome()
         // 开发者模式变化：横幅显隐＋位置＋各页内边距同步（见 handleDevModeChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
+        // P0-3：离线横幅跟 App 级 reachability 走（见 handleReachabilityChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleReachabilityChanged(_:)), name: .bearyReachabilityDidChange, object: nil)
+        // P0-3：语言切换重建容器后无新广播也会到此——按当前快照同步一次，
+        // 离线重建不漏横幅（首报前 isOnline 为 true，不误报）。
+        setOfflineBannerVisible(!BearyReachability.shared.isOnline)
         // 底栏消息角标：订阅通知页的未读数变化（见 handleUnreadChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleUnreadChanged(_:)), name: BearyNotificationsViewController.unreadChangedNotificationName, object: nil)
         // 视觉清单第 4 项：两侧背景层已停用——buildSideDeco 现为空操作，
@@ -1904,6 +1988,8 @@ final class BearyChromeViewController: UIViewController {
         }
         // 开发者模式横幅：跟顶栏显隐走（显示时贴顶栏下方，收起时贴安全区顶）。
         updateDevBannerPosition(animated: animated)
+        // P0-3：离线横幅位置跟顶栏显隐走（同上，另叠开发者横幅 36pt）。
+        updateOfflineBannerPosition(animated: animated)
     }
 
     /// 顶栏透度批：各页顶距只认各自的恒定态，与当前选中页无关——首页恒显示态
@@ -2144,6 +2230,8 @@ final class BearyChromeViewController: UIViewController {
         }
         // 开发者模式横幅：安全区顶变了（旋转/分屏），位置跟变。
         updateDevBannerPosition()
+        // P0-3：离线横幅位置同上。
+        updateOfflineBannerPosition()
         // 顶栏透度批：安全区顶变了，Feed/时间线的属性内边距（含安全区顶）必须跟变；
         // 各页收敛到各自恒定态（首页显示态、他页收起态），与当前选中页无关；
         // 各页 helper 自带“值不变跳过”，故此处全量重发是无害 no-op（消息页下拉刷新中被守卫挡下，见其 helper）。
