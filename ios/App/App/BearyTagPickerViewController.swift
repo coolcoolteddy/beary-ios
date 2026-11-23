@@ -179,13 +179,8 @@ final class BearyTagPickerViewController: UIViewController {
         confirmButton.bearyAddPressFeedback()
         buttonStack.addArrangedSubview(confirmButton)
         confirmButton.heightAnchor.constraint(equalToConstant: confirmButton.style.height).isActive = true
-        let cancelButton = BearyButton(style: .secondaryOutline(.regular))
-        cancelButton.translatesAutoresizingMaskIntoConstraints = false
-        cancelButton.setTitle("取消", for: .normal)
-        cancelButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        cancelButton.bearyAddPressFeedback()
-        buttonStack.addArrangedSubview(cancelButton)
-        cancelButton.heightAnchor.constraint(equalToConstant: cancelButton.style.height).isActive = true
+        // Li 2026-11-23 定（第三批第 49 题）：底部弹窗不留最底部「取消」钮，
+        // 只留确定钮；关闭走抓手／点外。
         view.addSubview(buttonStack)
 
         let tagsAreaHeight = tagsAreaView.heightAnchor.constraint(equalToConstant: Self.rowHeight)
@@ -375,10 +370,6 @@ final class BearyTagPickerViewController: UIViewController {
         dismiss(animated: BearyMotion.animated(true)) {
             handler(tags)
         }
-    }
-
-    @objc private func closeTapped() {
-        dismiss(animated: BearyMotion.animated(true))
     }
 }
 
