@@ -283,7 +283,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             primaryButton.topAnchor.constraint(equalTo: footerView.topAnchor),
             primaryButton.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: 24),
             primaryButton.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -24),
-            primaryButton.heightAnchor.constraint(equalToConstant: 52),
+            primaryButton.heightAnchor.constraint(equalToConstant: 56),
             secondaryButton.topAnchor.constraint(equalTo: primaryButton.bottomAnchor, constant: 8),
             secondaryButton.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: 24),
             secondaryButton.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -24),
@@ -684,7 +684,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         button.titleLabel?.font = BearyDynamicType.buttonFont()
         button.setTitle(title, for: .normal)
         button.layer.cornerRadius = 12
-        button.heightAnchor.constraint(equalToConstant: 52).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 56).isActive = true
         addPressFeedback(to: button)
         return button
     }
