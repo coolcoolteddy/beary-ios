@@ -444,77 +444,16 @@ final class BearyDetailViewController: UIViewController {
         imagesScrollView.isScrollEnabled = true
     }
 
-    /// 九宫格入口：图片数 > 3 时在图片条下方弹起；纯文字 pill（卡片同款，
-    /// surface2 底、墨字、13 semibold、圆角 single 12、高 32）。点按直接走
-    /// BearyNineGridPresenter（Plus 门控 + 开网格都在那里）。
-    private lazy var nineGridButton: UIButton = {
-        let btn = BearyHit44Button(type: .system)
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
-        btn.titleLabel?.adjustsFontForContentSizeCategory = true
-        btn.setTitle("九宫格", for: .normal)
-        btn.setTitleColor(BearyColors.ink, for: .normal)
-        btn.backgroundColor = BearyColors.surface2
-        btn.layer.cornerRadius = 12
-        btn.clipsToBounds = true
-        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
-        return btn
-    }()
-
-    /// 九宫格按钮容器：左贴内容缘，栈内隐藏时自动压零、不留空位。
-    private lazy var nineGridWrapView: UIView = {
-        let v = UIView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.isHidden = true
-        v.alpha = 0
-        v.addSubview(nineGridButton)
-        NSLayoutConstraint.activate([
-            nineGridButton.leadingAnchor.constraint(equalTo: v.leadingAnchor),
-            nineGridButton.topAnchor.constraint(equalTo: v.topAnchor),
-            nineGridButton.bottomAnchor.constraint(equalTo: v.bottomAnchor),
-            nineGridButton.heightAnchor.constraint(equalToConstant: 32),
-        ])
-        return v
-    }()
-
-    /// 九宫格入口隐藏动画代次：收起动画完成时若已有新一轮展开，须以新态为准、不再藏。
-    private var nineGridHideToken = 0
-
-    /// 九宫格入口显隐：图片数 > 3 才出现；状态真变时才动（重复渲染不闪）。
-    /// 出现走规范 §6 局部状态 0.18s 淡入，减动效直设；收起先淡出、完成再藏。
-    private func updateNineGridButton(count: Int) {
-        let shouldShow = count > 3
-        guard nineGridWrapView.isHidden == shouldShow else { return }
-        nineGridHideToken += 1
-        let animated = view.window != nil && !UIAccessibility.isReduceMotionEnabled
-        if shouldShow {
-            nineGridWrapView.isHidden = false
-            nineGridWrapView.alpha = animated ? 0 : 1
-            if animated {
-                UIView.animate(withDuration: 0.18) {
-                    self.nineGridWrapView.alpha = 1
-                }
-            }
-        } else {
-            if animated {
-                let token = nineGridHideToken
-                UIView.animate(withDuration: 0.18, animations: {
-                    self.nineGridWrapView.alpha = 0
-                }, completion: { _ in
-                    guard token == self.nineGridHideToken else { return }
-                    self.nineGridWrapView.isHidden = true
-                })
-            } else {
-                nineGridWrapView.isHidden = true
-                nineGridWrapView.alpha = 0
-            }
+    /// 九宫格直显（2026-11-22 Li 定，取代 2026-11-12 旧形态）：选了九宫格格式的
+    /// 日记直接以正文＋九宫格排版显示；旧「九宫格」按钮与单独网格页已删。
+    /// 点格直接进灯箱（与图片条点图同款 presentImageViewer）。
+    private lazy var inlineNineGridView: BearyInlineNineGridView = {
+        let grid = BearyInlineNineGridView()
+        grid.onImageTapped = { [weak self] index, originFrame, thumbnail in
+            self?.presentImageViewer(index: index, originFrame: originFrame, thumbnail: thumbnail)
         }
-    }
-
-    @objc private func nineGridButtonTapped() {
-        BearyNineGridPresenter.present(from: self, anchorView: nineGridButton, imageKeys: Array(imageKeys.prefix(9)), liveVideos: entry.liveVideos)
-    }
+        return grid
+    }()
     /// 批 E 详情位置行：官方 icon_location 13 灰 + 位置文案；公开篇作者本人
     /// 也只看区级（与他人视角一致），不再另附提示行。无位置/他人视角无区级/
     /// 公开篇无区级时整组隐藏，不留空行（与卡片同口径）。
@@ -1152,7 +1091,7 @@ final class BearyDetailViewController: UIViewController {
 
     private func buildImages() {
         bodyStack.addArrangedSubview(imagesScrollView)
-        bodyStack.addArrangedSubview(nineGridWrapView)
+        bodyStack.addArrangedSubview(inlineNineGridView)
         imagesScrollView.addSubview(imagesStack)
         let imageHeight = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
         imageHeightConstraint = imageHeight
@@ -1392,9 +1331,9 @@ final class BearyDetailViewController: UIViewController {
         }
         // 图片→定位 12（ChatGPT 间距跟进）：图片条与定位行中间隔着引用卡，
         // 两段相邻间距（图片→引用、引用→定位）各取 12（天气已并进定位行）；
-        // 九宫格按钮在图片条与引用卡之间时，图片条→按钮、按钮→引用卡各取 12。
+        // 九宫格直显时图片条藏起、网格占图片条原位，图片条→网格、网格→引用卡各取 12。
         bodyStack.setCustomSpacing(12, after: imagesScrollView)
-        bodyStack.setCustomSpacing(12, after: nineGridWrapView)
+        bodyStack.setCustomSpacing(12, after: inlineNineGridView)
         bodyStack.setCustomSpacing(12, after: quoteView)
         // 定位→操作行 14（ChatGPT 间距跟进，#904 为 10）。
         bodyStack.setCustomSpacing(14, after: detailLocationStack)
@@ -2487,7 +2426,15 @@ final class BearyDetailViewController: UIViewController {
         let allKeys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "") == false }
         imageKeys = allKeys
         let keys = Array(allKeys.prefix(9))
-        updateNineGridButton(count: keys.count)
+        // 九宫格直显（2026-11-22 Li 定）：选了九宫格格式的日记直接显示
+        // 正文＋九宫格，图片条整条藏起；条状走原路，网格同步藏起。
+        if entry.isNineGridLayout, !keys.isEmpty {
+            imagesScrollView.isHidden = true
+            imageHeightConstraint?.constant = 0
+            inlineNineGridView.configure(keys: keys)
+            return
+        }
+        inlineNineGridView.configure(keys: [])
         if imageSlots.isEmpty { makeImageSlots() }
         if keys.isEmpty {
             imagesScrollView.isHidden = true
@@ -3720,16 +3667,21 @@ final class BearyDetailViewController: UIViewController {
            let until = imageSlotLiveViews[index].suppressTapUntil, until > Date() {
             return
         }
+        presentImageViewer(index: index, originFrame: sender.view.map { $0.convert($0.bounds, to: nil) }, thumbnail: (sender.view as? UIImageView)?.image, focusElement: sender.view)
+    }
+
+    /// 点图进灯箱（图片条与九宫格网格共用）：已弹出时不叠加、0.8 秒内连点只进一次。
+    private func presentImageViewer(index: Int, originFrame: CGRect? = nil, thumbnail: UIImage? = nil, focusElement: UIView? = nil) {
         guard !imageKeys.isEmpty, index >= 0, index < imageKeys.count else { return }
         if presentedViewController != nil { return }
         let now = Date()
         if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
         lastImageViewerAt = now
-let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: entry.liveVideos, startIndex: index)
-        viewer.initialThumbnail = (sender.view as? UIImageView)?.image
-        viewer.originFrameInWindow = sender.view.map { $0.convert($0.bounds, to: nil) }
+        let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: entry.liveVideos, startIndex: index)
+        viewer.initialThumbnail = thumbnail
+        viewer.originFrameInWindow = originFrame
         // 无障碍：关闭后焦点回被点的缩略图。
-        viewer.focusReturnElement = sender.view
+        viewer.focusReturnElement = focusElement
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }

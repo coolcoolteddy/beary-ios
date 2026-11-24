@@ -835,6 +835,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             mentionedUserId: selectedRecipient?.id,
             title: headlineForCreate,
             tags: selectedTags,
+            // 九宫格版式（2026-11-22 Li 定新口径）：选中且图片超 3 张才发 'grid'；
+            // 未选或图 ≤3 张发 nil（默认条状）；编辑不走本快照，版式由服务端保留。
+            layout: (isNineGridLayout && imageItems.count > 3) ? "grid" : nil,
             ephemeral: isEphemeral ? 1 : nil,
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
@@ -877,8 +880,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var backgroundFlushFailed = false
     private var editTimer: Timer?
     private var imageItems: [ComposerImageItem] = [] {
-        didSet { editorEditVersion += 1 }
+        didSet {
+            editorEditVersion += 1
+            refreshLayoutToggleVisibility()
+        }
     }
+    /// 九宫格版式选择（2026-11-22 Li 定新口径）：新建日记、图片超 3 张时
+    /// 在图片条下方出现「九宫格版式」选择；Plus 可选九宫格或默认条状，
+    /// 非 Plus 点它弹现行 Plus 提示；默认条状。编辑模式不显示（已发日记的
+    /// 版式服务端保留，编辑不改版式）；草稿往返保留本标记（见 BearyDraft.layout）。
+    private var isNineGridLayout = false
     /// 原图确认（2026-11-12 Li 定）：一次选图（一个 picker 回调）内新选
     /// 的图先只显示本地图、不上传，等用户在确认弹窗里选原图/压缩再传。
     /// pendingChoiceAwaiting：准备未完成（压缩落盘＋原图取文件未都 settled）
@@ -1047,6 +1058,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // 图片预览（无标题、无 + 块；空时整条隐藏，添加走工具栏图片钮）
     private let imageScrollView = UIScrollView()
     private let imageStackView = UIStackView()
+    /// 九宫格版式选择行（2026-11-22 Li 定新口径）：图片超 3 张时在图片条下方出现，
+    /// 一处即可；图片 ≤3 张或编辑模式时整行隐藏、不留空位。
+    private let layoutToggleWrapView = UIView()
+    private let layoutToggleButton = BearyHit44Button(type: .system)
+    private var layoutToggleHideToken = 0
     /// 待确认条：「N 张照片待确认上传方式」，点按重开确认弹窗；无未确认项时隐藏。
     private let pendingUploadBar = UIButton(type: .custom)
     private let pendingUploadBarLabel = UILabel()
@@ -3919,6 +3935,35 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ])
         refreshImageStripVisibility()
         contentStack.setCustomSpacing(4, after: imageScrollView)
+        // 九宫格版式选择（2026-11-22 Li 定新口径）：图片超 3 张时在图片条下方出现，
+        // 纯文字 pill（九宫格入口旧款同款样式：surface2 底、墨字、13 semibold、
+        // 圆角 single 12、高 32）；选中时钮首显官方 icon_check。点按走
+        // didTapLayoutToggle（Plus 门控 + 提示都在那里）。
+        layoutToggleWrapView.translatesAutoresizingMaskIntoConstraints = false
+        layoutToggleWrapView.isHidden = true
+        layoutToggleWrapView.alpha = 0
+        layoutToggleWrapView.addSubview(layoutToggleButton)
+        layoutToggleButton.translatesAutoresizingMaskIntoConstraints = false
+        layoutToggleButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        layoutToggleButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        layoutToggleButton.setTitle("九宫格版式", for: .normal)
+        layoutToggleButton.setTitleColor(BearyColors.ink, for: .normal)
+        layoutToggleButton.backgroundColor = BearyColors.surface2
+        layoutToggleButton.layer.cornerRadius = 12
+        layoutToggleButton.clipsToBounds = true
+        layoutToggleButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        layoutToggleButton.accessibilityLabel = "九宫格版式"
+        layoutToggleButton.addTarget(self, action: #selector(didTapLayoutToggle), for: .touchUpInside)
+        contentStack.addArrangedSubview(layoutToggleWrapView)
+        NSLayoutConstraint.activate([
+            layoutToggleButton.leadingAnchor.constraint(equalTo: layoutToggleWrapView.leadingAnchor),
+            layoutToggleButton.topAnchor.constraint(equalTo: layoutToggleWrapView.topAnchor),
+            layoutToggleButton.bottomAnchor.constraint(equalTo: layoutToggleWrapView.bottomAnchor),
+            layoutToggleButton.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        refreshLayoutToggleButton()
+        refreshLayoutToggleVisibility()
+        contentStack.setCustomSpacing(4, after: layoutToggleWrapView)
         // 原图确认待确认条：插在图片条下方，默认隐藏；有未确认项时显示
         //「N 张照片待确认上传方式」，点按重开确认弹窗（见 refreshPendingUploadBar）。
         pendingUploadBar.backgroundColor = BearyColors.surface2
@@ -3989,6 +4034,89 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.imageScrollView.isHidden = true
                 }
             })
+        }
+    }
+
+    /// 九宫格版式选择行显隐：新建态且图片超 3 张才出现；状态真变时才动
+    ///（复用图片增减不闪）。出现／收起走 0.18s 淡入淡出（旧九宫格入口同款），
+    /// 减动效直设；收起动画完成时若已有新一轮展开，以新态为准、不再藏。
+    /// imageItems.didSet 里调（增删图都走），视图未建好时直接返回。
+    private func refreshLayoutToggleVisibility() {
+        guard isViewLoaded, layoutToggleWrapView.superview != nil else { return }
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in self?.refreshLayoutToggleVisibility() }
+            return
+        }
+        let shouldShow = !isEditMode && imageItems.count > 3
+        guard layoutToggleWrapView.isHidden == shouldShow else { return }
+        layoutToggleHideToken += 1
+        let animated = view.window != nil && !UIAccessibility.isReduceMotionEnabled
+        if shouldShow {
+            layoutToggleWrapView.isHidden = false
+            layoutToggleWrapView.alpha = animated ? 0 : 1
+            if animated {
+                UIView.animate(withDuration: 0.18) {
+                    self.layoutToggleWrapView.alpha = 1
+                }
+            }
+        } else {
+            if animated {
+                let token = layoutToggleHideToken
+                UIView.animate(withDuration: 0.18, animations: {
+                    self.layoutToggleWrapView.alpha = 0
+                }, completion: { _ in
+                    guard token == self.layoutToggleHideToken else { return }
+                    self.layoutToggleWrapView.isHidden = true
+                })
+            } else {
+                layoutToggleWrapView.isHidden = true
+                layoutToggleWrapView.alpha = 0
+            }
+        }
+    }
+
+    /// 版式钮外观：选中时钮首显官方 icon_check（通知复选同款资产），
+    /// 未选时无图、标题居中；读屏值同步已选／未选。
+    private func refreshLayoutToggleButton() {
+        if isNineGridLayout {
+            layoutToggleButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
+            layoutToggleButton.tintColor = BearyColors.ink
+            layoutToggleButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
+            layoutToggleButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+            layoutToggleButton.accessibilityValue = "已选"
+        } else {
+            layoutToggleButton.setImage(nil, for: .normal)
+            layoutToggleButton.imageEdgeInsets = .zero
+            layoutToggleButton.titleEdgeInsets = .zero
+            layoutToggleButton.accessibilityValue = "未选"
+        }
+    }
+
+    /// 版式钮点按：先取 Plus 态（编辑器会话内缓存一次，见 ensurePlusStatus）；
+    /// Plus 翻转选择；非 Plus 只摇本钮＋现行 Plus 提示（旧网格入口同款文案），
+    /// 不改选择；取 Plus 态失败（网络错）不误判为非 Plus，只报网络不稳定。
+    @objc private func didTapLayoutToggle() {
+        ensurePlusStatus { [weak self] isPlus in
+            guard let self = self else { return }
+            guard let isPlus = isPlus else {
+                self.showToast(message: "网络不稳定，请稍后再试")
+                return
+            }
+            guard isPlus else {
+                BearyHaptics.rejectionWarning()
+                BearySoundPlayer.play(.refuseBonk)
+                if !UIAccessibility.isReduceMotionEnabled {
+                    let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+                    shake.values = [0, -8, 8, -5, 5, 0]
+                    shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+                    shake.duration = BearyMotion.screen
+                    self.layoutToggleButton.layer.add(shake, forKey: "bearyLayoutToggleDenyShake")
+                }
+                self.showToast(message: "仅 Plus 会员可使用九宫格版式")
+                return
+            }
+            self.isNineGridLayout.toggle()
+            self.refreshLayoutToggleButton()
         }
     }
 
@@ -7344,7 +7472,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// Plus 判定（九宫格 BearyNineGridPresenter 同款口径：/me 的 plus 字段）：
+    /// Plus 判定（九宫格版式选择与旧网格入口同款口径：/me 的 plus 字段）：
     /// 本编辑器会话内缓存一次；只缓存成功拉到的结果，拉取失败不缓存、不判定，
     /// 下次再拉——已开通用户遇网络失败不再被误认为非 Plus。
     /// completion(nil) 表示拉取失败；未登录（/me 回 nil）按非 Plus 计。
@@ -8261,6 +8389,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             locationStreet: selectedLocation?.street,
             visibilitySegmentIndex: selectedVisibilityFriends ? 2 : (selectedVisibilityPublished ? 1 : 0),
             tags: selectedTags,
+            // 九宫格版式选择随草稿存（原始标记，不设图数门：图 ≤3 张时选择行虽隐藏，
+            // 标记仍保留、再加图超 3 张时选择行重现仍为已选；发布时由快照按图数再 gate 一次）。
+            layout: isNineGridLayout ? "grid" : nil,
             ephemeralEnabled: isEditMode ? false : isEphemeral,
             recipientId: recipientUserId,
             recipientName: recipientNameValue,
@@ -8900,6 +9031,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedVisibilityPublished = false
         selectedVisibilityFriends = false
         isEphemeral = false
+        // 空白新日记不继承上一篇的九宫格版式选择（选择行随图片清空隐藏，
+        // 见 removeAllImageViews → imageItems.didSet 刷新）。
+        isNineGridLayout = false
+        refreshLayoutToggleButton()
         refreshVisibilityButton()
         setQuotePanelOpen(false)
         removeAllImageViews()
@@ -8986,6 +9121,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         setHeadlineText(draft.title)
         selectedMood = draft.mood
         selectedTags = draft.tags ?? []
+        // 九宫格版式随草稿恢复（放图片恢复之前：图片逐张插入时
+        // imageItems.didSet 即刷新选择行，标记须先到位、勾选态才一次对）。
+        isNineGridLayout = (draft.layout == "grid")
+        refreshLayoutToggleButton()
         selectedWeather = draft.weather
         selectedTemperature = draft.temperature
         // 切草稿：上一篇在途自动填天气回包即过期作废，不覆盖新篇天气（见 weatherFetchGeneration）。

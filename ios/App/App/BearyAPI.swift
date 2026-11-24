@@ -192,6 +192,12 @@ struct Entry: Codable {
 
     /// 仅好友判定：只认显式 friends 值；缺失/其他值一律不算（fail-closed）。
     var isFriendsOnly: Bool { visibility == "friends" }
+    /// 九宫格版式（2026-11-22 Li 定新口径）：服务端 layout 字段，'grid' =
+    /// 发布时选了九宫格格式，卡片／详情／时间线直接正文＋九宫格排版；
+    /// 缺失／其他值一律按默认条状（fail-closed，与 isFriendsOnly 同口径）。
+    var layout: String? = nil
+    /// 九宫格直显判定：只认显式 grid 值。
+    var isNineGridLayout: Bool { layout == "grid" }
     /// 引用规则简化来源行：被引篇作者 handle（后端直传时才有；缺失时来源行不编造）。
     var authorHandle: String? = nil
     /// 限时日记：到期时间戳（毫秒）；nil = 非限时。存活期（now < 该值）才算限时态，

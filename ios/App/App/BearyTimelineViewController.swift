@@ -924,42 +924,19 @@ final class BearyTimelineCell: UITableViewCell {
     private weak var cardStackReference: UIStackView?
     private var thumbImageViews: [UIImageView] = []
 
-    /// 九宫格入口：图片数 > 3 时在图片条下方弹起；纯文字 pill（卡片同款，
-    /// surface2 底、墨字、13 semibold、圆角 single 12、高 32）。点按走
-    /// onNineGridTapped，Plus 门控在容器侧。
-    private lazy var nineGridButton: UIButton = {
-        let btn = BearyHit44Button(type: .system)
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
-        btn.titleLabel?.adjustsFontForContentSizeCategory = true
-        btn.setTitle("九宫格", for: .normal)
-        btn.setTitleColor(BearyColors.ink, for: .normal)
-        btn.backgroundColor = BearyColors.surface2
-        btn.layer.cornerRadius = 12
-        btn.clipsToBounds = true
-        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
-        return btn
+    /// 九宫格直显（2026-11-22 Li 定，取代 2026-11-12 旧形态）：选了九宫格格式的
+    /// 日记直接以正文＋九宫格排版显示；旧「九宫格」按钮与单独网格页已删。
+    /// 点格走主图条点图同款回调 onTapImages（keys 从 currentEntry 重算，
+    /// 与 didTapThumb 同口径）。
+    private lazy var inlineNineGridView: BearyInlineNineGridView = {
+        let grid = BearyInlineNineGridView()
+        grid.onImageTapped = { [weak self] index, originFrame, thumbnail in
+            guard let self = self, let entry = self.currentEntry else { return }
+            let keys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "") == false }
+            self.onTapImages?(keys, index, originFrame, thumbnail)
+        }
+        return grid
     }()
-
-    /// 九宫格按钮容器：左贴内容缘，栈内隐藏时自动压零、不留空位。
-    private lazy var nineGridWrapView: UIView = {
-        let v = UIView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.isHidden = true
-        v.alpha = 0
-        v.addSubview(nineGridButton)
-        NSLayoutConstraint.activate([
-            nineGridButton.leadingAnchor.constraint(equalTo: v.leadingAnchor),
-            nineGridButton.topAnchor.constraint(equalTo: v.topAnchor),
-            nineGridButton.bottomAnchor.constraint(equalTo: v.bottomAnchor),
-            nineGridButton.heightAnchor.constraint(equalToConstant: 32),
-        ])
-        return v
-    }()
-
-    /// 九宫格入口隐藏动画代次：收起动画完成时若已有新一轮展开，须以新态为准、不再藏。
-    private var nineGridHideToken = 0
 
     // TL-1 竖线 + 圆点：线 x=11 宽 2（与 .tl:before 一致）；圆点中心 x=12 与线对齐，
     // 9pt 空心圆（configure 统一口径：公开橙边／私密蓝边，2.5pt 边、bg 填充）。
@@ -994,9 +971,8 @@ final class BearyTimelineCell: UITableViewCell {
     /// VC 侧复用独立文件内的 BearyEntryImageViewerViewController 全屏弹出；
     /// 另传被点缩略图已显示的 UIImage，灯箱打开先显它。
     /// 引用卡小图不走此路（点按引用卡仍走 onQuoteEntry 打开被引用日记）。
+    /// 九宫格网格点格走同一回调（keys 同口径重算）。
     var onTapImages: (([String], Int, CGRect?, UIImage?) -> Void)?
-    /// 九宫格入口点按：容器接线（Plus 门控 + 开网格都在容器侧，本处只转发）。
-    var onNineGridTapped: ((UIButton) -> Void)?
     private let actsStack = UIStackView()
     /// 2026-10-29 Li 定编辑态口径：无图标、只留文字；冲突清单第 4 条取消
     /// 15 分钟锁后，本行只剩可点按的“编辑”二字（本行唯一的编辑入口，
@@ -1168,7 +1144,7 @@ final class BearyTimelineCell: UITableViewCell {
         // 批 E 补漏：位置行落点 = 图片条 → 引用卡 → 位置行 → 足行（操作行一带），与卡片
         // “图片条之后、操作行之前”同序；图片条后的动态间距（configure 内按有图
         // 9 / 无图 0）现为图片条→引用卡间距，位置行隐藏时栈自动塌掉不留空行。
-        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, thumbsScrollView, nineGridWrapView, quoteCard, timelineLocationStack, footStack, actsStack])
+        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, thumbsScrollView, inlineNineGridView, quoteCard, timelineLocationStack, footStack, actsStack])
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         cardStack.axis = .vertical
         cardStack.spacing = 0
@@ -1177,8 +1153,8 @@ final class BearyTimelineCell: UITableViewCell {
         cardStack.setCustomSpacing(6, after: titleLabel)
         cardStack.setCustomSpacing(14, after: contentLabel)
         cardStack.setCustomSpacing(12, after: thumbsScrollView)
-        // 九宫格按钮在图片条与引用卡之间时，图片条→按钮、按钮→引用卡各取 12。
-        cardStack.setCustomSpacing(12, after: nineGridWrapView)
+        // 九宫格直显时图片条藏起、网格占图片条原位，图片条→网格、网格→引用卡各取 12。
+        cardStack.setCustomSpacing(12, after: inlineNineGridView)
         cardStack.setCustomSpacing(12, after: quoteCard)
         cardStack.setCustomSpacing(14, after: timelineLocationStack)
         cardStack.setCustomSpacing(12, after: footStack)
@@ -1403,10 +1379,7 @@ final class BearyTimelineCell: UITableViewCell {
         onQuoteEntry = nil
         onMoreEntry = nil
         onTapImages = nil
-        onNineGridTapped = nil
-        nineGridHideToken += 1
-        nineGridWrapView.isHidden = true
-        nineGridWrapView.alpha = 0
+        inlineNineGridView.configure(keys: [])
         resetImageStripPinch()
         // 内联 GIF 覆盖层复用时清理（动画停播、图层摘掉，防串位到下一行）。
         bodyGIFOverlay.clear()
@@ -1563,41 +1536,6 @@ final class BearyTimelineCell: UITableViewCell {
         thumbsStack.spacing = 8
         applyImageStripCornerRadius(progress: 0)
         thumbsScrollView.isScrollEnabled = true
-    }
-
-    /// 九宫格入口显隐：图片数 > 3 才出现；状态真变时才动（复用滚动不闪）。
-    /// 出现走规范 §6 局部状态 0.18s 淡入，减动效直设；收起先淡出、完成再藏。
-    private func updateNineGridButton(count: Int) {
-        let shouldShow = count > 3
-        guard nineGridWrapView.isHidden == shouldShow else { return }
-        nineGridHideToken += 1
-        let animated = window != nil && !UIAccessibility.isReduceMotionEnabled
-        if shouldShow {
-            nineGridWrapView.isHidden = false
-            nineGridWrapView.alpha = animated ? 0 : 1
-            if animated {
-                UIView.animate(withDuration: 0.18) {
-                    self.nineGridWrapView.alpha = 1
-                }
-            }
-        } else {
-            if animated {
-                let token = nineGridHideToken
-                UIView.animate(withDuration: 0.18, animations: {
-                    self.nineGridWrapView.alpha = 0
-                }, completion: { _ in
-                    guard token == self.nineGridHideToken else { return }
-                    self.nineGridWrapView.isHidden = true
-                })
-            } else {
-                nineGridWrapView.isHidden = true
-                nineGridWrapView.alpha = 0
-            }
-        }
-    }
-
-    @objc private func nineGridButtonTapped() {
-        onNineGridTapped?(nineGridButton)
     }
 
     /// C4：时间线引用占位/来源行已并入公共 BearyQuoteCardView（showGone /
@@ -1831,10 +1769,15 @@ final class BearyTimelineCell: UITableViewCell {
         // 再进图条会同一张图出现两次）；图条只放照片。
         let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "") == false }
         resetImageStripPinch()
-        thumbsScrollView.isHidden = imageKeys.isEmpty
-        thumbsHeightConstraint?.constant = imageKeys.isEmpty ? 0 : 216
-        cardStackReference?.setCustomSpacing(imageKeys.isEmpty ? 0 : 12, after: thumbsScrollView)
-        for (thumbIndex, key) in imageKeys.enumerated() {
+        // 九宫格直显（2026-11-22 Li 定）：选了九宫格格式的日记直接显示
+        // 正文＋九宫格，缩略图条整条藏起；条状走原路，网格同步藏起。
+        let isGridLayout = entry.isNineGridLayout && !imageKeys.isEmpty
+        thumbsScrollView.isHidden = isGridLayout || imageKeys.isEmpty
+        thumbsHeightConstraint?.constant = (isGridLayout || imageKeys.isEmpty) ? 0 : 216
+        cardStackReference?.setCustomSpacing((isGridLayout || imageKeys.isEmpty) ? 0 : 12, after: thumbsScrollView)
+        inlineNineGridView.configure(keys: isGridLayout ? imageKeys : [])
+        let stripKeys: [String] = isGridLayout ? [] : imageKeys
+        for (thumbIndex, key) in stripKeys.enumerated() {
             let imageView = UIImageView()
             imageView.translatesAutoresizingMaskIntoConstraints = false
             imageView.contentMode = .scaleAspectFill
@@ -1870,7 +1813,6 @@ final class BearyTimelineCell: UITableViewCell {
                 bearyFeedLoadImage(into: imageView, url: url, retryButton: thumbRetry, downsampleToWidth: strip * UIScreen.main.scale, blurUp: true)
             }
         }
-        updateNineGridButton(count: imageKeys.count)
         // 批 E 补漏：位置行（图片条 → 引用卡 → 位置行 → 足行）；无位置、或他人视角下
         // 无区级时整组隐藏，不留空行（文案与脱敏走 BearyLocationDisplay，
         // 与首页/个人页卡片、详情同一函数，时间线本只列本人日记，故实效为
@@ -7070,10 +7012,6 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             viewer.originFrameInWindow = originFrame
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
-        }
-        cell.onNineGridTapped = { [weak self] button in
-            guard let strongSelf = self else { return }
-            BearyNineGridPresenter.present(from: strongSelf, anchorView: button, imageKeys: viewerEntry.images ?? [], liveVideos: viewerEntry.liveVideos)
         }
         return cell
     }
