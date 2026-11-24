@@ -1,5 +1,7 @@
 # Codemagic 对等配置：对标 .github/workflows/ios.yml 里的 sideload job
 # 无签名 device Release 包 + 打 beary.ipa（侧载包，不走商店签名）
+# ios-appstore：App Store 分发签名包（自动签名，走 App Store Connect API key，
+# provisioning profile 类型 IOS_APP_STORE），只手动触发，不自动跑
 workflows:
   ios-sideload:
     name: iOS sideload
@@ -33,3 +35,38 @@ workflows:
           zip -r beary.ipa Payload
     artifacts:
       - beary.ipa
+  ios-appstore:
+    name: iOS App Store
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: latest
+      groups:
+        - appstore_credentials
+    scripts:
+      - name: Install dependencies
+        script: npm ci
+      - name: Set up keychain for code signing
+        script: keychain initialize
+      - name: Fetch signing files
+        script: |
+          app-store-connect fetch-signing-files "com.teddyhn.beary" \
+            --type IOS_APP_STORE \
+            --create \
+            --key-id "@env:APP_STORE_CONNECT_KEY_ID" \
+            --issuer-id "@env:APP_STORE_CONNECT_ISSUER_ID" \
+            --private-key "@env:APP_STORE_CONNECT_PRIVATE_KEY" \
+            --certificate-key "@env:CERTIFICATE_PRIVATE_KEY"
+      - name: Set up signing certificate
+        script: keychain add-certificates
+      - name: Set up code signing settings on Xcode project
+        script: xcode-project use-profiles
+      - name: Build IPA for distribution
+        script: |
+          xcode-project build-ipa \
+            --project ios/App/App.xcodeproj \
+            --scheme App \
+            --config Release \
+            --ipa-directory build/ios/ipa
+    artifacts:
+      - build/ios/ipa/*.ipa
