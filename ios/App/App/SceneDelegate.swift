@@ -20,6 +20,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         // 静默投递（无横幅、无声音），开发者模式的通知测试与 21:00 写日记提醒在用 App 时
         // 都看不到。SceneDelegate 随场景存活，直接作 delegate；只管展示方式，不动排程与权限。
         UNUserNotificationCenter.current().delegate = self
+        // 远程推送（2026-11-25，私信）：授权已给时注册取 device token；
+        // 未授权时不弹框，等现有本地通知流程授权后再补注册（见 BearyPushNotifications）。
+        BearyPushNotifications.shared.registerIfAuthorized()
         // 临时诊断（81 包，定根因后删除）：冷启动先记一行 launch，供下次启动判断上次是否卡在打开流程。
         DiagFile.mark("launch")
         // 反馈日志：生命周期只记固定事件名（不含任何用户内容）。
@@ -84,6 +87,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
 
     // UNUserNotificationCenterDelegate：前台收到本地通知时也显示横幅并播提示音
     //（默认不设 delegate 时前台静默投递）。不按类别过滤、不改 badge；点按见下方 didReceive 转发。
+    // 远端私信推送同口径：前台也显示横幅＋提示音（与本地通知一致）。
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])
     }
@@ -91,13 +95,27 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
     // UNUserNotificationCenterDelegate：点按本地通知的路由（第 25 轮 60）。
     // 落点逻辑在 BearyLocalNotifications（userInfo 带 kind＋账号＋目标 id），这里只转发；
     // 前台横幅仍由上面的 willPresent 负责。
+    // 远端私信推送先判（userInfo 带 aps＋type=dm）：账号校验后进对应会话，不走本地路由。
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        if let remoteDM = BearyPushNotifications.remoteDM(from: response.notification),
+           let peer = BearyPushNotifications.peer(for: remoteDM) {
+            defer { completionHandler() }
+            DispatchQueue.main.async { [weak self] in
+                guard let chrome = self?.window?.rootViewController as? BearyChromeViewController else { return }
+                chrome.presentDMChat(peer: peer)
+            }
+            return
+        }
         BearyLocalNotifications.shared.userNotificationCenter(center, didReceive: response, withCompletionHandler: completionHandler)
     }
 
     // 反馈日志：前后台切换只记固定事件名（不含任何用户内容）。
     func sceneDidBecomeActive(_ scene: UIScene) {
         BearyAppLog.event("app foreground")
+        // 远程推送（2026-11-25，私信）：回前台时补注册（用户在引导页／首篇提示里
+        // 刚授权后即生效）并补报 token（登录态在前台变化后也经此补齐）。
+        BearyPushNotifications.shared.registerIfAuthorized()
+        BearyPushNotifications.shared.syncTokenIfNeeded()
         // 门槛 4：首启不再问通知权限；写完第一篇日记后由 onPublished 接线问。
         // 隐私遮罩卡住修法：只在 willEnterForeground 撤遮罩不够——下拉通知中心/
         // 控制中心、系统权限弹框等只走 resignActive → becomeActive，根本不进后台，
@@ -1367,6 +1385,8 @@ final class BearyChromeViewController: UIViewController {
         // 登录态：从共享 cookie 恢复（已登录用户不用重登）；变化时刷新顶栏登录钮 / 头像。
         SessionManager.shared.onUserChanged = { [weak self] user in
             self?.applyLoginState(user)
+            // 远程推送（2026-11-25，私信）：登录／切号后把本机 token 上报到新账号名下。
+            BearyPushNotifications.shared.syncTokenIfNeeded()
             guard let self = self else { return }
             // P1-1：首个 /me 回包（成功或 401 映射的 nil）即标记已回包；FAB 若在
             // 等回包，待本次回调走完再恢复（defer 到下一 runloop，防重入）。

@@ -19,6 +19,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         return true
     }
 
+    // 远程推送（2026-11-25，私信）：系统下发／刷新 device token 时转交
+    // BearyPushNotifications 存下并上报服务端；注册失败只记日志。
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        BearyPushNotifications.shared.didRegister(deviceToken: deviceToken)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        BearyPushNotifications.shared.didFailToRegister(error: error)
+    }
+
     func application(_ application: UIApplication,
                      configurationForConnecting connectingSceneSession: UISceneSession,
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {
