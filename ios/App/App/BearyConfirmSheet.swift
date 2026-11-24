@@ -1,20 +1,18 @@
 import UIKit
 
 // ===== 通用确认底 sheet（第四轮审计 12：居中 Alert 迁底部弹窗）=====
-// 一处通用确认弹窗，走共享底部弹窗容器 BearyBottomSheet（与登录弹窗同款
-// 呈现与关闭流程：弹簧 0.38s 上升、背后缩 0.92、遮罩 0.45、下拖关/弹回；
-// 右上角叉叉关闭由本 sheet 自己保留，叉叉贴面板边 16）。调用方只给标题/
-// 说明/按钮，不各自再写 UIAlertController。
+// 一处通用确认弹窗，走系统底部 sheet（UISheetPresentationController，见
+// BearySystemSheet）。调用方只给标题/说明/按钮，不各自再写 UIAlertController。
 // 按钮顺序：非取消按钮按调用方顺序在上，取消按钮永远垫底（iOS 动作表口径）。
 // 点按按钮先关 sheet、关完再跑回调——回调里要再弹 sheet（如注销两步确认）
 // 或出分享面板时，调用方仍是原 presenter，不会叠在正在退场的 sheet 上。
-// 叉叉/遮罩/下滑关闭默认只关 sheet、不跑任何回调；调用方若有“必须给结论”
+// 抓手下滑/遮罩点按关闭默认只关 sheet、不跑任何回调；调用方若有“必须给结论”
 // 的回调（如可见性切换的 busy 清理，见 r16-16 引用门禁），传
 // onDismissWithoutAction：未点任何按钮就关闭时调一次，且只调一次。
 // 危险操作仍走二次确认（调用方原语义不动），本 sheet 只换呈现容器。
 // 字号走规范语义入口：标题 sheet 档 15 bold（smallActionFont），
 // 说明 15 regular（smallBodyFont）；按钮走 BearyButton 工厂（常规 16 semibold）。
-// 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
+// 部署目标 iOS 16.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 enum BearyConfirmSheet {
 
@@ -63,24 +61,11 @@ enum BearyConfirmSheet {
         // 先到的弹窗为准，只跳过本次弹出，不动已有弹窗的关闭行为。
         guard presenter.presentedViewController == nil else { return }
         let sheet = BearyConfirmSheetViewController(title: title, message: message, actions: actions, toggle: toggle, onDismissWithoutAction: onDismissWithoutAction)
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        // 进场前先算一次内容高，首帧不拿容器一半高回退、随后不再大跳变；
-        // 安全区此时未进窗口为 0，落窗后 viewDidLayoutSubviews 按真实安全区跟帧补齐。
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }
 
-final class BearyConfirmSheetViewController: UIViewController {
+final class BearyConfirmSheetViewController: UIViewController, BearySystemSheetSizing {
 
     private let sheetTitle: String
     private let sheetMessage: String?
@@ -92,11 +77,6 @@ final class BearyConfirmSheetViewController: UIViewController {
     /// 防 onDismissWithoutAction 与按钮回调双跑。
     private var resolved = false
 
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法），
-    /// 否则容器在呈现中途释放、进退场动画丢 delegate。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
-
-    private let grabberView = UIView()
     private let titleLabel = UILabel()
     private let messageLabel = UILabel()
     private let buttonStack = UIStackView()
@@ -128,13 +108,6 @@ final class BearyConfirmSheetViewController: UIViewController {
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
-
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #F5F5F5）
-        // 对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        view.addSubview(grabberView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = sheetTitle
@@ -228,12 +201,9 @@ final class BearyConfirmSheetViewController: UIViewController {
         view.addSubview(buttonStack)
 
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            // 顶部留白与旧抓手区等高（抓手顶 10＋高 4＋标题间距 16）：系统抓手
+            // 占顶区，标题位置不动；一律不要 ×，标题右缘放回内容边 -16。
+            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
         ])
@@ -268,7 +238,7 @@ final class BearyConfirmSheetViewController: UIViewController {
         updatePreferredContentSize()
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高；宽/字号档变化时跟帧补齐。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
@@ -278,6 +248,7 @@ final class BearyConfirmSheetViewController: UIViewController {
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 
@@ -298,8 +269,8 @@ final class BearyConfirmSheetViewController: UIViewController {
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        // 遮罩点按/下滑关闭走容器 requestDismiss（程序化 dismiss），不经过
-        // closeTapped；退场完成时 isBeingDismissed 为真，在此补一次回调。
+        // 抓手下滑/遮罩点按关闭是系统 dismiss，不经过按钮回调；
+        // 退场完成时 isBeingDismissed 为真，在此补一次回调。
         // 被其他弹窗盖住时 isBeingDismissed 为假，不触发。
         if isBeingDismissed {
             resolveDismissWithoutAction()

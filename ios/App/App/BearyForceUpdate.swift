@@ -133,23 +133,12 @@ enum BearyForceUpdateSheet {
 
     // MARK: - 柔性提醒：可关底 sheet
 
-    /// “有新版本”底 sheet：走共享底部弹窗容器 BearyBottomSheet（与公告底 sheet
-    /// 同款：弹簧 0.38s 上升、背后缩 0.92、遮罩 0.45、下拖关/弹回）。
+    /// “有新版本”底 sheet：走系统底部 sheet（UISheetPresentationController，见
+    /// BearySystemSheet）。
     /// [立即更新]（打开 update_url）／[稍后再说]（关闭）。
     static func showSoft(from presenter: UIViewController, updateURL: String, notes: BearyAnnouncement?) {
         let sheet = BearySoftUpdateSheetViewController(updateURL: updateURL, notes: notes)
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }
 
@@ -261,15 +250,11 @@ final class BearyForceUpdateViewController: UIViewController {
 
 // MARK: - 柔性提醒底 sheet
 
-final class BearySoftUpdateSheetViewController: UIViewController {
+final class BearySoftUpdateSheetViewController: UIViewController, BearySystemSheetSizing {
 
     private let updateURL: String
     private let notes: BearyAnnouncement?
 
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（公告 sheet 同款做法）。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
-
-    private let grabberView = UIView()
     private let titleLabel = UILabel()
     private let notesTitleLabel = UILabel()
     private let notesBodyLabel = UILabel()
@@ -291,11 +276,6 @@ final class BearySoftUpdateSheetViewController: UIViewController {
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
-
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        view.addSubview(grabberView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = NSLocalizedString("force_update.new_version_title", comment: "")
@@ -353,12 +333,9 @@ final class BearySoftUpdateSheetViewController: UIViewController {
         view.addSubview(buttonStack)
 
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            // 顶部留白与旧抓手区等高（抓手顶 10＋高 4＋标题间距 16）：系统抓手
+            // 占顶区，标题位置不动。
+            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
@@ -374,7 +351,7 @@ final class BearySoftUpdateSheetViewController: UIViewController {
         updatePreferredContentSize()
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高（公告 sheet 同款）。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高（公告 sheet 同款）。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
         let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
@@ -383,6 +360,7 @@ final class BearySoftUpdateSheetViewController: UIViewController {
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 

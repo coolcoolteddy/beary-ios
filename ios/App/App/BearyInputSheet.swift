@@ -1,33 +1,28 @@
 import UIKit
 
 // ===== 输入型底 sheet（编辑器气温输入框迁移，2026-11-11）=====
-// 仓内首个带输入框的底 sheet：走共享底部弹窗容器 BearyBottomSheet（与确认弹窗
-// 同款呈现与关闭流程：弹簧 0.38s 上升、背后缩 0.92、遮罩 0.45、下拖关/弹回）。结构照抄 BearyAnnouncementSheet
-// （enum show(from:...) ＋ ViewController、sheetDelegate 强持有、
-// modalPresentationStyle=.custom、进场前 loadViewIfNeeded＋算内容高＋
-// updatePreferredContentSize）。
-// 键盘：基础容器 BearyBottomSheetPresentationController 不跟键盘
-// （keyboardTopY 只在登录 sheet 的子类里），所以本 sheet 自带一个小的
-// presentation 子类 BearyInputSheetPresentationController，照抄登录 sheet
-// 的键盘口径：只跟停靠键盘（帧须与容器相交且触到底边），sheet 底贴键盘顶边；
-// 浮动/分屏键盘不动 sheet。输入框在 viewWillAppear 里 becomeFirstResponder
-// （面板已加入转场容器，键盘通知先于进场动画落位，停靠键盘的目标位置参与
-// 同一次入场，不再先落屏底再被键盘抬上去；viewDidLoad 时 view 尚未挂窗、
-// 首次响应者可能静默失败，见 BearyComposerPickers；viewDidAppear 再补一次
-// 当兜底）。键盘 Return（.done）走确定同款路径。
+// 仓内首个带输入框的底 sheet：走系统底部 sheet（UISheetPresentationController，
+// 见 BearySystemSheet）。结构照抄 BearyAnnouncementSheet（enum show(from:...) ＋
+// ViewController、进场前算内容高＋updatePreferredContentSize）。
+// 键盘：系统 sheet 不跟键盘，按钮组改由 BearySheetKeyboardAvoidance 顶升：
+// 只跟停靠键盘（帧须与视图相交且触到底边），按钮组贴键盘顶边；浮动/分屏键盘
+// 不动 sheet。输入框在 viewWillAppear 里 becomeFirstResponder（键盘通知先于
+// 进场动画落位；viewDidLoad 时 view 尚未挂窗、首次响应者可能静默失败，
+// 见 BearyComposerPickers；viewDidAppear 再补一次当兜底）。键盘 Return（.done）
+// 走确定同款路径。
 // 按钮顺序按 BearyConfirmSheet 口径：非取消在上、取消垫底（确定、清除在上，
 // 取消垫底）；清除钮只在传了 onClear 时出现。点按按钮先关 sheet、关完再跑
 // 回调（回调里再弹 sheet 或出 toast 时不叠在正在退场的 sheet 上）；
-// 遮罩/下滑关闭只关 sheet、不跑任何回调。
-// 滚动结构：表单区走 UIScrollView＋内容容器（grabber→标题→说明→输入框在
-// 滚动区内，确定/清除/取消按钮组固定在底部），键盘顶−56 封顶截断内容高时
-// 表单纵向滚动、按钮组不被遮挡；updatePreferredContentSize 改为滚动内容高
-// ＋按钮组高分别相加（滚动区无固有高，整体系 fitting 算不出高）。
+// 抓手下滑/遮罩点按关闭只关 sheet、不跑任何回调。
+// 滚动结构：表单区走 UIScrollView＋内容容器（标题→说明→输入框在滚动区内，
+// 确定/清除/取消按钮组固定在底部），超高时表单纵向滚动、按钮组贴底不动；
+// updatePreferredContentSize 改为滚动内容高＋按钮组高分别相加（滚动区无固有高，
+// 整体系 fitting 算不出高）。
 // 输入框走共享 BearyInputContainer（surface2 底、圆角 12、48 最小高、聚焦阴影，
 // 与登录页字段同款）；字号走规范语义入口：标题 sheet 档 15 bold
 // （smallActionFont），说明 15 regular（smallBodyFont），输入字 16
 // （scaledFont）；按钮走 BearyButton 工厂（常规 16 semibold）。
-// 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
+// 部署目标 iOS 16.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 enum BearyInputSheet {
 
@@ -39,26 +34,11 @@ enum BearyInputSheet {
     ///   - onClear: 点清除时调一次；不传则不显示清除钮。
     static func show(from presenter: UIViewController, title: String, message: String, placeholder: String, initialText: String?, onConfirm: @escaping (String) -> Void, onClear: (() -> Void)? = nil) {
         let sheet = BearyInputSheetViewController(title: title, message: message, placeholder: placeholder, initialText: initialText, onConfirm: onConfirm, onClear: onClear)
-        let delegate = BearyBottomSheetTransitioningDelegate { presented, presenting, _ in
-            BearyInputSheetPresentationController(presentedViewController: presented, presenting: presenting)
-        }
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        // 进场前先算一次内容高，首帧不拿容器一半高回退、随后不再大跳变；
-        // 安全区此时未进窗口为 0，落窗后 viewDidLayoutSubviews 按真实安全区跟帧补齐。
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }
 
-final class BearyInputSheetViewController: UIViewController {
+final class BearyInputSheetViewController: UIViewController, BearySystemSheetSizing {
 
     private let sheetTitle: String
     private let sheetMessage: String
@@ -70,13 +50,13 @@ final class BearyInputSheetViewController: UIViewController {
     /// 只解析一次：点按任一按钮即定局，后到的直接丢弃，防确定/清除双跑。
     private var resolved = false
 
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法），
-    /// 否则容器在呈现中途释放、进退场动画丢 delegate。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
+    /// 按钮组底边约束：停靠键盘时由 BearySheetKeyboardAvoidance 按键盘顶升改常量。
+    private var buttonStackBottomConstraint: NSLayoutConstraint?
+    /// 停靠键盘顶升（只跟停靠键盘，浮动/分屏不动，见 BearySystemSheet）。
+    private var keyboardAvoidance: BearySheetKeyboardAvoidance?
 
     private let scrollView = UIScrollView()
     private let scrollContentView = UIView()
-    private let grabberView = UIView()
     private let titleLabel = UILabel()
     private let messageLabel = UILabel()
     private let inputField = UITextField()
@@ -103,17 +83,12 @@ final class BearyInputSheetViewController: UIViewController {
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
 
-        // 表单区滚动容器：grabber→标题→说明→输入框挂内容容器内纵向滚动，
+        // 表单区滚动容器：标题→说明→输入框挂内容容器内纵向滚动，
         // 按钮组留在 view 上固定底部。
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrollView)
         scrollContentView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(scrollContentView)
-
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        scrollContentView.addSubview(grabberView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = sheetTitle
@@ -175,6 +150,9 @@ final class BearyInputSheetViewController: UIViewController {
         // 封顶高时先断这条，按钮组仍贴底可见，滚动区塌到 0 高，不动按钮高）。
         let scrollBottom = scrollView.bottomAnchor.constraint(equalTo: buttonStack.topAnchor)
         scrollBottom.priority = UILayoutPriority(rawValue: 999)
+        // 按钮组底边：贴安全区底边 -16；停靠键盘时由 keyboardAvoidance 按键盘顶升改常量。
+        let buttonBottom = buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16)
+        buttonStackBottomConstraint = buttonBottom
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -187,12 +165,9 @@ final class BearyInputSheetViewController: UIViewController {
             scrollContentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             scrollContentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
 
-            grabberView.topAnchor.constraint(equalTo: scrollContentView.topAnchor, constant: BearySheetChrome.grabberTop),
-            grabberView.centerXAnchor.constraint(equalTo: scrollContentView.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            // 顶部留白与旧抓手区等高（抓手顶 10＋高 4＋标题间距 16）：系统抓手
+            // 占顶区，标题位置不动；一律不要 ×，标题右缘放回内容边 -16。
+            titleLabel.topAnchor.constraint(equalTo: scrollContentView.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16),
             titleLabel.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor, constant: 16),
             titleLabel.trailingAnchor.constraint(equalTo: scrollContentView.trailingAnchor, constant: -16),
 
@@ -207,15 +182,27 @@ final class BearyInputSheetViewController: UIViewController {
 
             buttonStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             buttonStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            buttonBottom,
         ])
+
+        // 停靠键盘顶升按钮组（只跟停靠键盘，浮动/分屏不动；顶升量＝键盘盖住安全区底边的部分）。
+        keyboardAvoidance = BearySheetKeyboardAvoidance(view: view) { [weak self] keyboardTop in
+            guard let self = self else { return }
+            let lift: CGFloat
+            if let top = keyboardTop {
+                lift = max(0, self.view.bounds.maxY - self.view.safeAreaInsets.bottom - top)
+            } else {
+                lift = 0
+            }
+            self.buttonStackBottomConstraint?.constant = -16 - lift
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        // 键盘与面板同一次入场：面板已加入转场容器即请求焦点，键盘通知先于
-        // 进场动画落位，停靠键盘的目标位置参与同一次入场；旧版在 viewDidAppear
-        // 才请求焦点，面板先落屏底、进场结束才被键盘抬上去，两步分开可见停顿。
+        // 键盘与面板同一次入场：进场即请求焦点，键盘通知先于进场动画落位；
+        // 旧版在 viewDidAppear 才请求焦点，面板先落屏底、进场结束才被键盘
+        // 抬上去，两步分开可见停顿。
         inputField.becomeFirstResponder()
     }
 
@@ -233,12 +220,11 @@ final class BearyInputSheetViewController: UIViewController {
         updatePreferredContentSize()
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高；宽/字号档变化时跟帧补齐。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     /// 滚动区无固有高，整体系 fitting 算不出高：改为滚动内容高（已含内容底
     /// 16 留白）＋按钮组高＋底边 16＋安全区底边分别相加；与改前总高一致，
-    /// 封顶（键盘顶−56）仍由 presentation 控制器做，超高时表单在滚动区内
-    /// 纵向滚动、按钮组贴底不动。
+    /// 超高时表单在滚动区内纵向滚动、按钮组贴底不动（系统 sheet 封顶 88%）。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
         let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
@@ -248,6 +234,7 @@ final class BearyInputSheetViewController: UIViewController {
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 
@@ -282,107 +269,5 @@ extension BearyInputSheetViewController: UITextFieldDelegate {
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         confirmTapped()
         return false
-    }
-}
-
-// MARK: - 键盘跟随 presentation 控制器
-
-/// 只跟停靠键盘的 presentation 控制器（照抄登录 sheet 的键盘口径，
-/// 见 BearyLoginSheetPresentationController）：sheet 底贴键盘顶边；
-/// 浮动/分屏键盘不动 sheet。本 sheet 无玻璃/阴影 chrome，动画只落布局。
-private final class BearyInputSheetPresentationController: BearyBottomSheetPresentationController {
-
-    /// sheet 顶距容器顶的最小留白（与容器默认帧同口径）。
-    private static let topMargin: CGFloat = 56
-
-    /// 停靠键盘顶边（容器坐标）；浮动/分屏键盘不置位。
-    private var keyboardTopY: CGFloat?
-
-    override init(presentedViewController: UIViewController, presenting presentingViewController: UIViewController?) {
-        super.init(presentedViewController: presentedViewController, presenting: presentingViewController)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    /// 默认帧改走键盘停靠：底贴键盘顶（无键盘时贴容器底），高跟内容走、顶留 56pt；
-    /// 宽：<821 全宽，≥821 居中 600（与容器默认帧同口径）。
-    override var frameOfPresentedViewInContainerView: CGRect {
-        guard let container = containerView else { return .zero }
-        let width: CGFloat
-        if container.bounds.width >= 821 {
-            width = min(600, container.bounds.width - 32)
-        } else {
-            width = container.bounds.width
-        }
-        let x = (container.bounds.width - width) / 2
-        let preferred = presentedViewController.preferredContentSize.height
-        let height = preferred > 0 ? preferred : container.bounds.height * 0.5
-        let bottomY = keyboardTopY ?? container.bounds.height
-        let maxHeight = bottomY - Self.topMargin
-        let h = max(0, min(height, maxHeight))
-        return CGRect(x: x, y: bottomY - h, width: width, height: h)
-    }
-
-    @objc private func keyboardWillShow(_ note: Notification) {
-        updateKeyboardTop(from: note)
-    }
-
-    @objc private func keyboardWillChangeFrame(_ note: Notification) {
-        updateKeyboardTop(from: note)
-    }
-
-    @objc private func keyboardWillHide(_ note: Notification) {
-        keyboardTopY = nil
-        animateLayoutForKeyboard(note)
-    }
-
-    /// 只跟停靠键盘：浮动/分屏键盘（底边未贴容器底）不动 sheet。
-    /// 停靠→悬浮只发 keyboardWillChangeFrame、不发 keyboardWillHide：键盘不再贴底时
-    /// 在这里把旧的停靠顶边清掉、落回容器底，否则 sheet 一直停在旧高度。
-    /// 与 Toast 同口径：帧须与容器相交且触到容器底边才认贴底；收起途中的
-    /// WillChangeFrame 终帧在屏外（minY 已过底边）同判为无，不再误认贴底。
-    /// （照抄 BearyLoginSheetPresentationController.updateKeyboardTop。）
-    private func updateKeyboardTop(from note: Notification) {
-        guard let container = containerView,
-              let value = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
-        let frameInContainer = container.convert(value.cgRectValue, from: nil)
-        let bounds = container.bounds
-        guard frameInContainer.minY < bounds.maxY - 1,
-              frameInContainer.maxY >= bounds.maxY - 1,
-              frameInContainer.intersects(bounds) else {
-            // 键盘不再贴底（iPad 悬浮/分屏／已移出屏幕）：清掉旧的停靠顶边并重算落点；
-            // 已是 nil 时不重复布局。
-            guard keyboardTopY != nil else { return }
-            keyboardTopY = nil
-            animateLayoutForKeyboard(note)
-            return
-        }
-        keyboardTopY = frameInContainer.minY
-        animateLayoutForKeyboard(note)
-    }
-
-    private func animateLayoutForKeyboard(_ note: Notification) {
-        guard let container = containerView else { return }
-        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
-        let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
-        if UIAccessibility.isReduceMotionEnabled {
-            container.layoutIfNeeded()
-            return
-        }
-        // 拖动期间不叠加键盘动画：容器拖动只改 transform、不改帧，松手复位后
-        // containerViewWillLayoutSubviews 会按最新 keyboardTopY 落帧。
-        guard let presentedView = presentedView, presentedView.transform.isIdentity else {
-            container.layoutIfNeeded()
-            return
-        }
-        UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: {
-            container.layoutIfNeeded()
-        })
     }
 }

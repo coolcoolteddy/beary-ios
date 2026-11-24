@@ -2,11 +2,11 @@ import UIKit
 
 // ===== 注册后引导 ID 卡：表单底 sheet ＋ 可翻转 ID 卡底 sheet =====
 // 流程：进主页后约 400ms 弹表单（只弹一次）→「生成 ID 卡」/「跳过」380ms 后
-// 弹 ID 卡。两张 sheet 都走共享底部弹窗容器 BearyBottomSheet（阻力＋弹回
-// 手感与全站弹窗统一），视觉按预览：白底、顶圆角 26、抓手。
+// 弹 ID 卡。两张 sheet 都走系统底部 sheet（UISheetPresentationController，
+// 见 BearySystemSheet），视觉按预览：白底卡片、系统抓手、顶圆角 26。
 // 数据只存本地（见 BearyIDCard.swift 注释：服务端 display_name 有唯一性
 // 校验且无生日/城市字段，本流程不调 profile 接口）。
-// 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
+// 部署目标 iOS 16.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 // MARK: - Form sheet
 
@@ -17,29 +17,15 @@ enum BearyIDCardFormSheet {
         sheet.onGenerate = onGenerate
         sheet.onSkip = onSkip
         sheet.onDismissedWithoutChoice = onDismissedWithoutChoice
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }
 
-final class BearyIDCardFormViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate {
+final class BearyIDCardFormViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate, BearySystemSheetSizing {
 
     var onGenerate: ((BearyIDCardData) -> Void)?
     var onSkip: ((BearyIDCardData) -> Void)?
     var onDismissedWithoutChoice: (() -> Void)?
-
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法）。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
 
     private let initialNickname: String
     private let locatedCity: (country: String, region: String, city: String)?
@@ -144,21 +130,8 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
             formStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
             formStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
-        // 抓手。
-        let grabberWrap = UIView()
-        let grabber = UIView()
-        grabber.translatesAutoresizingMaskIntoConstraints = false
-        grabber.backgroundColor = UIColor(red: 217.0 / 255.0, green: 217.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
-        grabber.layer.cornerRadius = 2.5
-        grabberWrap.addSubview(grabber)
-        NSLayoutConstraint.activate([
-            grabber.widthAnchor.constraint(equalToConstant: 40),
-            grabber.heightAnchor.constraint(equalToConstant: 5),
-            grabber.centerXAnchor.constraint(equalTo: grabberWrap.centerXAnchor),
-            grabber.topAnchor.constraint(equalTo: grabberWrap.topAnchor, constant: 10),
-            grabber.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
-        ])
-        formStack.addArrangedSubview(grabberWrap)
+        // 系统 sheet 自带抓手（旧自绘抓手退役，留 15pt 顶距、标题位置不动）。
+        formStack.addArrangedSubview(spacer(15))
         formStack.addArrangedSubview(spacer(8))
         // 标题＋说明。
         let titleLabel = UILabel()
@@ -419,18 +392,6 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
             pickerContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             pickerContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        // 抓手。
-        let grabber = UIView()
-        grabber.translatesAutoresizingMaskIntoConstraints = false
-        grabber.backgroundColor = UIColor(red: 217.0 / 255.0, green: 217.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
-        grabber.layer.cornerRadius = 2.5
-        pickerContainer.addSubview(grabber)
-        NSLayoutConstraint.activate([
-            grabber.widthAnchor.constraint(equalToConstant: 40),
-            grabber.heightAnchor.constraint(equalToConstant: 5),
-            grabber.centerXAnchor.constraint(equalTo: pickerContainer.centerXAnchor),
-            grabber.topAnchor.constraint(equalTo: pickerContainer.topAnchor, constant: 10),
-        ])
         // 返回。
         let backButton = UIButton(type: .system)
         backButton.translatesAutoresizingMaskIntoConstraints = false
@@ -662,7 +623,11 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
             contentHeight = formScrollView.contentSize.height
         }
         let width = view.bounds.width > 0 ? view.bounds.width : 375
-        preferredContentSize = CGSize(width: width, height: contentHeight + extraBottomInset)
+        let preferred = CGSize(width: width, height: contentHeight + extraBottomInset)
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
+        }
     }
 }
 
@@ -673,27 +638,13 @@ enum BearyIDCardSheet {
     static func show(from presenter: UIViewController, cardData: BearyIDCardData, stats: BearyIDCardStore.Stats, isPlus: Bool, avatarURL: URL?, serialText: String?, onDismissed: @escaping () -> Void) {
         let sheet = BearyIDCardSheetViewController(cardData: cardData, stats: stats, isPlus: isPlus, avatarURL: avatarURL, serialText: serialText)
         sheet.onDismissed = onDismissed
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }
 
-final class BearyIDCardSheetViewController: UIViewController {
+final class BearyIDCardSheetViewController: UIViewController, BearySystemSheetSizing {
 
     var onDismissed: (() -> Void)?
-
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法）。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
 
     private let cardData: BearyIDCardData
     private let stats: BearyIDCardStore.Stats
@@ -766,21 +717,8 @@ final class BearyIDCardSheetViewController: UIViewController {
             stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
             stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
-        // 抓手。
-        let grabberWrap = UIView()
-        let grabber = UIView()
-        grabber.translatesAutoresizingMaskIntoConstraints = false
-        grabber.backgroundColor = UIColor(red: 217.0 / 255.0, green: 217.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
-        grabber.layer.cornerRadius = 2.5
-        grabberWrap.addSubview(grabber)
-        NSLayoutConstraint.activate([
-            grabber.widthAnchor.constraint(equalToConstant: 40),
-            grabber.heightAnchor.constraint(equalToConstant: 5),
-            grabber.centerXAnchor.constraint(equalTo: grabberWrap.centerXAnchor),
-            grabber.topAnchor.constraint(equalTo: grabberWrap.topAnchor, constant: 10),
-            grabber.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
-        ])
-        stack.addArrangedSubview(grabberWrap)
+        // 系统 sheet 自带抓手（旧自绘抓手退役，留 15pt 顶距、卡片位置不动）。
+        stack.addArrangedSubview(spacerView(15))
         // 卡片（点按绕 Y 轴翻转）。
         cardView.translatesAutoresizingMaskIntoConstraints = false
         cardView.configure(data: cardData, stats: stats, isPlus: isPlus, avatarURL: avatarURL, serialText: serialText)
@@ -889,7 +827,11 @@ final class BearyIDCardSheetViewController: UIViewController {
         view.layoutIfNeeded()
         let contentHeight = scrollView.contentSize.height
         let width = view.bounds.width > 0 ? view.bounds.width : 375
-        preferredContentSize = CGSize(width: width, height: contentHeight + extraBottomInset)
+        let preferred = CGSize(width: width, height: contentHeight + extraBottomInset)
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
+        }
     }
 }
 
