@@ -55,6 +55,27 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     var onClosed: (() -> Void)?
 
     private let tableView = UITableView(frame: .zero, style: .plain)
+    /// 自定义下拉指示器图标（32pt 官方刷新图标、灰色；平时 alpha 0，
+    /// 下拉时淡入＋跟随旋转，刷新中常亮连续旋转）。
+    private lazy var pullIconView = BearyRefreshIconView()
+
+    /// 自定义下拉指示器（通知页同款）：固定高 116、藏在表内容上方
+    /// （content y=-116..0），指示高按手指行程 ×0.48 阻尼（上限 116），
+    /// 不拦截触摸；刷新中改固定 84 高。
+    private lazy var pullView: UIView = {
+        let pull = UIView()
+        pull.backgroundColor = BearyColors.bg
+        pull.isUserInteractionEnabled = false
+        pull.frame = CGRect(x: 0, y: -116, width: 0, height: 116)
+        pull.addSubview(pullIconView)
+        NSLayoutConstraint.activate([
+            pullIconView.centerXAnchor.constraint(equalTo: pull.centerXAnchor),
+            pullIconView.bottomAnchor.constraint(equalTo: pull.bottomAnchor, constant: -14),
+            pullIconView.widthAnchor.constraint(equalToConstant: 32),
+            pullIconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        return pull
+    }()
     private let emptyLabel = UILabel()
     // 空态走 BearyStateView（仅无消息时显，与 emptyLabel/loadFailedStateView 同槽位居中、互斥；
     // 会话已关闭分支仍用 emptyLabel）。
@@ -116,6 +137,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var latestLoading = false
     private var olderLoading = false
     private var refreshQueued = false
+    /// 自定义下拉头（通知页同款口径）：固定高 116、藏在表内容上方，指示高按
+    /// 手指行程 ×0.48 阻尼（上限 116），32pt 官方刷新图标；触发 140pt、
+    /// 刷新固定 84 高、进入／收回 0.38s。
+    private var isCustomPullRefreshing = false
+    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
+    private var customPullEndInFlight = false
+    /// 一次拖动的 engage 锚点：只锁一次，中途不再凭 offset/inset 阈值清掉。
+    private var pullEngageTranslation: CGFloat?
     private var newMessagePillBottomConstraint: NSLayoutConstraint?
     /// A6：未读新消息计数——用户读旧消息时回包新到的对方消息数累积于此，
     /// pill 文案即由此出（"N 条新消息"）；回到到底部/点按 pill 即清零。
@@ -232,9 +261,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         tableView.delegate = self
         tableView.dataSource = self
         tableView.register(BearyDMMessageCell.self, forCellReuseIdentifier: "dmMessageCell")
-        let refresh = UIRefreshControl()
-        refresh.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
-        tableView.refreshControl = refresh
+        tableView.addSubview(pullView)
         view.addSubview(tableView)
 
         // 点记录区收键盘：轻点消息列表即收起键盘；cancelsTouchesInView=false，
@@ -968,10 +995,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         view.endEditing(true)
     }
 
-    @objc private func refreshPulled() {
-        loadLatest()
-    }
-
     /// 请求回包身份校验（发起时捕获账号 + 代次，回包时任一不匹配即丢弃）：
     /// 切号夹在请求与回包之间时，旧号回包绝不碰界面、不写盘、不触发后续拉取。
     private func isRequestCurrent(accountId: Int?, epoch: Int) -> Bool {
@@ -1053,6 +1076,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        if tableView.bounds.width > 0 && pullView.frame.width != tableView.bounds.width {
+            pullView.frame.size.width = tableView.bounds.width
+        }
         updateInputTextViewHeight()
     }
 
@@ -1561,7 +1587,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private func loadLatest() {
         guard let userId = peer.id else { return }
         guard SessionManager.shared.isLoggedIn else {
-            tableView.refreshControl?.endRefreshing()
+            endCustomPullRefresh()
             onRequireLogin?()
             return
         }
@@ -1570,13 +1596,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 刷新控件保持转圈（可见反馈），翻旧结束即跑这次刷新；
         // 翻旧在途蕴含 hasMoreOlder（loadOlder 守卫），无更早消息时翻旧根本跑不起来，
         // 正常刷新路径不受影响。最新页本身在途时同样不断刷新控件，
-        // 等在途那次结束（它会 endRefreshing），不另排队。
+        // 等在途那次结束（它会 endCustomPullRefresh），不另排队。
         if olderLoading {
             refreshQueued = true
             return
         }
-        // 最新页在途时记一次待补刷新、不 endRefreshing——在途那次结束时
-        // endRefreshing 并补跑这次刷新（#727“最新页在途同样不断刷新控件”口径；
+        // 最新页在途时记一次待补刷新、不 endCustomPullRefresh——在途那次结束时
+        // endCustomPullRefresh 并补跑这次刷新（#727“最新页在途同样不断刷新控件”口径；
         // M3：否则发送成功调 loadLatest 会被静默吞掉，待发一直挂发送态）。
         // 翻旧在途的跳过走上面排队路，同样不断刷新控件。
         if latestLoading {
@@ -1588,7 +1614,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 审计第 19 项：首次无本地消息才显加载态；有本地消息时先显旧消息、
         // 后台刷新（不遮内容）。下拉刷新自带转圈时不叠加；发送成功后的重拉
         // 此时 firstLoadPending 已为 false，同样不遮内容（#668 回显口径不动）。
-        if firstLoadPending && messages.isEmpty && tableView.refreshControl?.isRefreshing != true {
+        if firstLoadPending && messages.isEmpty && !isCustomPullRefreshing {
             emptyLabel.isHidden = true
             emptyStateView.isHidden = true
             firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
@@ -1611,11 +1637,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 // 只复位加载态即返回，关页由账号变化广播负责。
                 guard self.isRequestCurrent(accountId: requestAccountId, epoch: requestEpoch) else {
                     self.latestLoading = false
-                    self.tableView.refreshControl?.endRefreshing()
+                    self.endCustomPullRefresh()
                     return
                 }
                 self.latestLoading = false
-                self.tableView.refreshControl?.endRefreshing()
+                self.endCustomPullRefresh()
                 switch result {
                 case .success(let history):
                     // 第二批体验检查第 9 项：成功一次即复位退避；退避中成功时
@@ -2195,6 +2221,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         // 搜索结果表不走聊天页的新消息 pill／翻旧逻辑。
         guard scrollView == tableView else { return }
+        updateCustomPullIndicator()
         // 回到底部附近即收起“新消息”pill（程序化跟随到底同样收起）。
         if isNearBottom() {
             setNewMessagePillVisible(false)
@@ -2210,12 +2237,127 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
         // 仅用户手势滚动到顶部附近且还有 older 时翻页：程序化滚动（首拉后
         // 回到底部、reloadData 布局抖动）不得触发，否则首屏会连翻 older。
-        // 下拉刷新控件也在顶部，阈值取 120，与下拉手势不打架；
+        // 自定义下拉头也在顶部，阈值取 120，与下拉手势不打架；
         // 最新页在途时 loadOlder 不并发（loadOlder 的 latestLoading 守卫），
         // 翻旧在途时滚动不再重复触发（loadOlder 的 olderLoading 守卫）。
         guard scrollView.isDragging || scrollView.isDecelerating else { return }
         if scrollView.contentOffset.y < 120 {
             loadOlder()
+        }
+    }
+
+    /// 自定义下拉指示器跟随：手指行程（pan 手势自顶部锚点起算）× 0.48 阻尼、
+    /// 上限 116；指示高 ≥67.2 时转满一圈（= 触发行程 140pt × 0.48）。
+    /// 指示器是表内子视图：屏内底边固定为指示高，顶边随表回弹裁剪。
+    /// 锚点一次拖动只锁一次：中途不再凭 offset/inset 阈值清掉——顶栏显隐
+    /// 改 contentInset.top 或重载顶 offset，都会把阈值顶到手指下面，旧口径
+    /// 一清锚点 fingerRaw 即归零、指示高塌掉，图标还没触发就缩回去。
+    /// 锚点只在拖动结束清（scrollViewDidEndDragging 与下方 !isDragging 分支）。
+    private func updateCustomPullIndicator() {
+        if isCustomPullRefreshing {
+            return
+        }
+        if !tableView.isDragging {
+            pullEngageTranslation = nil
+            pullView.frame = CGRect(x: 0, y: -116, width: tableView.bounds.width, height: 116)
+            pullIconView.setPullProgress(0)
+            return
+        }
+        let contentRaw = max(0, -(tableView.contentOffset.y + tableView.contentInset.top))
+        let panTranslation = tableView.panGestureRecognizer.translation(in: tableView).y
+        if tableView.contentOffset.y <= -tableView.contentInset.top && pullEngageTranslation == nil {
+            pullEngageTranslation = panTranslation
+        }
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        let indicatorHeight = min(fingerRaw * 0.48, 116)
+        pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: tableView.bounds.width, height: 116)
+        if indicatorHeight <= 0 {
+            pullIconView.setPullProgress(0)
+        } else {
+            let progress = min(1, indicatorHeight / 67.2)
+            pullIconView.setPullProgress(progress)
+        }
+    }
+
+    /// 自定义下拉刷新进入：指示固定 84 高 + 转圈，回包到即收回
+    /// （无 0.5 秒最低展示）。下拉刷新拉的是最新页（loadLatest），
+    /// 不是翻旧消息——翻旧仍走顶部附近滚动触发的 loadOlder，方向与口径不变。
+    /// loadLatest() 回包终点调 endCustomPullRefresh 收回；在途时
+    /// loadLatest() 直接排队不收回——在途那次结束时收回并补跑，不丢刷新。
+    private func beginCustomPullRefresh() {
+        if isCustomPullRefreshing || (firstLoadPending && latestLoading) {
+            return
+        }
+        isCustomPullRefreshing = true
+        pullIconView.startSpinning()
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”。
+        tableView.setContentOffset(tableView.contentOffset, animated: false)
+        let pullIn = {
+            self.tableView.contentInset.top = 84 // beary-lint: allow
+            self.tableView.scrollIndicatorInsets.top = 84
+            self.tableView.contentOffset = CGPoint(x: 0, y: -84)
+            self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullIn()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
+        }
+        loadLatest()
+    }
+
+    private func endCustomPullRefresh() {
+        if !isCustomPullRefreshing || customPullEndInFlight {
+            return
+        }
+        customPullEndInFlight = true
+        // 收回动画全程仍持刷新旗：跟随侧不中途重写 pullView.frame。
+        // 结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
+        // 不再把 contentOffset 拽回 0 顶部，只复位内边距、藏指示头，留在原位置；
+        // 仍停在下拉位的才按旧口径回到 0（指示区须收掉）。
+        // 下拉位 = -84（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
+        let stillAtPullPosition = !self.tableView.isDragging
+            && self.tableView.contentOffset.y <= -84 + 8
+        // 动量截断（进入侧同款）：只在仍停在下拉位时——此时收回动画要接管
+        // offset；松手后的表减速若还在跑，会与收回 easing 双路驱动
+        // contentOffset，图标先往下掉一下再上去；先掐断再播动画。
+        // 用户已滑走时 offset 不参与收回动画，不碰他的滚动。
+        if stillAtPullPosition {
+            tableView.setContentOffset(tableView.contentOffset, animated: false)
+        }
+        let pullOut = {
+            self.tableView.contentInset.top = 0
+            self.tableView.scrollIndicatorInsets.top = 0
+            if stillAtPullPosition {
+                self.tableView.contentOffset = CGPoint(x: 0, y: 0)
+            }
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullOut()
+            self.isCustomPullRefreshing = false
+            self.customPullEndInFlight = false
+            self.pullIconView.stopSpinning()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+                self.isCustomPullRefreshing = false
+                self.customPullEndInFlight = false
+                self.pullIconView.stopSpinning()
+            })
+        }
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        // 自定义下拉触发：手指原始行程满 140pt 松手才刷新。
+        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        pullEngageTranslation = nil
+        if fingerRaw >= 140 && !isCustomPullRefreshing && !(firstLoadPending && latestLoading) {
+            // 自定义下拉触发（满 140pt 松手）给一次轻触觉；程序触发的 loadLatest() 不走这里。
+            BearyHaptics.press()
+            beginCustomPullRefresh()
         }
     }
 }
