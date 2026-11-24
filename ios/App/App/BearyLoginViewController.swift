@@ -35,6 +35,11 @@ import UIKit
 //
 // 发码/验码一律走 BearyAPI（BearyAPI.sendCode、
 // BearyAPI.verify 返回完整响应体含 pending_delete）：本页不再有本地账户请求实现。
+// 密码登录（demo 账号专用，2026-11-23）：入口在“使用其他邮箱登录”展开区内，
+// 默认仍走验证码，不改默认流程；走 BearyAPI.loginPassword
+//（POST /api/account/login-password），成功与验码同一套会话／响应处理；
+// 失败只展示服务端泛化文案，服务端没给文案时才用 catalog 里的同款泛化文案兜底，
+// 不自己区分失败原因；不动游客流程，不动 Apple／Google 登录。
 // 发码直接走 BearyAPI.sendCode，不再经过人机验证页，
 // 按钮文案“发送中…”保持。登录成功判定只认验码 {ok: true}，
 // 不认 refreshMe（容器随后才刷新）；BearyAPI 的发码/验码不触发 onUnauthorized，
@@ -78,6 +83,17 @@ final class BearyLoginViewController: UIViewController {
     private let logoImageView = UIImageView()
     private let emailField = UITextField()
     private let codeField = UITextField()
+    /// 密码登录（demo 账号专用）：密码框与密码登录钮，只在密码模式下出现；
+    /// 模式切换钮（纯文字链，guestButton 同款）常驻展开区底部。
+    private let passwordField = UITextField()
+    private let passwordLoginButton = UIButton(type: .system)
+    private let passwordModeButton = UIButton(type: .custom)
+    private let passwordErrorLabel = UILabel()
+    /// 密码模式下隐藏验证码行（label 与整行容器须留引用，见 updateLoginModeVisibility）。
+    private var codeModeLabel: UILabel?
+    private var codeModeRow: UIView?
+    private var passwordLabel: UILabel?
+    private var passwordInputContainer: BearyInputContainer?
     private let sendButton = UIButton(type: .system)
     private let loginButton = UIButton(type: .system)
     private let guestButton = UIButton(type: .custom)
@@ -148,6 +164,11 @@ final class BearyLoginViewController: UIViewController {
 
     private var isSendingCode = false
     private var isVerifying = false
+    /// 密码登录模式（默认 false：仍走验证码）；密码登录进行态与在途任务。
+    private var isPasswordMode = false
+    private var isPasswordLoggingIn = false
+    private var currentPasswordLoginTitle: String?
+    private var passwordLoginTask: URLSessionDataTask?
     /// 扫 bug 定版第 1 项：登录成功不再等反馈窗口，验码成功即进 App；
     /// 旧 1.2 秒绑定反馈窗口已删（见 handleLoginReferralFeedback）。
     private var countdownRemaining: Int?
@@ -176,6 +197,7 @@ final class BearyLoginViewController: UIViewController {
         countdownTimer?.invalidate()
         sendCodeTask?.cancel()
         verifyTask?.cancel()
+        passwordLoginTask?.cancel()
         appleLoginTask?.cancel()
     }
 
@@ -410,6 +432,7 @@ final class BearyLoginViewController: UIViewController {
         configureEmailField()
         configureCodeField()
         configureInviteField()
+        configurePasswordField()
         configureLegalLine()
 
         sendButton.translatesAutoresizingMaskIntoConstraints = false
@@ -428,7 +451,7 @@ final class BearyLoginViewController: UIViewController {
 
         // 字段旁提示：与 messageLabel 同字号同口径，无文案时隐藏、不占高；
         // 颜色由 showMessage 按文案定（发码成功绿、字段错红）。
-        for label in [emailErrorLabel, codeStatusLabel, inviteErrorLabel] {
+        for label in [emailErrorLabel, codeStatusLabel, inviteErrorLabel, passwordErrorLabel] {
             label.translatesAutoresizingMaskIntoConstraints = false
             label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
             label.adjustsFontForContentSizeCategory = true
@@ -438,6 +461,7 @@ final class BearyLoginViewController: UIViewController {
         emailErrorLabel.textColor = Self.loginErrorRed
         codeStatusLabel.textColor = Self.loginErrorRed
         inviteErrorLabel.textColor = Self.loginErrorRed
+        passwordErrorLabel.textColor = Self.loginErrorRed
 
         loginButton.translatesAutoresizingMaskIntoConstraints = false
         // 2026-11-14 Li 定：纯白／纯黑墨底太突兀，登录钮改 surface2 柔和灰底 + ink 字
@@ -455,6 +479,26 @@ final class BearyLoginViewController: UIViewController {
             loginSpinner.widthAnchor.constraint(equalToConstant: 20),
             loginSpinner.heightAnchor.constraint(equalToConstant: 20),
         ])
+
+        // 密码登录钮：与验证码登录钮同款（surface2 灰底 + ink 字，见 setLoginTitle），
+        // 只在密码模式下出现；进行态只换文案，不另配转圈。
+        passwordLoginButton.translatesAutoresizingMaskIntoConstraints = false
+        passwordLoginButton.backgroundColor = BearyColors.surface2
+        passwordLoginButton.layer.cornerRadius = BearyCorners.single
+        passwordLoginButton.addTarget(self, action: #selector(passwordLoginTapped), for: .touchUpInside)
+        passwordLoginButton.bearyAddPressFeedback()
+
+        // 模式切换钮：纯文字链（墨字、无底，guestButton 同款），常驻展开区底部；
+        // 标题随模式换（见 updateLoginModeVisibility），默认“使用密码登录”。
+        passwordModeButton.translatesAutoresizingMaskIntoConstraints = false
+        passwordModeButton.backgroundColor = UIColor.clear
+        passwordModeButton.setTitle(NSLocalizedString("login.password.switch_to_password", comment: ""), for: .normal)
+        passwordModeButton.setTitleColor(BearyColors.ink, for: .normal)
+        passwordModeButton.setTitleColor(BearyColors.ink, for: .disabled)
+        passwordModeButton.titleLabel?.font = BearyDynamicType.buttonFont()
+        passwordModeButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        passwordModeButton.addTarget(self, action: #selector(passwordModeTapped), for: .touchUpInside)
+        passwordModeButton.bearyAddPressFeedback()
 
         // 游客次钮：纯文字链（墨字、无底），不受登录钮启用条件约束，任何时候可点。
         // .custom 类型避免 system 钮的点按标题变暗。
@@ -478,10 +522,16 @@ final class BearyLoginViewController: UIViewController {
         codeRow.addSubview(sendButton)
         let inviteContainer = makeFieldContainer(field: inviteField)
         inviteInputContainer = inviteContainer
+        let passwordContainer = makeFieldContainer(field: passwordField)
+        passwordInputContainer = passwordContainer
 
         let emailLabel = makeFieldLabel(text: "邮箱")
         let codeLabel = makeFieldLabel(text: "验证码")
+        codeModeLabel = codeLabel
+        codeModeRow = codeRow
         let inviteLabel = makeFieldLabel(text: "邀请码（选填）")
+        let passwordLabel = makeFieldLabel(text: NSLocalizedString("login.password.label", comment: ""))
+        self.passwordLabel = passwordLabel
 
         // 邮箱表单组：邮箱／验证码／邀请码／登录钮，收起时整组隐藏；
         // 内部间距与原值一致。
@@ -495,8 +545,12 @@ final class BearyLoginViewController: UIViewController {
         emailFormStack.addArrangedSubview(inviteDisclosureRow)
         emailFormStack.addArrangedSubview(inviteLabel)
         emailFormStack.addArrangedSubview(inviteContainer)
+        emailFormStack.addArrangedSubview(passwordLabel)
+        emailFormStack.addArrangedSubview(passwordContainer)
         emailFormStack.addArrangedSubview(messageLabel)
         emailFormStack.addArrangedSubview(loginButton)
+        emailFormStack.addArrangedSubview(passwordLoginButton)
+        emailFormStack.addArrangedSubview(passwordModeButton)
         emailFormStack.setCustomSpacing(7, after: emailLabel)
         emailFormStack.setCustomSpacing(10, after: emailContainer)
         emailFormStack.setCustomSpacing(7, after: codeLabel)
@@ -504,12 +558,20 @@ final class BearyLoginViewController: UIViewController {
         emailFormStack.setCustomSpacing(7, after: inviteDisclosureRow)
         emailFormStack.setCustomSpacing(7, after: inviteLabel)
         emailFormStack.setCustomSpacing(8, after: inviteContainer)
+        emailFormStack.setCustomSpacing(7, after: passwordLabel)
+        emailFormStack.setCustomSpacing(10, after: passwordContainer)
         emailFormStack.setCustomSpacing(8, after: messageLabel)
+        emailFormStack.setCustomSpacing(8, after: loginButton)
+        emailFormStack.setCustomSpacing(8, after: passwordLoginButton)
         emailFormStack.isHidden = true
         // 邀请码收起（只留收起行，字段隐藏但文本保留）；邀请 label 在
         // 收起态不出现（收起行即字段说明）。
         inviteLabel.isHidden = true
         inviteContainer.isHidden = true
+        // 密码模式默认关闭：密码行与密码登录钮初始隐藏（见 updateLoginModeVisibility）。
+        passwordLabel.isHidden = true
+        passwordContainer.isHidden = true
+        passwordLoginButton.isHidden = true
 
         // 小熊居中包一层（stack 为 fill 对齐，直接放按钮会被拉满宽）。
         let hugEmoteWrap = UIView()
@@ -578,9 +640,12 @@ final class BearyLoginViewController: UIViewController {
             emailErrorLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
             codeStatusLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
             inviteErrorLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
+            passwordErrorLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
             // L1：按钮与验证码行由固定高改最小高——大字号下由内容撑高，
             // 默认字号仍为原值（登录/游客钮 44、验证码行 48、发码钮 44）。
             loginButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            passwordLoginButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            passwordModeButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             guestButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             codeRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
             sendButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
@@ -708,7 +773,7 @@ final class BearyLoginViewController: UIViewController {
     @objc private func dismissKeyboardOnBlankTap(_ gesture: UITapGestureRecognizer) {
         let point = gesture.location(in: view)
         // 点在输入框内时不收键盘（否则点输入框聚焦后立刻被收起）。
-        for field in [emailField, codeField, inviteField] {
+        for field in [emailField, codeField, inviteField, passwordField] {
             if field.bounds.contains(field.convert(point, from: view)) {
                 return
             }
@@ -725,6 +790,24 @@ final class BearyLoginViewController: UIViewController {
         inviteField.returnKeyType = .done
         inviteField.delegate = self
         inviteField.addTarget(self, action: #selector(textChanged), for: .editingChanged)
+    }
+
+    /// 密码框：与邮箱框同字号同口径（16 regular scaled，与邮箱／验证码／
+    /// 邀请码框同值；语义入口里 16 regular 只有 diaryBodyFont，故走它），
+    /// 密文显示、不自动大写、不联想；
+    /// Return 键为前往（点按即调 passwordLoginTapped），无长度截断——
+    /// 密码字符集与长度由服务端定，客户端不前置拦截。
+    private func configurePasswordField() {
+        passwordField.font = BearyDynamicType.diaryBodyFont()
+        passwordField.adjustsFontForContentSizeCategory = true
+        passwordField.textColor = BearyColors.ink
+        passwordField.isSecureTextEntry = true
+        passwordField.autocapitalizationType = .none
+        passwordField.autocorrectionType = .no
+        passwordField.textContentType = .password
+        passwordField.returnKeyType = .go
+        passwordField.delegate = self
+        passwordField.addTarget(self, action: #selector(textChanged), for: .editingChanged)
     }
 
     /// 法律行（2026-11-16 登录页重做）：不再是勾选框，登录即代表同意；
@@ -867,7 +950,7 @@ final class BearyLoginViewController: UIViewController {
     /// 不传 = 不标字段（网络/服务端/通用失败），只留行内红字。
     /// 字段旁提示：发码成功（ok）只放验证码框下方 codeStatusLabel（绿）；
     /// 字段错只放对应字段框下方（红字＋红边）；通用失败仍走原 messageLabel。
-    private enum LoginErrorField { case email, code, invite }
+    private enum LoginErrorField { case email, code, invite, password }
 
     /// 第六轮 07：脱敏邮箱，只露首字符与域名，如 teddy@example.com → t***@example.com，
     /// 让用户一眼看出验证码发去了哪只邮箱。
@@ -889,6 +972,8 @@ final class BearyLoginViewController: UIViewController {
         codeStatusLabel.isHidden = codeStatusLabel.text?.isEmpty ?? true
         inviteErrorLabel.text = failed && errorField == .invite ? text : ""
         inviteErrorLabel.isHidden = inviteErrorLabel.text?.isEmpty ?? true
+        passwordErrorLabel.text = failed && errorField == .password ? text : ""
+        passwordErrorLabel.isHidden = passwordErrorLabel.text?.isEmpty ?? true
         messageLabel.text = !isCodeSent && (ok || (failed && errorField == nil)) ? text : ""
         messageLabel.isHidden = messageLabel.text?.isEmpty ?? true
         messageLabel.textColor = ok ? BearyColors.deepGreenText : Self.loginErrorRed
@@ -899,6 +984,7 @@ final class BearyLoginViewController: UIViewController {
         emailInputContainer?.isError = failed && errorField == .email
         codeInputContainer?.isError = failed && errorField == .code
         inviteInputContainer?.isError = failed && errorField == .invite
+        passwordInputContainer?.isError = failed && errorField == .password
         // 2026-11-16 登录页重做：失败走全站拒绝口径——摇头＋震动＋拒绝音＋toast，
         // 行内红字保留；成功与清空不触发。
         if failed {
@@ -922,7 +1008,7 @@ final class BearyLoginViewController: UIViewController {
         stackView.layer.add(shake, forKey: "bearyLoginDenyShake")
     }
 
-    private func setLoginTitle(_ text: String) {
+    private func setLoginTitle(_ text: String, for button: UIButton) {
         // U1：登录钮底色已统一为 surface2（2026-11-14 Li 定，纯白／纯黑墨底太突兀），
         // 标题前景跟底色走 ink：深色白字灰底、浅色墨字灰底，两模式对比都够。
         let title = NSAttributedString(string: text, attributes: [
@@ -930,8 +1016,8 @@ final class BearyLoginViewController: UIViewController {
             .foregroundColor: BearyColors.ink,
             .kern: 5.43,
         ])
-        loginButton.setAttributedTitle(title, for: .normal)
-        loginButton.setAttributedTitle(title, for: .disabled)
+        button.setAttributedTitle(title, for: .normal)
+        button.setAttributedTitle(title, for: .disabled)
     }
 
     private func updateButtonStates() {
@@ -945,7 +1031,7 @@ final class BearyLoginViewController: UIViewController {
         } else {
             sendButton.setTitle("获取验证码", for: .normal)
         }
-        let sendEnabled = emailValid && !isSendingCode && countdownRemaining == nil && !isVerifying
+        let sendEnabled = emailValid && !isSendingCode && countdownRemaining == nil && !isVerifying && !isPasswordLoggingIn
         sendButton.isEnabled = sendEnabled
         // 2026-11-16 登录页重做：发码钮恒 surface2（登录钮之外不另设重色），
         // 启用态墨字、未启用态灰字。
@@ -957,14 +1043,20 @@ final class BearyLoginViewController: UIViewController {
 
         // 登录启用条件：邮箱合法＋验证码 6 位（2026-11-16 登录页重做：协议勾选
         // 已取消，登录即代表同意，不再参与启用条件）。
-        let loginEnabled = emailValid && code.count == 6 && !isVerifying
+        let loginEnabled = emailValid && code.count == 6 && !isVerifying && !isPasswordLoggingIn
         loginButton.isEnabled = loginEnabled
         loginButton.alpha = loginEnabled ? 1 : 0.35
         // 第 25 轮 21-26（项23）：验码期间冻结邮箱／验证码／邀请码字段，
         // 界面显示的邮箱与正在登录的邮箱不再脱节；验证结束即恢复。
-        emailField.isEnabled = !isVerifying
+        emailField.isEnabled = !isVerifying && !isPasswordLoggingIn
         codeField.isEnabled = !isVerifying
         inviteField.isEnabled = !isVerifying
+        // 密码登录启用条件：邮箱合法＋密码非空；进行态冻结邮箱／密码框，
+        // 两路登录互斥（任一路在途时另一路的钮与发码钮都不可点）。
+        passwordField.isEnabled = !isPasswordLoggingIn
+        let passwordLoginEnabled = emailValid && !(passwordField.text ?? "").isEmpty && !isVerifying && !isPasswordLoggingIn
+        passwordLoginButton.isEnabled = passwordLoginEnabled
+        passwordLoginButton.alpha = passwordLoginEnabled ? 1 : 0.35
         // M14：进行态 = “处理中…”文案 + 圈转指示，不再只有 alpha 变化。
         if isVerifying {
             loginSpinner.startSpinning()
@@ -976,7 +1068,15 @@ final class BearyLoginViewController: UIViewController {
         let loginTitle = isVerifying ? "处理中…" : "登录"
         if currentLoginTitle != loginTitle {
             currentLoginTitle = loginTitle
-            setLoginTitle(loginTitle)
+            setLoginTitle(loginTitle, for: loginButton)
+        }
+        // 密码登录钮文案只在真正变文案时重建（与验证码登录钮同口径，见上）。
+        let passwordLoginTitle = isPasswordLoggingIn
+            ? NSLocalizedString("login.password.processing", comment: "")
+            : NSLocalizedString("login.password.submit", comment: "")
+        if currentPasswordLoginTitle != passwordLoginTitle {
+            currentPasswordLoginTitle = passwordLoginTitle
+            setLoginTitle(passwordLoginTitle, for: passwordLoginButton)
         }
     }
 
@@ -1042,6 +1142,8 @@ final class BearyLoginViewController: UIViewController {
         sendCodeTask = nil
         verifyTask?.cancel()
         verifyTask = nil
+        passwordLoginTask?.cancel()
+        passwordLoginTask = nil
         appleLoginTask?.cancel()
         appleLoginTask = nil
         onCancelled?()
@@ -1204,6 +1306,118 @@ final class BearyLoginViewController: UIViewController {
                 }
             }
         }
+    }
+
+    // MARK: - 密码登录（demo 账号专用）
+
+    /// 验证码／密码模式切换：只换展开区内可见的字段与登录钮，邮箱框共用、
+    /// 各字段文本保留；切换时清掉旧行内文案，焦点跟到新模式的首个输入框。
+    /// 默认验证码模式；游客／Apple／Google 流程不在本方法里，不动。
+    private func updateLoginModeVisibility() {
+        codeModeLabel?.isHidden = isPasswordMode
+        codeModeRow?.isHidden = isPasswordMode
+        inviteDisclosureRow.isHidden = isPasswordMode
+        inviteInputContainer?.isHidden = isPasswordMode || !inviteExpanded
+        loginButton.isHidden = isPasswordMode
+        passwordLabel?.isHidden = !isPasswordMode
+        passwordInputContainer?.isHidden = !isPasswordMode
+        passwordLoginButton.isHidden = !isPasswordMode
+        passwordModeButton.setTitle(NSLocalizedString(isPasswordMode ? "login.password.switch_to_code" : "login.password.switch_to_password", comment: ""), for: .normal)
+    }
+
+    /// 模式切换钮点按：翻模式、清旧文案、重算按钮启用态、焦点跟到新模式。
+    @objc private func passwordModeTapped() {
+        isPasswordMode.toggle()
+        updateLoginModeVisibility()
+        showMessage("")
+        updateButtonStates()
+        if isPasswordMode {
+            passwordField.becomeFirstResponder()
+        } else {
+            codeField.becomeFirstResponder()
+        }
+    }
+
+    /// 密码登录入口：邮箱沿用验码同款前置校验；密码只判非空，
+    /// 长度与字符集由服务端定，客户端不前置拦截；邀请码不参与本路
+    ///（契约 body 只有 {email, password}，demo 账号由 Li 事先注册好）。
+    @objc private func passwordLoginTapped() {
+        let email = normalizedEmail()
+        guard isEmailValid(email) else {
+            showMessage(NSLocalizedString("login.password.invalid_email", comment: ""), errorField: .email)
+            return
+        }
+        let password = passwordField.text ?? ""
+        guard !password.isEmpty else {
+            showMessage(NSLocalizedString("login.password.empty", comment: ""), errorField: .password)
+            return
+        }
+        isPasswordLoggingIn = true
+        updateButtonStates()
+        loginPassword(email: email, password: password, confirmCancel: false)
+    }
+
+    /// 密码登录服务端请求：与验码同一套会话／响应处理；成功走 onLoggedIn?(nil)
+    ///（无邀请绑定反馈，demo 账号不走邀请码）＋loginChime，注销冷静期复用
+    /// 确认流程（确认后带 confirm_cancel=true 再调一次）。
+    /// 失败只展示服务端泛化文案：服务端没给文案（.server 空串／其他失败型）
+    /// 时用 catalog 里的同款泛化文案兜底，不自己区分失败原因。
+    private func loginPassword(email: String, password: String, confirmCancel: Bool) {
+        loggedInIsNew = false
+        passwordLoginTask = BearyAPI.shared.loginPassword(
+            email: email,
+            password: password,
+            dev: deviceSignals(),
+            confirmCancel: confirmCancel
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.passwordLoginTask = nil
+                strongSelf.isPasswordLoggingIn = false
+                strongSelf.updateButtonStates()
+                switch result {
+                case .success(let resp):
+                    if resp.pendingDelete == true {
+                        if confirmCancel {
+                            // 二次确认后仍回 pending_delete 不应出现：不断循环，直接报失败。
+                            strongSelf.showMessage(NSLocalizedString("login.password.incorrect", comment: ""))
+                        } else {
+                            strongSelf.presentPasswordPendingDeleteConfirm(email: email, password: password, deleteAt: resp.deleteAt)
+                        }
+                    } else if resp.ok == true {
+                        // 验码成功分支同款：登录成功即注销已取消，清掉注销时持久化的 delete_at。
+                        UserDefaults.standard.removeObject(forKey: "bearyPendingDeleteAt")
+                        strongSelf.loggedInIsNew = resp.isNew ?? false
+                        BearySoundPlayer.play(.loginChime)
+                        strongSelf.onLoggedIn?(nil)
+                    } else {
+                        strongSelf.showMessage(resp.message ?? resp.error ?? NSLocalizedString("login.password.incorrect", comment: ""))
+                    }
+                case .failure(.cancelled):
+                    break
+                case .failure(.server(let message, _)):
+                    strongSelf.showMessage(message.isEmpty ? NSLocalizedString("login.password.incorrect", comment: "") : message)
+                case .failure(.network):
+                    strongSelf.showMessage(NSLocalizedString("login.password.network_error", comment: ""))
+                case .failure:
+                    strongSelf.showMessage(NSLocalizedString("login.password.incorrect", comment: ""))
+                }
+            }
+        }
+    }
+
+    /// 密码登录的注销冷静期确认：文案与邮箱登录同款（见 pendingDeleteMessage），
+    /// 确认后用存下的邮箱＋密码再调一次 loginPassword（confirm_cancel=true）。
+    private func presentPasswordPendingDeleteConfirm(email: String, password: String, deleteAt: Int?) {
+        BearyConfirmSheet.show(from: self, title: NSLocalizedString("login.password.pending_delete_title", comment: ""), message: pendingDeleteMessage(deleteAt: deleteAt), actions: [
+            BearyConfirmSheet.Action(title: NSLocalizedString("login.password.pending_delete_cancel", comment: ""), style: .cancel),
+            BearyConfirmSheet.Action(title: NSLocalizedString("login.password.pending_delete_continue", comment: ""), style: .default) { [weak self] in
+                guard let strongSelf = self else { return }
+                strongSelf.isPasswordLoggingIn = true
+                strongSelf.updateButtonStates()
+                strongSelf.loginPassword(email: email, password: password, confirmCancel: true)
+            },
+        ])
     }
 
     // MARK: - Apple 登录
@@ -1390,10 +1604,10 @@ final class BearyLoginViewController: UIViewController {
         // U2：照抄编辑器选人框 ComposerPickers:572-579 与私信页 #704 的口径——
         // 先判键盘帧与当前输入框是否相交，再算重叠；浮动键盘停在中部未碰输入框时
         // 不再大值垫 inset。贴底键盘的重叠量口径与旧代码一致。
-        // 本页三个输入框（邮箱／验证码／邀请码）取当前 firstResponder 的那一个；
+        // 本页四个输入框（邮箱／验证码／邀请码／密码）取当前 firstResponder 的那一个；
         // 键盘弹出时必有一个输入框持有焦点，取不到则不垫。
         view.layoutIfNeeded()
-        let activeField = [emailField, codeField, inviteField].first(where: { $0.isFirstResponder })
+        let activeField = [emailField, codeField, inviteField, passwordField].first(where: { $0.isFirstResponder })
         let overlapsInput: Bool
         if let activeField = activeField {
             let inputFrame = view.convert(activeField.bounds, from: activeField)
@@ -1484,7 +1698,13 @@ extension BearyLoginViewController: UITextFieldDelegate {
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         if textField === emailField {
-            codeField.becomeFirstResponder()
+            if isPasswordMode {
+                passwordField.becomeFirstResponder()
+            } else {
+                codeField.becomeFirstResponder()
+            }
+        } else if textField === passwordField {
+            passwordLoginTapped()
         } else if textField === inviteField {
             textField.resignFirstResponder()
         }

@@ -1671,3 +1671,34 @@ final class BearySearchSnippetTests: XCTestCase {
         XCTAssertEqual(entry.snippet, "…公园散步…")
     }
 }
+
+// ===== Password login (demo accounts): contract response decoding =====
+// POST /api/account/login-password returns the same VerifyResponse shape as
+// /api/account/verify: {ok, is_new} on success, {pending_delete, delete_at}
+// while the account is in the deletion cooling-off period, and a generic
+// message on failure. The server never returns a password hash, and the
+// client never invents a demo email: the fixture below uses a placeholder.
+final class BearyLoginPasswordResponseTests: XCTestCase {
+    func testSuccessBodyDecodes() throws {
+        let json = #"{"ok":true,"is_new":false,"user":{"id":27,"email":"user@example.com","display_name":"User"}}"#
+        let resp = try bearyDecoder().decode(VerifyResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(resp.ok, true)
+        XCTAssertEqual(resp.isNew, false)
+        XCTAssertNil(resp.pendingDelete)
+    }
+
+    func testPendingDeleteBodyDecodes() throws {
+        let json = #"{"pending_delete":true,"delete_at":1796000000000}"#
+        let resp = try bearyDecoder().decode(VerifyResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(resp.pendingDelete, true)
+        XCTAssertEqual(resp.deleteAt, 1796000000000)
+        XCTAssertNil(resp.ok)
+    }
+
+    func testGenericFailureBodyDecodes() throws {
+        let json = #"{"ok":false,"message":"Incorrect email or password"}"#
+        let resp = try bearyDecoder().decode(VerifyResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(resp.ok, false)
+        XCTAssertEqual(resp.message, "Incorrect email or password")
+    }
+}

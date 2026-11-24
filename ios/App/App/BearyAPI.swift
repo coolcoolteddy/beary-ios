@@ -1638,6 +1638,42 @@ final class BearyAPI {
         }
     }
 
+    /// 密码登录（demo 账号专用）：POST /api/account/login-password {email, password, dev?, confirm_cancel?}。
+    /// 响应沿用 VerifyResponse 解码（含 pending_delete 冷静期）；成功即与验码同一套会话 cookie
+    ///（共享 URLSession 存入），不另建会话。服务端只放行 is_demo=1 且 password_hash 非空的账号，
+    /// 其余一律泛化失败；客户端只展示服务端回的泛化文案，不自己区分失败原因。
+    /// 本方法不走通用 mapStatus、不触发 onUnauthorized（登录请求不该清用户态）。
+    /// 失败时 .server 携带服务端 message 展示文案；完成回调不在主线程发。
+    @discardableResult
+    func loginPassword(email: String, password: String, dev: [String: Any]?, confirmCancel: Bool, completion: @escaping (Result<VerifyResponse, APIError>) -> Void) -> URLSessionDataTask? {
+        var body: [String: Any] = ["email": email, "password": password]
+        if let dev = dev, !dev.isEmpty { body["dev"] = dev }
+        if confirmCancel { body["confirm_cancel"] = true }
+        return perform("/api/account/login-password", method: "POST", jsonBody: body) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled {
+                completion(.failure(.cancelled))
+                return
+            }
+            if let e = error {
+                completion(.failure(.network(e)))
+                return
+            }
+            if let data = data, let resp = try? self.decoder.decode(VerifyResponse.self, from: data) {
+                if resp.pendingDelete == true { completion(.success(resp)); return }
+                if resp.ok == true { completion(.success(resp)); return }
+                let message = resp.message ?? resp.error ?? ""
+                completion(.failure(.server(message, nil)))
+                return
+            }
+            if !(200...299).contains(status) {
+                completion(.failure(.http(status, self.errorSnippet(from: data))))
+                return
+            }
+            completion(.failure(.decoding(NSError(domain: "BearyAPI", code: -1, userInfo: nil))))
+        }
+    }
+
     /// Apple 登录：POST /api/account/apple-login {identity_token, nonce, full_name?, email?, dev?, confirm_cancel?}。
     /// 响应沿用 VerifyResponse 解码（含 pending_delete 冷静期与 referral 绑定结果），不只看状态码。
     /// identityToken 只发一次、不存；本方法不走通用 mapStatus、不触发 onUnauthorized（登录请求不该清用户态）。
