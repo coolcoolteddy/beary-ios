@@ -966,7 +966,7 @@ final class BearyChromeViewController: UIViewController {
         // 高 17、宽 ≥17 随数字自适应（1 位 17pt 起，99+ 最宽约 28pt），
         // 右缘到邻段（x=216）留 10pt 以上，不顶邻段、不盖图标主体。
         let badge = UILabel()
-        badge.font = BearyDynamicType.scaledFont(for: .boldSystemFont(ofSize: 10))
+        badge.font = BearyDynamicType.unreadBadgeFont()
         badge.adjustsFontForContentSizeCategory = true
         badge.textColor = .white
         badge.backgroundColor = BearyColors.blue
@@ -2227,11 +2227,11 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 未读角标几何跟随系统字号（同会话行 updateUnreadBadgeGeometry 口径）：
-    /// 实际高 = max(17, ceil(字体行高) + 4)，默认字号下 ceil(12.1) + 4 = 17，
-    /// 默认视觉不变；最小宽 ≥ 实际高、圆角 = 高 / 2。
+    /// 实际高 = max(17, ceil(字体行高) + 4)，默认字号下 ceil(13.3) + 4 = 18；
+    /// 最小宽 ≥ 实际高、圆角 = 高 / 2。
     private func updateMessagesBadgeGeometry() {
         guard let badge = messagesBadgeLabel else { return }
-        badge.font = BearyDynamicType.scaledFont(for: .boldSystemFont(ofSize: 10))
+        badge.font = BearyDynamicType.unreadBadgeFont()
         let badgeHeight = max(17, ceil(badge.font.lineHeight) + 4)
         messagesBadgeHeightConstraint?.constant = badgeHeight
         messagesBadgeMinWidthConstraint?.constant = badgeHeight

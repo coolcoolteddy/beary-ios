@@ -964,7 +964,7 @@ final class BearyDMConversationCell: UITableViewCell {
         timeLabel.adjustsFontForContentSizeCategory = true
         timeLabel.textColor = BearyColors.gray
         unreadBadge.translatesAutoresizingMaskIntoConstraints = false
-        unreadBadge.font = BearyDynamicType.scaledFont(for: .boldSystemFont(ofSize: 10))
+        unreadBadge.font = BearyDynamicType.unreadBadgeFont()
         unreadBadge.adjustsFontForContentSizeCategory = true
         // 角标字固定纯黑（不用 BearyColors.ink：深色下 ink 是近白 #F5F5F5，
         // 在深蓝底上仅 3.35:1；固定黑字浅 #007AFF 底 5.23:1、深 #0A84FF 底 5.76:1，均 ≥4.5:1）
@@ -1041,12 +1041,12 @@ final class BearyDMConversationCell: UITableViewCell {
     }
 
     /// 审计 N1：未读角标几何跟随系统字号——实际高 = max(17, ceil(字体行高) + 4)，
-    /// 默认字号下 ceil(12.1) + 4 = 17，默认视觉不变；最小宽 ≥ 实际高、圆角 = 高 / 2
-    ///（规范 §1 半高类）；字号／颜色／文案均不动（字号 10 bold 见规范 §11、角标色
+    /// 默认字号下 ceil(13.3) + 4 = 18；最小宽 ≥ 实际高、圆角 = 高 / 2
+    ///（规范 §1 半高类）；字号／颜色／文案均不动（字号 11 bold 见规范 §11、角标色
     /// BearyColors.blue 见 §7）。字体按当前 trait 重取：scaledFont 只在创建时按当前档
     /// 取值，trait 变化后须重建，否则几何与渲染字体脱节。
     private func updateUnreadBadgeGeometry() {
-        unreadBadge.font = BearyDynamicType.scaledFont(for: .boldSystemFont(ofSize: 10))
+        unreadBadge.font = BearyDynamicType.unreadBadgeFont()
         let badgeHeight = max(17, ceil(unreadBadge.font.lineHeight) + 4)
         unreadBadgeHeightConstraint?.constant = badgeHeight
         unreadBadgeMinWidthConstraint?.constant = badgeHeight
