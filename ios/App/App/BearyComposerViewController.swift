@@ -9187,6 +9187,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         let checkpoint = buildEditCheckpoint(entryId: entryId, accountId: accountId)
+        // 空检查点（标题正文双空）不存盘：正文空时发布被禁、提交不到 PUT，
+        // 快照无可恢复的修改；有旧检查点一并清掉，防它留到下次打开误弹恢复框。
+        guard !checkpoint.isEmptyText else {
+            BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: editCheckpointAccountId())
+            completion?(true)
+            return
+        }
         BearyDraftStore.ioQueue.async {
             let ok = BearyDraftStore.saveEditCheckpoint(checkpoint, forAccount: accountId)
             DispatchQueue.main.async {
@@ -9223,6 +9230,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 guard self.isEditMode, self.editingEntry?.id == entryId,
                       self.editorEditVersion == baselineVersion,
                       self.pendingEditCheckpoint == nil else { return }
+                // 空检查点（标题正文双空）直接丢弃、不弹恢复框：它是更早一次
+                // 删光正文后防抖存下的快照，恢复只会把原文盖空；正文空本就发不出去。
+                if checkpoint.isEmptyText {
+                    BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: accountId)
+                    return
+                }
                 guard self.editCheckpointDiffersFromOriginal(checkpoint) else {
                     BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: accountId)
                     return
