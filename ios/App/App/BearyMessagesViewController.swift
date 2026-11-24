@@ -1087,8 +1087,9 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
         }
     }
 
-    /// 左滑删除单条：信件行删该条通知，会话行删该会话；卡片（系统消息／
-    /// 互动消息）与失败行／哨兵行不给左滑。行消失／回来走子页快照变化的
+    /// 左滑删除单条：信件行删该条通知，会话行删该会话（删前先二次确认，
+    /// HIG W4；通知行即删不动）；卡片（系统消息／互动消息）与失败行／
+    /// 哨兵行不给左滑。行消失／回来走子页快照变化的
     /// diff，容器不直接改行；失败时子页回滚＋toast，diff 把行插回来。
     /// 删除调用延后一拍：等左滑收起后再走快照 diff，免得在 swipe 进行中
     /// 做 batch 更新。
@@ -1112,7 +1113,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
                 guard let self = self else { done(false); return }
                 done(true)
                 DispatchQueue.main.async {
-                    self.conversationsChild.deleteConversation(peerId: peerId) { _ in }
+                    self.conversationsChild.confirmDeleteConversation(peerId: peerId, sourceView: tableView.cellForRow(at: indexPath) ?? tableView)
                 }
             }
             delete.accessibilityLabel = "删除这个会话"
