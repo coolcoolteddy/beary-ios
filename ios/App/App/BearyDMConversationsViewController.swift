@@ -500,7 +500,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”。
         tableView.setContentOffset(tableView.contentOffset, animated: false)
         let pullIn = {
-            self.tableView.contentInset.top = 84
+            self.tableView.contentInset.top = 84 // beary-lint: allow
             self.tableView.scrollIndicatorInsets.top = 84
             self.tableView.contentOffset = CGPoint(x: 0, y: -84)
             self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
