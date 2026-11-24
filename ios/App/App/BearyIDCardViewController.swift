@@ -940,6 +940,8 @@ final class BearyIDCardView: UIView {
         backView.layer.isDoubleSided = false
         // 背面预旋转 180°：容器转 180° 后背面正对观众。
         backView.layer.transform = CATransform3DMakeRotation(CGFloat.pi, 0, 1, 0)
+        // 初始只显示正面：静止态的可见面由 isHidden 钉死（见 flip）。
+        backView.isHidden = true
         flipContainer.addSubview(backView)
         NSLayoutConstraint.activate([
             frontView.topAnchor.constraint(equalTo: flipContainer.topAnchor),
@@ -995,6 +997,9 @@ final class BearyIDCardView: UIView {
     }
 
     /// 点卡片绕 Y 轴 0.55s 弹簧翻转；减动效时直接换面。
+    /// 静止态只靠 isDoubleSided=false 兜底，真机上背面会显示正面的镜像：
+    /// 翻转完成后用 isHidden 钉死只显示当前面。动画开始前两面先都显示，
+    /// 让出去的面能正常转走（否则翻面中途卡片会变空）。
     func flip(animated: Bool) {
         guard !isFlipping else { return }
         isShowingBack.toggle()
@@ -1005,13 +1010,22 @@ final class BearyIDCardView: UIView {
             transform = CATransform3DRotate(transform, target, 0, 1, 0)
             self.flipContainer.layer.transform = transform
         }
+        let applyVisibility = { [weak self] in
+            guard let strongSelf = self else { return }
+            strongSelf.frontView.isHidden = strongSelf.isShowingBack
+            strongSelf.backView.isHidden = !strongSelf.isShowingBack
+        }
         if animated && BearyMotion.animated(true) {
             isFlipping = true
+            frontView.isHidden = false
+            backView.isHidden = false
             UIView.animate(withDuration: 0.55, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: applyTransform, completion: { [weak self] _ in
                 self?.isFlipping = false
+                applyVisibility()
             })
         } else {
             applyTransform()
+            applyVisibility()
         }
     }
 
