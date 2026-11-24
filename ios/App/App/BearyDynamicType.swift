@@ -161,4 +161,9 @@ extension BearyDynamicType {
     static func liveBadgeFont() -> UIFont {
         scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .bold))
     }
+
+    /// 语义：未读角标数字（私信会话行与底栏消息角标圆点内数字）。定版值：11 bold，scaled（规范第 11 节 token:180，HIG 审计 W8，2026-11-23 Li 点选“都按建议修”；原 10 bold）。
+    static func unreadBadgeFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .bold))
+    }
 }
