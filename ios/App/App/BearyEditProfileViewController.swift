@@ -981,9 +981,14 @@ class BearyEditProfileViewController: UIViewController {
         // 进选择页前按共享会话重读一次 Plus 态：本页打开期间刚到账的 Plus
         //（邀请绑定后 refreshMe 已写回 currentUser）不等下次进页即生效。
         fetchedPlus = SessionManager.shared.currentUser?.plus == true
+        // 预览顶部叠头像＋名字（画出来像个人页封面的样子）；昵称取当前输入，
+        // 为空时回落到进页时的初值。
+        let pickerDisplayName = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let picker = BearyDepthBackgroundViewController(
             currentTheme: storedFestivalTheme(),
             isPlus: fetchedPlus,
+            avatarImage: avatarImageView.image,
+            displayName: pickerDisplayName.isEmpty ? initialDisplayName : pickerDisplayName,
             onPick: { [weak self] theme, isPlus in
                 guard let strongSelf = self else { return false }
                 return strongSelf.handleDepthThemePicked(theme, isPlus: isPlus)
