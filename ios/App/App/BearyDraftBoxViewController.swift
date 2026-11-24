@@ -2406,7 +2406,16 @@ private final class BearyDraftBoxDashedButton: BearyHit44Button {
     override func layoutSubviews() {
         super.layoutSubviews()
         dashedLayer.frame = bounds
-        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 12).cgPath
+        // 描边以 path 为中心：path 贴 bounds 边时，外侧一半落在 layer 背板外被裁掉，
+        // 顶边只剩一半粗（像素实测约 0.75pt）、底边却近全粗（约 1.5pt），上下不一。
+        // path 内缩半个线宽，整条描边落进 layer 内，四边同粗；外沿仍贴 bounds、
+        // 圆角同步减半个线宽（12 - 0.75 = 11.25），外形不动。
+        // 线宽 1.5、pattern [6, 4]、颜色、圆角外形均不动。
+        let halfLine = dashedLayer.lineWidth / 2
+        dashedLayer.path = UIBezierPath(
+            roundedRect: bounds.insetBy(dx: halfLine, dy: halfLine),
+            cornerRadius: BearyCorners.single - halfLine
+        ).cgPath
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
