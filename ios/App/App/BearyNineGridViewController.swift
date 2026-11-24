@@ -171,8 +171,8 @@ extension BearyNineGridViewController: UICollectionViewDataSource, UICollectionV
 /// 九宫格入口唯一门控与打开点：卡片、时间线、个人页、详情四处共用。
 enum BearyNineGridPresenter {
 
-    /// Plus 专属（2026-11-03 Li 定版：九宫格版式只给 Plus 开）；非 Plus 走景深背景
-    /// 同款 Plus 专属提示口径，不开网格。图片上限 9 张与图片条一致。
+    /// 门控走统一门 BearyPlusGate（现在全开）；未开通时走景深背景同款 Plus 专属
+    /// 提示口径，不开网格。图片上限 9 张与图片条一致。
     /// r22 A6：未登录先走登录门（登录态未知时不弹登录页，改网络 toast，与卡片
     /// onRequireLogin 汇点同款）；A7：非 Plus 拒绝只摇触发入口，不摇整页。
     static func present(from viewController: UIViewController, anchorView: UIView? = nil, imageKeys: [String], liveVideos: [String: String]?) {
@@ -184,7 +184,7 @@ enum BearyNineGridPresenter {
             }
             return
         }
-        guard BearyDeveloperMode.effectivePlus(SessionManager.shared.currentUser?.plus == true) else {
+        guard BearyPlusGate.canUsePlusFeature(user: SessionManager.shared.currentUser) else {
             if let anchorView {
                 playDenyShake(on: anchorView)
             }

@@ -334,7 +334,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
     /// 拿到（邀请绑定成功即发 Plus），init 时的快照会过期。首次出现不拉
     ///（值刚从个人页 profile.plus 传来）；之后每次回前台拉一次 /me。
     /// 失败静默保留旧值，不弹 toast、不把人判成非 Plus；/me 未下发 plus
-    ///（nil）时同样保留旧值。只在值真的变了时才刷新状态与底栏。
+    /// 与 plusUntil（均 nil、未确认）时同样保留旧值。只在值真的变了时才刷新状态与底栏。
     /// 审计四轮第 6 项：发起时记下账号与请求序号，回调先校验——已有更新的
     /// 请求发出、或发起后已切号、或 /me 回包的账号与发起账号不符时，过期
     /// 回包直接丢弃，不写 isPlusValue。
@@ -348,8 +348,8 @@ final class BearyDepthBackgroundViewController: UIViewController {
                 guard let self else { return }
                 guard sequence == self.plusStatusRequestSequence else { return }
                 guard BearyDraftStore.currentAccountId == accountId else { return }
-                guard case .success(let user) = result, let rawPlus = user?.plus else { return }
-                let plus = BearyDeveloperMode.effectivePlus(rawPlus)
+                guard case .success(let user) = result, BearyPlusGate.realPlusState(user: user) != nil else { return }
+                let plus = BearyPlusGate.canUsePlusFeature(user: user)
                 if let userId = user?.id, let accountId, userId != accountId { return }
                 guard plus != self.isPlusValue else { return }
                 self.isPlusValue = plus

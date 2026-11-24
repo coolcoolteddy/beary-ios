@@ -598,13 +598,13 @@ final class BearyWishWallViewController: UIViewController {
     @objc private func retryTapped() { loadWishes() }
 
     /// App 侧 Plus 门三态（r17-C9）：仅决定发起钮显隐，真正校验在服务端
-    ///（plus_until > now 或永久阈值）。true 已确认是 Plus；false 已确认不是；
-    /// nil 未确认——冷启动快照的 plusUntil 为 nil，不得直接判非 Plus，须等
+    ///（plus_until > now 或永久阈值）。判定走统一门 BearyPlusGate（现在全开；
+    /// 真实口径为 plus 为 true 或 plusUntil 未过期）。true 已确认是 Plus；
+    /// false 已确认不是；nil 未确认——尚未登录、不得直接判非 Plus，须等
     /// /me（见 refreshPlusGate）。
     private func plusState() -> Bool? {
-        guard let until = SessionManager.shared.currentUser?.plusUntil else { return nil }
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        return until >= 4102444800000 || until > now
+        guard let user = SessionManager.shared.currentUser else { return nil }
+        return BearyPlusGate.canUsePlusFeature(user: user)
     }
 
     /// Plus 门刷新：已确认按结果显隐；未确认时先隐藏发起钮、等一次 /me

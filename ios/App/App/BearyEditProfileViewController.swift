@@ -419,10 +419,10 @@ class BearyEditProfileViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // 景深背景门控初值：与九宫格门控同口径读共享会话 currentUser.plus。
+        // 景深背景门控初值：走统一门 BearyPlusGate（现在全开）。
         // 此前初值 false，且正常入口（带 userId）从不走 refreshLinkRowFromMe
         // 的 /me 补写，Plus 用户进页即被判非 Plus，封面行全锁“Plus 专属”。
-        fetchedPlus = SessionManager.shared.currentUser?.plus == true
+        fetchedPlus = BearyPlusGate.canUsePlusFeature(user: SessionManager.shared.currentUser)
         view.backgroundColor = BearyColors.bg
         buildLayout()
         // U3：输入框 Return 收起/切换 + 滑动收键盘 + 键盘顶起时调 inset
@@ -492,7 +492,7 @@ class BearyEditProfileViewController: UIViewController {
                 case .success(let user):
                     strongSelf.meFetchFailed = false
                     strongSelf.fetchedUserId = user?.id
-                    strongSelf.fetchedPlus = BearyDeveloperMode.effectivePlus(user?.plus == true)
+                    strongSelf.fetchedPlus = BearyPlusGate.canUsePlusFeature(user: user)
                     strongSelf.updateLinkRow()
                     strongSelf.fetchInitialSignature()
                     if thenCopy {
@@ -980,7 +980,7 @@ class BearyEditProfileViewController: UIViewController {
     private func presentDepthBackgroundPicker() {
         // 进选择页前按共享会话重读一次 Plus 态：本页打开期间刚到账的 Plus
         //（邀请绑定后 refreshMe 已写回 currentUser）不等下次进页即生效。
-        fetchedPlus = SessionManager.shared.currentUser?.plus == true
+        fetchedPlus = BearyPlusGate.canUsePlusFeature(user: SessionManager.shared.currentUser)
         // 预览顶部叠头像＋名字（画出来像个人页封面的样子）；昵称取当前输入，
         // 为空时回落到进页时的初值。
         let pickerDisplayName = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
