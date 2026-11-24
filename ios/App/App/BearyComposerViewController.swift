@@ -337,7 +337,7 @@ private final class BearyBodyTextView: UITextView {
     }
 }
 
-/// U3：编辑器工具栏七钮专用热区钮（图片／定位／自定义／天气／@／引用／标签）。
+/// U3：编辑器工具栏六钮专用热区钮（图片／定位／表情／@／引用／标签）。
 /// 根因：七钮视觉帧 24pt，父类 BearyHit44Button 对称各扩 10pt 至 44pt；
 /// 工具行间距 16 时中心距 24+16=40 < 44，相邻热区重叠 4pt，窄屏间距压到 8 时
 /// 中心距 32、重叠 12pt，交界处点按落到后加的右钮。
@@ -498,7 +498,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
     /// 编辑原篇的标签列（首次回填时拍定；PUT 只在 selectedTags 与它不同时发 tags）。
     private var originalTags: [String] = []
-    /// 插入式图片的上次焦点框：点选自定义钮/弹出框选项时焦点可能已被
+    /// 插入式图片的上次焦点框：点选表情钮/弹出框选项时焦点可能已被
     /// 拾取动作带走，单靠 isFirstResponder 会误判；本字段记最后一次
     /// 获焦的框（标题/正文），兜底时仍插到上次光标所在的框。
     private enum ComposerInput { case headline, body }
@@ -1117,16 +1117,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 行高仍由子项固有高撑着、会把工具行顶下去；隐藏时钉 0、显示时停用。
     private var draftStatusBannerHeightConstraint: NSLayoutConstraint?
     private let imageToolButton = BearyComposerToolButton(type: .system)
-    /// 批 E 定位钮：工具栏左组第 2 位（图片右边、自定义之前，预览 v2 定版；v1 的心情/天气并列位置已作废）。
+    /// 批 E 定位钮：工具栏左组第 2 位（图片右边、表情之前，预览 v2 定版；v1 的心情/天气并列位置已作废）。
     private let locationToolButton = BearyComposerToolButton(type: .system)
-    private let gifToolButton = BearyComposerToolButton(type: .system)
-    /// 自定义入口钮（点开底部弹窗自定义图片选择器，见 presentGIFPickerSheet）。
-    /// 2026-11-18：写日记页心情选择器已删（心情改为正文键入 [mood:xxx]），
-    /// 本钮只开“自定义”组（个人自定义心情图库，GIF 与常规图）。
-    private weak var gifPickerSheet: BearyMoodPickerSheetViewController?
-    /// 自定义选择器是否正开着：半屏弹窗下键盘回来会盖住弹窗下半与正文，
+    private let emoteToolButton = BearyComposerToolButton(type: .system)
+    /// 表情入口钮（点开统一表情选择器，见 presentEmotePickerSheet）。
+    /// 2026-11-20 Li 定：工具栏“自定义”钮换成表情钮，选择器里内置表情
+    /// 与自定义表情都有，都可插进正文；旧自定义图片选择器
+    /// BearyMoodPickerSheet 不再从这里打开。
+    private weak var emotePickerSheet: BearyEmotePickerSheetViewController?
+    /// 表情选择器是否正开着：弹窗下键盘回来会盖住弹窗下半与正文，
     /// 插图后键盘保持收起、表情直接落在可见的正文区；关弹窗后再点正文继续输。
-    private var isGIFPickerOpen: Bool { gifPickerSheet?.view.window != nil }
+    private var isEmotePickerOpen: Bool { emotePickerSheet?.view.window != nil }
     private let recipientToolButton = BearyComposerToolButton(type: .system)
     private let quoteToolButton = BearyComposerToolButton(type: .system)
     /// 标签完整版（2026-11-18）：工具栏 # 钮（文字 #，无官方 hashtag 图标资产）；
@@ -4000,7 +4001,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    // MARK: - 工具栏（C1：左 [图片][定位][自定义][天气][@][引用][标签]、右 [字数圆环]；
+    // MARK: - 工具栏（C1：左 [图片][定位][表情][@][引用][标签]、右 [字数圆环]；
     // 草稿 pill 已随编辑器改版（2026-10-29）移到顶栏发布钮左边，不再在此处；
     // 容器贴键盘上方、不在内容栈里，见 buildLayout；本函数只布容器内部，
     // 分隔线 + 工具行约束不变，工具行左右仍与内容栈边距同宽 16）
@@ -4025,17 +4026,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageToolButton.tintColor = BearyColors.ink
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
         imageToolButton.bearyAddPressFeedback()
-        // 批 E：定位钮插在图片钮右边、自定义钮之前（左组顺序：图片 → 定位 → 自定义 → @ → 引用 → #；天气钮已删，天气自动显示在底部元信息行）。
+        // 批 E：定位钮插在图片钮右边、表情钮之前（左组顺序：图片 → 定位 → 表情 → @ → 引用 → #；天气钮已删，天气自动显示在底部元信息行）。
         locationToolButton.setImage(BearyLocationIcon.image(pointSize: 24), for: .normal)
         locationToolButton.accessibilityLabel = "添加位置"
         locationToolButton.tintColor = BearyColors.ink
         locationToolButton.addTarget(self, action: #selector(didTapLocationTool), for: .touchUpInside)
         locationToolButton.bearyAddPressFeedback()
-        gifToolButton.setImage(BearyIconImages.image(named: "icon_image", pointSize: 24), for: .normal)
-        gifToolButton.accessibilityLabel = "自定义"
-        gifToolButton.tintColor = BearyColors.ink
-        gifToolButton.addTarget(self, action: #selector(didTapGIFTool), for: .touchUpInside)
-        gifToolButton.bearyAddPressFeedback()
+        emoteToolButton.setImage(BearyIconImages.image(named: "icon_mood", pointSize: 24), for: .normal)
+        emoteToolButton.accessibilityLabel = NSLocalizedString("emote_picker.composer_title", comment: "")
+        emoteToolButton.tintColor = BearyColors.ink
+        emoteToolButton.addTarget(self, action: #selector(didTapEmoteTool), for: .touchUpInside)
+        emoteToolButton.bearyAddPressFeedback()
         recipientToolButton.setImage(BearyIconImages.image(named: "icon_at", pointSize: 24), for: .normal)
         recipientToolButton.accessibilityLabel = "@ 谁"
         recipientToolButton.tintColor = BearyColors.ink
@@ -4054,7 +4055,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
-        for button in [imageToolButton, locationToolButton, gifToolButton, recipientToolButton, quoteToolButton, tagToolButton] {
+        for button in [imageToolButton, locationToolButton, emoteToolButton, recipientToolButton, quoteToolButton, tagToolButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -4101,7 +4102,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.addSubview(toolRow)
         toolRow.addArrangedSubview(imageToolButton)
         toolRow.addArrangedSubview(locationToolButton)
-        toolRow.addArrangedSubview(gifToolButton)
+        toolRow.addArrangedSubview(emoteToolButton)
         toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(quoteToolButton)
         toolRow.addArrangedSubview(tagToolButton)
@@ -4597,15 +4598,86 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         fetchWeatherWith(latitude: latitude, longitude: longitude, generation: generation)
     }
 
-    /// 弹出自定义图片底部选择器（2026-11-18：心情组已删，只剩“自定义”组）：
+    /// 表情钮（统一表情入口）：内置 40 只＋自定义组，点选即插正文光标处；
+    /// 回应侧的 BearyEmotePickerSheet 不动（本入口只开 composer 模式）。
     /// 引用面板打开时不弹出。
-    private func presentGIFPickerSheet() {
+    private func presentEmotePickerSheet() {
         if quotePanelOpen { return }
-        gifPickerSheet = BearyMoodPickerSheet.show(from: self, gifKeys: BearyGIFLibrary.cachedKeys()) { [weak self] key in
+        let sheet = BearyEmotePickerSheetViewController()
+        sheet.mode = .composer
+        sheet.onPick = { [weak self] key in
+            self?.didSelectMoodEmote(key)
+        }
+        sheet.onPickCustomGIF = { [weak self] key in
             self?.didSelectGIF(key)
-        } onUploadGIF: { [weak self] in
+        }
+        sheet.onUploadCustomGIF = { [weak self] in
             self?.didTapUploadGIF()
         }
+        emotePickerSheet = sheet
+        present(sheet, animated: BearyMotion.animated(true))
+    }
+
+    /// 内置表情点选：按 [mood:<key>] 记号插进光标处（与手打 [mood:xxx] 同口径；
+    /// 8 只物件 key 已进记号集，见 BearyText.bearMoodKeys）。
+    private func didSelectMoodEmote(_ key: String) {
+        guard BearyText.bearMoodKeys.contains(key) else { return }
+        insertMoodAttachmentAtCursor(key: key)
+    }
+
+    /// 把一个内置表情附件插进指定框当前选区：与 insertGIFAttachmentAtCursor
+    /// 同款焦点口径（获焦插该框、两框都没焦点按上次焦点框兜底；选择器正开着
+    /// 时不抢焦点，表情落在可见的正文区）。
+    private func insertMoodAttachmentAtCursor(key: String) {
+        let dark = traitCollection.userInterfaceStyle == .dark
+        if headlineField.isFirstResponder || lastFocusedComposerInput == .headline {
+            if !isEmotePickerOpen, !headlineField.isFirstResponder {
+                headlineField.becomeFirstResponder()
+                headlineField.selectedRange = NSRange(location: headlineField.attributedText.length, length: 0)
+            }
+            if headlineField.markedTextRange != nil {
+                headlineField.unmarkText()
+            }
+            insertMoodAttachment(into: headlineField, key: key, font: headlineFont, dark: dark)
+            headlineDidChange()
+            return
+        }
+        if textView.isFirstResponder || lastFocusedComposerInput == .body {
+            if !isEmotePickerOpen, !textView.isFirstResponder {
+                textView.becomeFirstResponder()
+            }
+            if textView.markedTextRange != nil {
+                textView.unmarkText()
+            }
+            insertMoodAttachment(into: textView, key: key, font: bodyFont, dark: dark)
+            textViewDidChange(textView)
+            return
+        }
+        if !isEmotePickerOpen {
+            textView.becomeFirstResponder()
+        }
+        textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)
+        insertMoodAttachment(into: textView, key: key, font: bodyFont, dark: dark)
+        textViewDidChange(textView)
+    }
+
+    /// 把一个内置表情附件插进指定 UITextView 的当前选区（有选区则替换选区），
+    /// 插完光标落在图后 1 格，并把 typingAttributes 复位回该框的正文字体
+    /// （与 insertGIFAttachment 同款，免得图后打字跟了附件字体）。
+    private func insertMoodAttachment(into textView: UITextView, key: String, font: UIFont, dark: Bool) {
+        guard let attachment = BearyText.inlineAttachment(for: key, font: font, dark: dark) else { return }
+        let range = textView.selectedRange
+        let mutable = NSMutableAttributedString(attributedString: textView.attributedText ?? NSAttributedString())
+        let safeLocation = min(range.location, mutable.length)
+        let safeLength = min(range.length, mutable.length - safeLocation)
+        mutable.replaceCharacters(in: NSRange(location: safeLocation, length: safeLength), with: attachment)
+        textView.attributedText = mutable
+        if textView === headlineField {
+            textView.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
+        } else {
+            textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
+        }
+        textView.selectedRange = NSRange(location: safeLocation + 1, length: 0)
     }
 
     /// 天气动态图标覆盖层（BearyEmoteView，底层静态图作 fallback；与落点行同款）。
@@ -4773,8 +4845,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(0, after: imageUndoBar)
     }
 
-    @objc private func didTapGIFTool() {
-        presentGIFPickerSheet()
+    @objc private func didTapEmoteTool() {
+        presentEmotePickerSheet()
     }
 
     /// 天气取数（GPS 链路与 IP 回落链路共用）：成功填类型与气温、回落成功提示一句；
@@ -5130,7 +5202,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func setToolbarToolRowSpacing(_ spacing: CGFloat, in toolRow: UIStackView) {
         if toolRow.spacing != spacing { toolRow.spacing = spacing }
         let cap = max(0, spacing / 2)
-        for button in [imageToolButton, locationToolButton, gifToolButton, recipientToolButton, quoteToolButton] {
+        for button in [imageToolButton, locationToolButton, emoteToolButton, recipientToolButton, quoteToolButton] {
             button.maxSideExpansion = cap
         }
     }
@@ -5587,7 +5659,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         notifyCheckButton.isEnabled = !frozen && !isEditMode
         quoteCardRemoveButton.isEnabled = !frozen
         quoteDeletedRemoveButton.isEnabled = !frozen
-        gifToolButton.isEnabled = !frozen
+        emoteToolButton.isEnabled = !frozen
         recipientToolButton.isEnabled = !frozen
         // 底部元信息行定位钮同理补齐（其 handler 本就有 isPublishing 第二道守卫，此处是第一道禁用）。
         headlineClearButton.isEnabled = !frozen
@@ -5671,7 +5743,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             picker.delegate = self
             self.present(picker, animated: true)
         }
-        if let sheet = gifPickerSheet {
+        if let sheet = emotePickerSheet {
             sheet.dismiss(animated: BearyMotion.animated(true), completion: presentPicker)
         } else {
             presentPicker()
@@ -5934,7 +6006,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if inlineGifKeys.contains(key) == false { inlineGifKeys.append(key) }
         let firstFrame = gifFirstFrames[randKey]
         if headlineField.isFirstResponder || lastFocusedComposerInput == .headline {
-            if !isGIFPickerOpen, !headlineField.isFirstResponder {
+            if !isEmotePickerOpen, !headlineField.isFirstResponder {
                 headlineField.becomeFirstResponder()
                 headlineField.selectedRange = NSRange(location: headlineField.attributedText.length, length: 0)
             }
@@ -5946,7 +6018,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         if textView.isFirstResponder || lastFocusedComposerInput == .body {
-            if !isGIFPickerOpen, !textView.isFirstResponder {
+            if !isEmotePickerOpen, !textView.isFirstResponder {
                 textView.becomeFirstResponder()
             }
             if textView.markedTextRange != nil {
@@ -5956,7 +6028,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             textViewDidChange(textView)
             return
         }
-        if !isGIFPickerOpen {
+        if !isEmotePickerOpen {
             textView.becomeFirstResponder()
         }
         textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)

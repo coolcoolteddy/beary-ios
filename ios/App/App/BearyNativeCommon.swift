@@ -2138,6 +2138,8 @@ enum BearyText {
         "surprised": "惊讶", "pat": "摸摸头", "peek": "偷偷看", "sleepy": "困倦",
         "proud": "骄傲", "shrug": "没办法", "sorry": "对不起", "cry": "想哭",
         "angry": "生气", "thanks": "谢谢你", "zap": "带电", "wave": "挥挥手",
+        "candle": NSLocalizedString("mood.candle", comment: ""), "flower": NSLocalizedString("mood.flower", comment: ""), "letter": NSLocalizedString("mood.letter", comment: ""), "paperplane": NSLocalizedString("mood.paperplane", comment: ""),
+        "sprout": NSLocalizedString("mood.sprout", comment: ""), "tea": NSLocalizedString("mood.tea", comment: ""), "umbrella": NSLocalizedString("mood.umbrella", comment: ""), "wish": NSLocalizedString("mood.wish", comment: ""),
         "pumpkin": "南瓜灯", "ghost": "小幽灵", "bat": "蝙蝠", "witchhat": "女巫帽",
         "candy": "糖果", "spider": "蜘蛛", "lantern": "红灯笼", "redenvelope": "红包",
         "dumpling": "饺子", "firecracker": "鞭炮", "liondance": "舞狮", "ingot": "元宝",
@@ -2269,7 +2271,8 @@ enum BearyText {
     /// 内联心情记号（编辑器熊脸图 ↔ 落库纯文本的中间层）：
     /// 编辑器里心情是图片附件，正文/标题落库与后端都只存纯文本，故附件在
     /// 发出/存草稿时转成记号 `[mood:<key>]`，读回编辑器/卡片/详情时再转回图。
-    /// 前 32 只熊脸（后 8 只非熊脸已删，不进记号集）＋节日 200 款；
+    /// 前 32 只熊脸＋后 8 只物件（2026-11-20 Li 定：编辑器统一表情入口
+    /// 可插全部 40 只，8 只物件重进记号集）＋节日 200 款；
     /// 前 32 只即旧编辑器默认组（2026-11-18 选择器已删，不再另抄一份）；
     /// 节日款只进本集与 moodNames（资产检查只认 PNG）。
     /// 未知 key 的记号原样当文字，不凭空变图。用户手打的同形文字也会在读回时变图，
@@ -2279,6 +2282,7 @@ enum BearyText {
         "facepalm", "shy", "goodnight", "hug", "wink", "idea", "kiss", "thinking",
         "listening", "lonely", "speechless", "nope", "surprised", "pat", "peek", "sleepy",
         "proud", "shrug", "sorry", "cry", "angry", "thanks", "zap", "wave",
+        "candle", "flower", "letter", "paperplane", "sprout", "tea", "umbrella", "wish",
         "pumpkin", "ghost", "bat", "witchhat", "candy", "spider",
         "lantern", "redenvelope", "dumpling", "firecracker", "liondance", "ingot",
         "clockstrikesmidnight", "calendarflips", "partypopper", "newyearclink",
