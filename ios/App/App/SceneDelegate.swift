@@ -4798,13 +4798,13 @@ final class BearyChromeViewController: UIViewController {
         // 编辑时限（2026-11-18 Li 定版，取代 2026-11-17「永久可改」口径）：非 Plus 发布后
         // 1 小时内可改，超过 1 小时只能 Plus 改；1 小时内改多少次都行。草稿走新建流程不进
         // 本函数，不受限。发布时间锚点 = entry.createdAt（毫秒；服务端行创建时间即发布时刻，
-        // 可见性切换不改它）；createdAt 缺失时按可改放行（旧数据兜底）。Plus 判定走九宫格
-        // 同款口径（SessionManager.currentUser.plus，冷启动／登录时 refreshMe 已同步）。
+        // 可见性切换不改它）；createdAt 缺失时按可改放行（旧数据兜底）。Plus 判定走
+        // 统一门 BearyPlusGate（现在全开；冷启动／登录时 refreshMe 已同步）。
         // 本函数是全部编辑入口的唯一汇合点（详情 ⋯ 菜单、时间线／个人页卡片菜单、快照恢复），
         // 在此拦一次即全覆盖；被拦时只弹 Plus 提示，不进编辑页。
         if let createdAt = entry.createdAt,
            Date().timeIntervalSince1970 * 1000 - Double(createdAt) > 3600 * 1000,
-           SessionManager.shared.currentUser?.plus != true {
+           !BearyPlusGate.canUsePlusFeature(user: SessionManager.shared.currentUser) {
             BearyToast.show(in: topmostViewController().view, message: "发布超过 1 小时，仅 Plus 会员可继续编辑")
             return
         }

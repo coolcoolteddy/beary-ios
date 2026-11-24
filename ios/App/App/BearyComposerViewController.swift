@@ -7344,10 +7344,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// Plus 判定（九宫格 BearyNineGridPresenter 同款口径：/me 的 plus 字段）：
+    /// Plus 判定走统一门 BearyPlusGate（现在全开）：
     /// 本编辑器会话内缓存一次；只缓存成功拉到的结果，拉取失败不缓存、不判定，
     /// 下次再拉——已开通用户遇网络失败不再被误认为非 Plus。
-    /// completion(nil) 表示拉取失败；未登录（/me 回 nil）按非 Plus 计。
+    /// completion(nil) 表示拉取失败；未登录（/me 回 nil）时统一门仍按全开放行，
+    /// 登录态由编辑器入口另拦，不在这里判。
     private func ensurePlusStatus(completion: @escaping (Bool?) -> Void) {
         if let cached = cachedPlusStatus {
             completion(cached)
@@ -7357,7 +7358,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             DispatchQueue.main.async {
                 switch result {
                 case .success(let user):
-                    let isPlus = BearyDeveloperMode.effectivePlus(user?.plus == true)
+                    let isPlus = BearyPlusGate.canUsePlusFeature(user: user)
                     self?.cachedPlusStatus = isPlus
                     completion(isPlus)
                 case .failure:
