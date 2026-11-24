@@ -167,7 +167,7 @@ final class BearyLocalNotifications: NSObject {
                     }
                     return
                 }
-                BearyConfirmSheet.show(from: presenter, title: "晚上 9 点提醒你写一句", message: NSLocalizedString("local_notifications.first_entry_prompt.message", comment: ""), actions: [
+                BearyConfirmSheet.show(from: presenter, title: NSLocalizedString("local_notifications.first_entry_prompt.title", comment: ""), message: NSLocalizedString("local_notifications.first_entry_prompt.message", comment: ""), actions: [
                     BearyConfirmSheet.Action(title: "好", style: .default) { [weak self, weak presenter] in
                         guard let self = self, let presenter = presenter else { return }
                         self.requestAuthorizationIfNeeded {
