@@ -183,7 +183,7 @@ final class BearyForceUpdateViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "需要更新"
+        titleLabel.text = NSLocalizedString("force_update.required_title", comment: "")
         titleLabel.font = BearyDynamicType.smallActionFont()
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
@@ -191,7 +191,7 @@ final class BearyForceUpdateViewController: UIViewController {
         view.addSubview(titleLabel)
 
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
-        bodyLabel.text = message.isEmpty ? "当前版本过低，请更新到最新版本后继续使用。" : message
+        bodyLabel.text = message.isEmpty ? NSLocalizedString("force_update.too_old_body", comment: "") : message
         bodyLabel.font = BearyDynamicType.smallBodyFont()
         bodyLabel.textColor = BearyColors.gray
         bodyLabel.textAlignment = .center
@@ -199,7 +199,7 @@ final class BearyForceUpdateViewController: UIViewController {
         view.addSubview(bodyLabel)
 
         updateButton.translatesAutoresizingMaskIntoConstraints = false
-        updateButton.setTitle("去更新", for: .normal)
+        updateButton.setTitle(NSLocalizedString("force_update.go_update", comment: ""), for: .normal)
         updateButton.addTarget(self, action: #selector(updateTapped), for: .touchUpInside)
         updateButton.bearyAddPressFeedback()
         view.addSubview(updateButton)
@@ -298,7 +298,7 @@ final class BearySoftUpdateSheetViewController: UIViewController {
         view.addSubview(grabberView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "有新版本"
+        titleLabel.text = NSLocalizedString("force_update.new_version_title", comment: "")
         titleLabel.font = BearyDynamicType.smallActionFont()
         titleLabel.textColor = BearyColors.ink
         titleLabel.numberOfLines = 0
@@ -338,14 +338,14 @@ final class BearySoftUpdateSheetViewController: UIViewController {
         buttonStack.spacing = BearySpace.sm
         let updateButton = BearyButton(style: .primaryPill(.ink))
         updateButton.translatesAutoresizingMaskIntoConstraints = false
-        updateButton.setTitle("立即更新", for: .normal)
+        updateButton.setTitle(NSLocalizedString("force_update.update_now", comment: ""), for: .normal)
         updateButton.addTarget(self, action: #selector(updateTapped), for: .touchUpInside)
         updateButton.bearyAddPressFeedback()
         buttonStack.addArrangedSubview(updateButton)
         updateButton.heightAnchor.constraint(equalToConstant: updateButton.style.height).isActive = true
         let laterButton = BearyButton(style: .secondaryOutline(.regular))
         laterButton.translatesAutoresizingMaskIntoConstraints = false
-        laterButton.setTitle("稍后再说", for: .normal)
+        laterButton.setTitle(NSLocalizedString("force_update.later", comment: ""), for: .normal)
         laterButton.addTarget(self, action: #selector(laterTapped), for: .touchUpInside)
         laterButton.bearyAddPressFeedback()
         buttonStack.addArrangedSubview(laterButton)

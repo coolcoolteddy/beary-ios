@@ -3573,7 +3573,7 @@ final class BearySettingsViewController: UIViewController {
     @objc private func openWishWallPage() {
         // 远程开关（2026-11-19）：wishwall 关掉时入口仍可见，点按只 toast、不跳转。
         if BearyForceUpdateCenter.shared.isFeatureDisabled(.wishwall) {
-            showToast("该功能暂时维护中")
+            showToast(NSLocalizedString("common.feature_maintenance", comment: ""))
             return
         }
         let vc = BearyWishWallViewController()

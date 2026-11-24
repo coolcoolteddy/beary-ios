@@ -712,7 +712,7 @@ final class BearyPlusPageViewController: UIViewController {
         // 远程开关（2026-11-19）：invite 关掉时不进邀请页，点按只 toast、不跳转；
         // 另一入口（顶栏礼物钮／首页邀请提示）在 SceneDelegate.presentInvite 同款关。
         if BearyForceUpdateCenter.shared.isFeatureDisabled(.invite) {
-            BearyToast.show(in: view, message: "该功能暂时维护中")
+            BearyToast.show(in: view, message: NSLocalizedString("common.feature_maintenance", comment: ""))
             return
         }
         // 邀请页是容器负责关闭的 sheet 页：此处按 SceneDelegate.presentInvite 同款

@@ -10411,7 +10411,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     @objc private func openStarMap() {
         // 远程开关（2026-11-19）：starmap 关掉时入口仍可见，点按只 toast、不跳转。
         if BearyForceUpdateCenter.shared.isFeatureDisabled(.starmap) {
-            BearyToast.show(in: view, message: "该功能暂时维护中")
+            BearyToast.show(in: view, message: NSLocalizedString("common.feature_maintenance", comment: ""))
             return
         }
         // 112 他人页口径：星图入口行已从他人页脚部去除，此处再守一道，

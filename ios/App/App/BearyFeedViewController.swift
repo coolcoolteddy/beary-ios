@@ -760,7 +760,7 @@ class BearyFeedViewController: UIViewController {
             // 远程开关（2026-11-19）：blindbox 关掉时入口仍可见，点按只 toast、不跳转；
             // 该入口是盲盒唯一点按链（含已换态下的撤回入口），关掉会一并挡住撤回。
             if BearyForceUpdateCenter.shared.isFeatureDisabled(.blindbox) {
-                BearyToast.show(in: self.view, message: "该功能暂时维护中")
+                BearyToast.show(in: self.view, message: NSLocalizedString("common.feature_maintenance", comment: ""))
                 return
             }
             self.presentBlindBoxFlow()

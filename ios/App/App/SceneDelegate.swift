@@ -3080,7 +3080,7 @@ final class BearyChromeViewController: UIViewController {
         // 消息 tab 本身不动（通知行仍在里面）。四路入口（消息页会话行、通知
         // 页私信行、会话列表行、他人主页私信钮）都经此处，一处关全关。
         if BearyForceUpdateCenter.shared.isFeatureDisabled(.dm) {
-            showToast(message: "该功能暂时维护中")
+            showToast(message: NSLocalizedString("common.feature_maintenance", comment: ""))
             return
         }
         guard peer.id != nil else {
@@ -3137,7 +3137,7 @@ final class BearyChromeViewController: UIViewController {
         // 顶栏礼物钮与首页邀请提示都经此处；Plus 页入口另在
         // BearyPlusPageViewController.inviteButtonTapped 同款关。
         if BearyForceUpdateCenter.shared.isFeatureDisabled(.invite) {
-            showToast(message: "该功能暂时维护中")
+            showToast(message: NSLocalizedString("common.feature_maintenance", comment: ""))
             return
         }
         // 游客模式：邀请入口全藏——礼物钮已隐藏，此处再拦一道：任何路径进邀请页
@@ -4594,7 +4594,7 @@ final class BearyChromeViewController: UIViewController {
     private func presentComposer(openingDraft: BearyDraft? = nil, silentDisabled: Bool = false) {
         if isComposerPresented() { return }
         if BearyForceUpdateCenter.shared.isFeatureDisabled(.publish) {
-            if !silentDisabled { showToast(message: "该功能暂时维护中") }
+            if !silentDisabled { showToast(message: NSLocalizedString("common.feature_maintenance", comment: "")) }
             return
         }
         // 闪退诊断打点（容器侧，只记日志不改行为）：本文件此前无日志，循仓内
