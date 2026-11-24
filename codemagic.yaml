@@ -63,10 +63,11 @@ workflows:
         script: xcode-project use-profiles
       - name: Build IPA for distribution
         script: |
-          xcode-project build-ipa \
-            --project ios/App/App.xcodeproj \
-            --scheme App \
-            --config Release \
-            --ipa-directory build/ios/ipa
+          set -o pipefail
+          mkdir -p build/ios build/ios/ipa
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -config Release -archivePath build/ios/xcarchive/App.xcarchive archive COMPILER_INDEX_STORE_ENABLE=NO DEVELOPMENT_TEAM=935CH2UYQR CODE_SIGN_IDENTITY="Apple Distribution" CODE_SIGN_STYLE=Manual 2>&1 | tee build/ios/archive.log
+          xcodebuild -exportArchive -archivePath build/ios/xcarchive/App.xcarchive -exportPath build/ios/ipa -exportOptionsPlist "$HOME/export_options.plist" 2>&1 | tee build/ios/export.log
     artifacts:
       - build/ios/ipa/*.ipa
+      - build/ios/archive.log
+      - build/ios/export.log
