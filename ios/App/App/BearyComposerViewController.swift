@@ -5814,7 +5814,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 self.showToast(message: "表情库满了，先删掉一些再添加")
                             }
                             if response.duplicate == true {
-                                self.showToast(message: "已经添加过了")
+                                self.showToast(message: NSLocalizedString("composer.custom_emoji.already_added", comment: ""))
                             }
                             self.gifFirstFrames[rand] = firstFrame
                             // #49：回包只认发起那篇——切篇后回包仍进库（服务端 GIF
@@ -5901,7 +5901,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             if response.duplicate == true {
                                 // 指纹已在库里：服务端直接回了旧 key，不再存一份；
                                 // 行已存在，不再调 add，toast 后照插旧 key。
-                                self.showToast(message: "已经添加过了")
+                                self.showToast(message: NSLocalizedString("composer.custom_emoji.already_added", comment: ""))
                             } else {
                                 // 非 GIF 上传服务端不自动进库：显式调 add；部署前 400
                                 // 静默忽略——图照插进正文，只是不进自定义库。
