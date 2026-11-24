@@ -335,7 +335,7 @@ final class BearySoftUpdateSheetViewController: UIViewController {
 
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
         buttonStack.axis = .vertical
-        buttonStack.spacing = 8
+        buttonStack.spacing = BearySpace.sm
         let updateButton = BearyButton(style: .primaryPill(.ink))
         updateButton.translatesAutoresizingMaskIntoConstraints = false
         updateButton.setTitle("立即更新", for: .normal)
