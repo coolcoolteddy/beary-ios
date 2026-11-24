@@ -2484,7 +2484,7 @@ final class BearyDetailViewController: UIViewController {
         resetImageStripPinch()
         // 内联图不进图条（与卡片同款：已插进正文/标题里播，再进图条
         // 会同一张图出现两次）；图条只放照片。
-        let allKeys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "") == false }
+        let allKeys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "", title: entry.title ?? "") == false }
         imageKeys = allKeys
         let keys = Array(allKeys.prefix(9))
         updateNineGridButton(count: keys.count)

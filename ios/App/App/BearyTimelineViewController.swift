@@ -1829,7 +1829,7 @@ final class BearyTimelineCell: UITableViewCell {
         }
         // 内联图不进缩略图条（与卡片/详情同款：已插进正文/标题里播，
         // 再进图条会同一张图出现两次）；图条只放照片。
-        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "") == false }
+        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "", title: entry.title ?? "") == false }
         resetImageStripPinch()
         thumbsScrollView.isHidden = imageKeys.isEmpty
         thumbsHeightConstraint?.constant = imageKeys.isEmpty ? 0 : 216
@@ -1954,7 +1954,7 @@ final class BearyTimelineCell: UITableViewCell {
     @objc private func didTapThumb(_ sender: UITapGestureRecognizer) {
         guard let entry = currentEntry else { return }
         // 与缩略图条同口径过滤（内联图不进图条，index 才对得上）。
-        let keys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "") == false }
+        let keys = (entry.images ?? []).filter { !$0.isEmpty && BearyGIF.isInlineImageKey($0, content: entry.content ?? "", title: entry.title ?? "") == false }
         let index = sender.view?.tag ?? 0
         guard index >= 0 && index < keys.count else { return }
         onTapImages?(keys, index, sender.view.map { $0.convert($0.bounds, to: nil) }, (sender.view as? UIImageView)?.image)
@@ -6998,7 +6998,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         let contentWidth = max(0, tableWidth - 84)
         let text = entry.content ?? ""
         let textHeight = BearyDiaryCardCell.estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.75)
-        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && !BearyGIF.isInlineImageKey($0, content: text) }
+        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && !BearyGIF.isInlineImageKey($0, content: text, title: entry.title ?? "") }
         let hasImages = !imageKeys.isEmpty
         let hasTitle = !(entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasQuote = entry.quote != nil || entry.quoteId != nil

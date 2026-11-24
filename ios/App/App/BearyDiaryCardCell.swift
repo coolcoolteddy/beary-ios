@@ -2778,7 +2778,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // 112：卡片图片条上限 9 张（详情侧同款 Array(allKeys.prefix(9))）。
         // 脏数据超 9 张时先截断再渲染，灯箱 keys 同步取截断后列表，
         // 第 10 张起既不渲染也不进灯箱；逐项再 guard 三池下标，防池化异常越界。
-        let keys = Array(keys.filter { BearyGIF.isInlineImageKey($0, content: currentEntry?.content ?? "") == false }.prefix(9))
+        let keys = Array(keys.filter { BearyGIF.isInlineImageKey($0, content: currentEntry?.content ?? "", title: currentEntry?.title ?? "") == false }.prefix(9))
         currentImageKeys = keys
         updateNineGridButton(count: keys.count)
         if imageSlots.isEmpty { makeImageSlots() }
@@ -4806,7 +4806,7 @@ extension BearyDiaryCardCell {
         if text.isEmpty, (entry.mood ?? "").isEmpty == false { textHeight = singleHeight }
         if overflow && !expanded { textHeight = CGFloat(6) * singleHeight }
 
-        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && !BearyGIF.isInlineImageKey($0, content: text) }
+        let imageKeys = (entry.images ?? []).filter { !$0.isEmpty && !BearyGIF.isInlineImageKey($0, content: text, title: entry.title ?? "") }
         let hasImages = !imageKeys.isEmpty
         let hasTitle = !(entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasQuote = entry.quote != nil || entry.quoteId != nil
