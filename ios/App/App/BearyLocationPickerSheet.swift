@@ -159,6 +159,7 @@ final class BearyLocationPickerViewController: UIViewController {
         let cardTap = UITapGestureRecognizer(target: self, action: #selector(cardTapped))
         cardTap.delegate = self
         currentCard.addGestureRecognizer(cardTap)
+        currentCard.bearyAddRowPressFeedback()
         currentPinView.translatesAutoresizingMaskIntoConstraints = false
         currentPinView.image = BearyLocationIcon.image(pointSize: 20)
         currentPinView.tintColor = BearyColors.ink
@@ -588,6 +589,17 @@ extension BearyLocationPickerViewController: UITableViewDataSource, UITableViewD
         cell.backgroundColor = .clear
         cell.selectionStyle = .none
         return cell
+    }
+
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        guard indexPath.row < rows.count else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {

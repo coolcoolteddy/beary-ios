@@ -1810,6 +1810,17 @@ extension BearyDiaryStarMapViewController: UITableViewDataSource, UITableViewDel
         return cell
     }
 
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        guard indexPath.row < edgeListEdges.count else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         // 130 扫 bug（#1214 引入）：点按后须取消选中，否则该行一直亮着
         // selectedBackgroundView；列表是常驻复用的表，再打开时旧行还亮着

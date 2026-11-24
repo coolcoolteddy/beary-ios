@@ -914,6 +914,7 @@ final class BearySettingsViewController: UIViewController {
         headerButton.accessibilityLabel = title
         headerButton.accessibilityValue = "已收起"
         headerWrap.addSubview(headerButton)
+        headerWrap.bearyAddRowPressFeedback()
         NSLayoutConstraint.activate([
             headerContent.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 14),
             headerContent.leadingAnchor.constraint(equalTo: headerWrap.leadingAnchor, constant: 16),
@@ -1842,6 +1843,7 @@ final class BearySettingsViewController: UIViewController {
         deleteRow.addSubview(deleteRowButton)
         // 审计 E2 第 23 项：忙碌图标挂在注销行内、原入口右侧（不改标题、不新增弹窗）。
         deleteRow.addSubview(deleteSpinner)
+        deleteRow.bearyAddRowPressFeedback()
         NSLayoutConstraint.activate([
             deleteRowButton.topAnchor.constraint(equalTo: deleteRow.topAnchor),
             deleteRowButton.centerXAnchor.constraint(equalTo: deleteRow.centerXAnchor),
@@ -1879,6 +1881,7 @@ final class BearySettingsViewController: UIViewController {
         exportRowWrap.translatesAutoresizingMaskIntoConstraints = false
         exportRowWrap.addSubview(exportRow)
         exportRowWrap.addSubview(exportRowButton)
+        exportRowWrap.bearyAddRowPressFeedback()
         exportRow.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             exportRow.topAnchor.constraint(equalTo: exportRowWrap.topAnchor),
@@ -3141,6 +3144,7 @@ final class BearySettingsViewController: UIViewController {
         wrap.addSubview(content)
         button.translatesAutoresizingMaskIntoConstraints = false
         wrap.addSubview(button)
+        wrap.bearyAddRowPressFeedback()
         NSLayoutConstraint.activate([
             content.topAnchor.constraint(equalTo: wrap.topAnchor),
             content.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),

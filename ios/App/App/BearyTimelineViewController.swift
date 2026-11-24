@@ -7159,6 +7159,18 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         return UITableView.automaticDimension
     }
 
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        let sections = currentSections()
+        guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: false)
         let sections = currentSections()

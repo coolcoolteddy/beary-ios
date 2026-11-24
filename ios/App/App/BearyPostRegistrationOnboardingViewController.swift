@@ -939,6 +939,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             }
             let row = VisibilityRowView(title: option.1, subtitle: option.2, selected: visibility == option.0)
             row.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(visibilityRowTapped(_:))))
+            row.bearyAddRowPressFeedback()
             row.tag = index
             stack.addArrangedSubview(row)
         }

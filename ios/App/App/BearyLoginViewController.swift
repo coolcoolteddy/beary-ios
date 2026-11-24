@@ -388,6 +388,7 @@ final class BearyLoginViewController: UIViewController {
         inviteDisclosureRow.accessibilityTraits = .button
         inviteDisclosureRow.accessibilityValue = "已收起"
         inviteDisclosureRow.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(inviteDisclosureTapped)))
+        inviteDisclosureRow.bearyAddRowPressFeedback()
         // 读屏激活（审计 ①-P1）：VoiceOver 双击走 accessibilityActivate，
         // 与普通点按共用 inviteDisclosureTapped()，展开状态在其内同步。
         inviteDisclosureRow.onActivate = { [weak self] in self?.inviteDisclosureTapped() }

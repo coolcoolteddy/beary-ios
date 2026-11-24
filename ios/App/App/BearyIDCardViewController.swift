@@ -613,6 +613,18 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         return cell
     }
 
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        let rows = pickerRows()
+        guard indexPath.row < rows.count else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         let rows = pickerRows()
         guard indexPath.row < rows.count else { return }
@@ -775,6 +787,7 @@ final class BearyIDCardSheetViewController: UIViewController {
         cardView.heightAnchor.constraint(equalTo: cardView.widthAnchor, multiplier: 1.0 / 1.586).isActive = true
         let cardTap = UITapGestureRecognizer(target: self, action: #selector(cardTapped))
         cardView.addGestureRecognizer(cardTap)
+        cardView.bearyAddRowPressFeedback()
         stack.addArrangedSubview(cardView)
         // Plus 身份预览开关（默认关；开只预览皇冠，不开通 Plus）。
         let plusRow = UIStackView()

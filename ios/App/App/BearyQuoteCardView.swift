@@ -372,6 +372,7 @@ final class BearyQuoteCardView: UIView {
         // F2：引用卡可点（此前 isUserInteractionEnabled=false 导致点按全被行导航吞掉）。
         isUserInteractionEnabled = true
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(quoteTapped(_:))))
+        bearyAddRowPressFeedback()
         sourceButton.addTarget(self, action: #selector(sourceTapped), for: .touchUpInside)
         expandButton.addTarget(self, action: #selector(expandTapped), for: .touchUpInside)
         backgroundColor = BearyColors.surface2
