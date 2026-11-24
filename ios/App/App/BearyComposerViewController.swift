@@ -7892,6 +7892,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    /// Y6：切语言换根前冲刷待保存草稿——与切后台同款路径（新建态 saveDraftNow／
+    /// 编辑态 saveEditCheckpointNow）。换根会同步释放编辑器，deinit 只作废 timer
+    /// 不落盘；必须在换根前调。写盘已入队 BearyDraftStore.ioQueue，调完即可换根，
+    /// 不必等回调。
+    func flushDraftBeforeLanguageChange() {
+        flushDraftBeforeBackground()
+    }
+
     /// 审计四轮 07：失活/入后台时立即冲刷一次未落盘的草稿——防抖 timer 只有
     /// 400ms，进程若在窗口内被终止，最后输入会丢。防抖本身不动，只在这里把
     /// 待触发的 timer 取消、直接调 saveDraftNow（已有串行队列＋原子写＋失败回传，
