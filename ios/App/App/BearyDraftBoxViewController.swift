@@ -2414,7 +2414,7 @@ private final class BearyDraftBoxDashedButton: BearyHit44Button {
         let halfLine = dashedLayer.lineWidth / 2
         dashedLayer.path = UIBezierPath(
             roundedRect: bounds.insetBy(dx: halfLine, dy: halfLine),
-            cornerRadius: 12 - halfLine
+            cornerRadius: BearyCorners.single - halfLine
         ).cgPath
     }
 
