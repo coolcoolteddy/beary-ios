@@ -5650,16 +5650,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// “自定义”组首格 ＋ 添加格：一次只传一张；9 张满（照片＋已插自定义图合计）或
-    /// 上传中时 toast 拦截；自定义 sheet 是已弹出的 VC，等它退场完再弹相册，
-    /// 否则 present 会撞上退场动画。相册不过滤 GIF（.images 全选，见 handleGIFPickerResults）。
+    /// “自定义”组首格 ＋ 添加格：一次只传一张；上传中时 toast 拦截；自定义
+    /// sheet 是已弹出的 VC，等它退场完再弹相册，否则 present 会撞上退场动画。
+    /// 表情不占 9 张照片名额（2026-11-20 Li 定），这里不查 9 张上限。
+    /// 相册不过滤 GIF（.images 全选，见 handleGIFPickerResults）。
     private func didTapUploadGIF() {
         if gifUploadInFlight {
             showToast(message: "图片正在上传")
-            return
-        }
-        if imageItems.count + referencedGifKeys().count >= Self.maxImages {
-            showToast(message: "最多 9 张图片")
             return
         }
         let presentPicker = { [weak self] in
@@ -5683,9 +5680,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// PHPicker 回调的自定义心情图片分流（picker 代理开头先判 gifPickerActive）：
     /// picker 自身先 dismiss（自定义 sheet 已在弹相册前退场）；空选/取消直接复位；
-    /// 只取第 1 个结果。GIF 走原始文件数据不转码（1MB 上限，见 finishGIFUpload）；
+    /// 只取第 1 个结果。GIF 上传前逐帧缩到表情尺寸（见 finishGIFUpload）；
     /// 其余图片取注册类型里第一个图片类型标识读原始文件（fetchOriginalFile 同款
-    /// 取法），解成 UIImage 后走照片口径（见 finishImageUpload）。
+    /// 取法），解成 UIImage 后走表情尺寸上传（见 finishImageUpload）。
     private func handleGIFPickerResults(picker: PHPickerViewController, results: [PHPickerResult]) {
         picker.dismiss(animated: BearyMotion.animated(true))
         defer { gifPickerActive = false }
@@ -5726,12 +5723,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// GIF 校验＋上传：原始字节直接传 data:image/gif;base64（不走 JPEG 转码）；
-    /// 本地先验 magic/宽高/帧数/1MB（超了直接 toast，不发请求）；服务端 413
+    /// GIF 校验＋上传：上传前逐帧缩放到表情尺寸（最长边 240px，动画保留，
+    /// 见 BearyGIF.resizedEmojiGIFData），不再原样传 1000px／1MB；
+    /// 本地先验 magic/宽高/帧数/1MB（超了直接 toast，不发请求）；缩放后
+    /// 仍超 1MB 时回落原数据（长动图极少数情况，不拒传）；服务端 413
     /// 'gif too large' 同样 toast「GIF 不能超过 1MB」；上传成功后记 key、
-    /// 插进光标处；库满时服务端仍回 key，GIF 照插、另 toast 提醒删库。
+    /// 插进光标处；库满时服务端仍回 key，GIF 照插、另 toast 提醒删库；
+    /// 去重命中（服务端 duplicate）时 toast「已经添加过了」，照插旧 key。
     /// 线程：1MB 字节上限先在主线程预检（只读 count，O(1)）；GIF 结构
-    /// 遍历、首帧解码、缩略图、两次 Base64 编码全在 imagePrepQueue（照片
+    /// 遍历、逐帧缩放、首帧解码、缩略图、两次 Base64 编码全在 imagePrepQueue（照片
     /// 预处理同款后台队列）上做，主线程只更新界面。旧实现在主线程先遍历
     /// GIF 结构再查 1MB、随后首帧解码＋缩略图＋编码，1MB GIF 会卡主线程一拍。
     private func finishGIFUpload(data: Data) {
@@ -5771,7 +5771,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 return
             }
-            guard let firstFrame = BearyGIF.firstFrameImage(data) else {
+            // 上传前压成小表情：逐帧缩放到最长边 240px（动画保留）；
+            // 缩放失败或压完仍超 1MB 时回落原数据（不拒传、不只传首帧）。
+            let resized = BearyGIF.resizedEmojiGIFData(data)
+            let payload: (data: Data, w: Int, h: Int)
+            if let r = resized, r.data.count <= BearyGIF.maxBytes {
+                payload = r
+            } else {
+                payload = (data, info.w, info.h)
+            }
+            guard let firstFrame = BearyGIF.firstFrameImage(payload.data) else {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     self.gifUploadInFlight = false
@@ -5780,11 +5789,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 return
             }
             let thumbData = BearyImagePrep.thumbData(firstFrame)
-            let dataUrl = "data:image/gif;base64,\(data.base64EncodedString())"
+            // 去重指纹：对压完后的文件算 SHA-256，服务端命中旧 key 时直接
+            // 回旧 key + duplicate，不再存一份（只表情路传，照片不传）。
+            let fingerprint = BearyGIF.sha256Hex(payload.data)
+            let dataUrl = "data:image/gif;base64,\(payload.data.base64EncodedString())"
             let thumbDataUrl = thumbData.map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: info.w, height: info.h, thumbDataUrl: thumbDataUrl) { [weak self] result in
+                BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: payload.w, height: payload.h, thumbDataUrl: thumbDataUrl, fingerprint: fingerprint) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.gifUploadInFlight = false
@@ -5800,6 +5812,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             }
                             if response.libraryFull == true {
                                 self.showToast(message: "表情库满了，先删掉一些再添加")
+                            }
+                            if response.duplicate == true {
+                                self.showToast(message: NSLocalizedString("composer.custom_emoji.already_added", comment: ""))
                             }
                             self.gifFirstFrames[rand] = firstFrame
                             // #49：回包只认发起那篇——切篇后回包仍进库（服务端 GIF
@@ -5821,12 +5836,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 常规图片上传（自定义心情的非 GIF 图）：照片口径——JPEG 转码
-    /// （最长边 1600、q0.92，与日记图片上传同款）、data:image/jpeg;base64、
-    /// 5MB 上限（服务端非 GIF 上限同值）；成功后显式调库接口进库（服务端
+    /// 常规图片上传（自定义心情的非 GIF 图）：表情尺寸——JPEG 转码
+    /// （最长边 240px、q0.85，见 BearyGIF.emojiMaxSide，不再用照片口径
+    /// 1600／0.92）、data:image/jpeg;base64、5MB 上限（服务端非 GIF
+    /// 上限同值；压完几乎不可能超）；成功后显式调库接口进库（服务端
     /// 只对 GIF 上传自动进库，部署前 add 会 400、静默忽略、不阻断插入）；
-    /// 失败 toast 用图片口径。线程口径与 finishGIFUpload 同款（编码在
-    /// imagePrepQueue，主线程只更新界面）。
+    /// 去重命中（服务端 duplicate）时 toast「已经添加过了」、不再调 add，
+    /// 照插旧 key。失败 toast 用图片口径。线程口径与 finishGIFUpload
+    /// 同款（编码在 imagePrepQueue，主线程只更新界面）。
     private func finishImageUpload(image: UIImage) {
         guard gifUploadInFlight == false else {
             showToast(message: "图片正在上传")
@@ -5842,7 +5859,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         gifUploadDraftId = currentDraftId
         imagePrepQueue.async { [weak self] in
             guard let self = self else { return }
-            guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.92),
+            guard let full = BearyImagePrep.jpegData(image, maxSide: BearyGIF.emojiMaxSide, quality: BearyGIF.emojiJPEGQuality),
                   let thumbData = BearyImagePrep.thumbData(image),
                   let firstFrame = UIImage(data: full.data) else {
                 DispatchQueue.main.async { [weak self] in
@@ -5861,11 +5878,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 return
             }
+            // 去重指纹：对压完后的 JPEG 文件算 SHA-256（只表情路传，照片不传）。
+            let fingerprint = BearyGIF.sha256Hex(full.data)
             let dataUrl = "data:image/jpeg;base64,\(full.data.base64EncodedString())"
             let thumbDataUrl = "data:image/jpeg;base64,\(thumbData.base64EncodedString())"
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: full.w, height: full.h, thumbDataUrl: thumbDataUrl) { [weak self] result in
+                BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: full.w, height: full.h, thumbDataUrl: thumbDataUrl, fingerprint: fingerprint) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.gifUploadInFlight = false
@@ -5879,9 +5898,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 self.showToast(message: "图片上传失败，请重试")
                                 return
                             }
-                            // 非 GIF 上传服务端不自动进库：显式调 add；部署前 400
-                            // 静默忽略——图照插进正文，只是不进自定义库。
-                            BearyGIFLibrary.add(key: key) { _ in }
+                            if response.duplicate == true {
+                                // 指纹已在库里：服务端直接回了旧 key，不再存一份；
+                                // 行已存在，不再调 add，toast 后照插旧 key。
+                                self.showToast(message: NSLocalizedString("composer.custom_emoji.already_added", comment: ""))
+                            } else {
+                                // 非 GIF 上传服务端不自动进库：显式调 add；部署前 400
+                                // 静默忽略——图照插进正文，只是不进自定义库。
+                                BearyGIFLibrary.add(key: key, fingerprint: fingerprint) { _ in }
+                            }
                             self.gifFirstFrames[rand] = firstFrame
                             // #49：回包只认发起那篇——切篇后回包仍进自定义库
                             // 与首帧缓存，只不插进当前篇正文。
@@ -5959,7 +5984,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 正文/标题里实际引用的 GIF key（按 inlineGifKeys 顺序过滤引用）：
-    /// 删掉 GIF 后 key 不再进 images，GC 可回收；9 张上限与发布都按此口径计。
+    /// 删掉 GIF 后 key 不再进 images，GC 可回收；发布 images 仍按此口径带，
+    /// 但 9 张上限只数照片、不数这里（2026-11-20 Li 定：表情不占照片名额）。
     private func referencedGifKeys() -> [String] {
         let text = headlineText + "\n" + committedContent()
         return inlineGifKeys.filter { key in
@@ -5968,9 +5994,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 9 张上限的剩余名额：普通图＋已引用的内联图合计（与发布口径 uploadedImageKeys 一致）。
+    /// 9 张上限的剩余名额：只数照片条（自定义表情不占名额，2026-11-20 Li 定）。
     private func remainingImageSlots() -> Int {
-        Self.maxImages - imageItems.count - referencedGifKeys().count
+        Self.maxImages - imageItems.count
     }
 
     private func createImageItem(localImage: UIImage?, key: String?, uploading: Bool, localFile: String?, failed: Bool) -> ComposerImageItem {
@@ -6539,8 +6565,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     @objc private func didTapAddImage() {
         // P2：9 图上限到达时不再完全静默，给 toast（不改按钮置灰口径）。
-        // GIF 也占 1 张：照片条＋已插 GIF 合计满 9 即拦（发布时服务端同口径）。
-        if imageItems.count + referencedGifKeys().count >= BearyComposerViewController.maxImages {
+        // 9 张只数照片条，自定义表情不占名额（2026-11-20 Li 定；发布时
+        // 服务端同口径，内联 [gif:] key 不进 9 张计数）。
+        if imageItems.count >= BearyComposerViewController.maxImages {
             showToast(message: "最多 9 张图片")
             return
         }
@@ -6564,7 +6591,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         picker.dismiss(animated: BearyMotion.animated(true))
         for result in results {
-            if imageItems.count + referencedGifKeys().count >= BearyComposerViewController.maxImages {
+            if imageItems.count >= BearyComposerViewController.maxImages {
                 break
             }
             let provider = result.itemProvider

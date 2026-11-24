@@ -1,5 +1,7 @@
 import UIKit
 import ImageIO
+import CryptoKit
+import UniformTypeIdentifiers
 
 // ===== 用户自传 GIF：内联图片记号 [gif:<rand>] =====
 // 正文/标题里的自定义心情图只存记号（rand = 服务端 image key 里的随机部分，
@@ -40,6 +42,20 @@ enum BearyGIF {
         let image: UIImage
         let loopCount: Int?
         let duration: TimeInterval
+    }
+
+    /// 自定义表情上传尺寸（微信表情包模式，2026-11-20 Li 定）：
+    /// 最长边 240px（2x 下约 120pt 显示，够锐利又够小）；静态图 JPEG q0.85。
+    /// 240px 的 GIF 压完通常几十到几百 KB，远小于旧的 1MB／1000px 原样上传。
+    static let emojiMaxSide: CGFloat = 240
+    static let emojiJPEGQuality: CGFloat = 0.85
+
+    /// 压完文件的 SHA-256 指纹（hex 小写）：上传去重用——同一张表情传两次
+    /// 是同一个指纹，服务端直接回原来那个 key、不再存一份。只对压完后的
+    /// 文件算（GIF 是缩放后的字节、静态图是 JPEG 转码后的字节）。
+    static func sha256Hex(_ data: Data) -> String {
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     static func isGIFData(_ data: Data) -> Bool {
@@ -186,6 +202,118 @@ enum BearyGIF {
         format.scale = 1
         let renderer = UIGraphicsImageRenderer(size: target, format: format)
         return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
+    }
+
+    /// GIF 帧版式（逐帧缩放合成用）：每帧在逻辑屏里的矩形 + 该帧播完后的
+    /// disposal（0 未指定／1 保留／2 清掉本帧矩形／3 恢复到本帧绘制前）。
+    /// 与 info() 同款块结构走法（图形控制扩展的 packed 在 0x21 0xF9 后
+    /// 第 3 字节，disposal 占 bit 2-4）；结构非法返回 nil。
+    private static func gifFrameLayouts(_ data: Data) -> [(left: Int, top: Int, w: Int, h: Int, disposal: Int)]? {
+        guard isGIFData(data), data.count >= 13 else { return nil }
+        let packed = data[10]
+        var off = 13
+        if packed & 0x80 != 0 { off += 3 * (1 << ((Int(packed) & 0x07) + 1)) }
+        var frames: [(left: Int, top: Int, w: Int, h: Int, disposal: Int)] = []
+        var disposal = 0
+        while off < data.count {
+            let b = data[off]
+            if b == 0x3B { break }
+            if b == 0x2C {
+                guard off + 10 <= data.count else { return nil }
+                let left = Int(data[off + 1]) | (Int(data[off + 2]) << 8)
+                let top = Int(data[off + 3]) | (Int(data[off + 4]) << 8)
+                let w = Int(data[off + 5]) | (Int(data[off + 6]) << 8)
+                let h = Int(data[off + 7]) | (Int(data[off + 8]) << 8)
+                frames.append((left, top, w, h, disposal))
+                disposal = 0
+                let ipacked = data[off + 9]
+                off += 10
+                if ipacked & 0x80 != 0 { off += 3 * (1 << ((Int(ipacked) & 0x07) + 1)) }
+                off += 1
+                while off < data.count {
+                    let n = Int(data[off])
+                    off += 1 + n
+                    if n == 0 { break }
+                }
+            } else if b == 0x21 {
+                guard off + 7 < data.count else { return nil }
+                if data[off + 1] == 0xF9 {
+                    disposal = (Int(data[off + 3]) >> 2) & 0x07
+                }
+                off += 2
+                while off < data.count {
+                    let n = Int(data[off])
+                    off += 1 + n
+                    if n == 0 { break }
+                }
+            } else {
+                return nil
+            }
+        }
+        return frames.isEmpty ? nil : frames
+    }
+
+    /// 把 GIF 逐帧缩放到表情尺寸（最长边 emojiMaxSide），保住动画：
+    /// 每帧按逻辑屏尺寸缩放合成到位移帧与 disposal 都正确的位置，
+    /// 延时与循环次数原样保留。已够小（最长边 ≤240）时原样返回；
+    /// 结构异常或写出失败返回 nil（调用方回落原数据上传，不静默丢帧、
+    /// 不改成只传首帧静态图）。位移帧与 disposal 全按规范处理，
+    /// 不是只缩每帧原图——位移帧直接缩放会错位。
+    static func resizedEmojiGIFData(_ data: Data) -> (data: Data, w: Int, h: Int)? {
+        guard let info = info(data), info.w > 0, info.h > 0, info.frames > 0,
+              let layouts = gifFrameLayouts(data),
+              let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let sourceCount = CGImageSourceGetCount(source)
+        guard sourceCount > 0, layouts.count == sourceCount else { return nil }
+        let longest = max(info.w, info.h)
+        guard CGFloat(longest) > emojiMaxSide else { return (data, info.w, info.h) }
+        let scale = emojiMaxSide / CGFloat(longest)
+        let targetW = max(1, Int(round(CGFloat(info.w) * scale)))
+        let targetH = max(1, Int(round(CGFloat(info.h) * scale)))
+        guard let canvas = CGContext(data: nil, width: targetW, height: targetH, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        // 翻成左上原点，与 GIF 描述符坐标一致（帧矩形直接按左上算）。
+        canvas.translateBy(x: 0, y: CGFloat(targetH))
+        canvas.scaleBy(x: 1, y: -1)
+        let fullRect = CGRect(x: 0, y: 0, width: targetW, height: targetH)
+        // 循环次数：顶层 GIF 字典的 LoopCount，缺省为 0（无限循环，GIF 默认）。
+        var loopCount = 0
+        if let topProps = CGImageSourceCopyProperties(source, nil) as? [CFString: Any],
+           let gifProps = topProps[kCGImagePropertyGIFDictionary] as? [CFString: Any],
+           let loop = gifProps[kCGImagePropertyGIFLoopCount] as? Int {
+            loopCount = loop
+        }
+        let outData = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(outData, UTType.gif.identifier as CFString, sourceCount, nil) else { return nil }
+        CGImageDestinationSetProperties(dest, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: loopCount]] as CFDictionary)
+        var restoreSnapshot: CGImage?
+        for i in 0..<sourceCount {
+            let layout = layouts[i]
+            // 上一帧的 disposal 在本帧绘制前生效：2=清掉上一帧矩形，
+            // 3=恢复到上一帧绘制前的画面（disposal 1/0=保留画布不动）。
+            if i > 0 {
+                let prev = layouts[i - 1]
+                if prev.disposal == 2 {
+                    let prevRect = CGRect(x: CGFloat(prev.left) * scale, y: CGFloat(prev.top) * scale, width: CGFloat(prev.w) * scale, height: CGFloat(prev.h) * scale)
+                    canvas.clear(prevRect)
+                } else if prev.disposal == 3, let snap = restoreSnapshot {
+                    canvas.clear(fullRect)
+                    canvas.draw(snap, in: fullRect)
+                }
+            }
+            // disposal 3 的帧：画之前先存快照，播完后靠它恢复。
+            if layout.disposal == 3 {
+                restoreSnapshot = canvas.makeImage()
+            }
+            guard let raw = CGImageSourceCreateImageAtIndex(source, i, nil) else { return nil }
+            let rect = CGRect(x: CGFloat(layout.left) * scale, y: CGFloat(layout.top) * scale, width: CGFloat(layout.w) * scale, height: CGFloat(layout.h) * scale)
+            canvas.draw(raw, in: rect)
+            guard let snap = canvas.makeImage() else { return nil }
+            let delay = delayForFrame(source: source, index: i)
+            let frameProps = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay]] as CFDictionary
+            CGImageDestinationAddImage(dest, snap, frameProps)
+        }
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return (outData as Data, targetW, targetH)
     }
 
     /// 自定义心情图片后缀（GIF 与常规图；与服务端 imageKey 允许的扩展一致，
