@@ -49,8 +49,8 @@ final class BearySubpageLayoutGuard {
               frameOff ? "Y" : "N", transformOff ? "Y" : "N", topOff ? "Y" : "N", topHeightOff ? "Y" : "N",
               contentFrames, presentation ?? "nil")
         guard frameOff || transformOff || topOff else { return false }
-        if frameOff { view.frame = bounds }
         if transformOff { view.transform = .identity }
+        if frameOff { view.frame = bounds }
         view.setNeedsLayout()
         view.layoutIfNeeded()
         NSLog("[Diag] subpage-layout-reset page=%@", page)
