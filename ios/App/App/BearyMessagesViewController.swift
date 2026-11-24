@@ -140,7 +140,7 @@ final class BearyMessagesViewController: UIViewController {
         // 图标与标题对齐：标题 21 bold 顶沿 +18、视觉中心约在顶栏 +30.5，
         // 顶栏中心 +22，图标下移 8.5 与标题同高；按钮本身仍 44×44 锚在
         // 顶栏中央（触区不变、不探出顶栏压列表首行），只动图标位置。
-        userListButton.imageEdgeInsets = UIEdgeInsets(top: 8.5, left: 0, bottom: -8.5, right: 0)
+        userListButton.imageEdgeInsets = UIEdgeInsets(top: BearySpace.sm, left: 0, bottom: -BearySpace.sm, right: 0)
         topBar.addSubview(userListButton)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
