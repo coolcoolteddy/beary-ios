@@ -1162,18 +1162,6 @@ class BearyProfileViewController: UIViewController {
         return imageViewValue
     }()
 
-    /// 邮箱行：1:1 复刻后本人主页也不显示（网页个人主页无邮箱行）；
-    /// 视图保留仅作统计行约束锚点，applyEmailRow 恒隐藏（见该方法）。
-    private let emailLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.secondaryFont()
-        labelValue.adjustsFontForContentSizeCategory = true
-        labelValue.textColor = BearyColors.gray
-        labelValue.isHidden = true
-        return labelValue
-    }()
-
     private let publicCountLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -2178,10 +2166,6 @@ class BearyProfileViewController: UIViewController {
     private var isModalTopBar = false
     private lazy var headerShareToGearConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8)
     private lazy var headerShareToHeaderConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16)
-    /// 统计行顶约束二选一（邮箱行已按 1:1 移除，withEmail 恒不激活、
-    /// 仅保留作锚点；有 handle 时统计行贴 handle 下 12（#1252 改 12）；
-    /// 无 handle 且有加入日期时贴日期行下 12，见 applyEmailRow）。
-    private lazy var statsTopWithEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: emailLabel.bottomAnchor, constant: 12)
     private lazy var statsTopWithoutEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: handleLabel.bottomAnchor, constant: 12)
     private lazy var tableLeadingConstraint: NSLayoutConstraint = tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
     private lazy var tableTrailingConstraint: NSLayoutConstraint = tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
@@ -3011,7 +2995,6 @@ class BearyProfileViewController: UIViewController {
         handleLabel.transform = fullShift
         joinedIconView.transform = fullShift
         joinedLabel.transform = fullShift
-        emailLabel.transform = fullShift
         // 标签跟移（见函数头注释）；模块容器已搬到脚部（表格行下方），滚动位移不跟移（见上）。
         modulesContainer.transform = .identity
         // 统一位移（2026-11-01 真机报 tab→首卡、墙→tab 间距随滑动呼吸的根治）：
@@ -3195,7 +3178,6 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(handleLabel)
         headerView.addSubview(joinedIconView)
         headerView.addSubview(joinedLabel)
-        headerView.addSubview(emailLabel)
         headerView.addSubview(publicCountLabel)
         headerView.addSubview(signatureContainer)
         signatureContainer.addSubview(signatureLabel)
@@ -3323,10 +3305,6 @@ class BearyProfileViewController: UIViewController {
             // F18：图标与加入时间 gap 4 → 5（网页 pf-meta gap:5px）。
             joinedLabel.leadingAnchor.constraint(equalTo: joinedIconView.trailingAnchor, constant: 5),
             joinedLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16),
-
-            emailLabel.topAnchor.constraint(equalTo: handleLabel.bottomAnchor, constant: 8),
-            emailLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
-            emailLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16),
 
             statsTopWithoutEmailConstraint,
             publicCountLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
@@ -4267,9 +4245,6 @@ class BearyProfileViewController: UIViewController {
     /// 邮箱行：1:1 复刻后本人主页也不显示邮箱行（网页个人主页无邮箱行），
     /// 他人同样不显示。统计行恒贴 handle 下 13，不再被邮箱行下推。
     private func applyEmailRow() {
-        emailLabel.text = nil
-        emailLabel.isHidden = true
-        statsTopWithEmailConstraint.isActive = false
         // 第 6 轮第 8 项：无 handle 且有加入日期时，统计行贴日期行下 12，
         // 不再贴已塌掉的 handle 行下 12；其余情况仍贴 handle 下 12。
         if handleLabel.isHidden && !joinedLabel.isHidden {

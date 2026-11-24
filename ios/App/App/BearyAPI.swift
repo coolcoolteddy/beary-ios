@@ -254,16 +254,6 @@ struct EntryList: Decodable {
     var recentPublished: [Entry]?
 }
 
-/// B 方案公开/取消响应：服务端 POST /publish 与 /publish/cancel 均返回
-/// {ok, publish_pending_until, published}（published 为 0/1 数字；取消成功时 publish_pending_until 为 null）。
-/// 旧公开/取消响应（iCity：调用方改走 setVisibility 的 VisibilityResponse；本结构仅保留解码兼容）。
-struct PublishResponse: Decodable {
-    var ok: Bool?
-    var publishPendingUntil: Int?
-    var published: Int?
-    var publishedAt: Int?
-}
-
 /// iCity 可见性切换响应：POST /beary/api/entries/:id/visibility → {published, published_at}。
 struct VisibilityResponse: Decodable {
     var ok: Bool?
@@ -1765,21 +1755,6 @@ final class BearyAPI {
         }
     }
 
-    // MARK: - B 方案公开 / 取消（网页 doPublish / doPublishCancel 同款端点，见 teddy_beary/worker.js）
-
-    /// 旧公开端点（iCity 已废弃：调用方改走 setVisibility；仅保留，调用点已全部迁移）。
-    /// 服务端兼容语义改为立即公开，但 App 不再使用。
-    func requestPublish(id: String, completion: @escaping (Result<PublishResponse, APIError>) -> Void) {
-        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        request("/beary/api/entries/\(safe)/publish", method: "POST", completion: completion)
-    }
-
-    /// 旧取消公开端点（iCity 已废弃：调用方改走 setVisibility 显式目标态；仅保留，调用点已全部迁移）。
-    func cancelPublish(id: String, completion: @escaping (Result<PublishResponse, APIError>) -> Void) {
-        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        request("/beary/api/entries/\(safe)/publish/cancel", method: "POST", completion: completion)
-    }
-
     // MARK: - iCity 可见性切换 / 举报 / 拉黑 / 行为事件
 
     /// 可见性切换：POST /beary/api/entries/:id/visibility {published: 0|1}（显式目标态，禁 toggle）。
@@ -1869,16 +1844,6 @@ final class BearyAPI {
     /// 互关好友：GET /beary/api/friends/list（两个方向都有行）。
     func fetchFriends(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
         request("/beary/api/friends/list", completion: completion)
-    }
-
-    /// 我关注的人：GET /beary/api/friends/following。
-    func fetchFollowing(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
-        request("/beary/api/friends/following", completion: completion)
-    }
-
-    /// 关注我的人：GET /beary/api/friends/followers。
-    func fetchFollowers(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
-        request("/beary/api/friends/followers", completion: completion)
     }
 
     /// B2：同会话在途去重——主页、通知卡等各处同时查同一人时只发一条
@@ -2257,13 +2222,6 @@ final class BearyAPI {
         if let before = before, !before.isEmpty { q["before"] = before }
         if let beforeId = beforeId, !beforeId.isEmpty { q["before_id"] = beforeId }
         request("/beary/api/trash", query: q, completion: completion)
-    }
-
-    /// 恢复（旧无回包版；回收站页改走 restoreTrashDetail 按原可见性分流 toast）。
-    /// 服务端按 trash 原值写回 published + published_at（旧行按私密 + NULL 恢复）。
-    func restoreTrash(id: String, completion: @escaping (Result<Void, APIError>) -> Void) {
-        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        requestVoid("/beary/api/trash/\(safe)/restore", method: "POST", completion: completion)
     }
 
     /// 彻底删除：DELETE /beary/api/trash/:id（不可恢复；过期或已变化返回 409）。
