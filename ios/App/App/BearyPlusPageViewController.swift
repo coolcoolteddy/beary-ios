@@ -709,6 +709,12 @@ final class BearyPlusPageViewController: UIViewController {
     }
 
     @objc private func inviteButtonTapped() {
+        // 远程开关（2026-11-19）：invite 关掉时不进邀请页，点按只 toast、不跳转；
+        // 另一入口（顶栏礼物钮／首页邀请提示）在 SceneDelegate.presentInvite 同款关。
+        if BearyForceUpdateCenter.shared.isFeatureDisabled(.invite) {
+            BearyToast.show(in: view, message: NSLocalizedString("common.feature_maintenance", comment: ""))
+            return
+        }
         // 邀请页是容器负责关闭的 sheet 页：此处按 SceneDelegate.presentInvite 同款
         // 转场自己当容器（宽屏居中弹窗、窄屏底 sheet，点遮罩走 onClose 关闭）。
         // 本页三个入口均为已登录语境，onRequireLogin 仅作兜底（关邀请页、不弹登录门）。

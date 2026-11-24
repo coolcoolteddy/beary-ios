@@ -10409,6 +10409,11 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     /// 时 toast，不进空星空。112 起仅本人页可进（他人页入口行已去除，
     /// 函数内亦有门控）。
     @objc private func openStarMap() {
+        // 远程开关（2026-11-19）：starmap 关掉时入口仍可见，点按只 toast、不跳转。
+        if BearyForceUpdateCenter.shared.isFeatureDisabled(.starmap) {
+            BearyToast.show(in: view, message: NSLocalizedString("common.feature_maintenance", comment: ""))
+            return
+        }
         // 112 他人页口径：星图入口行已从他人页脚部去除，此处再守一道，
         // 他人页不进星图页；本人页原样。
         guard isOwnProfile else { return }

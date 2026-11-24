@@ -3571,6 +3571,11 @@ final class BearySettingsViewController: UIViewController {
 
     /// 补缺第 21 项：功能许愿墙列表页（反馈页同款全屏 modal + fadeRise）。
     @objc private func openWishWallPage() {
+        // 远程开关（2026-11-19）：wishwall 关掉时入口仍可见，点按只 toast、不跳转。
+        if BearyForceUpdateCenter.shared.isFeatureDisabled(.wishwall) {
+            showToast(NSLocalizedString("common.feature_maintenance", comment: ""))
+            return
+        }
         let vc = BearyWishWallViewController()
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
