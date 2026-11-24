@@ -2321,6 +2321,8 @@ final class BearyChromeViewController: UIViewController {
             navigator.open(.entry(entryId))
         case .pastDay:
             navigator.open(.profile)
+        case .dmConversations:
+            showPage(.messages)
         }
     }
 

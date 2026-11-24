@@ -6,9 +6,10 @@ import UserNotifications
 /// 根因：此前 BGAppRefreshTask / BGTaskScheduler 全仓 0 命中，根本没注册，
 /// 系统从不会在后台唤醒 App 刷新；本地通知那半是活的
 /// （BearyLocalNotifications），死的是后台刷新那半。
-/// 一轮只做三件小事：拉广场首屏（12 篇，与前台首拉同口径）→ 写回广场
+/// 一轮只做四件小事：拉广场首屏（12 篇，与前台首拉同口径）→ 写回广场
 /// 快照（回前台秒显新内容）→ 头条比快照新且不是自己的篇时，经本地
-/// 通知提醒一次；最后重算已有四种本地提醒（refreshAll）。
+/// 通知提醒一次；再拉一次私信会话列表（未读比快照基线多才提醒一条）→
+/// 最后重算已有本地提醒（refreshAll）。
 /// 不碰 sceneDidBecomeActive 的通知逻辑；不碰 SceneDelegate 里
 /// UIBackgroundTaskIdentifier 的退后台草稿补存（短时任务，不是 BG 任务）。
 enum BearyBackgroundRefresh {
@@ -91,8 +92,8 @@ enum BearyBackgroundRefresh {
         }
     }
 
-    /// 拉广场首屏 → 写回快照 → 有新头条则提醒 → 重算四种本地提醒。
-    /// 回包线程不固定，收尾一律回主线程。
+    /// 拉广场首屏 → 写回快照 → 有新头条则提醒 → 拉私信会话（未读多才提醒）
+    /// → 重算本地提醒。回包线程不固定，收尾一律回主线程。
     /// isCancelled 由 handle 的超时方（系统过期回调或 25 秒看门狗）置位；
     /// 置位后本轮不再发新请求，晚到回包在每处副作用前复核，只收尾。
     private static func runOnce(isCancelled: @escaping () -> Bool, completion: @escaping (Bool) -> Void) {
@@ -133,13 +134,16 @@ enum BearyBackgroundRefresh {
                     switch result {
                     case .failure:
                         // 提醒重算独立于广场请求结果：失败时也要按最新本地数据
-                        // 重算已有四种本地提醒（第 25 轮 53）；取消态不做副作用。
+                        // 重算已有本地提醒（第 25 轮 53）；取消态不做副作用。
+                        // 私信拉取同样独立于广场结果：失败支也跑，成败不翻转本轮结果。
                         guard !isCancelled() else {
                             completion(false)
                             return
                         }
                         BearyLocalNotifications.shared.refreshAll(force: true)
-                        completion(false)
+                        refreshDMs(
+                            requestAccountId: requestAccountId, requestEpoch: requestEpoch,
+                            isCancelled: isCancelled, plazaSuccess: false, completion: completion)
                     case .success(let list):
                         // 检查点 2（写盘前）：请求在途期间切号 → 回包属于旧会话，
                         // 不得写进旧桶、不得按旧账号判“自己的篇”、不得重算提醒。
@@ -164,8 +168,8 @@ enum BearyBackgroundRefresh {
                         // （首次后台跑）只记不提醒，不把旧内容当新内容推。
                         if let latest = fresh.first, let seen = seenHead, isNewer(latest, than: seen) {
                             // 自己的新篇不提醒（刚发布完就弹“广场有新日记”是噪音）。
-                            // 第 25 轮 59：广场新提醒纳入现有四类开关——任一类开着才发，
-                            // 四类全关即停；不新增开关。说明见设置页通知组末行。
+                            // 第 25 轮 59：广场新提醒纳入现有五类开关——任一类开着才发，
+                            // 五类全关即停；不新增开关。说明见设置页通知组末行。
                             if latest.authorId != requestAccountId,
                                BearyLocalNotifications.Kind.allCases.contains(where: { BearyLocalNotifications.shared.isEnabled($0) }) {
                                 guard !isCancelled() else {
@@ -175,15 +179,139 @@ enum BearyBackgroundRefresh {
                                 postPlazaNewNotification()
                             }
                         }
-                        // 联动：按最新本地数据重算已有四种本地提醒。
+                        // 联动：按最新本地数据重算已有本地提醒。
                         guard !isCancelled() else {
                             completion(false)
                             return
                         }
                         BearyLocalNotifications.shared.refreshAll(force: true)
-                        completion(true)
+                        refreshDMs(
+                            requestAccountId: requestAccountId, requestEpoch: requestEpoch,
+                            isCancelled: isCancelled, plazaSuccess: true, completion: completion)
                     }
                 }
+            }
+        }
+    }
+
+    /// 后台拉私信（与广场拉取串行，共用同一轮 25 秒看门狗；两个都只是
+    /// 一次小 GET，预算内跑得完；超时方置取消态后本方法各处只收尾）。
+    /// 读会话快照记未读基线 → 拉服务端会话列表 → 与本地会话合并
+    /// （仅本地有的对方保留，与前台 load() 同口径，拉黑过滤同款）→ 写回
+    /// 快照（回前台进私信页先显新会话）→ 未读总数比基线多、且私信未读
+    /// 开关开着时发一条提醒。无快照基线（首次后台跑）只记不提醒，不把
+    /// 旧未读当新私信推（与广场新提醒同口径）。
+    /// 会话列表接口不下发单条消息，故不碰 BearyDMStore 的消息库——消息
+    /// 内容仍由前台进会话页时拉 history；本轮只刷新会话列表与未读数。
+    /// 私信失败不翻转本轮结果（广场已定）；切号后到达的旧回包直接丢弃。
+    private static func refreshDMs(
+        requestAccountId: Int?, requestEpoch: Int,
+        isCancelled: @escaping () -> Bool,
+        plazaSuccess: Bool, completion: @escaping (Bool) -> Void
+    ) {
+        guard let accountId = requestAccountId, SessionManager.shared.isLoggedIn else {
+            completion(plazaSuccess)
+            return
+        }
+        let bucket = "\(accountId)"
+        BearyDMConversationsCache.load(bucket: bucket) { snapshot in
+            guard !isCancelled() else {
+                completion(false)
+                return
+            }
+            // 检查点（发请求前）：读盘期间切号 → 之后发出的请求会用新会话，
+            // 回包却仍写旧桶；直接放弃，不发请求。
+            guard !BearyAPI.isStaleAccountLoad(
+                requestAccountId: requestAccountId, requestEpoch: requestEpoch,
+                currentAccountId: SessionManager.shared.currentUser?.id,
+                currentEpoch: BearyAPI.shared.authEpoch) else {
+                completion(true)
+                return
+            }
+            let hasBaseline = snapshot != nil
+            let beforeUnread = (snapshot?.conversations ?? []).reduce(0) { $0 + ($1.unreadCount ?? 0) }
+            // 超时后不再发新的网络请求。
+            guard !isCancelled() else {
+                completion(false)
+                return
+            }
+            BearyAPI.shared.fetchDMConversations { result in
+                DispatchQueue.main.async {
+                    // 超时后晚到的回包：不做任何副作用，只收尾。
+                    guard !isCancelled() else {
+                        completion(false)
+                        return
+                    }
+                    // 检查点（合并前）：请求在途期间切号 → 回包属于旧会话，
+                    // 不得写进旧桶、不得按旧账号判拉黑、不得发提醒。
+                    guard !BearyAPI.isStaleAccountLoad(
+                        requestAccountId: requestAccountId, requestEpoch: requestEpoch,
+                        currentAccountId: SessionManager.shared.currentUser?.id,
+                        currentEpoch: BearyAPI.shared.authEpoch) else {
+                        completion(true)
+                        return
+                    }
+                    switch result {
+                    case .failure:
+                        completion(plazaSuccess)
+                    case .success(let list):
+                        // 拉黑过滤与前台同口径：只在传入账号就是当前账号时才给闭包。
+                        let isBlocked: ((Int) -> Bool)? = accountId == SessionManager.shared.currentUser?.id
+                            ? { BearyBlockedStore.isBlocked($0) } : nil
+                        BearyDMStore.mergedConversations(
+                            server: list.resolvedConversations,
+                            accountId: accountId,
+                            isBlocked: isBlocked) { merged in
+                            // 合并是异步的：完成时再验一次账号/代次——切号夹在
+                            // 网络回包与合并完成之间时，旧结果不得写进新号快照。
+                            guard !isCancelled() else {
+                                completion(false)
+                                return
+                            }
+                            guard !BearyAPI.isStaleAccountLoad(
+                                requestAccountId: requestAccountId, requestEpoch: requestEpoch,
+                                currentAccountId: SessionManager.shared.currentUser?.id,
+                                currentEpoch: BearyAPI.shared.authEpoch) else {
+                                completion(true)
+                                return
+                            }
+                            BearyDMConversationsCache.save(bucket: bucket, conversations: merged)
+                            let afterUnread = merged.reduce(0) { $0 + ($1.unreadCount ?? 0) }
+                            if hasBaseline, afterUnread > beforeUnread,
+                               BearyLocalNotifications.shared.isEnabled(.dmUnread) {
+                                guard !isCancelled() else {
+                                    completion(false)
+                                    return
+                                }
+                                postDMUnreadNotification(accountId: accountId)
+                            }
+                            completion(plazaSuccess)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 私信未读提醒一条（1 秒后触发，不走重算、不改排程；与
+    /// postPlazaNewNotification 同款投递方式）。未授权时系统静默丢弃，
+    /// 不报错。点按落点见 BearyLocalNotifications 的 dmConversations。
+    private static func postDMUnreadNotification(accountId: Int) {
+        let content = UNMutableNotificationContent()
+        content.body = NSLocalizedString("local_notifications.dm_unread.body", comment: "")
+        content.sound = .default
+        content.userInfo = [
+            "kind": BearyLocalNotifications.Kind.dmUnread.rawValue,
+            "accountId": accountId,
+        ]
+        let request = UNNotificationRequest(
+            identifier: BearyLocalNotifications.dmUnreadIdentifier,
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                NSLog("[BearyBackgroundRefresh] dm-unread notification failed: %@", error.localizedDescription)
             }
         }
     }
