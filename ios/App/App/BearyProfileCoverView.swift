@@ -517,12 +517,18 @@ public final class ProfileCoverView: UIView {
                    center: CGPoint(x: padded.midX + structureX, y: padded.midY),
                    width: padded.width, height: padded.height, angle: 0, alpha: egg * (0.35 + 0.45 * motion), layered: true)
         }
-        // 两只喜鹊中心（帧坐标）：大喜鹊 (545.5, 263)，小喜鹊 (883, 57.5)；
-        // 桥心取两者中点 (714.25, 160.25)；靠拢走 55% 的路、留翼尖相触的距离，
+        // 两只喜鹊中心（帧坐标）：大喜鹊 (390.5, 263)，小喜鹊 (728, 57.5)；
+        // 桥心取两者中点 (559.25, 160.25)；靠拢走 55% 的路、留翼尖相触的距离，
         // 不叠在一起；再各加一条 sin 弧线（约 10px），轨迹是短弧线、像滑翔。
-        let meet = CGPoint(x: 714.25, y: 160.25)
-        let bigCenter = CGPoint(x: 545.5, y: 263)
-        let smallCenter = CGPoint(x: 883, y: 57.5)
+        // D-1：iPhone 个人页可见帧窗右缘 830，小喜鹊身体层帧 x[813,953] 静止
+        // 仅 12% 可见——双鹊整体左移 155 帧 px（身体层 → [658,798]，满幅右倾
+        // 到 822，仍在窗内；大喜鹊 → [331,457]；相会点跟着走，仍在金带上）。
+        // 纵向不移：双鹊纵跨 y[10,318] 比窗高 293 只多约 15，仅翼尖／尾尖
+        // 约 5–10 帧 px 微裁，平移修不了，留作已知残留。
+        let magpieShiftX: CGFloat = -155
+        let meet = CGPoint(x: 714.25 + magpieShiftX, y: 160.25)
+        let bigCenter = CGPoint(x: 545.5 + magpieShiftX, y: 263)
+        let smallCenter = CGPoint(x: 883 + magpieShiftX, y: 57.5)
         let arc = sin(.pi * converge) * 10
         let bigFrame = CGPoint(
             x: converge * 0.55 * (meet.x - bigCenter.x) + arc * 0.520,
@@ -553,7 +559,7 @@ public final class ProfileCoverView: UIView {
         }
         // 未触发时整张喜鹊：PNG 左上角对帧坐标 (483, 7)、473×313。
         bitmap("qixi-magpie", in: ctx,
-               center: CGPoint(x: -32 + (483 + 473 / 2) * scaleX + subjectX,
+               center: CGPoint(x: -32 + (483 + 473 / 2) * scaleX + subjectX + magpieShiftX * scaleX,
                                y: -12 + (7 + 313 / 2) * scaleY + vertical),
                width: 473 * scaleX, height: 313 * scaleY, angle: 0, alpha: 1 - split, layered: true)
     }
@@ -587,8 +593,9 @@ public final class ProfileCoverView: UIView {
     /// 三层视差已 baked 进帧——远层帧移 1(f−6) px（±6）、中层 2(f−6) px
     /// （±12）、近层 3(f−6) px（±18），窗框在底图里全程静止。
     /// 彩蛋一张是与第 7 帧对齐的整帧透明层：7 颗金色四角星（(843,49) 在右上
-    /// 大金烟花里，另 6 颗 (150,62)、(320,108)、(430,48)、(600,38)、
-    /// (250,212)、(950,192) 布满天空），跟远层走。
+    /// 大金烟花里，另 6 颗 (230,62)、(320,108)、(430,48)、(600,38)、
+    /// (250,212)、(790,192) 布满天空），跟远层走。D-2：(150,62) 与 (950,192)
+    /// 两颗出屏，已在 newyear-egg-burst.png 里分别移到 (230,62) 与 (790,192)。
     /// 坐标全按帧坐标（1024×323）算、再乘 padded 的拉伸比换到画布坐标，与 canvasRectToView 同一套映射。
     /// App 侧动态层跟图集同速：彩蛋跟远层，帧移 1(f−6) px 即 6*depth
     /// （depth ∈ [−1, 1]，f = (depth+1)*6）。
@@ -611,8 +618,9 @@ public final class ProfileCoverView: UIView {
     /// 三层位移（第 1→13 帧全程）：远 24／中 36／前景 60；帧 f=(depth+1)*6，
     /// 中层帧内位移 3(f−6) px 即 18*depth——彩蛋与金蛋都跟中层走（±18px）。
     /// 动态彩蛋（easter-painted-egg.png，512×560）：画在开阔草地上、兔子左侧，
-    /// 中心帧坐标 (380, 269)、宽 90，底边贴草地（y≈318）；交付里只说“落在草地上”、
-    /// 没给位置，这个点是我定的，想挪直接改这两个数。金蛋：倾斜保持 0.45 秒后
+    /// 中心帧坐标 (412, 269)、宽 90，底边贴草地（y≈318）；交付里只说“落在草地上”、
+    /// 没给位置，这个点是我定的，想挪直接改这两个数。D-4：原中心 (380, 269) 左下角
+    /// 碰头像遮挡区，右移 32 帧 px。金蛋：倾斜保持 0.45 秒后
     /// 随 egg 淡入（触发走共享 step 逻辑，与圣诞同款；每次进页 restartVisit 可再触发）。
     private func drawEaster(_ ctx: CGContext, depth: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
@@ -621,16 +629,21 @@ public final class ProfileCoverView: UIView {
         // 即 18*depth）；彩蛋与金蛋都按它平移才贴得住草地。
         let middleX = 18 * depth * scaleX
         // 金蛋：兔子右侧草丛，整帧透明层与第 7 帧对齐（金蛋 bbox x801–851、y240–281）。
+        // D-3：iPhone 可见帧窗右缘 830，金蛋静止仅 58% 可见——整层左移 60 帧 px
+        // （→ [741,791]，满幅倾斜也在窗内；图层除金蛋外全透明，整层平移无影响）。
         if egg > 0.001 {
             bitmap("easter-golden-egg", in: ctx,
-                   center: CGPoint(x: padded.midX + middleX, y: padded.midY),
+                   center: CGPoint(x: padded.midX + middleX - 60 * scaleX, y: padded.midY),
                    width: padded.width, height: padded.height, angle: 0, alpha: egg, layered: true)
         }
-        // 动态彩蛋：PNG 512×560，宽 90、高 90*560/512；中心帧坐标 (380, 269)。
+        // 动态彩蛋：PNG 512×560，宽 90、高 90*560/512；中心帧坐标 (412, 269)。
+        // D-4：原中心 (380, 269) 左下角碰头像遮挡区（满幅左倾时左缘到帧 344，
+        // 头像右缘 357）——中心右移 32 帧 px，满幅左倾左缘到约 365，刚出头像区；
+        // 右缘仍远离兔子（兔子左缘约 600）。
         let eggWidth: CGFloat = 90
         let eggHeight = eggWidth * 560 / 512
         bitmap("easter-painted-egg", in: ctx,
-               center: CGPoint(x: -32 + 380 * scaleX + middleX,
+               center: CGPoint(x: -32 + 412 * scaleX + middleX,
                                y: -12 + 269 * scaleY + vertical),
                width: eggWidth, height: eggHeight, angle: 0, alpha: 1, layered: true)
     }
@@ -642,8 +655,9 @@ public final class ProfileCoverView: UIView {
     /// (T/2)*depth——花灯浮在水面跟中层走（±18px），光效近景片跟近景（±24px）、
     /// 远景片跟远景（±12px）。中景片与前景片为空：光晕够不着桥面水纹与梅花枝，
     /// 拆分见 festival-depth-covers/chatgpt-step2/split-lights.py，两片重组与原图逐像素一致。
-    /// 莲花灯（flower-lantern.png，520×484）：画在桥右水面开阔处，中心帧坐标 (430, 288)、
+    /// 莲花灯（flower-lantern.png，520×484）：画在桥右水面开阔处，中心帧坐标 (430, 279)、
     /// 宽 70，底边贴水面（y≈320）；交付里没给位置，这个点是我定的，想挪直接改这两个数。
+    /// D-5：原中心 y 288 时底边超出可见窗底，上提 9 帧 px。
     /// 预览 v2 里花灯会持续漂移＋浮沉＋倾斜＋光晕脉动，本接线没做：灯锚在水面，
     /// 只跟倾斜轻摆（角度 0.03*travel）＋水面一圈暖光晕；持续漂移要时间驱动，
     /// 现在的 ProfileCoverView 没有时间相位，先不做。远景虚化＋梅花清晰豁免也是
@@ -662,15 +676,20 @@ public final class ProfileCoverView: UIView {
             bitmap("lantern-lights-far", in: ctx,
                    center: CGPoint(x: padded.midX + farX, y: padded.midY),
                    width: padded.width, height: padded.height, angle: 0, alpha: egg, layered: true)
+            // D-6：近景光效层亮核帧 x[739,903]，可见窗右缘 830——整层左收 100 帧 px
+            // （亮核 → [639,803]，满幅右倾到 827，仍在窗内；光晕是柔和 wash，
+            // 相对右楼位置略移，亮核仍落在楼体上；极淡尾部少量残留，见 NOTES）。
             bitmap("lantern-lights-near", in: ctx,
-                   center: CGPoint(x: padded.midX + nearX, y: padded.midY),
+                   center: CGPoint(x: padded.midX + nearX - 100 * scaleX, y: padded.midY),
                    width: padded.width, height: padded.height, angle: 0, alpha: egg, layered: true)
         }
-        // 莲花灯：PNG 520×484，宽 70、高 70*484/520；中心帧坐标 (430, 288)。
+        // 莲花灯：PNG 520×484，宽 70、高 70*484/520；中心帧坐标 (430, 279)。
+        // D-5：原中心 y 288 时底边帧 y≈314，超出可见窗底 308——上提 9 帧 px，
+        // 底边到约 305，满幅竖直倾斜也在窗内。
         let lanternWidth: CGFloat = 70
         let lanternHeight = lanternWidth * 484 / 520
         let lanternCenter = CGPoint(x: -32 + 430 * scaleX + middleX,
-                                    y: -12 + 288 * scaleY + vertical)
+                                    y: -12 + 279 * scaleY + vertical)
         // 水面暖光晕（灯下倒影一圈暖色，随灯走）。
         glow(ctx, center: CGPoint(x: lanternCenter.x, y: lanternCenter.y + lanternHeight * 0.42),
              rx: 52, ry: 8, color: UIColor(red: 1, green: 0.69, blue: 0.34, alpha: 1), alpha: 0.30)
@@ -686,10 +705,13 @@ public final class ProfileCoverView: UIView {
     /// 彩蛋（jade-rabbit-egg.png，1024×323）：月亮里玉兔捣药金色剪影
     /// （alpha 框 x888–916、y138–170，正落在月盘里），倾斜保持 0.45 秒后
     /// 随 egg 淡入（触发走共享 step 逻辑，与圣诞同款；每次进页 restartVisit 可再触发）。
+    /// D-7：月盘（图集第 7 帧 x801–925）与玉兔静止只剩约 18%／完全出屏——
+    /// 月盘在图集与海报里左移 110 帧 px，玉兔代码里同移 110，相对位置不变。
     /// 孔明灯（sky-lantern.png，120×110）：三盏错开相位循环上飘（周期约
     /// 14 秒，底部淡入、顶部淡出）；上飘由 App 实现——ProfileCoverView
     /// 用 step() 的 dt 累一个 lanternPhase（进页／停播时复位），灯的位置
-    /// （x 180／480／760）与大小（宽 56）是我定的，想挪直接改这两个数。
+    /// （x 280／480／760）与大小（宽 56）是我定的，想挪直接改这两个数。
+    /// D-8：原左灯 x 180 静止基本全在屏外，左移到 280。
     private func drawMidautumn(_ ctx: CGContext, depth: CGFloat, travel: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
         let scaleY = padded.height / 323
@@ -697,17 +719,22 @@ public final class ProfileCoverView: UIView {
         // 彩蛋与孔明灯都按它平移才贴得住月亮／天空。
         let farX = 12 * depth * scaleX
         // 彩蛋：月亮里玉兔捣药金色剪影，整帧透明层与第 7 帧对齐。
+        // D-7：玉兔与月盘一起左移 110 帧 px（月盘在图集里同步左移，见
+        // midautumn-depth.png／midautumn-poster.png；玉兔 → [778,806]，
+        // 满幅右倾到 818，仍在窗内；与月盘相对位置不变）。
         if egg > 0.001 {
             bitmap("jade-rabbit-egg", in: ctx,
-                   center: CGPoint(x: padded.midX + farX, y: padded.midY),
+                   center: CGPoint(x: padded.midX + farX - 110 * scaleX, y: padded.midY),
                    width: padded.width, height: padded.height, angle: 0, alpha: egg, layered: true)
         }
         // 孔明灯：三盏错开相位循环上飘（周期 14 秒，从 y≈290 升到 y≈30）。
+        // D-8：左灯 baseX 180 时静止基本全在屏外——左灯 180 → 280（中、右两盏不动）；
+        // 左灯内容宽约 34.5 canvas pt，满幅左倾左缘到约 282，仍在窗内。
         let lanternWidth: CGFloat = 56
         let lanternHeight = lanternWidth * 110 / 120
         let period: CGFloat = 14
         let rise: CGFloat = 260
-        for (index, baseX) in [180, 480, 760].enumerated() {
+        for (index, baseX) in [280, 480, 760].enumerated() {
             let phase = (lanternPhase / period + CGFloat(index) / 3).truncatingRemainder(dividingBy: 1)
             let fade = min(phase / 0.15, (1 - phase) / 0.15, 1)
             guard fade > 0 else { continue }
@@ -730,8 +757,8 @@ public final class ProfileCoverView: UIView {
     /// 这两个数。
     /// 花瓣（marigold-petal-1～4.png，从一张四瓣图裁开，各瓣原生比不同）：
     /// 四片错开相位循环飘落（周期约 12 秒，从 y≈-30 落到 y≈350，首尾淡入淡出），
-    /// 横向轻摆 ±20px、微转；落点（x 150／420／680／900）与大小（宽 46）是我
-    /// 定的，想挪直接改这两个数。
+    /// 横向轻摆 ±20px、微转；落点（x 260／420／680／770）与大小（宽 46）是我
+    /// 定的，想挪直接改这两个数。D-9：原 1 号 150、4 号 900 出屏，重排进窗。
     private func drawMuertos(_ ctx: CGContext, depth: CGFloat, travel: CGFloat, vertical: CGFloat, padded: CGRect) {
         let scaleX = padded.width / 1024
         let scaleY = padded.height / 323
@@ -749,11 +776,14 @@ public final class ProfileCoverView: UIView {
         }
         // 花瓣：四片错开相位循环飘落（周期 12 秒，从 y≈-30 落到 y≈350）。
         let petalWidth: CGFloat = 46
+        // D-9：1 号瓣静止仅 26% 可见、4 号瓣永远 0%——落点重排进窗（1 号 150 → 260，
+        // 4 号 900 → 770；2、3 号不动）。最坏摆动下 1 号左缘到 229、4 号右缘到 1008，
+        // 均在可见窗 x[213,1017] 内。
         let petalSizes: [(key: String, aspect: CGFloat, baseX: CGFloat)] = [
-            ("marigold-petal-1", 426 / 490, 150),
+            ("marigold-petal-1", 426 / 490, 260),
             ("marigold-petal-2", 417 / 683, 420),
             ("marigold-petal-3", 229 / 438, 680),
-            ("marigold-petal-4", 373 / 550, 900),
+            ("marigold-petal-4", 373 / 550, 770),
         ]
         let period: CGFloat = 12
         let fall: CGFloat = 380
@@ -829,7 +859,9 @@ public final class ProfileCoverView: UIView {
             }
 
         case .korea:
-            let hook = CGPoint(x: 1002 + nearX, y: 318 + vertical)
+            // D-12：挂钩满幅右倾到 canvas 1022，超出可见窗右缘 1017——挂钩
+            // 1002 → 980（满幅右倾到 1000，仍在窗内；风筝组件整体跟挂钩走）。
+            let hook = CGPoint(x: 980 + nearX, y: 318 + vertical)
             let radius: CGFloat = 276, theta = -1.10 + 0.039 * travel, angle = 0.095 + 0.052 * travel
             let end = CGPoint(x: hook.x + radius * sin(theta), y: hook.y - radius * cos(theta))
             let height: CGFloat = 106
@@ -837,7 +869,9 @@ public final class ProfileCoverView: UIView {
             let center = CGPoint(x: end.x + sin(angle) * tie, y: end.y - cos(angle) * tie)
             let cord = UIColor(red: 0.35, green: 0.24, blue: 0.22, alpha: 1)
             stroke(ctx, [hook, end], color: cord, width: 1.2, alpha: 0.57)
-            glow(ctx, center: CGPoint(x: 1090 + nearX + 24 * x, y: 357 + 5 * y),
+            // D-11：地面光晕中心 1090 时静止仅约 12% 可见——左移 120 canvas pt
+            // （→ 970；亮核常在窗内，满幅右倾中心到 1014，仍在窗内）。
+            glow(ctx, center: CGPoint(x: 970 + nearX + 24 * x, y: 357 + 5 * y),
                  rx: 97, ry: 16, color: gold, alpha: 0.15 + 0.27 * strength)
             bitmap("kite", in: ctx, center: center, width: width, height: height, angle: angle) {
                 guard self.egg > 0 else { return }

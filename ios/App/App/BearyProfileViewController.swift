@@ -10270,6 +10270,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         if festivalWallpaperView == nil || festivalTheme != effective {
             do {
                 let wallpaperView = try BearyFestivalWallpaperView(theme: wallpaperTheme)
+                // D-10：个人页是满幅封面，没有日记卡左侧文字区——用居中裁切＋去遮罩，
+                // 场景占满整块封面；选择页预览（depth-bg-vc-main）保持默认卡片模式。
+                wallpaperView.isCoverMode = true
                 wallpaperView.translatesAutoresizingMaskIntoConstraints = false
                 wallpaperView.accessibilityElementsHidden = true
                 festivalWallpaperView?.removeFromSuperview()
