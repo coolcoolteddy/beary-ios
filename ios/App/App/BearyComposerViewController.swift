@@ -4033,7 +4033,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationToolButton.addTarget(self, action: #selector(didTapLocationTool), for: .touchUpInside)
         locationToolButton.bearyAddPressFeedback()
         emoteToolButton.setImage(BearyIconImages.image(named: "icon_mood", pointSize: 24), for: .normal)
-        emoteToolButton.accessibilityLabel = "表情"
+        emoteToolButton.accessibilityLabel = NSLocalizedString("emote_picker.composer_title", comment: "")
         emoteToolButton.tintColor = BearyColors.ink
         emoteToolButton.addTarget(self, action: #selector(didTapEmoteTool), for: .touchUpInside)
         emoteToolButton.bearyAddPressFeedback()

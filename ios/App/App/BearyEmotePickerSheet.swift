@@ -178,7 +178,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         grabView.clipsToBounds = true
         grabView.translatesAutoresizingMaskIntoConstraints = false
         sheetView.addSubview(grabView)
-        titleLabel.text = mode == .composer ? "表情" : "贴一只小熊"
+        titleLabel.text = mode == .composer ? NSLocalizedString("emote_picker.composer_title", comment: "") : NSLocalizedString("emote_picker.sticker_title", comment: "")
         // 审计 D-13：标题跟系统字号（原 15pt 固定）；标题长高时下方列表顶约束同步下移，门控见 gestureRecognizerShouldBegin。
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
         titleLabel.adjustsFontForContentSizeCategory = true
@@ -257,8 +257,8 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     /// 自定义组内长按 cell：删库内图片（只删库行，不删文件、不影响已发日记；
     /// 与心情选择器同口径）。
     private func confirmDeleteGIF(key: String) {
-        BearyConfirmSheet.show(from: self, title: "从自定义里删除？", message: nil, actions: [
-            BearyConfirmSheet.Action(title: "删除", style: .destructive) {
+        BearyConfirmSheet.show(from: self, title: NSLocalizedString("emote_picker.custom.delete_confirm_title", comment: ""), message: nil, actions: [
+            BearyConfirmSheet.Action(title: NSLocalizedString("dm.delete.confirm.delete", comment: ""), style: .destructive) {
                 BearyGIFLibrary.remove(key: key)
             },
         ])
@@ -448,9 +448,9 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         }
         switch pickerSections()[indexPath.section] {
         case .recent:
-            header.configure(title: "最近使用")
+            header.configure(title: NSLocalizedString("emote_picker.section.recent", comment: ""))
         case .custom:
-            header.configure(title: "自定义")
+            header.configure(title: NSLocalizedString("emote_picker.section.custom", comment: ""))
         case .builtin:
             return UICollectionReusableView()
         }
@@ -476,7 +476,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             }
             // 首格（item 0）是 ＋ 添加格；其后格子依次对应库图 keys[i-1]。
             if indexPath.item == 0 {
-                cell.configureAdd(a11yLabel: "添加自定义表情")
+                cell.configureAdd(a11yLabel: NSLocalizedString("emote_picker.custom.add_accessibility_label", comment: ""))
                 cell.onDeleteGIF = nil
                 return cell
             }
