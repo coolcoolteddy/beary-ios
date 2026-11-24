@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 // ===== beary 原生接口层（第一阶段）=====
 // 后端：Cloudflare Workers（teddy-beary + teddy-accounts-v2），无需重写数据库。
@@ -1603,6 +1604,15 @@ final class BearyAPI {
         var body: [String: Any] = ["email": email, "code": code, "invite_code": inviteCode ?? ""]
         if let dev = dev, !dev.isEmpty { body["dev"] = dev }
         if confirmCancel { body["confirm_cancel"] = true }
+        // 登录与设备信息（2026-11-20）：method 固定 email；app_version 为 ShortVersion(build)；
+        // os_version 为系统版本。Apple / Google 登录落地时同口径带这三个字段（method 改 apple / google）。
+        body["method"] = "email"
+        let appShort = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let appBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+        let appVersion = appShort.isEmpty ? appBuild : (appBuild.isEmpty ? appShort : "\(appShort) (\(appBuild))")
+        if !appVersion.isEmpty { body["app_version"] = appVersion }
+        let osVersion = UIDevice.current.systemVersion
+        if !osVersion.isEmpty { body["os_version"] = osVersion }
         return perform("/api/account/verify", method: "POST", jsonBody: body) { [weak self] data, status, error in
             guard let self = self else { return }
             if let e = error as NSError?, e.code == NSURLErrorCancelled {
