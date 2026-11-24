@@ -295,7 +295,8 @@ public final class BearyFestivalWallpaperView: UIView {
             let u = clamp((t - 0.13) / 0.70)
             p.x = -72 + 178 * u
             p.y = -13 - 22 * sin(.pi * u) + 34 * u
-            p.angle = -1.4 + 5.2 * u + 0.24 * x
+            // C 批 T-2：转角 5.2 → 2.6 rad（约 149°），飘落不再像旋转。
+            p.angle = -1.4 + 2.6 * u + 0.24 * x
             p.sx = 0.55 + 0.69 * u
             p.sy = p.sx
             p.alpha = still ? 0 : smooth(u, 0, 0.13) * (1 - smooth(u, 0.84, 1))
@@ -339,7 +340,8 @@ public final class BearyFestivalWallpaperView: UIView {
             let u = clamp((t - 0.18) / 0.65)
             p.x = 8 - 181 * u
             p.y = -40 + 72 * u + 11 * sin(2 * .pi * u)
-            p.angle = -0.7 + u * 3.5
+            // C 批 T-3：转角 3.5 → 1.75 rad（约 100°）。
+            p.angle = -0.7 + u * 1.75
             p.sx = 0.63 + 0.45 * u
             p.sy = p.sx
             p.alpha = still ? 0 : 0.9 * smooth(u, 0, 0.14) * (1 - smooth(u, 0.80, 1))
