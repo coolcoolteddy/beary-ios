@@ -671,8 +671,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 直接 toast，不并行）。
     private var gifUploadInFlight = false
     /// 自定义心情图上传发起时的草稿篇 id（#49）：finishGIFUpload /
-    /// finishImageUpload 发起时记下 currentDraftId，回包成功时只认发起那篇
-    /// （nil 表示发起时还是空白未落盘篇，沿 pickDraftId 口径不设防）；
+    /// finishImageUpload 发起时记下 currentDraftId，回包成功时只认发起那篇；
+    /// 空白未落盘篇发起时先落一个新 id 再记（makePublishSnapshot 同款口径），
+    /// 否则回包守卫无 id 可比、切篇后回包仍会插进当前篇。回包成功时先拍下
+    /// 本次发起 id 再清掉——清完再比恒为 nil，守卫即失效（旧写法即此 bug）。
     /// 切篇后回包仍进自定义库/首帧缓存，只不插进当前篇正文。
     private var gifUploadDraftId: String?
     /// B2：关闭进行中守卫——didTapCancel（取消钮）与边缘关闭共用同一入口，
@@ -5759,6 +5761,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         gifUploadInFlight = true
+        // #49：空白未落盘篇 currentDraftId 为 nil 时先落一个新 id 再记发起篇，
+        // 否则回包守卫无 id 可比；新 id 只作本次上传的身份，不落盘。
+        if currentDraftId == nil {
+            currentDraftId = BearyDraftStore.newDraftId()
+            clearedCurrentDraftId = nil
+        }
         gifUploadDraftId = currentDraftId
         imagePrepQueue.async { [weak self] in
             guard BearyGIF.isGIFData(data), let info = BearyGIF.info(data), info.w > 0, info.h > 0, info.frames > 0 else {
@@ -5794,6 +5802,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.gifUploadInFlight = false
+                        // #49：先拍下本次发起篇 id 再清掉——清完再比恒为 nil，
+                        // 旧写法下守卫恒真、切篇后回包照插不误。
+                        let startedDraftId = self.gifUploadDraftId
                         self.gifUploadDraftId = nil
                         switch result {
                         case .success(let response):
@@ -5807,7 +5818,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             self.gifFirstFrames[rand] = firstFrame
                             // #49：回包只认发起那篇——切篇后回包仍进库（服务端 GIF
                             // 上传自动进库）与首帧缓存，只不插进当前篇正文。
-                            if self.gifUploadDraftId == nil || self.currentDraftId == self.gifUploadDraftId {
+                            // 发起时已落 id，startedDraftId 恒非空；nil 只作防御，不插。
+                            if let startedDraftId = startedDraftId, self.currentDraftId == startedDraftId {
                                 self.insertGIFAttachmentAtCursor(key: key, randKey: rand)
                             }
                         case .failure(let error):
@@ -5835,6 +5847,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         gifUploadInFlight = true
+        // #49：空白未落盘篇 currentDraftId 为 nil 时先落一个新 id 再记发起篇，
+        // 否则回包守卫无 id 可比；新 id 只作本次上传的身份，不落盘。
+        if currentDraftId == nil {
+            currentDraftId = BearyDraftStore.newDraftId()
+            clearedCurrentDraftId = nil
+        }
         gifUploadDraftId = currentDraftId
         imagePrepQueue.async { [weak self] in
             guard let self = self else { return }
@@ -5865,6 +5883,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.gifUploadInFlight = false
+                        // #49：先拍下本次发起篇 id 再清掉——清完再比恒为 nil，
+                        // 旧写法下守卫恒真、切篇后回包照插不误。
+                        let startedDraftId = self.gifUploadDraftId
                         self.gifUploadDraftId = nil
                         switch result {
                         case .success(let response):
@@ -5878,7 +5899,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             self.gifFirstFrames[rand] = firstFrame
                             // #49：回包只认发起那篇——切篇后回包仍进自定义库
                             // 与首帧缓存，只不插进当前篇正文。
-                            if self.gifUploadDraftId == nil || self.currentDraftId == self.gifUploadDraftId {
+                            // 发起时已落 id，startedDraftId 恒非空；nil 只作防御，不插。
+                            if let startedDraftId = startedDraftId, self.currentDraftId == startedDraftId {
                                 self.insertGIFAttachmentAtCursor(key: key, randKey: rand)
                             }
                         case .failure(let error):
