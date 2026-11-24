@@ -70,10 +70,12 @@ enum BearyColors {
     static var hov: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 248.0/255.0, alpha: 0.08) : UIColor(red: 17.0/255.0, green: 17.0/255.0, blue: 20.0/255.0, alpha: 0.06) } }
     /// 限时日记虚线气泡四档色（2026-11-19 预览定版，Space xian-shi-ri-ji-yang-shi-yu-lan
     /// 源码值；深浅同值，浅色下虚线不另加深——预览源码亦如此）：
-    /// 充裕灰 #8f8f8c、临近暖黄 #e8b34b、紧急橙 #ff7a45、到期虚线 #55554f。
+    /// 充裕灰 #8f8f8c、临近暖黄 #b57f1e、紧急橙 #e05a1e、到期虚线 #55554f。
+    /// 临近／紧急两档 2026-11-23 按 HIG 审计 W1 加深：白底对比度 ≥3:1
+    ///（15pt semibold 大字门槛），色相保持暖黄／橙；深浅同值。
     static var limitedCalmDash: UIColor { UIColor(red: 143.0/255.0, green: 143.0/255.0, blue: 140.0/255.0, alpha: 1) }
-    static var limitedNear: UIColor { UIColor(red: 232.0/255.0, green: 179.0/255.0, blue: 75.0/255.0, alpha: 1) }
-    static var limitedUrgent: UIColor { UIColor(red: 1.0, green: 122.0/255.0, blue: 69.0/255.0, alpha: 1) }
+    static var limitedNear: UIColor { UIColor(red: 181.0/255.0, green: 127.0/255.0, blue: 30.0/255.0, alpha: 1) }
+    static var limitedUrgent: UIColor { UIColor(red: 224.0/255.0, green: 90.0/255.0, blue: 30.0/255.0, alpha: 1) }
     static var limitedExpiredDash: UIColor { UIColor(red: 85.0/255.0, green: 85.0/255.0, blue: 79.0/255.0, alpha: 1) }
     /// 限时倒计时文字色（预览值）：充裕 #8e8e8a、到期 #6d6d68；临近／紧急与虚线同色。
     static var limitedCalmCountdown: UIColor { UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 138.0/255.0, alpha: 1) }
