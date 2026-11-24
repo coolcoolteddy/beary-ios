@@ -341,7 +341,7 @@ public final class ProfileCoverView: UIView {
         converge = nextConverge
         // 底图图层每帧都跟姿态走（只改图层属性，不重画；与 drawOverlay 同一套公式）。
         // 叠加层仍走下面的阈值节流。
-        currentDepth = min(1, max(-1, tilt.x + 0.16 * tilt.y))
+        currentDepth = Self.softClamp(tilt.x + 0.16 * tilt.y)
         currentVertical = 3 * tilt.y
         updateBackdropLayers()
         guard delta >= 0.002 else { return }
@@ -352,6 +352,17 @@ public final class ProfileCoverView: UIView {
         let magnitude = min(abs(raw), 1)
         guard magnitude > 0.06 else { return 0 }
         return (raw < 0 ? -1 : 1) * (magnitude - 0.06) / 0.94
+    }
+
+    /// 末端软钳制（C 批 T-5）：|v| ≤ 0.85 时原样通过；超出后指数趋近 ±1，
+    /// 在 0.85 处斜率连续为 1——倾斜到头时速度平滑归零，不再硬停
+    ///（旧 min/max 在 ±1 处速度瞬间归零、无末端缓动）。
+    private static func softClamp(_ v: CGFloat) -> CGFloat {
+        let lim: CGFloat = 0.85
+        let a = abs(v)
+        guard a > lim else { return v }
+        let s: CGFloat = v < 0 ? -1 : 1
+        return s * (1 - (1 - lim) * exp(-(a - lim) / (1 - lim)))
     }
 
     /// 叠加层绘制（由 CoverOverlayView 的 draw() 转调）：底图已改走图层，这里只画
@@ -383,8 +394,8 @@ public final class ProfileCoverView: UIView {
             ctx.setAlpha(layeredBlend)
         }
         let x = tilt.x, y = tilt.y
-        let travel = min(1, max(-1, x + 0.22 * y))
-        let depth = min(1, max(-1, x + 0.16 * y))
+        let travel = Self.softClamp(x + 0.22 * y)
+        let depth = Self.softClamp(x + 0.16 * y)
         let vertical = 3 * y
         let midX = 4 * depth, nearX = 20 * depth
         let gold = UIColor(red: 1, green: 0.69, blue: 0.34, alpha: 1)
@@ -397,6 +408,9 @@ public final class ProfileCoverView: UIView {
             let boatX = 612 + 25 * travel
             let motionAmount = min(1, hypot(x, y))
             let direction: CGFloat = travel < 0 ? -1 : travel > 0 ? 1 : 0
+            // C 批 T-4：尾迹显形跟船的实际位移走——travel 过零时 alpha 归零，
+            // 方向翻面不可见；纯前后倾时船几乎不动，尾迹也只剩淡淡一层。
+            let wakeFade = min(1, abs(travel))
             glow(ctx, center: CGPoint(x: boatX, y: 338 + vertical), rx: 98, ry: 6, color: .black, alpha: 0.28)
             if direction != 0 {
                 for i in 0..<3 {
@@ -404,7 +418,7 @@ public final class ProfileCoverView: UIView {
                     let tail = CGPoint(x: boatX - direction * (width * 0.41 + n * 19), y: 338 + vertical + n * 2.3)
                     stroke(ctx, [tail, CGPoint(x: tail.x - direction * (43 + n * 10), y: tail.y + 2)],
                            color: UIColor(red: 0.93, green: 0.86, blue: 0.73, alpha: 1),
-                           width: 2.1, alpha: (0.46 - n * 0.09) * motionAmount)
+                           width: 2.1, alpha: (0.46 - n * 0.09) * motionAmount * wakeFade)
                 }
             }
             let lightX = 816 + midX + 35 * x, lightY = 350 + 6 * y
@@ -507,6 +521,12 @@ public final class ProfileCoverView: UIView {
         // split 取 egg 与 converge 的较大值——松手后 egg 先褪、converge 慢慢回，
         // 分层多留一会儿，喜鹊漂回的过程才看得见，不会一下跳回原位。
         let split = max(egg, converge)
+        // C 批 T-1：松手回落时整张喜鹊保持隐藏，直到 converge < 0.05 再淡入——
+        // 否则整张（静止位）与分层（归途位）同时半透明，位置差最大约 120 canvas pt，
+        // 肉眼可见两个半透明喜鹊。淡入在 converge 0.05→0 之间线性走完，此时
+        // 分层 alpha 已 ≤0.05，两者不同时显形。触发方向不受影响（egg 快满时
+        // converge 还小，整张照常随 egg 褪去）。
+        let releaseFade = min(1, max(0, 1 - converge / 0.05))
         if egg > 0.001 {
             // 星点层：只沿银河带多出的小金点，淡淡浮现、不密。
             bitmap("qixi-egg-stars", in: ctx,
@@ -561,7 +581,7 @@ public final class ProfileCoverView: UIView {
         bitmap("qixi-magpie", in: ctx,
                center: CGPoint(x: -32 + (483 + 473 / 2) * scaleX + subjectX + magpieShiftX * scaleX,
                                y: -12 + (7 + 313 / 2) * scaleY + vertical),
-               width: 473 * scaleX, height: 313 * scaleY, angle: 0, alpha: 1 - split, layered: true)
+               width: 473 * scaleX, height: 313 * scaleY, angle: 0, alpha: (1 - split) * releaseFade, layered: true)
     }
 
     /// 圣诞（北欧木刻、深蓝雪夜）：图集只含背景，雪花由动态物层单独贴；
@@ -737,17 +757,20 @@ public final class ProfileCoverView: UIView {
         // 左灯内容宽约 34.5 canvas pt，满幅左倾左缘到约 282，仍在窗内。
         let lanternWidth: CGFloat = 56
         let lanternHeight = lanternWidth * 110 / 120
+        // C 批 T-6：三盏灯速度与大小各差 ±20%，不再机械同步（周期 14s → 约 16.5/14/11.9s）。
+        let lanternRates: [CGFloat] = [0.85, 1.0, 1.18]
+        let lanternScales: [CGFloat] = [0.92, 1.0, 1.08]
         let period: CGFloat = 14
         let rise: CGFloat = 260
         for (index, baseX) in [280, 480, 760].enumerated() {
-            let phase = (lanternPhase / period + CGFloat(index) / 3).truncatingRemainder(dividingBy: 1)
+            let phase = (lanternPhase * lanternRates[index] / period + CGFloat(index) / 3).truncatingRemainder(dividingBy: 1)
             let fade = min(phase / 0.15, (1 - phase) / 0.15, 1)
             guard fade > 0 else { continue }
             let centerY = 290 - phase * rise
             bitmap("sky-lantern", in: ctx,
                    center: CGPoint(x: -32 + CGFloat(baseX) * scaleX + farX + 6 * travel * scaleX,
                                    y: -12 + centerY * scaleY + vertical),
-                   width: lanternWidth, height: lanternHeight, angle: 0.03 * travel, alpha: fade, layered: true)
+                   width: lanternWidth * lanternScales[index], height: lanternHeight * lanternScales[index], angle: 0.03 * travel, alpha: fade, layered: true)
         }
     }
     /// 亡灵节（深紫夜＋万寿菊花丛）：图集只含背景，花瓣与花环由 App 单独贴。
@@ -796,8 +819,11 @@ public final class ProfileCoverView: UIView {
         ]
         let period: CGFloat = 12
         let fall: CGFloat = 380
+        // C 批 T-6：四片花瓣速度与大小各差 ±20%，不再机械同步（周期 12s → 约 14.6/12.6/11.1/10s）。
+        let petalRates: [CGFloat] = [0.82, 0.95, 1.08, 1.2]
+        let petalScales: [CGFloat] = [0.9, 1.0, 1.1, 0.95]
         for (index, petal) in petalSizes.enumerated() {
-            let phase = (petalPhase / period + CGFloat(index) / 4).truncatingRemainder(dividingBy: 1)
+            let phase = (petalPhase * petalRates[index] / period + CGFloat(index) / 4).truncatingRemainder(dividingBy: 1)
             let fade = min(phase / 0.12, (1 - phase) / 0.12, 1)
             guard fade > 0 else { continue }
             let sway = 20 * sin(phase * .pi * 4 + CGFloat(index))
@@ -805,7 +831,7 @@ public final class ProfileCoverView: UIView {
             bitmap(petal.key, in: ctx,
                    center: CGPoint(x: -32 + (petal.baseX + sway) * scaleX + foregroundX,
                                    y: -12 + centerY * scaleY + vertical),
-                   width: petalWidth, height: petalWidth * petal.aspect,
+                   width: petalWidth * petalScales[index], height: petalWidth * petal.aspect * petalScales[index],
                    angle: 0.15 * sin(phase * .pi * 2 + CGFloat(index)) + 0.03 * travel, alpha: fade, layered: true)
         }
     }
@@ -841,6 +867,9 @@ public final class ProfileCoverView: UIView {
             let water: CGFloat = 346 + vertical
             let centerX = 684 + 23 * travel
             let direction: CGFloat = travel < 0 ? -1 : travel > 0 ? 1 : 0
+            // C 批 T-4：同中国船——尾迹显形跟飞机的实际位移走，travel 过零
+            // 时 alpha 归零，方向翻面不可见；纯前后倾时也只剩淡淡一层。
+            let wakeFade = min(1, abs(travel))
             glow(ctx, center: CGPoint(x: centerX + 21, y: water + 2), rx: width * 0.42, ry: 5,
                  color: UIColor(red: 0.15, green: 0.34, blue: 0.35, alpha: 1), alpha: 0.29)
             let pale = UIColor(red: 0.87, green: 0.95, blue: 0.87, alpha: 1)
@@ -850,7 +879,7 @@ public final class ProfileCoverView: UIView {
                 let n = CGFloat(i), yy = water + 3 + n * 4
                 let tail = centerX - direction * (width * 0.29 + n * 17)
                 stroke(ctx, [CGPoint(x: tail, y: yy), CGPoint(x: tail - direction * (34 + n * 9), y: yy + 2)],
-                       color: pale, width: 1.6, alpha: (0.42 - n * 0.08) * strength)
+                       color: pale, width: 1.6, alpha: (0.42 - n * 0.08) * strength * wakeFade)
             }
             bitmap("floatplane", in: ctx, center: CGPoint(x: centerX, y: water - height / 2),
                    width: width, height: height, angle: 0) {
