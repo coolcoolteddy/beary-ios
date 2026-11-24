@@ -3647,7 +3647,11 @@ final class BearyChromeViewController: UIViewController {
         topmostViewController().present(vc, animated: BearyMotion.animated(true)) { [weak vc] in
             guard let vc = vc, let window = vc.view.window else { return }
             let bounds = window.bounds
-            if vc.view.frame != bounds {
+            // 与设置子页 presentSettingsPage 同口径：先复位 transform 再写
+            // frame——呈现完成时若用户已在拖动（transform 非单位阵），
+            // 直接写 frame 会连 center 一起改掉，松手后整页偏左。
+            if vc.view.frame != bounds || !vc.view.transform.isIdentity {
+                vc.view.transform = .identity
                 vc.view.frame = bounds
                 vc.view.setNeedsLayout()
                 vc.view.layoutIfNeeded()

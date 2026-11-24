@@ -553,6 +553,14 @@ final class BearySettingsViewController: UIViewController {
         let topBarOff = topBar != nil && abs(topBarMinY - safeTop) > 20
         let scrollCollapsed = scrollView.frame.height <= 0
         guard viewFrameOff || topBarOff || scrollCollapsed else { return }
+        // 跟手拖动中 transform 非单位阵：此时 frame.origin 含跟手位移，
+        // 按 bounds 写 frame 会连 center 一起改掉——松手复位后整页停在
+        // 左侧、右侧露出后方内容（右滑返回中途不松手左滑复现）。
+        // 跳过本次、不消耗一次性守卫，等 transform 回到单位阵后的
+        // 下一次布局再复位。
+        if viewFrameOff, !view.transform.isIdentity {
+            return
+        }
         settingsFrameResetDone = true
         if viewFrameOff {
             view.frame = bounds
