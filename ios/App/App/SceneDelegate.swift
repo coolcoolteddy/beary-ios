@@ -5171,7 +5171,10 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         if presentedView.frame != frame {
             // 90 包修法：转场进行中 transform 未归位，frame 未定义，跳过这次写帧；
             // sheetHeight 与阴影层照常从局部变量 frame 更新，转场结束后恢复正常写帧。
-            if !isTransitioning {
+            // 拖动同款口径（BearyBottomSheet containerViewWillLayoutSubviews）：
+            // 抓手拖动中 transform 带位移，写 frame 会连 center 一起改掉；
+            // 跳过本次写帧，等复位弹簧把 transform 播回单位阵后补布局。
+            if !isTransitioning, presentedView.transform.isIdentity {
                 presentedView.frame = frame
             }
             sheetHeight = frame.height
@@ -5257,11 +5260,20 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
                     self.presentedViewController.additionalSafeAreaInsets.bottom = 0
                     self.dimmingView.alpha = 1
                 }
+                // 拖动结束复位时补布局（BearyBottomSheet restoreDrag 同款）：
+                // 拖动中 containerViewWillLayoutSubviews 为保跟手跳过写帧，
+                // 期间旋转/键盘/内容高变化只记了值、未落帧；复位完成后再跑
+                // 一次布局，按最新容器尺寸把帧落到正确位置。
+                let relayout = { [weak self] in
+                    self?.containerView?.setNeedsLayout()
+                    self?.containerView?.layoutIfNeeded()
+                }
                 if UIAccessibility.isReduceMotionEnabled {
                     restore()
+                    relayout()
                 } else {
                     let drag = BearySheetDrag.offset(for: translation)
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: drag), options: [], animations: restore)
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: drag), options: [], animations: restore, completion: { _ in relayout() })
                 }
             }
         case .cancelled, .failed:
@@ -5274,10 +5286,17 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
                 self.presentedViewController.additionalSafeAreaInsets.bottom = 0
                 self.dimmingView.alpha = 1
             }
+            // 与 .ended 复位同款：复位完成时补布局（BearyBottomSheet restoreDrag 同款），
+            // 把拖动中跳过的写帧按最新容器尺寸落到正确位置。
+            let relayout = { [weak self] in
+                self?.containerView?.setNeedsLayout()
+                self?.containerView?.layoutIfNeeded()
+            }
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
+                relayout()
             } else {
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore, completion: { _ in relayout() })
             }
         default:
             break
