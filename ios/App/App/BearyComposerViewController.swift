@@ -10649,7 +10649,16 @@ private final class BearyQuoteStatusPillView: UIView {
         super.layoutSubviews()
         if style == .limited {
             dashedLayer.frame = bounds
-            dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
+            // 与草稿箱虚线钮（#2019）同病：描边以 path 为中心，path 贴 bounds 边时
+            // 外侧一半落在 layer 外被裁掉（本 pill 另有 masksToBounds，必裁），
+            // 顶边只剩一半粗、底边却近全粗，上下不一。path 内缩半个线宽，
+            // 整条描边落进 layer 内，四边同粗；外沿仍贴 bounds、圆角同步减半个
+            // 线宽（height / 2 - 0.75），外形不动。线宽 1.5、pattern [4, 3] 不动。
+            let halfLine = dashedLayer.lineWidth / 2
+            dashedLayer.path = UIBezierPath(
+                roundedRect: bounds.insetBy(dx: halfLine, dy: halfLine),
+                cornerRadius: bounds.height / 2 - halfLine
+            ).cgPath
         }
     }
 
