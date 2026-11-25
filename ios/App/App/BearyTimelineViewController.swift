@@ -5462,39 +5462,24 @@ class BearyTimelineViewController: UIViewController {
             }
             guard let first = days.first, let last = days.last else { return }
             // 网页周标题口径：起日“[年]M月d日 – ”+ 尾日（同月只写 d日，同年写 M月d日，跨年写 Y年M月d日）。
-            // TL-6：各段之间有空格（网页 us=' '），≤340px 窄屏才去空格紧凑写。
-            // 2026-11-21 日期完全本地化：中文沿用下方插值（窄屏去空格逻辑不动），
-            // 非中文走共享 helper（同月只写日数字，同年写月日，跨年写年月日）。
-            let isNarrow = tableView.bounds.width <= 340
-            let us = isNarrow ? "" : " "
+            // 2026-11-21 日期完全本地化：走共享 helper（同月只写日数字，同年写月日，跨年写年月日）。
+            // 年／月／日之间无空格（此前中文宽屏在年／月／日两侧加空格、窄屏才去空格；
+            // i18n-guard 不许中文插值，统一走 helper，与绝对日期格式同款）。
             let todayYear = BearyBeijingDay.todayComponents()?.year
-            var title = ""
-            if BearyLocalizedDate.isChinese {
-                if first.year != todayYear { title += "\(first.year)\(us)年\(us)" }
-                title += "\(first.month)\(us)月\(us)\(first.day)\(us)日 – "
-                if first.year == last.year && first.month == last.month {
-                    title += "\(last.day)\(us)日"
-                } else if first.year == last.year {
-                    title += "\(last.month)\(us)月\(us)\(last.day)\(us)日"
-                } else {
-                    title += "\(last.year)\(us)年\(us)\(last.month)\(us)月\(us)\(last.day)\(us)日"
-                }
+            let firstDate = BearyLocalizedDate.dateFromComponents(year: first.year, month: first.month, day: first.day, timeZone: BearyLocalizedDate.gmt8) ?? Date()
+            let lastDate = BearyLocalizedDate.dateFromComponents(year: last.year, month: last.month, day: last.day, timeZone: BearyLocalizedDate.gmt8) ?? Date()
+            let firstPart = first.year != todayYear
+                ? BearyLocalizedDate.yearMonthDayString(from: firstDate, timeZone: BearyLocalizedDate.gmt8)
+                : BearyLocalizedDate.monthDayString(from: firstDate, timeZone: BearyLocalizedDate.gmt8)
+            let lastPart: String
+            if first.year == last.year && first.month == last.month {
+                lastPart = "\(last.day)"
+            } else if first.year == last.year {
+                lastPart = BearyLocalizedDate.monthDayString(from: lastDate, timeZone: BearyLocalizedDate.gmt8)
             } else {
-                let firstDate = BearyLocalizedDate.dateFromComponents(year: first.year, month: first.month, day: first.day, timeZone: BearyLocalizedDate.gmt8) ?? Date()
-                let lastDate = BearyLocalizedDate.dateFromComponents(year: last.year, month: last.month, day: last.day, timeZone: BearyLocalizedDate.gmt8) ?? Date()
-                let firstPart = first.year != todayYear
-                    ? BearyLocalizedDate.yearMonthDayString(from: firstDate, timeZone: BearyLocalizedDate.gmt8)
-                    : BearyLocalizedDate.monthDayString(from: firstDate, timeZone: BearyLocalizedDate.gmt8)
-                let lastPart: String
-                if first.year == last.year && first.month == last.month {
-                    lastPart = "\(last.day)"
-                } else if first.year == last.year {
-                    lastPart = BearyLocalizedDate.monthDayString(from: lastDate, timeZone: BearyLocalizedDate.gmt8)
-                } else {
-                    lastPart = BearyLocalizedDate.yearMonthDayString(from: lastDate, timeZone: BearyLocalizedDate.gmt8)
-                }
-                title = firstPart + " – " + lastPart
+                lastPart = BearyLocalizedDate.yearMonthDayString(from: lastDate, timeZone: BearyLocalizedDate.gmt8)
             }
+            let title = firstPart + " – " + lastPart
             calendarCard.setTitle(title)
             calendarCard.setToggleTitle("月视图")
             calendarCard.setNavigation(prevEnabled: true, nextEnabled: !isCurrentWeek(weekStart: weekStart))
@@ -6505,14 +6490,10 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 追加 6①：日组标题统一格式——此前今天/昨天带“今天 · / 昨天 · ”前缀、
-    /// 更早的日期没有前缀，同页内格式不统一；统一为一律“X 月 X 日”
+    /// 更早的日期没有前缀，同页内格式不统一；统一为一律“X月X日”
     /// （当日面板表头是另一组件，口径不动）。
-    /// 2026-11-21 日期完全本地化：中文沿用“X 月 X 日”，非中文走共享 helper。
+    /// 2026-11-21 日期完全本地化：走共享 helper（中文 M月d日，与卡片同口径）。
     private func dayTitleForMs(_ ms: Int) -> String {
-        guard let comps = BearyBeijingDay.components(ofMs: ms) else { return "" }
-        if BearyLocalizedDate.isChinese {
-            return "\(comps.month) 月 \(comps.day) 日"
-        }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         return BearyLocalizedDate.monthDayString(from: date, timeZone: BearyLocalizedDate.gmt8)
     }

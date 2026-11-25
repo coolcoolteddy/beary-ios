@@ -2214,9 +2214,8 @@ enum BearyLocalizedDate {
     static func monthDayString(from date: Date, timeZone: TimeZone? = nil) -> String {
         formatter(template: "MMMMd", zhFormat: "M月d日", timeZone: timeZone).string(from: date)
     }
-    /// 月日插值（如 ID 卡生日“11月3日”）：中文沿用既有插值，非中文走共享 helper。
+    /// 月日插值（如 ID 卡生日“11月3日”）：走共享 formatter（中文 M月d日，非中文按模板）。
     static func monthDayString(month: Int, day: Int, timeZone: TimeZone? = nil) -> String {
-        if isChinese { return "\(month)月\(day)日" }
         let year = calendar(for: timeZone).component(.year, from: Date())
         guard let date = dateFromComponents(year: year, month: month, day: day, timeZone: timeZone) else { return "\(month)/\(day)" }
         return monthDayString(from: date, timeZone: timeZone)
@@ -2274,33 +2273,30 @@ enum BearyLocalizedDate {
         return cachedRelativeFormatter!
     }
 
-    /// 1 分钟内：中文“刚刚”，非中文走系统相对时间（如 now／30 seconds ago）。
+    /// 1 分钟内：文案走 catalog（date.relative.justNow：中文“刚刚”，英文 now，Li 2026-11-21 定稿）。
     static func justNowString(date: Date) -> String {
-        if isChinese { return "刚刚" }
-        // 未来时间戳（时钟不准）当成现在：英文不再显示 in X，直接 now。
-        let clamped = min(date, Date())
-        return relativeFormatter().localizedString(for: clamped, relativeTo: Date())
+        NSLocalizedString("date.relative.justNow", comment: "")
     }
-    /// X 分钟前：中文沿用既有词，非中文如 5 minutes ago。
+    /// X 分钟前：中文走 catalog（date.relative.minutesAgo），非中文如 5 minutes ago。
     static func minutesAgoString(_ value: Int) -> String {
-        if isChinese { return "\(value) 分钟前" }
+        if isChinese { return String(format: NSLocalizedString("date.relative.minutesAgo", comment: ""), value) }
         let ref = Date().addingTimeInterval(TimeInterval(-value * 60))
         return relativeFormatter().localizedString(for: ref, relativeTo: Date())
     }
-    /// X 小时前：中文沿用既有词，非中文如 2 hours ago。
+    /// X 小时前：中文走 catalog（date.relative.hoursAgo），非中文如 2 hours ago。
     static func hoursAgoString(_ value: Int) -> String {
-        if isChinese { return "\(value) 小时前" }
+        if isChinese { return String(format: NSLocalizedString("date.relative.hoursAgo", comment: ""), value) }
         let ref = Date().addingTimeInterval(TimeInterval(-value * 3600))
         return relativeFormatter().localizedString(for: ref, relativeTo: Date())
     }
-    /// X 天前：中文沿用既有词，非中文如 3 days ago（1 天为 yesterday）。
+    /// X 天前：中文走 catalog（date.relative.daysAgo），非中文如 3 days ago（1 天为 yesterday）。
     static func daysAgoString(_ value: Int) -> String {
-        if isChinese { return "\(value) 天前" }
+        if isChinese { return String(format: NSLocalizedString("date.relative.daysAgo", comment: ""), value) }
         let ref = Date().addingTimeInterval(TimeInterval(-value * 24 * 3600))
         return relativeFormatter().localizedString(for: ref, relativeTo: Date())
     }
 
-    /// “今天／昨天”：中文沿用既有词，非中文走 doesRelativeDateFormatting（如 Today／Yesterday）。
+    /// “今天／昨天”：中文走 catalog（date.relative.today／yesterday），非中文走 doesRelativeDateFormatting（如 Today／Yesterday）。
     /// timeZone 与调用方判定今天／昨天用的日历一致（卡片／草稿箱／回收站三处原来都是 GMT+8）。
     static func todayWord(timeZone: TimeZone? = nil) -> String { relativeDayWord(for: Date(), timeZone: timeZone) }
     static func yesterdayWord(timeZone: TimeZone? = nil) -> String {
@@ -2309,7 +2305,8 @@ enum BearyLocalizedDate {
     }
     private static func relativeDayWord(for date: Date, timeZone: TimeZone? = nil) -> String {
         if isChinese {
-            return calendar(for: timeZone).isDateInToday(date) ? "今天" : "昨天"
+            let key = calendar(for: timeZone).isDateInToday(date) ? "date.relative.today" : "date.relative.yesterday"
+            return NSLocalizedString(key, comment: "")
         }
         let f = DateFormatter()
         f.locale = locale
@@ -2320,11 +2317,10 @@ enum BearyLocalizedDate {
         return f.string(from: date)
     }
 
-    /// “Plus 至 <短日期>”后缀：中文沿用既有词，非中文为草稿（Plus until <短日期>，待 Li 定稿）。
+    /// “Plus 至 <短日期>”后缀：走 catalog（plus.untilSuffix；英文为草稿，待 Li 定稿）。
     static func plusUntilSuffix(untilMs: Int, timeZone: TimeZone? = nil) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(untilMs) / 1000.0)
-        if isChinese { return "，Plus 至 " + shortDateString(from: date, timeZone: timeZone) }
-        return ", Plus until " + shortDateString(from: date, timeZone: timeZone)
+        return String(format: NSLocalizedString("plus.untilSuffix", comment: ""), shortDateString(from: date, timeZone: timeZone))
     }
 }
 

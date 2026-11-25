@@ -5204,14 +5204,9 @@ class BearyProfileViewController: UIViewController {
         thisDayBodyLabel.isHidden = false
         thisDayBodyLabel.textAlignment = .left
         thisDayBodyLabel.textColor = BearyColors.ink
-        var meta: String
-        if BearyLocalizedDate.isChinese {
-            meta = "\(history.year) 年 \(month) 月 \(day) 日"
-        } else {
-            // 2026-11-21 日期完全本地化：非中文走共享 helper（与既有那年今日同口径，GMT+8）。
-            let date = BearyLocalizedDate.dateFromComponents(year: history.year, month: month, day: day, timeZone: BearyLocalizedDate.gmt8) ?? Date()
-            meta = BearyLocalizedDate.yearMonthDayString(from: date, timeZone: BearyLocalizedDate.gmt8)
-        }
+        // 2026-11-21 日期完全本地化：走共享 helper（中文 M月d日，与卡片同口径）。
+        let metaDate = BearyLocalizedDate.dateFromComponents(year: history.year, month: month, day: day, timeZone: BearyLocalizedDate.gmt8) ?? Date()
+        var meta = BearyLocalizedDate.yearMonthDayString(from: metaDate, timeZone: BearyLocalizedDate.gmt8)
         if isOwnProfile {
             // 可见性三档实标：仅好友不再误标私密；存活限时篇补限时剩余信息。
             let visValue = BearyVisibility.current(for: main)
