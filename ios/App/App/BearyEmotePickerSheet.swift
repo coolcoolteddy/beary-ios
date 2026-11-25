@@ -116,6 +116,13 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     /// 见 refreshCustomLibrary，与心情选择器同口径）。
     private var customGifKeys: [String] = []
     private var libraryObserver: NSObjectProtocol?
+    /// 底部悬浮胶囊分类条（2026-11-25 Li 定，预览定版）：分类切换的唯一入口；
+    /// 不足 2 类（无可切换对象）时不建条。
+    private var capsuleBar: BearyEmoteCapsuleBarView?
+    /// 胶囊对应的节（与胶囊项同序：内置／节日／自定义／最近使用，按预览顺序）。
+    private var capsuleSections: [PickerSection] = []
+    /// 胶囊点按触发的编程式滚动进行中（滚动回调不同步选中态，避免中途闪烁）。
+    private var capsuleProgrammaticScroll = false
 
     deinit {
         if let observer = libraryObserver { NotificationCenter.default.removeObserver(observer) }
@@ -160,7 +167,113 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         }
         let items = (0..<bearyEmoteFestivalGroups[index].keys.count).map { IndexPath(item: $0, section: festivalSection) }
         collection.reloadItems(at: items)
+        // 胶囊节日图标跟当前组走（代表图）。
+        if let festivalItem = capsuleSections.firstIndex(of: .festival) {
+            capsuleBar?.updateIconKey(bearyEmoteFestivalGroups[index].representativeKey, forItem: festivalItem)
+        }
+        updatePreferredContentSize()
     }
+
+    /// 底部悬浮胶囊分类条：按预览顺序（内置／节日／自定义／最近使用）列出
+    /// 当前模式下存在的节；不足 2 类（无可切换对象）时不建条。
+    /// 分类名：recent／custom 复用既有 key；builtin／festival 无既有 key，
+    /// 新加 emote_picker.section.builtin／.festival（英文为 agent 译法、非 Li 定版）。
+    private func buildCapsuleBar() {
+        let sections = pickerSections()
+        var items: [BearyEmoteCapsuleBarView.Item] = []
+        var mappedSections: [PickerSection] = []
+        if sections.contains(.builtin) {
+            items.append(BearyEmoteCapsuleBarView.Item(titleKey: "emote_picker.section.builtin", iconKey: "happy"))
+            mappedSections.append(.builtin)
+        }
+        if sections.contains(.festival) {
+            items.append(BearyEmoteCapsuleBarView.Item(titleKey: "emote_picker.section.festival", iconKey: bearyEmoteFestivalGroups[selectedFestivalGroupIndex].representativeKey))
+            mappedSections.append(.festival)
+        }
+        if sections.contains(.custom) {
+            items.append(BearyEmoteCapsuleBarView.Item(titleKey: "emote_picker.section.custom", iconKey: "wish"))
+            mappedSections.append(.custom)
+        }
+        if sections.contains(.recent) {
+            items.append(BearyEmoteCapsuleBarView.Item(titleKey: "emote_picker.section.recent", iconKey: recentEmoteKeys.first ?? "happy"))
+            mappedSections.append(.recent)
+        }
+        guard items.count >= 2 else { return }
+        capsuleSections = mappedSections
+        let bar = BearyEmoteCapsuleBarView()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: BearySpace.lg),
+            bar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -BearySpace.lg),
+            bar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -BearyEmoteCapsuleBarView.bottomMargin),
+            bar.heightAnchor.constraint(equalToConstant: BearyEmoteCapsuleBarView.capsuleHeight),
+        ])
+        // 末行预留：网格底 inset＝胶囊高＋底距，末行能滚到胶囊上方、不被盖住。
+        emoteCollectionView?.contentInset.bottom = BearyEmoteCapsuleBarView.reservedBottomInset
+        bar.configure(items: items, selectedIndex: selectedIndexForCurrentSection()) { [weak self] itemIndex in
+            self?.capsuleItemTapped(itemIndex)
+        }
+        capsuleBar = bar
+    }
+
+    /// 打开时可见的首节（最近在首，无则内置）对应的胶囊项下标。
+    private func selectedIndexForCurrentSection() -> Int {
+        guard let firstSection = pickerSections().first else { return 0 }
+        return capsuleSections.firstIndex(of: firstSection) ?? 0
+    }
+
+    /// 胶囊点按：滚到对应节顶（header 在上），选中态立即跟上；
+    /// 滚动回调在编程式滚动期间不同步，避免中途闪烁。
+    private func capsuleItemTapped(_ itemIndex: Int) {
+        guard capsuleSections.indices.contains(itemIndex) else { return }
+        let section = capsuleSections[itemIndex]
+        capsuleBar?.setSelectedItem(itemIndex, animated: true)
+        scrollToSection(section, animated: BearyMotion.animated(true))
+    }
+
+    private func scrollToSection(_ section: PickerSection, animated: Bool) {
+        guard let collection = emoteCollectionView,
+              let sectionIndex = pickerSections().firstIndex(of: section) else { return }
+        collection.layoutIfNeeded()
+        guard let targetY = sectionTopY(sectionIndex) else { return }
+        capsuleProgrammaticScroll = true
+        collection.setContentOffset(CGPoint(x: 0, y: targetY), animated: animated)
+        if animated == false { capsuleProgrammaticScroll = false }
+    }
+
+    /// 某节顶边的纵坐标（header 在上；无 header 的节取首格顶减 sectionInset.top）。
+    private func sectionTopY(_ sectionIndex: Int) -> CGFloat? {
+        guard let collection = emoteCollectionView else { return nil }
+        let layout = collection.collectionViewLayout
+        let indexPath = IndexPath(item: 0, section: sectionIndex)
+        if let header = layout.layoutAttributesForSupplementaryView(ofKind: UICollectionView.elementKindSectionHeader, at: indexPath), header.frame.height > 0 {
+            return header.frame.minY
+        }
+        guard let item = layout.layoutAttributesForItem(at: indexPath) else { return nil }
+        let topInset = (layout as? UICollectionViewFlowLayout)?.sectionInset.top ?? 0
+        return item.frame.minY - topInset
+    }
+
+    /// 手动滚动时胶囊选中态跟随可见节：顶边在可见顶沿之上（含 20pt 容差）
+    /// 的最后一个节；到底时末节即当前节。
+    private func syncCapsuleSelectionWithScroll() {
+        guard let collection = emoteCollectionView, capsuleBar != nil else { return }
+        let visibleTop = collection.contentOffset.y + collection.contentInset.top
+        var currentSection = pickerSections().first ?? .builtin
+        for (index, section) in pickerSections().enumerated() {
+            if let top = sectionTopY(index), top <= visibleTop + BearySpace.xl {
+                currentSection = section
+            }
+        }
+        updateCapsuleSelection(for: currentSection, animated: false)
+    }
+
+    private func updateCapsuleSelection(for section: PickerSection, animated: Bool) {
+        guard let itemIndex = capsuleSections.firstIndex(of: section) else { return }
+        capsuleBar?.setSelectedItem(itemIndex, animated: animated)
+    }
+
     /// 自定义组格数（含首格 ＋ 添加格）。
     private func customItemCount() -> Int { customGifKeys.count + 1 }
     /// 弹窗高度封顶 480：内容不足 480 时按内容高，超出时封顶、列表内部滚动。
@@ -216,6 +329,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             collection.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collection.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
+        buildCapsuleBar()
         refreshCustomLibrary()
     }
 
@@ -271,7 +385,10 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         let contentHeight = collection.collectionViewLayout.collectionViewContentSize.height
         guard contentHeight > 0 else { return }
         let headerHeight: CGFloat = BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16 + titleLabel.intrinsicContentSize.height + 12
-        let height = min(headerHeight + contentHeight + view.safeAreaInsets.bottom + extraBottomInset, maxSheetHeight)
+        // 胶囊在时预留胶囊高＋底距（内容不足时胶囊落在内容之下、不盖末行）；
+        // 内容超高封顶时由底 contentInset 兜底（末行可滚到胶囊上方）。
+        let capsuleSpace: CGFloat = capsuleBar == nil ? 0 : BearyEmoteCapsuleBarView.reservedBottomInset
+        let height = min(headerHeight + contentHeight + capsuleSpace + view.safeAreaInsets.bottom + extraBottomInset, maxSheetHeight)
         let preferred = CGSize(width: view.bounds.width > 0 ? view.bounds.width : 375, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
@@ -446,6 +563,24 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
 
     func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
         (cell as? BearyMoodPickerCell)?.setPlaying(false)
+    }
+
+    // MARK: - 胶囊滚动同步（手动滚动时选中态跟随可见节；编程式滚动期间不同步）
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === emoteCollectionView, capsuleProgrammaticScroll == false else { return }
+        syncCapsuleSelectionWithScroll()
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        capsuleProgrammaticScroll = false
+    }
+
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+        capsuleProgrammaticScroll = false
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        capsuleProgrammaticScroll = false
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -721,5 +856,172 @@ final class BearyEmoteFestivalPillHeaderView: UICollectionReusableView {
 
     @objc private func pillItemTapped(_ sender: UIButton) {
         onSelectGroup?(sender.tag)
+    }
+}
+
+// MARK: - 表情选择器底部悬浮胶囊分类条
+
+/// 底部悬浮胶囊分类条（2026-11-25 Li 定，预览定版）：圆角胶囊钉在 sheet 底部，
+/// 分类图标一排（内置／节日／自定义／最近使用，按预览顺序），选中图标上抬 14pt＋
+/// 下方小圆点（与节日 pill 头同值）；点按切换分类，网格滚动到对应节；条常驻底部，
+/// 网格在条下滚动，末行由底 contentInset 顶到条上方。
+/// 与节日节 pill 头分工不同：胶囊切分类（4 类），pill 头切节日组（10 组）；
+/// 删 pill 头会让 9 组节日无入口，故 pill 头保留、只把分类切换交给胶囊。
+final class BearyEmoteCapsuleBarView: UIView {
+
+    /// 胶囊高 64；圆角取高一半（height/2，不写字面量）；底距安全区 12。
+    static let capsuleHeight: CGFloat = 64
+    static let bottomMargin: CGFloat = BearySpace.md
+    /// 网格底 contentInset 预留＝胶囊高＋底距（76），让末行能滚到胶囊上方；
+    /// sheet 高度同样加这段（内容不足时胶囊落在内容之下、不盖末行）。
+    static let reservedBottomInset: CGFloat = capsuleHeight + bottomMargin
+    /// 选中图标上抬（与节日 pill 头同值）与图标尺寸、圆点直径。
+    static let selectedRaise: CGFloat = 14
+    static let iconSize: CGFloat = 36
+    static let dotDiameter: CGFloat = 6
+
+    struct Item {
+        let titleKey: String
+        let iconKey: String
+    }
+
+    private let stackView = UIStackView()
+    private var itemButtons: [UIButton] = []
+    private var iconSlots: [UIView] = []
+    private var dots: [UIView] = []
+    private var emoteViews: [BearyEmoteView?] = []
+    private var selectedIndex = 0
+    private var onSelect: ((Int) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = BearyColors.surface2
+        layer.cornerRadius = Self.capsuleHeight / 2
+        layer.masksToBounds = false
+        BearyShadow.applyRaised(to: layer)
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        stackView.axis = .horizontal
+        stackView.distribution = .fillEqually
+        stackView.alignment = .fill
+        addSubview(stackView)
+        NSLayoutConstraint.activate([
+            stackView.topAnchor.constraint(equalTo: topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: BearySpace.lg),
+            stackView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -BearySpace.lg),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// 项在 init 时一次建好（分类是静态表），这里只同步选中态与回调。
+    func configure(items: [Item], selectedIndex: Int, onSelect: @escaping (Int) -> Void) {
+        self.onSelect = onSelect
+        self.selectedIndex = selectedIndex
+        for button in itemButtons {
+            stackView.removeArrangedSubview(button)
+            button.removeFromSuperview()
+        }
+        itemButtons = []
+        iconSlots = []
+        dots = []
+        emoteViews = []
+        for (index, item) in items.enumerated() {
+            let button = UIButton(type: .custom)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.accessibilityLabel = NSLocalizedString(item.titleKey, comment: "")
+            button.accessibilityTraits = [.button]
+            button.addTarget(self, action: #selector(itemTapped(_:)), for: .touchUpInside)
+            button.bearyAddPressFeedback()
+            button.tag = index
+            stackView.addArrangedSubview(button)
+            itemButtons.append(button)
+            let iconSlot = UIView()
+            iconSlot.translatesAutoresizingMaskIntoConstraints = false
+            iconSlot.isUserInteractionEnabled = false
+            button.addSubview(iconSlot)
+            iconSlots.append(iconSlot)
+            let emoteView = BearyEmoteView(key: item.iconKey, animated: true)
+            emoteView.translatesAutoresizingMaskIntoConstraints = false
+            emoteView.isUserInteractionEnabled = false
+            iconSlot.addSubview(emoteView)
+            emoteViews.append(emoteView)
+            NSLayoutConstraint.activate([
+                emoteView.topAnchor.constraint(equalTo: iconSlot.topAnchor),
+                emoteView.bottomAnchor.constraint(equalTo: iconSlot.bottomAnchor),
+                emoteView.leadingAnchor.constraint(equalTo: iconSlot.leadingAnchor),
+                emoteView.trailingAnchor.constraint(equalTo: iconSlot.trailingAnchor),
+            ])
+            let dot = UIView()
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.backgroundColor = BearyColors.ink
+            dot.layer.cornerRadius = Self.dotDiameter / 2
+            dot.alpha = 0
+            dot.isUserInteractionEnabled = false
+            button.addSubview(dot)
+            dots.append(dot)
+            NSLayoutConstraint.activate([
+                iconSlot.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+                iconSlot.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+                iconSlot.widthAnchor.constraint(equalToConstant: Self.iconSize),
+                iconSlot.heightAnchor.constraint(equalToConstant: Self.iconSize),
+                dot.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+                dot.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -BearySpace.sm),
+                dot.widthAnchor.constraint(equalToConstant: Self.dotDiameter),
+                dot.heightAnchor.constraint(equalToConstant: Self.dotDiameter),
+            ])
+        }
+        refreshSelection(animated: false)
+    }
+
+    /// 换节日组代表图标（节日分类的图标跟当前选中组走）。
+    func updateIconKey(_ key: String, forItem index: Int) {
+        guard iconSlots.indices.contains(index), emoteViews.indices.contains(index) else { return }
+        emoteViews[index]?.stop()
+        emoteViews[index]?.removeFromSuperview()
+        let next = BearyEmoteView(key: key, animated: true)
+        next.translatesAutoresizingMaskIntoConstraints = false
+        next.isUserInteractionEnabled = false
+        iconSlots[index].addSubview(next)
+        NSLayoutConstraint.activate([
+            next.topAnchor.constraint(equalTo: iconSlots[index].topAnchor),
+            next.bottomAnchor.constraint(equalTo: iconSlots[index].bottomAnchor),
+            next.leadingAnchor.constraint(equalTo: iconSlots[index].leadingAnchor),
+            next.trailingAnchor.constraint(equalTo: iconSlots[index].trailingAnchor),
+        ])
+        emoteViews[index] = next
+    }
+
+    func setSelectedItem(_ index: Int, animated: Bool) {
+        guard itemButtons.indices.contains(index) else { return }
+        selectedIndex = index
+        refreshSelection(animated: animated)
+    }
+
+    /// 选中态：选中图标上抬（只动 transform）＋下方小圆点显现（只动 opacity）；
+    /// 未选中图标回落、圆点隐藏。减动效时瞬时切换。
+    private func refreshSelection(animated: Bool) {
+        let apply = { [weak self] in
+            guard let self = self else { return }
+            for (index, slot) in self.iconSlots.enumerated() {
+                let selected = index == self.selectedIndex
+                slot.transform = selected ? CGAffineTransform(translationX: 0, y: -Self.selectedRaise) : .identity
+                self.dots[index].alpha = selected ? 1 : 0
+            }
+            for (index, button) in self.itemButtons.enumerated() {
+                button.accessibilityTraits = index == self.selectedIndex ? [.button, .selected] : [.button]
+            }
+        }
+        if animated, UIAccessibility.isReduceMotionEnabled == false {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: apply)
+        } else {
+            apply()
+        }
+    }
+
+    @objc private func itemTapped(_ sender: UIButton) {
+        onSelect?(sender.tag)
     }
 }
