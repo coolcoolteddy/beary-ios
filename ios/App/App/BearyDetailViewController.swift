@@ -3441,15 +3441,8 @@ final class BearyDetailViewController: UIViewController {
         if let reused = emoteAddButton {
             addButton = reused
         } else {
-            let made = BearyDiaryCardDashedAddButton(frame: .zero)
-            made.translatesAutoresizingMaskIntoConstraints = false
-            made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
-            made.tintColor = BearyColors.gray
-            made.accessibilityLabel = "贴一只小熊"
-            made.widthAnchor.constraint(equalToConstant: 34).isActive = true
-            made.heightAnchor.constraint(equalToConstant: 34).isActive = true
+            let made = BearyDiaryCardDashedAddButton.makeEmoteAddButton()
             made.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
-            made.bearyAddPressFeedback()
             emoteAddButton = made
             addButton = made
         }

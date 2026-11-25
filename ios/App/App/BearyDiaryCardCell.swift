@@ -373,6 +373,22 @@ final class BearyDiaryCardDashedAddButton: BearyHit44Button {
         super.traitCollectionDidChange(previousTraitCollection)
         updateStrokeColor()
     }
+
+    /// 回应行末 + 钮共享构造（详情页、卡片 feed、卡片 profile 三处同款）：
+    /// 34 虚线圆、icon_plus 24、灰色、无障碍名「贴一只小熊」、34×34、
+    /// 按压反馈（同收藏钮，通用按压缩 .84 + .light）。target 由调用方挂
+    ///（各处 emoteAddTapped 分属不同类）。
+    static func makeEmoteAddButton() -> BearyDiaryCardDashedAddButton {
+        let made = BearyDiaryCardDashedAddButton(frame: .zero)
+        made.translatesAutoresizingMaskIntoConstraints = false
+        made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
+        made.tintColor = BearyColors.gray
+        made.accessibilityLabel = "贴一只小熊"
+        made.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        made.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        made.bearyAddPressFeedback()
+        return made
+    }
 }
 
 // MARK: - 日记卡片 cell（首页 F1–F13 ＋个人主页列表行合并体）
@@ -4391,16 +4407,8 @@ class BearyDiaryCardCell: UITableViewCell {
             if let reused = feedAddButton {
                 addButton = reused
             } else {
-                let made = BearyDiaryCardDashedAddButton(frame: .zero)
-                made.translatesAutoresizingMaskIntoConstraints = false
-                made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
-                made.tintColor = BearyColors.gray
-                made.accessibilityLabel = "贴一只小熊"
-                made.widthAnchor.constraint(equalToConstant: 34).isActive = true
-                made.heightAnchor.constraint(equalToConstant: 34).isActive = true
+                let made = BearyDiaryCardDashedAddButton.makeEmoteAddButton()
                 made.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
-                // W6：同收藏钮，改通用按压（缩 .84 + .light）。
-                made.bearyAddPressFeedback()
                 feedAddButton = made
                 addButton = made
             }
@@ -4411,15 +4419,8 @@ class BearyDiaryCardCell: UITableViewCell {
             if let reused = profileAddButton {
                 addButton = reused
             } else {
-                let made = BearyDiaryCardDashedAddButton(frame: .zero)
-                made.translatesAutoresizingMaskIntoConstraints = false
-                made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
-                made.tintColor = BearyColors.gray
-                made.accessibilityLabel = "贴一只小熊"
-                made.widthAnchor.constraint(equalToConstant: 34).isActive = true
-                made.heightAnchor.constraint(equalToConstant: 34).isActive = true
+                let made = BearyDiaryCardDashedAddButton.makeEmoteAddButton()
                 made.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
-                made.bearyAddPressFeedback()
                 profileAddButton = made
                 addButton = made
             }

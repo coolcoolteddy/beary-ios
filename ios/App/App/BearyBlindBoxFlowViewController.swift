@@ -16,12 +16,6 @@ import UIKit
 // 不清已入池的自己那篇，重进 / 再入池后提示行由原有逻辑复写。
 // 部署目标 iOS 15.0、Swift 5.0：只用闭包回调，不用 async/await，不用 if-let 简写。
 
-/// 小熊回应 chip：BearyButton 工厂款 + emoteKey 属性（不用 accessibilityLabel 夹带 key，
-/// 无障碍文案保持“小熊回应”可读）。
-private final class BlindBoxEmoteChipButton: BearyButton {
-    var emoteKey = ""
-}
-
 private final class BlindBoxPoolRowView: UIView {
     var onTap: (() -> Void)?
 
@@ -260,8 +254,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private var exchangeId: String?
     private var received: BlindBoxReceivedEntry?
     private var receivedEmotes: [EmoteCount] = []
-    /// 上次渲染时各回应 key 的展示数量：数量变化才淡变，未变（主题切换重渲染）不重播。
-    private var shownEmoteTotals: [String: Int] = [:]
+    /// 本轮渲染在场 chip 的 key（与 overlayButton.tag 下标对齐，供点按／摇头按 key 认回 chip；
+    /// 与卡片／详情的 chipKeys 同口径）。
+    private var visibleEmoteKeys: [String] = []
     private var poolBusy = false
     private var openBusy = false
     private var withdrawBusy = false
@@ -595,6 +590,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         emoteScroll.translatesAutoresizingMaskIntoConstraints = false
         emoteScroll.showsHorizontalScrollIndicator = false
         emoteStack.axis = .horizontal
+        // 共享 chip 自带 34 高（36 高滚动区内纵向居中，不拉满，避免与 chip 自身
+        // 高约束冲突）；旧自建钮 36 高时 .fill 无冲突，换共享组件后须改此处。
+        emoteStack.alignment = .center
         emoteStack.spacing = 8
         emoteStack.translatesAutoresizingMaskIntoConstraints = false
         emoteScroll.addSubview(emoteStack)
@@ -1526,79 +1524,39 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     // MARK: - 匿名小熊回应（仅熊脸选择器；乐观更新、失败回滚）
 
-    /// chip 用小图：原图 72pt 直接设给按钮，UIButton 不替调用方缩图，
-    /// imageView 72pt 高塞进 36pt chip、又被 masksToBounds 切掉，只剩顶部
-    ///（133 真机：只看得见爱心、熊脸基本在 chip 外）。缩到 22pt 再设，
-    /// 熊脸完整可见、与 chip 高度匹配。
-    private static func chipEmoteImage(_ face: UIImage, side: CGFloat = 22) -> UIImage {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = face.scale > 0 ? face.scale : UIScreen.main.scale
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format)
-        return renderer.image { _ in face.draw(in: CGRect(x: 0, y: 0, width: side, height: side)) }
-    }
-
+    /// 盲盒 chip 走共享 BearyEmoteChipView（与卡片／详情同一组件）：
+    /// 24pt 动效图、34 高、countLabel numberFont、mine＝hov 底＋ink 边，
+    /// 无障碍名随共享 render 走（#2114 的「表情名＋总数＋已贴／未贴」合入后
+    /// 自动生效）。旧自建 BlindBoxEmoteChipButton（22pt 静态图、计数走
+    /// titleLabel、已选态墨底白字）与 chipEmoteImage 缩图、按底色取深浅图、
+    /// 计数淡变一并撤掉——共享组件内已有对应口径。
+    /// 代次守卫（beginBlindBoxRequest／isCurrentBlindBoxResponse）不动，
+    /// 仍在 emoteChipTapped／emoteAddTapped 里。
     private func renderEmoteChips() {
         for sub in emoteStack.arrangedSubviews {
             emoteStack.removeArrangedSubview(sub)
             sub.removeFromSuperview()
         }
         var visibleEmoteCount = 0
-        let isDarkTrait = traitCollection.userInterfaceStyle == .dark
+        var visibleKeys: [String] = []
         for count in receivedEmotes {
             guard let key = count.emote, let total = count.count, total > 0 else { continue }
             visibleEmoteCount += 1
-            let chip = BlindBoxEmoteChipButton(style: .secondaryOutline(.compact))
-            chip.setTitle("\(total)", for: .normal)
-            // 行内计数走数值档：12pt semibold scaled 等宽数字（规范 §11 numberFont），
-            // 不再继承紧凑按钮的 14pt semibold。
-            chip.titleLabel?.font = BearyDynamicType.numberFont()
-            chip.emoteKey = key
-            chip.translatesAutoresizingMaskIntoConstraints = false
-            // 取图按 chip 底色、不按系统主题：已选态底是墨色（浅色下近黑、
-            // 深色下近白），未选态底是 surface2（浅色下浅灰、深色下深灰）；
-            // 线稿须与底色反色才可见。浅色原图是深色线稿，在墨底上看不见
-            //（133 真机三 chip 全已选，熊脸只剩橙色点缀），已选态浅色下改取
-            // 深色版（白色线稿），其余组合沿用原按主题取图的口径。
+            visibleKeys.append(key)
             let mine = count.mine == true
-            let darkAsset = mine != isDarkTrait
-            if let face = BearyEmoteImages.image(for: key, dark: darkAsset) {
-                chip.setImage(Self.chipEmoteImage(face), for: .normal)
-                chip.imageView?.contentMode = .scaleAspectFit
-            }
-            // 左右各留 10pt 边距，图与计数之间留 6pt；删掉原来的
-            // imageEdgeInsets.left = -4——它把 chip 内在宽压掉 4pt，
-            // 计数顶到右缘只剩约 1pt 边距，看着像被切掉一半。
-            chip.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
-            chip.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
+            let chip = BearyEmoteChipView()
+            // 过渡：#2114 合入前共享 render 尚不写无障碍名，此处先写通用名占位
+            //（须在 render 之前调用——render 会覆盖成本文案，#2114 合入后本行
+            // 即多余、可删）；合入前盲盒 chip 不丢「小熊回应」读屏名。
+            chip.overlayButton.accessibilityLabel = "小熊回应"
+            chip.render(key: key, count: total, mine: mine)
+            chip.overlayButton.tag = visibleKeys.count - 1
+            chip.overlayButton.addTarget(self, action: #selector(emoteChipTapped(_:)), for: .touchUpInside)
+            chip.overlayButton.bearyAddPressFeedback()
             chip.setContentCompressionResistancePriority(.required, for: .horizontal)
-            if mine {
-                chip.backgroundColor = BearyColors.ink
-                chip.setTitleColor(BearyColors.bg, for: .normal)
-                chip.tintColor = BearyColors.bg
-            }
-            chip.addTarget(self, action: #selector(emoteChipTapped(_:)), for: .touchUpInside)
-            // 第 19 轮审计 B4：点按即时视觉＋触觉反馈——卡片行回应 chip 已挂
-            // bearyAddPressFeedback，盲盒 chip 补上同一反馈（按压轻缩＋轻震）。
-            chip.bearyAddPressFeedback()
-            chip.accessibilityLabel = "小熊回应"
             emoteStack.addArrangedSubview(chip)
-            NSLayoutConstraint.activate([
-                chip.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
-            ])
-            // 数量变化时 0.18s 透明度淡变（BearyMotion.micro）；减动效直设终值，
-            // 不播动画；数量未变（主题切换重渲染）不重播。
-            if shownEmoteTotals[key] != total, UIAccessibility.isReduceMotionEnabled == false, let countLabel = chip.titleLabel {
-                countLabel.alpha = 0
-                UIView.animate(withDuration: BearyMotion.micro) { countLabel.alpha = 1 }
-            }
         }
-        var nextShownTotals: [String: Int] = [:]
-        for count in receivedEmotes {
-            if let key = count.emote, let total = count.count, total > 0 {
-                nextShownTotals[key] = total
-            }
-        }
-        shownEmoteTotals = nextShownTotals
+        visibleEmoteKeys = visibleKeys
         emoteScroll.isHidden = visibleEmoteCount == 0
     }
 
@@ -1621,17 +1579,19 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     /// 失败回滚重渲染后按 emoteKey 找新 chip；已摘下（计数归 0）时摇整行。
     private func shakeEmoteChip(forKey key: String) {
         for sub in emoteStack.arrangedSubviews {
-            if let chip = sub as? BlindBoxEmoteChipButton, chip.emoteKey == key {
-                playDenyShake(on: chip)
-                return
-            }
+            guard let chip = sub as? BearyEmoteChipView else { continue }
+            let index = chip.overlayButton.tag
+            guard index >= 0, index < visibleEmoteKeys.count, visibleEmoteKeys[index] == key else { continue }
+            playDenyShake(on: chip)
+            return
         }
         playDenyShake(on: emoteScroll)
     }
 
     @objc private func emoteChipTapped(_ sender: UIButton) {
-        guard let chip = sender as? BlindBoxEmoteChipButton, chip.emoteKey.isEmpty == false, reactBusy == false, withdrawBusy == false, let exchangeId = exchangeId else { return }
-        let key = chip.emoteKey
+        let index = sender.tag
+        guard index >= 0, index < visibleEmoteKeys.count, reactBusy == false, withdrawBusy == false, let exchangeId = exchangeId else { return }
+        let key = visibleEmoteKeys[index]
         // 2026-10-29 即时性口径：点按瞬间先改填色与计数，服务端回包只做确认，失败回滚。
         let previous = receivedEmotes
         receivedEmotes = toggledEmotes(previous, key: key)
