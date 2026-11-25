@@ -827,20 +827,6 @@ class BearyProfileViewController: UIViewController {
         return viewValue
     }()
 
-    /// 无封面默认背景的文字 logo（v22，2026-10-30）：官方动态 wordmark 原图
-    ///（side_beary_word imageset：浅色黑字、深色白字，与 beary-wordmark-white
-    /// 同字形、alpha 通道逐字节一致，仅颜色随深浅变），150pt 宽、等比、
-    /// 封面居中；仅默认背景时显示，用户照片绝不叠加此 logo。
-    private let defaultWordmarkView: UIImageView = {
-        let imageViewValue = UIImageView()
-        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.contentMode = .scaleAspectFit
-        imageViewValue.isUserInteractionEnabled = false
-        imageViewValue.image = UIImage(named: "side_beary_word")
-        imageViewValue.isHidden = true
-        return imageViewValue
-    }()
-
     /// 2026-10-29 第 15 项：头像/封面大图查看热区（整张头像整圆区、整幅封面区，
     /// 不只小角落；复用现有灯箱纯查看，不带编辑入口）。头像钮后加、层级最上，
     /// 与封面重叠 28pt 区点按仍走头像；封面区内无其他可点钮（编辑/齿轮/
@@ -2112,15 +2098,15 @@ class BearyProfileViewController: UIViewController {
     private var stickyHeaderTrackTopInset: CGFloat {
         stickyHeaderTrackHeight - profileCoverHeight
     }
-    /// 第四轮第 1 项：封面照片加载失败标记——失败时恢复默认 wordmark 显示，
+    /// 第四轮第 1 项：封面照片加载失败标记——失败时恢复默认纯色背景，
     /// 封面带点按改走重拉（见 coverViewTapped），不再剩空带。
     private var coverLoadFailed = false
     /// 资料已到且无封面 URL 时为真：封面区显示主题底色默认背景（applyProfile 置位，布局同步用）。
     private var profileShowsDefaultCover = false
     /// 封面区是否显示（照片或默认背景任一）：下拉拉伸与复位以此为准，
     /// 不以 coverImageView.isHidden 为准（默认背景时图视图本身是隐藏的、区仍在）。
-    /// 第三轮第 13 项：景深主题态同样算显示——贴主题时照片与 wordmark 一并
-    /// 隐藏，旧口径会误判区不在、把带高复位成 0 裁没景深。
+    /// 第三轮第 13 项：景深主题态同样算显示——贴主题时照片隐藏，
+    /// 旧口径会误判区不在、把带高复位成 0 裁没景深。
     private var profileShowsCoverArea: Bool {
         return !coverImageView.isHidden || profileShowsDefaultCover || festivalTheme != .none
     }
@@ -2772,7 +2758,7 @@ class BearyProfileViewController: UIViewController {
     /// 锁定前 32pt 窗口内做 8pt 回落 bump（见头像段公式），窗口外恒 0、
     /// 定型位与 #612 现行一字不差，名字以下内容不受任何位移；
     /// header 用户名在内容用户名顶边碰到 header 底边时起、往后 20px 内
-    /// 淡入＋上浮到位；默认背景 wordmark 在后半段内 1→0 淡出（用户照片无此处理）。
+    /// 淡入＋上浮到位；吸顶 wordmark 在后半段内 1→0 淡出（用户照片无此处理）。
     /// 只改 transform／alpha 与跟踪图顶约束常量，不调 layoutIfNeeded、不做图片加载、
     /// 不改文案；几何取布局时存好的 stickyHeaderBottom／stickyHeaderBgNaturalTop。
     /// 层级：sticky header 恒在 table 之上——头像滑入带内即自然被 header 盖住消失，
@@ -2842,8 +2828,7 @@ class BearyProfileViewController: UIViewController {
         avatarLetterLabel.transform = CGAffineTransform(translationX: 0, y: avatarBottomHold).scaledBy(x: avatarScale, y: avatarScale)
         applyProfileBelowShift(0)
         currentBelowShift = 0
-        // 默认背景 wordmark：后半段内 1→0 淡出（照片时两视图均隐藏，赋值无可视影响）。
-        defaultWordmarkView.alpha = 1 - rampProgress
+        // 吸顶 wordmark：后半段内 1→0 淡出。
         stickyWordmarkView.alpha = 1 - rampProgress
         // 跟踪图：1:1 跟随、锁定后顶冻结（底贴 header 底边）；下拉区（up≤0）header 整体隐藏。
         let bgTop = max(stickyHeaderBgNaturalTop - up - stickyHeaderTrackTopInset, headerHeight - stickyHeaderTrackHeight)
@@ -3094,7 +3079,6 @@ class BearyProfileViewController: UIViewController {
         avatarLetterLabel.transform = .identity
         applyProfileBelowShift(0)
         currentBelowShift = 0
-        defaultWordmarkView.alpha = 1
         stickyWordmarkView.alpha = 1
         stickyHeaderNameLabel.alpha = 0
         stickyHeaderNameLabel.transform = .identity
@@ -3165,7 +3149,6 @@ class BearyProfileViewController: UIViewController {
         headerView.backgroundColor = BearyColors.bg
         headerView.addSubview(coverClipView)
         coverClipView.addSubview(coverImageView)
-        coverClipView.addSubview(defaultWordmarkView)
         coverImageView.addSubview(coverBlurImageView)
         // 2026-10-29 第 7 项：点封面查看热区在 headerView 层、仍在其上。
         NSLayoutConstraint.activate([
@@ -3173,11 +3156,6 @@ class BearyProfileViewController: UIViewController {
             coverBlurImageView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
             coverBlurImageView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
             coverBlurImageView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
-            // 默认背景 wordmark：封面居中（下拉拉伸时 clip 长高、中心跟随，即“居中跟随”）。
-            defaultWordmarkView.centerXAnchor.constraint(equalTo: coverClipView.centerXAnchor),
-            defaultWordmarkView.centerYAnchor.constraint(equalTo: coverClipView.centerYAnchor),
-            defaultWordmarkView.widthAnchor.constraint(equalToConstant: 150),
-            defaultWordmarkView.heightAnchor.constraint(equalToConstant: 150 * (defaultWordmarkView.image?.size.height ?? 117) / (defaultWordmarkView.image?.size.width ?? 305)),
         ])
         // 2026-10-29 第 15 项：查看热区——封面钮贴整幅封面、头像容器后加
         //（容器内头像钮在封面钮之上，重叠 28pt 区点按仍走头像）；无图时处理函数内守卫、不 present。
@@ -3397,16 +3375,15 @@ class BearyProfileViewController: UIViewController {
         wallTotalLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 116 原生先行框架：封面带是固定框架、不是数据——applyProfile 无论有无
         // 封面照片都把带高定为 profileCoverHeight（180），故首帧就按最终态搭好：
-        // 带高 180、头像半压在带底（-28）、默认主题底色 + 官方动态 wordmark。
+        // 带高 180、头像半压在带底（-28）、默认纯色底色。
         // 此前首帧带高 0、头像顶距 20，资料一到带高跳 180、头像与名字／统计／
-        // 标签整体下跳，整头闪一次。本改动不是骨架屏：主题底色 + wordmark 即无封面
-        // 时的最终默认背景（applyProfile 无封面分支同款），有封面时数据回来只把
-        // 带内照片换进来、带高与头像位一字不动；资料失败时框架同样不塌。
+        // 标签整体下跳，整头闪一次。本改动不是骨架屏：纯色即无封面时的最终默认
+        // 背景（applyProfile 无封面分支同款），有封面时数据回来只把带内照片换
+        // 进来、带高与头像位一字不动；资料失败时框架同样不塌。
         // 注意：旧“加载态先高 0 防 faint 灰块”注释（coverImageView 定义处）针对
         // 的是无图时露 faint 底——现首帧底色已是最终默认主题底色，不再适用。
         profileShowsDefaultCover = true
-        coverClipView.backgroundColor = BearyColors.bg
-        defaultWordmarkView.isHidden = false
+        coverClipView.backgroundColor = BearyColors.limitedBubbleBg
         coverHeightConstraint.constant = profileCoverHeight
         avatarImageView.layer.borderWidth = 3.5
         updateDynamicLayerColors()
@@ -4199,7 +4176,7 @@ class BearyProfileViewController: UIViewController {
         applyEmailRow()
 
         // 封面带（v22，2026-10-30）：资料到了封面区恒 180 高——有封面 URL 时为照片，
-        // 无封面时为主题底色默认背景（官方动态 wordmark）；加载态（本函数未跑）仍为高 0＋头顶距 20。
+        // 无封面时为纯色默认背景；加载态（本函数未跑）仍为高 0＋头顶距 20。
         // L17：空字符串不再算有封面——须非空且能拼出 URL 才算。
         let hasCover = !(profileValue.coverUrl ?? "").isEmpty && BearyImageURLs.avatarURL(profileValue.coverUrl) != nil
         profileShowsDefaultCover = !hasCover
@@ -4220,8 +4197,7 @@ class BearyProfileViewController: UIViewController {
             coverImageView.image = nil
         }
         coverImageView.isHidden = !hasCover
-        coverClipView.backgroundColor = profileShowsDefaultCover ? BearyColors.bg : BearyColors.surface2
-        defaultWordmarkView.isHidden = !profileShowsDefaultCover
+        coverClipView.backgroundColor = profileShowsDefaultCover ? BearyColors.limitedBubbleBg : BearyColors.surface2
         coverHeightConstraint.constant = profileCoverHeight
         // 下拉模糊用预模糊图：缓存命中时直接复用；异步加载的新图在首次下拉时生成；
         // 默认背景无照片、refreshCoverBlurImage 早退，模糊层无可视变化。
@@ -10116,12 +10092,11 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         presentCoverLightbox()
     }
 
-    /// 第四轮第 1 项：封面加载失败回退——恢复默认 wordmark 显示（带高不变，
+    /// 第四轮第 1 项：封面加载失败回退——恢复默认纯色背景（带高不变，
     /// 不剩空带），并立失败标记供封面带点按重拉。
     private func handleCoverLoadFailed() {
         coverLoadFailed = true
-        defaultWordmarkView.isHidden = false
-        coverClipView.backgroundColor = BearyColors.bg
+        coverClipView.backgroundColor = BearyColors.limitedBubbleBg
     }
 
     /// 第四轮第 1 项：封面带点按重拉（失败态专用；成功后标记清掉，下次点按回原流程）。
@@ -10215,7 +10190,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
 
     /// 景深背景贴／撤。返回 false 仅表示主题 View 创建失败（缺资源）。
     /// 他人页恒默认（本机先行阶段存量只属于当前账号，不替别人贴墙纸）。
-    /// 主题态：封面照片与默认 wordmark 一并隐藏，吸顶背景随 coverImageView
+    /// 主题态：封面照片隐藏，吸顶背景随 coverImageView
     /// 隐藏自动消失（syncStickyHeaderCover 原有分支），不另动吸顶逻辑。
     @discardableResult
     private func applyFestivalTheme(_ theme: FestivalTheme, persist: Bool) -> Bool {
@@ -10241,7 +10216,6 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             // 直接调用时 applyProfile 不重跑，不还原会一直露空带）。
             let hasCover = !(profile?.coverUrl ?? "").isEmpty && BearyImageURLs.avatarURL(profile?.coverUrl) != nil
             coverImageView.isHidden = !hasCover
-            defaultWordmarkView.isHidden = !profileShowsDefaultCover
             if persist {
                 UserDefaults.standard.set(FestivalTheme.none.rawValue, forKey: festivalThemeDefaultsKey)
             }
@@ -10274,7 +10248,6 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             }
             festivalTheme = effective
             coverImageView.isHidden = true
-            defaultWordmarkView.isHidden = true
             profileCoverVisible = false
             updateProfileCoverVisibility()
             // 切主题即预热吸顶跟踪图：海报读盘＋解码在后台做，不等首次滚动／布局
@@ -10334,7 +10307,6 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         // 只贴主题不恢复高度、仍裁没；贴主题即写回自然带高。
         coverHeightConstraint.constant = profileCoverHeight
         coverImageView.isHidden = true
-        defaultWordmarkView.isHidden = true
         updateFestivalDim()
         festivalWallpaperVisible = false
         updateFestivalWallpaperVisibility()
