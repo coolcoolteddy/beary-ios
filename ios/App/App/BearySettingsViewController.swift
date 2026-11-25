@@ -3503,11 +3503,12 @@ final class BearySettingsViewController: UIViewController {
         let devRow = makeSettingsTappableRow(content: devContent, button: devButton)
         devRow.isHidden = !BearyDeveloperMode.shared.isEnabled
         developerModeRow = devRow
-        let rows: [UIView] = [
-            makeSettingsTappableRow(content: feedbackContent, button: feedbackButton),
-            makeSettingsTappableRow(content: wishContent, button: wishButton),
-            devRow,
-        ]
+        // 远程开关：wishwall 关掉时不建许愿墙行（入口隐藏）；点按拦截仍在 openWishWallPage 兜底。
+        var rows: [UIView] = [makeSettingsTappableRow(content: feedbackContent, button: feedbackButton)]
+        if !BearyForceUpdateCenter.shared.isFeatureDisabled(.wishwall) {
+            rows.append(makeSettingsTappableRow(content: wishContent, button: wishButton))
+        }
+        rows.append(devRow)
         let group = makeGroupCard(title: "反馈与建议", rows: rows)
         dataFeedbackWrap.addArrangedSubview(group.card)
         // 第二批体验检查第 6 项：离线保存独立组（与反馈组并列，不混进反馈组标题下）。
