@@ -1020,7 +1020,7 @@ final class BearyDetailViewController: UIViewController {
             separatorView.topAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: 17),
             separatorView.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor),
             separatorView.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
-            separatorView.heightAnchor.constraint(equalToConstant: 1),
+            separatorView.heightAnchor.constraint(equalToConstant: 0.5),
             separatorView.bottomAnchor.constraint(equalTo: contentColumnView.bottomAnchor, constant: -24),
         ])
 

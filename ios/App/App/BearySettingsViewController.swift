@@ -821,7 +821,7 @@ final class BearySettingsViewController: UIViewController {
                 separator.translatesAutoresizingMaskIntoConstraints = false
                 separator.backgroundColor = BearyColors.line
                 NSLayoutConstraint.activate([
-                    separator.heightAnchor.constraint(equalToConstant: 1),
+                    separator.heightAnchor.constraint(equalToConstant: 0.5),
                 ])
                 stack.addArrangedSubview(separator)
                 separators.append(separator)
@@ -880,7 +880,7 @@ final class BearySettingsViewController: UIViewController {
     /// 标题行走组标题口径（12 灰 kern 1，见 makeSectionTitle）+ 行尾下箭头
     /// （官方包 icon_chevron_down 16 灰，通知卡同款）；体是行栈，初始收起
     /// （isHidden，栈自动归零高度），行包容器与分隔线口径与 makeGroupCard
-    /// 一致（行上下 14、左右 16、行间 1pt 细线），可点行的覆盖按钮按
+    /// 一致（行上下 14、左右 16、行间 0.5pt 细线），可点行的覆盖按钮按
     /// makeGroupCard 的审计口径改钉包容器四边（只扩留白区，不盖同行控件）。
     private final class SettingsDisclosure {
         let card: UIView
@@ -962,7 +962,7 @@ final class BearySettingsViewController: UIViewController {
         headerSeparator.translatesAutoresizingMaskIntoConstraints = false
         headerSeparator.backgroundColor = BearyColors.line
         NSLayoutConstraint.activate([
-            headerSeparator.heightAnchor.constraint(equalToConstant: 1),
+            headerSeparator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
         bodyStack.addArrangedSubview(headerSeparator)
         var wrappers: [UIView] = []
@@ -973,7 +973,7 @@ final class BearySettingsViewController: UIViewController {
                 separator.translatesAutoresizingMaskIntoConstraints = false
                 separator.backgroundColor = BearyColors.line
                 NSLayoutConstraint.activate([
-                    separator.heightAnchor.constraint(equalToConstant: 1),
+                    separator.heightAnchor.constraint(equalToConstant: 0.5),
                 ])
                 bodyStack.addArrangedSubview(separator)
                 separators.append(separator)
@@ -1379,7 +1379,7 @@ final class BearySettingsViewController: UIViewController {
     /// （账号卡）由 loadAll 隐藏，这里只清空行栈。
     /// 当前账号优先排第一位（其余按首次保存顺序），当前行打勾；
     /// “添加账号”行恒可见，满 3 个时点按只弹上限提示、不进登录页。
-    /// 行口径与 makeGroupCard 同款（行上下 14、行间 1pt 细线），唯首行
+    /// 行口径与 makeGroupCard 同款（行上下 14、行间 0.5pt 细线），唯首行
     /// 顶 0、末行底 0——外层账号卡的包容器已给整组上下各 14，内行再给
     /// 会双倍留白。
     private func refreshAccountSwitchSection() {
@@ -1500,13 +1500,13 @@ final class BearySettingsViewController: UIViewController {
         return wrap
     }
 
-    /// 账号卡内账号列表行间分隔线（1pt，BearyColors.line，与 makeGroupCard 同款）。
+    /// 账号卡内账号列表行间分隔线（0.5pt，BearyColors.line，与 makeGroupCard 同款）。
     private func accountListSeparator() -> UIView {
         let separator = UIView()
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.backgroundColor = BearyColors.line
         NSLayoutConstraint.activate([
-            separator.heightAnchor.constraint(equalToConstant: 1),
+            separator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
         return separator
     }

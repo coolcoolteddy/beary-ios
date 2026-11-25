@@ -779,11 +779,11 @@ private final class BearyFriendCell: UITableViewCell {
             moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             moreButton.widthAnchor.constraint(equalToConstant: 44),
             moreButton.heightAnchor.constraint(equalToConstant: 44),
-            // 审计低风险项：行底 1pt 分隔线（与日记行底边同口径）。
+            // 审计低风险项：行底 0.5pt 分隔线（与日记行底边同口径）。
             separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            separatorView.heightAnchor.constraint(equalToConstant: 1),
+            separatorView.heightAnchor.constraint(equalToConstant: 0.5),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
         ])
     }

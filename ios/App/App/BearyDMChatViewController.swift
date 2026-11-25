@@ -508,7 +508,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             topLine.topAnchor.constraint(equalTo: inputBar.topAnchor),
             topLine.leadingAnchor.constraint(equalTo: inputBar.leadingAnchor),
             topLine.trailingAnchor.constraint(equalTo: inputBar.trailingAnchor),
-            topLine.heightAnchor.constraint(equalToConstant: 1),
+            topLine.heightAnchor.constraint(equalToConstant: 0.5),
             inputTextView.topAnchor.constraint(equalTo: inputBar.topAnchor, constant: 9),
             // 横向安全区：竖屏 safeArea 左右为 0、与原 16 内距一致；横屏时输入框不再贴圆角/刘海边缘。
             // inputBar 本身仍铺满宽度（背景与顶线不变），只让框与发送钮的横向边界让出安全区。

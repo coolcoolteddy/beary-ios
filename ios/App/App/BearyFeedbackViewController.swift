@@ -679,7 +679,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 separator.backgroundColor = BearyColors.line
                 deviceStack.addArrangedSubview(separator)
                 NSLayoutConstraint.activate([
-                    separator.heightAnchor.constraint(equalToConstant: 1),
+                    separator.heightAnchor.constraint(equalToConstant: 0.5),
                 ])
             }
         }

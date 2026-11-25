@@ -546,7 +546,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         let divider = UIView()
         divider.translatesAutoresizingMaskIntoConstraints = false
         divider.backgroundColor = BearyColors.line
-        divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        divider.heightAnchor.constraint(equalToConstant: 0.5).isActive = true
         return divider
     }
 

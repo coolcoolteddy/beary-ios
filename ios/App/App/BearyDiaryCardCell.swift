@@ -724,8 +724,8 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 错位头像；非首卡与首页/时间线一字不动。
     var profileFirstRow = false
     /// 个人页“更多日记”行上方：本卡为日记 tab 最后一篇且后接“更多日记”行时，
-    /// 卡片底线整段塌掉（高 1 → 0 并隐藏，不留空占位）。#360 删的是“更多日记”
-    /// 行自带的顶线，本卡底线是另一条（同为 1pt、BearyColors.line、全宽、
+    /// 卡片底线整段塌掉（高 0.5 → 0 并隐藏，不留空占位）。#360 删的是“更多日记”
+    /// 行自带的顶线，本卡底线是另一条（同为 0.5pt、BearyColors.line、全宽、
     /// 贴 cell 底），故 #360 后截图里仍可见一条粗线。仅个人页容器在
     /// configure 前置 true；其余行、首页模式一律不动；复用时复位。
     var suppressBottomSeparator = false
@@ -1813,7 +1813,7 @@ class BearyDiaryCardCell: UITableViewCell {
         bodyTopPin.priority = UILayoutPriority(999)
         bodyStackTopPinConstraint = bodyTopPin
         if separatorHeightConstraint == nil {
-            separatorHeightConstraint = separatorView.heightAnchor.constraint(equalToConstant: 1)
+            separatorHeightConstraint = separatorView.heightAnchor.constraint(equalToConstant: 0.5)
         }
         NSLayoutConstraint.activate([
             avatarTop,
@@ -1997,7 +1997,7 @@ class BearyDiaryCardCell: UITableViewCell {
         transform = .identity
         profileFirstRow = false
         suppressBottomSeparator = false
-        separatorHeightConstraint?.constant = 1
+        separatorHeightConstraint?.constant = 0.5
         avatarTopConstraint?.constant = 14
         // 限时态复位：气泡／倒计时／pill 藏起、定时器停、正文移回正文栈，防残留到下一行。
         stopLimitedCountdownTimer()
@@ -3654,7 +3654,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 2026-10-31 107 真机报：首页限时篇下方没有分割线。旧口径是存活期
     /// “底线藏（边框代之）”，即 separatorView.isHidden = live，导致限时篇
     /// 下方与下一篇之间无实线。修法：首页模式（.feed）存活期底线也显，
-    /// 与普通篇一致（1pt、BearyColors.line、贴 cell 底、全宽）；个人主页
+    /// 与普通篇一致（0.5pt、BearyColors.line、贴 cell 底、全宽）；个人主页
     /// 模式保持旧口径不动（存活期限时篇藏底线但高仍 1）。
     private func refreshEphemeralState(entry: Entry) {
         let hasEphemeral = entry.ephemeralUntil != nil
@@ -3693,9 +3693,9 @@ class BearyDiaryCardCell: UITableViewCell {
             stopLimitedCountdownTimer()
         }
         // 个人页最后一篇后接“更多日记”行时底线整段塌掉（高 0 并隐藏），
-        // 其余行沿用旧口径（首页存活期限时篇也显底线；个人页存活期限时篇藏底线但高仍 1）。
+        // 其余行沿用旧口径（首页存活期限时篇也显底线；个人页存活期限时篇藏底线但高仍 0.5）。
         separatorView.isHidden = ((cardMode == .feed) ? false : live) || suppressBottomSeparator
-        separatorHeightConstraint?.constant = suppressBottomSeparator ? 0 : 1
+        separatorHeightConstraint?.constant = suppressBottomSeparator ? 0 : 0.5
         setNeedsLayout()
     }
 

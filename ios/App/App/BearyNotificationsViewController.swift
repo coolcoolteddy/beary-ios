@@ -4299,7 +4299,7 @@ class BearyNotificationCell: UITableViewCell {
             chevronView.heightAnchor.constraint(equalToConstant: 16),
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            separatorView.heightAnchor.constraint(equalToConstant: 1),
+            separatorView.heightAnchor.constraint(equalToConstant: 0.5),
             nestedLineView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             nestedLineView.widthAnchor.constraint(equalToConstant: 2),
             nestedLineView.topAnchor.constraint(equalTo: contentView.topAnchor),

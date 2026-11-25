@@ -947,7 +947,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 109 标题重写（从零新写，不复用 #244 前的旧标题实现）
     /// 设计（先写清再施工）：
     /// - 输入位置：内容栈首项、正文 textView 上方，一行独立输入区
-    ///   （headlineWrap：单行输入框 + 底部 1pt 细线），不进顶栏、不叠正文。
+    ///   （headlineWrap：单行输入框 + 底部 0.5pt 细线），不进顶栏、不叠正文。
     /// - 长度上限：30 字——与服务端 normalizeEntryTitle 口径一致
     ///   （>30 字服务端 400），前端输入时即截断到 30 字，不靠服务端报错。
     /// - 显示位置与样式：卡片与详情已有标题行（16.5 粗体，空标题整行
@@ -1874,7 +1874,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             topSeparator.leadingAnchor.constraint(equalTo: topBar.leadingAnchor),
             topSeparator.trailingAnchor.constraint(equalTo: topBar.trailingAnchor),
             topSeparator.bottomAnchor.constraint(equalTo: topBar.bottomAnchor),
-            // 8-4 例外：编辑器顶栏分隔线保持 0.5pt（iOS 细线惯例），不收进 1pt 行间分隔档。
+            // 全站分隔线统一 0.5pt（2026-11-21 Li 定），顶栏线与行间线同档。
             topSeparator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
         // 清单第 15 项：发布钮显式宽度约束（初值由 refreshPublishButtonWidth 按当前标题算出，
@@ -2008,7 +2008,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             headlineRule.topAnchor.constraint(equalTo: headlineField.bottomAnchor, constant: 6),
             headlineRule.leadingAnchor.constraint(equalTo: headlineWrap.leadingAnchor),
             headlineRule.trailingAnchor.constraint(equalTo: headlineWrap.trailingAnchor),
-            headlineRule.heightAnchor.constraint(equalToConstant: 1),
+            headlineRule.heightAnchor.constraint(equalToConstant: 0.5),
             headlineRule.bottomAnchor.constraint(equalTo: headlineWrap.bottomAnchor),
         ])
         // 审计三轮第 2 项：命中钮不进 headlineWrap（44 高以标题行为中心会伸出 wrap
@@ -3422,7 +3422,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     lockedSeparator.topAnchor.constraint(equalTo: lockedLabel.bottomAnchor, constant: 16),
                     lockedSeparator.leadingAnchor.constraint(equalTo: lockedButton.leadingAnchor, constant: 16),
                     lockedSeparator.trailingAnchor.constraint(equalTo: lockedButton.trailingAnchor, constant: -16),
-                    lockedSeparator.heightAnchor.constraint(equalToConstant: 2),
+                    lockedSeparator.heightAnchor.constraint(equalToConstant: 0.5),
                     lockedSeparator.bottomAnchor.constraint(equalTo: lockedButton.bottomAnchor),
                 ])
                 quotePanelRows.addArrangedSubview(lockedButton)
@@ -3682,7 +3682,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 2026-10-29 第 26 项：行间分隔线按详情页口径用 2pt（原 1pt）；
                 // leading/trailing 不动（行内内容：头像、名字、时间、正文一字不动）。
                 // 第二轮增量审计第 10 项：统一为 1pt（Li 点选）；只改高度，其余不动。
-                separator.heightAnchor.constraint(equalToConstant: 1),
+                // 2026-11-21 全站分隔线统一 0.5pt（Li 定），此行随之改 0.5。
+                separator.heightAnchor.constraint(equalToConstant: 0.5),
                 separator.bottomAnchor.constraint(equalTo: rowButton.bottomAnchor),
             ])
             rowButton.addTarget(self, action: #selector(didTapQuotePanelRow(_:)), for: .touchUpInside)
@@ -4152,7 +4153,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toolbarSeparator.topAnchor.constraint(equalTo: toolbarContainer.topAnchor),
             toolbarSeparator.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             toolbarSeparator.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            toolbarSeparator.heightAnchor.constraint(equalToConstant: 1),
+            toolbarSeparator.heightAnchor.constraint(equalToConstant: 0.5),
             draftStatusBanner.topAnchor.constraint(equalTo: toolbarSeparator.bottomAnchor, constant: 8),
             draftStatusBanner.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             draftStatusBanner.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
