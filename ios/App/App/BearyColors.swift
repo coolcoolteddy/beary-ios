@@ -58,7 +58,7 @@ enum BearyColors {
     /// 蓝 13% 深底对比约 4.77:1，均 ≥4.5:1。只用于私密 pill 文字前景；
     /// 图标／描边／填充仍走 blue，不动。
     static var deepBlueText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 10.0/255.0, green: 132.0/255.0, blue: 1.0, alpha: 1) : UIColor(red: 0.0, green: 102.0/255.0, blue: 204.0/255.0, alpha: 1) } }
-    /// 限时紫（规范值，深浅同值 #AF52DE）：限时 pill 的紫底／紫字基色。
+    /// 限时紫（规范值，深浅同值 #AF52DE）：限时 pill 的紫底／紫字基色；时间线竖线圆点存活限时边亦走它。
     static var limitedPurple: UIColor { UIColor(red: 175.0/255.0, green: 82.0/255.0, blue: 222.0/255.0, alpha: 1) }
     /// 正文用深紫（G6 对比度修复，2026-11-21）：浅 #8E2FB8 / 深 #AF52DE。
     /// 浅色白底对比约 6.46:1；深色黑底对比约 4.76:1，均 ≥4.5:1。
