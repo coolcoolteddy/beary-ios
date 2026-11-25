@@ -3599,11 +3599,16 @@ final class BearySettingsViewController: UIViewController {
     /// Plus 页入口②：设置页 Plus 组首行点按进 Plus 展示页。状态与入口行尾同源
     /// （plusDetail 已到时用永久／有效期判定，未到时退回 /me 的 plus）。
     private var isPlusMember: Bool {
+        // TF 本地 Plus（2026-11-26 Li 定）：测试版上本地买过 Plus 也算开通；
+        // 正式版里 isLocalTestFlightPlus 恒为 false，不影响服务端口径。
+        let base: Bool
         if let detail = plusDetail {
             let now = Int(Date().timeIntervalSince1970 * 1000)
-            return BearyDeveloperMode.effectivePlus(detail.permanent == true || (detail.effectiveUntil ?? 0) > now)
+            base = BearyDeveloperMode.effectivePlus(detail.permanent == true || (detail.effectiveUntil ?? 0) > now)
+        } else {
+            base = BearyDeveloperMode.effectivePlus(SessionManager.shared.currentUser?.plus == true)
         }
-        return BearyDeveloperMode.effectivePlus(SessionManager.shared.currentUser?.plus == true)
+        return base || BearyPlusGate.isLocalTestFlightPlus
     }
 
     @objc private func openPlusPage() {

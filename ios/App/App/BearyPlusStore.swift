@@ -8,6 +8,9 @@ import StoreKit
 // POST /api/account/plus-verify 服务端校验（验 JWS 签名＋发权益）→
 // 校验通过才 finish 交易。校验失败／网络异常时不 finish，交易留在
 // 未完成队列里，下次启动由 Transaction.updates 重投递再验，不丢单。
+// TF 本地 Plus（2026-11-26 Li 定）：测试版上不调 plus-verify，购买／
+// 恢复／续订成功后只写本地标记（BearyPlusGate.isLocalTestFlightPlus），
+// 权益只在本地生效；正式版仍走服务端验单。
 // 服务端验单实现见 ~/workspace/plus-iap-server-diff/（只备 diff，不部署）。
 // 本文件只负责购买与验单接线，不动 BearyPlusGate 统一门的总闸
 // （isOpenForAll=true 免费期行为不变），不碰其他 Plus 逻辑。
@@ -151,6 +154,19 @@ final class BearyPlusStore {
             await MainActor.run { completion(.failure(.revoked)) }
             return
         }
+        // TF 本地 Plus（2026-11-26 Li 定）：测试版买 Plus 只写本地标记、
+        // 不发服务端（plus-verify 不调），权益只在本地生效；正式版才走
+        // 下面服务端验单。本地标记只在 TF 构建生效（见 BearyPlusGate）。
+        if BearyPlusGate.isTestFlight {
+            BearyPlusGate.setLocalTestFlightPlus(true)
+            await transaction.finish()
+            let response = BearyPlusVerifyResponse(
+                ok: true, plus: true, plusUntil: nil,
+                permanent: transaction.productID == BearyPlusProduct.lifetime.productID,
+                productId: transaction.productID, alreadyVerified: nil, error: nil)
+            await MainActor.run { completion(.success(response)) }
+            return
+        }
         let outcome = await verify(jws: jws, retryOnce: true)
         switch outcome {
         case .granted(let response):
@@ -194,6 +210,13 @@ final class BearyPlusStore {
                     await transaction.finish()
                     continue
                 }
+                // TF 本地 Plus：恢复只写本地标记，不发服务端（与购买同款口径）。
+                if BearyPlusGate.isTestFlight {
+                    BearyPlusGate.setLocalTestFlightPlus(true)
+                    restored += 1
+                    await transaction.finish()
+                    continue
+                }
                 switch await verify(jws: jws, retryOnce: false) {
                 case .granted:
                     restored += 1
@@ -226,6 +249,12 @@ final class BearyPlusStore {
                 guard case .verified(let transaction) = result else { continue }
                 guard Self.productIDs.contains(transaction.productID) else { continue }
                 if transaction.revocationDate != nil {
+                    await transaction.finish()
+                    continue
+                }
+                // TF 本地 Plus：续订／重投递只写本地标记，不发服务端。
+                if BearyPlusGate.isTestFlight {
+                    BearyPlusGate.setLocalTestFlightPlus(true)
                     await transaction.finish()
                     continue
                 }
