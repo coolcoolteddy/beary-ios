@@ -36,6 +36,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         window?.backgroundColor = BearyColors.bg
         window?.rootViewController = BearyChromeViewController()
         window?.makeKeyAndVisible()
+        // 内购交易监听（2026-11-25）：冷启动挂一次，处理订阅续订与
+        // 购买中途崩溃后未完成交易的重投递（验单＋finish）；只认三件 Plus 商品。
+        BearyPlusStore.shared.startObservingTransactions()
         // 冷启动生物识别锁（2026-10-31）：开关开着时在建窗后立即挂窗口级锁屏，
         // 同 runloop 内盖住首帧内容；解锁后补跑被推迟的 veil 起播（见容器）。
         if let chrome = window?.rootViewController as? BearyChromeViewController, let window = window {

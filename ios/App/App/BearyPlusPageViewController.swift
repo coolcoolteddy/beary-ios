@@ -1,18 +1,20 @@
+import StoreKit
 import UIKit
 
-// ===== Plus 开通页（展示页先上，不接支付）=====
-// 口径（2026-11-04 Li 拍板）：先上展示页，价格与支付方式未定，页上如实写
-// “价格与支付方式待定”，不编价格、不接内购／网页支付、不动后端。
-// 文案与布局以预览 v4（.pptr/plus-preview/plus.html、plus-off/on-v4.png）为准。
-// 两态：未开通——墨色实心“去邀请”钮（接真实邀请页 BearyInviteViewController，
-// 与“免费得 Plus”行同入口）＋灰字“价格与支付方式待定”；已开通——页尾无按钮，
-// 状态只由顶部“已开通”交代。协议正文未定：全仓无《Plus 会员服务协议》正文，
-// 协议入口已去掉，绝不现编正文；等正式开通、有真实协议正文后再恢复。
-// 状态由调用方传入（/me 的 plus），本页不拉接口、不写后端。
+// ===== Plus 开通页（StoreKit 2 内购已接通）=====
+// 口径（2026-11-25 Li 定现在做）：三档套餐（包月／包年／永久）→
+// 点“继续”走系统支付 → 服务端 POST /api/account/plus-verify 验单
+// 通过才解锁（BearyPlusStore）。价格只在系统支付页出现，页上不写价格。
+// 套餐切换按预览 v32 定版：英文胶囊（Monthly/Yearly/Lifetime）＋下方
+// 三小点，点胶囊或左右滑切换；解锁动效同 v32（皇冠轻跳＋星星飘散＋呼吸光晕）。
+// 权益区四行文案不动（规范同步等 Li 开口）；“免费得 Plus”行与“去邀请”
+// 入口保留。协议正文未定：全仓无《Plus 会员服务协议》正文，协议入口已
+// 去掉，绝不现编正文；等正式开通、有真实协议正文后再恢复。
+// 状态由调用方传入（/me 的 plus），购买成功后本页内翻转为已开通。
 
 final class BearyPlusPageViewController: UIViewController {
 
-    private let isPlusValue: Bool
+    private var isPlusValue: Bool
     /// A2：设置页的 Plus 共享加载结果（同会话在途结果共用）；为 nil 时
     /// 本页自己拉一次（防御性兜底，设置页现行必传）。
     private var sharedLoad: BearySharedLoad<BearyPlusDetailResponse>?
@@ -103,7 +105,7 @@ final class BearyPlusPageViewController: UIViewController {
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.layer.cornerRadius = BearyCorners.single
         buttonValue.clipsToBounds = true
-        buttonValue.addTarget(self, action: #selector(inviteButtonTapped), for: .touchUpInside)
+        buttonValue.addTarget(self, action: #selector(purchaseButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
@@ -115,7 +117,7 @@ final class BearyPlusPageViewController: UIViewController {
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
-        labelValue.text = "价格与支付方式待定"
+        labelValue.text = NSLocalizedString("plus.cancel_note", comment: "")
         return labelValue
     }()
 
@@ -131,10 +133,12 @@ final class BearyPlusPageViewController: UIViewController {
         scrollView.addSubview(contentStack)
 
         buildHero()
+        buildPlanSwitcher()
         buildBenefitList()
         buildInviteRow()
         buildGrantsSection()
         buildFoot()
+        preloadProducts()
 
         NSLayoutConstraint.activate([
             topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -172,6 +176,7 @@ final class BearyPlusPageViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         crownView.stop()
+        stopUnlockGlow()
     }
 
     // MARK: - 内容列（详情页同款两分支互斥）
@@ -196,6 +201,17 @@ final class BearyPlusPageViewController: UIViewController {
             contentWideWidth.isActive = wantWide
             contentWideCenterX.isActive = wantWide
         }
+        // 套餐胶囊／小点半高圆角（height/2 公式，lint 放行写法）。
+        for pill in planPills {
+            pill.layer.cornerRadius = pill.bounds.height / 2
+        }
+        for dot in planDots {
+            dot.layer.cornerRadius = dot.bounds.height / 2
+        }
+        // 解锁光晕的渐变层跟随光晕视图尺寸。
+        if let glow = unlockGlowView, let layer = unlockGlowLayer {
+            layer.frame = glow.bounds
+        }
     }
 
     // MARK: - 区块
@@ -206,7 +222,7 @@ final class BearyPlusPageViewController: UIViewController {
         hero.addSubview(crownView)
         hero.addSubview(statusLabel)
         hero.addSubview(subLabel)
-        statusLabel.text = isPlusValue ? "已开通" : "尚未开通"
+        statusLabel.text = statusText()
         NSLayoutConstraint.activate([
             crownView.topAnchor.constraint(equalTo: hero.topAnchor, constant: 20),
             crownView.centerXAnchor.constraint(equalTo: hero.centerXAnchor),
@@ -674,20 +690,15 @@ final class BearyPlusPageViewController: UIViewController {
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         contentStack.addArrangedSubview(spacer)
 
-        // 已开通：页尾无按钮，状态只由顶部“已开通”交代；协议正文未定，
+        // 页尾 CTA：未开通是购买入口“继续”（点后进系统支付页）；
+        // 已开通按 v32 定版置灰“已开通 ✓”（不可点）。协议正文未定，
         // 协议入口已去掉（见文件头注释），不留死入口。
-        guard !isPlusValue else { return }
-
-        // 未开通：主入口是真实动作“去邀请”，与“免费得 Plus”行同入口
-        // （BearyInviteViewController）；购买未开放只由 priceNoteLabel
-        // 一行灰字交代，不用大按钮占位。
         let foot = UIView()
         foot.translatesAutoresizingMaskIntoConstraints = false
         foot.addSubview(mainButton)
-        mainButton.setTitle("去邀请", for: .normal)
-        mainButton.setTitleColor(BearyColors.bg, for: .normal)
-        mainButton.backgroundColor = BearyColors.ink
         foot.addSubview(priceNoteLabel)
+        foot.addSubview(restoreButton)
+        applyMainButtonState()
         NSLayoutConstraint.activate([
             mainButton.topAnchor.constraint(equalTo: foot.topAnchor, constant: 24),
             mainButton.leadingAnchor.constraint(equalTo: foot.leadingAnchor, constant: 16),
@@ -697,9 +708,366 @@ final class BearyPlusPageViewController: UIViewController {
             priceNoteLabel.centerXAnchor.constraint(equalTo: foot.centerXAnchor),
             priceNoteLabel.leadingAnchor.constraint(greaterThanOrEqualTo: foot.leadingAnchor, constant: 16),
             priceNoteLabel.trailingAnchor.constraint(lessThanOrEqualTo: foot.trailingAnchor, constant: -16),
-            priceNoteLabel.bottomAnchor.constraint(equalTo: foot.bottomAnchor, constant: -32),
+            restoreButton.topAnchor.constraint(equalTo: priceNoteLabel.bottomAnchor, constant: 12),
+            restoreButton.centerXAnchor.constraint(equalTo: foot.centerXAnchor),
+            restoreButton.bottomAnchor.constraint(equalTo: foot.bottomAnchor, constant: -32),
         ])
         contentStack.addArrangedSubview(foot)
+    }
+
+    // MARK: - 内购（StoreKit 2，2026-11-25）
+
+    /// 套餐切换（v32 定版）：三档英文胶囊＋下方三小点，点胶囊或左右滑切换。
+    private var selectedPlan: BearyPlusProduct = .monthly
+    private var planPills: [UIButton] = []
+    private var planDots: [UIView] = []
+    private var planSwitcherView: UIView?
+    private var isPurchasing = false
+    private var isRestoring = false
+    private var unlockGlowView: UIView?
+    private var unlockGlowLayer: CAGradientLayer?
+
+    /// 恢复购买入口（3.1.1：终身是非消耗品，须有恢复入口）；已开通时隐藏。
+    private lazy var restoreButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle(NSLocalizedString("plus.restore", comment: ""), for: .normal)
+        buttonValue.setTitleColor(BearyColors.gray, for: .normal)
+        buttonValue.titleLabel?.font = BearyDynamicType.buttonSmallFont()
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        buttonValue.addTarget(self, action: #selector(restoreButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    private func statusText() -> String {
+        isPlusValue
+            ? NSLocalizedString("plus.status.subscribed", comment: "")
+            : NSLocalizedString("plus.status.not_subscribed", comment: "")
+    }
+
+    /// v32 定版已开通 CTA 置灰色（浅 #ECECEC 底＋#9A9A9A 字／深 #2C2C30 底＋#8E8E93 字）。
+    private static var subscribedButtonBackground: UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .dark
+                ? UIColor(red: 44.0 / 255.0, green: 44.0 / 255.0, blue: 48.0 / 255.0, alpha: 1)
+                : UIColor(red: 236.0 / 255.0, green: 236.0 / 255.0, blue: 236.0 / 255.0, alpha: 1)
+        }
+    }
+
+    private static var subscribedButtonText: UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .dark
+                ? UIColor(red: 142.0 / 255.0, green: 142.0 / 255.0, blue: 147.0 / 255.0, alpha: 1)
+                : UIColor(red: 154.0 / 255.0, green: 154.0 / 255.0, blue: 154.0 / 255.0, alpha: 1)
+        }
+    }
+
+    private func applyMainButtonState() {
+        if isPlusValue {
+            mainButton.setTitle(NSLocalizedString("plus.cta.subscribed", comment: ""), for: .normal)
+            mainButton.setTitleColor(Self.subscribedButtonText, for: .normal)
+            mainButton.backgroundColor = Self.subscribedButtonBackground
+            mainButton.isEnabled = false
+        } else {
+            mainButton.setTitle(NSLocalizedString("plus.cta.continue", comment: ""), for: .normal)
+            mainButton.setTitleColor(BearyColors.bg, for: .normal)
+            mainButton.backgroundColor = BearyColors.ink
+            mainButton.isEnabled = !isPurchasing
+        }
+        restoreButton.isHidden = isPlusValue
+    }
+
+    private func buildPlanSwitcher() {
+        // 已开通不选套餐；未开通才显切换器。
+        guard !isPlusValue else { return }
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        let pillStack = UIStackView()
+        pillStack.translatesAutoresizingMaskIntoConstraints = false
+        pillStack.axis = .horizontal
+        pillStack.spacing = BearySpace.sm
+        pillStack.alignment = .center
+        pillStack.distribution = .fill
+        for plan in BearyPlusProduct.allCases {
+            let pill = UIButton(type: .custom)
+            pill.translatesAutoresizingMaskIntoConstraints = false
+            pill.setTitle(NSLocalizedString(plan.tierTitleKey, comment: ""), for: .normal)
+            pill.titleLabel?.font = BearyDynamicType.smallSemiboldFont()
+            pill.titleLabel?.adjustsFontForContentSizeCategory = true
+            pill.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpace.lg, bottom: 0, right: BearySpace.lg)
+            pill.layer.borderWidth = 1
+            pill.clipsToBounds = true
+            pill.addTarget(self, action: #selector(planPillTapped(_:)), for: .touchUpInside)
+            pill.bearyAddPressFeedback()
+            pill.heightAnchor.constraint(equalToConstant: 32).isActive = true
+            planPills.append(pill)
+            pillStack.addArrangedSubview(pill)
+        }
+        let dotStack = UIStackView()
+        dotStack.translatesAutoresizingMaskIntoConstraints = false
+        dotStack.axis = .horizontal
+        dotStack.spacing = BearySpace.xs
+        dotStack.alignment = .center
+        for _ in BearyPlusProduct.allCases {
+            let dot = UIView()
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.backgroundColor = BearyColors.line
+            dot.widthAnchor.constraint(equalToConstant: 5).isActive = true
+            dot.heightAnchor.constraint(equalToConstant: 5).isActive = true
+            planDots.append(dot)
+            dotStack.addArrangedSubview(dot)
+        }
+        // v32：皇冠区左右滑切套餐（循环）。
+        let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(planSwiped(_:)))
+        swipeLeft.direction = .left
+        wrap.addGestureRecognizer(swipeLeft)
+        let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(planSwiped(_:)))
+        swipeRight.direction = .right
+        wrap.addGestureRecognizer(swipeRight)
+        wrap.addSubview(pillStack)
+        wrap.addSubview(dotStack)
+        NSLayoutConstraint.activate([
+            pillStack.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 16),
+            pillStack.centerXAnchor.constraint(equalTo: wrap.centerXAnchor),
+            dotStack.topAnchor.constraint(equalTo: pillStack.bottomAnchor, constant: 10),
+            dotStack.centerXAnchor.constraint(equalTo: wrap.centerXAnchor),
+            dotStack.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -8),
+        ])
+        planSwitcherView = wrap
+        contentStack.addArrangedSubview(wrap)
+        applyPlanSelection(animated: false)
+    }
+
+    private func applyPlanSelection(animated: Bool) {
+        let update = { [weak self] in
+            guard let self = self else { return }
+            for (index, plan) in BearyPlusProduct.allCases.enumerated() {
+                let selected = plan == self.selectedPlan
+                let pill = self.planPills[index]
+                pill.backgroundColor = selected ? BearyColors.ink : .clear
+                pill.setTitleColor(selected ? BearyColors.bg : BearyColors.gray, for: .normal)
+                pill.layer.borderColor = selected ? BearyColors.ink.cgColor : BearyColors.line.cgColor
+                self.planDots[index].backgroundColor = selected ? BearyColors.orange : BearyColors.line
+            }
+        }
+        if animated {
+            UIView.animate(withDuration: BearyMotion.micro, animations: update)
+        } else {
+            update()
+        }
+    }
+
+    @objc private func planPillTapped(_ sender: UIButton) {
+        guard let index = planPills.firstIndex(of: sender) else { return }
+        selectPlan(BearyPlusProduct.allCases[index])
+    }
+
+    @objc private func planSwiped(_ gesture: UISwipeGestureRecognizer) {
+        let plans = BearyPlusProduct.allCases
+        guard let current = plans.firstIndex(of: selectedPlan) else { return }
+        let step = gesture.direction == .left ? 1 : -1
+        let next = (current + step + plans.count) % plans.count
+        selectPlan(plans[next])
+    }
+
+    private func selectPlan(_ plan: BearyPlusProduct) {
+        guard plan != selectedPlan else { return }
+        selectedPlan = plan
+        applyPlanSelection(animated: true)
+    }
+
+    /// 进页先拉商品，点“继续”时大概率已就绪；拉不到购买时再拉一次。
+    private func preloadProducts() {
+        BearyPlusStore.shared.loadProducts { _ in }
+    }
+
+    @objc private func purchaseButtonTapped() {
+        guard !isPurchasing, !isPlusValue else { return }
+        guard let product = BearyPlusStore.shared.product(for: selectedPlan) else {
+            // 商品还没拉到：先拉一次，拉到再买；拉不到给明确反馈，不静默。
+            isPurchasing = true
+            applyMainButtonState()
+            BearyPlusStore.shared.loadProducts { [weak self] result in
+                guard let self = self else { return }
+                self.isPurchasing = false
+                self.applyMainButtonState()
+                switch result {
+                case .success(let products):
+                    if let product = products.first(where: { $0.id == self.selectedPlan.productID }) {
+                        self.startPurchase(product)
+                    } else {
+                        self.showPurchaseToast(key: "plus.purchase.products_unavailable")
+                    }
+                case .failure:
+                    self.showPurchaseToast(key: "plus.purchase.products_unavailable")
+                }
+            }
+            return
+        }
+        startPurchase(product)
+    }
+
+    private func startPurchase(_ product: Product) {
+        isPurchasing = true
+        applyMainButtonState()
+        BearyPlusStore.shared.purchase(product) { [weak self] result in
+            guard let self = self else { return }
+            self.isPurchasing = false
+            switch result {
+            case .success:
+                self.applyPurchasedState()
+            case .cancelled:
+                self.applyMainButtonState()
+                self.showPurchaseToast(key: "plus.purchase.cancelled")
+            case .pending:
+                self.applyMainButtonState()
+                self.showPurchaseToast(key: "plus.purchase.pending")
+            case .failure(let error):
+                self.applyMainButtonState()
+                switch error {
+                case .productsUnavailable:
+                    self.showPurchaseToast(key: "plus.purchase.products_unavailable")
+                case .verificationFailed:
+                    self.showPurchaseToast(key: "plus.purchase.verify_failed")
+                case .revoked:
+                    self.showPurchaseToast(key: "plus.purchase.revoked")
+                case .notLoggedIn:
+                    self.showPurchaseToast(key: "plus.purchase.not_logged_in")
+                case .network:
+                    self.showPurchaseToast(key: "plus.purchase.network_retry")
+                case .unknown:
+                    self.showPurchaseToast(key: "plus.purchase.verify_failed")
+                }
+            }
+        }
+    }
+
+    @objc private func restoreButtonTapped() {
+        guard !isRestoring, !isPlusValue else { return }
+        isRestoring = true
+        BearyPlusStore.shared.restorePurchases { [weak self] result in
+            guard let self = self else { return }
+            self.isRestoring = false
+            switch result {
+            case .success(let count):
+                if count > 0 {
+                    self.applyPurchasedState()
+                } else {
+                    self.showPurchaseToast(key: "plus.restore.none")
+                }
+            case .failure:
+                self.showPurchaseToast(key: "plus.restore.failed")
+            }
+        }
+    }
+
+    private func applyPurchasedState() {
+        isPlusValue = true
+        statusLabel.text = statusText()
+        planSwitcherView?.isHidden = true
+        applyMainButtonState()
+        // 来源明细重拉：新发放的内购记录（包月订阅／包年订阅／永久买断）随之出现。
+        loadGrantsSection()
+        playUnlockAnimation()
+    }
+
+    private func showPurchaseToast(key: String) {
+        BearyToast.show(in: view, message: NSLocalizedString(key, comment: ""))
+    }
+
+    // MARK: - 解锁动效（v32 定版）
+
+    /// 皇冠轻跳 .8s（终值 1.06）＋6 颗星 600ms 飘散＋橙色外发光 2.4s 呼吸；
+    /// 减动效时直接落位，不播动画。
+    private func playUnlockAnimation() {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        crownView.transform = .identity
+        UIView.animate(withDuration: 0.8, delay: 0, usingSpringWithDamping: 0.55, initialSpringVelocity: 0, options: [], animations: { [weak self] in // beary-lint: allow（v32 定版 .8s，不在 BearyMotion 三档内）
+            self?.crownView.transform = CGAffineTransform(scaleX: 1.06, y: 1.06)
+        }, completion: nil)
+        playUnlockStars()
+        startUnlockGlow()
+    }
+
+    /// v32：6 颗 4 角星从皇冠处向上扇形飘散，600ms 后消失。
+    private func playUnlockStars() {
+        guard crownView.superview != nil else { return }
+        let center = view.convert(crownView.center, from: crownView.superview)
+        let angles: [CGFloat] = [-155, -125, -95, -85, -55, -25]
+        for angle in angles {
+            let star = unlockStarView()
+            star.center = center
+            view.addSubview(star)
+            let radians = angle * .pi / 180
+            let distance: CGFloat = 28
+            let target = CGPoint(x: center.x + cos(radians) * distance, y: center.y + sin(radians) * distance)
+            UIView.animate(withDuration: 0.6, delay: 0, options: .curveEaseOut, animations: {
+                star.center = target
+                star.alpha = 0
+            }, completion: { _ in star.removeFromSuperview() })
+        }
+    }
+
+    /// v32 预览同款 4 角星（16pt，橙宝石色）。
+    private func unlockStarView() -> UIView {
+        let star = UIView(frame: CGRect(x: 0, y: 0, width: 16, height: 16))
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: 8, y: 0))
+        path.addLine(to: CGPoint(x: 9.8, y: 6.2))
+        path.addLine(to: CGPoint(x: 16, y: 8))
+        path.addLine(to: CGPoint(x: 9.8, y: 9.8))
+        path.addLine(to: CGPoint(x: 8, y: 16))
+        path.addLine(to: CGPoint(x: 6.2, y: 9.8))
+        path.addLine(to: CGPoint(x: 0, y: 8))
+        path.addLine(to: CGPoint(x: 6.2, y: 6.2))
+        path.close()
+        let shape = CAShapeLayer()
+        shape.path = path.cgPath
+        shape.fillColor = BearyColors.orange.cgColor
+        star.layer.addSublayer(shape)
+        return star
+    }
+
+    /// 橙色外发光：径向渐变（中心橙 35% → 透明）罩在皇冠后方，2.4s 呼吸常驻到页面消失。
+    /// 径向半径由圆心 startPoint → endPoint 的距离决定（见 AGENTS.md）。
+    private func startUnlockGlow() {
+        guard let superview = crownView.superview, unlockGlowView == nil else { return }
+        let glow = UIView()
+        glow.translatesAutoresizingMaskIntoConstraints = false
+        glow.isUserInteractionEnabled = false
+        let layer = CAGradientLayer()
+        layer.type = .radial
+        layer.colors = [BearyColors.alpha(BearyColors.orange, 0.35).cgColor, UIColor.clear.cgColor]
+        layer.locations = [0, 1]
+        layer.startPoint = CGPoint(x: 0.5, y: 0.5)
+        layer.endPoint = CGPoint(x: 1, y: 0.5)
+        glow.layer.addSublayer(layer)
+        superview.insertSubview(glow, belowSubview: crownView)
+        NSLayoutConstraint.activate([
+            glow.centerXAnchor.constraint(equalTo: crownView.centerXAnchor),
+            glow.centerYAnchor.constraint(equalTo: crownView.centerYAnchor),
+            glow.widthAnchor.constraint(equalToConstant: 96),
+            glow.heightAnchor.constraint(equalToConstant: 96),
+        ])
+        superview.layoutIfNeeded()
+        layer.frame = glow.bounds
+        glow.layer.opacity = 0.35
+        let breathe = CABasicAnimation(keyPath: "opacity")
+        breathe.fromValue = 0.35
+        breathe.toValue = 0.9
+        breathe.duration = 2.4
+        breathe.autoreverses = true
+        breathe.repeatCount = .infinity
+        glow.layer.add(breathe, forKey: "breathe")
+        unlockGlowView = glow
+        unlockGlowLayer = layer
+    }
+
+    private func stopUnlockGlow() {
+        unlockGlowView?.removeFromSuperview()
+        unlockGlowView = nil
+        unlockGlowLayer = nil
     }
 
     // MARK: - 动作
