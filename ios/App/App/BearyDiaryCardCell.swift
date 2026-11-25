@@ -1068,7 +1068,9 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var titleStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, crownWrapView, titleSpacerLabel, timeLabel, limitedPillView, moodStack])
+        // 2026-11-25 Li 定：时间贴昵称／皇冠右侧（垫片挪到时间组之后吸掉剩余
+        // 宽度），不再钉右缘；间距仍统一 6。
+        let st = UIStackView(arrangedSubviews: [nameLabel, crownWrapView, timeLabel, limitedPillView, moodStack, titleSpacerLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         // 姓名→皇冠间距 6（2026-11-05 ChatGPT 间距跟进；徽章已下线摘掉，
@@ -1083,7 +1085,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     /// 标题行弹性垫片：横向 hugging/compression 均为最低（1），独吞标题行全部
-    /// 剩余宽度，使徽章/皇冠紧贴名字、日期留在右缘；空间不足时垫片先缩到 0，
+    /// 剩余宽度，使名字／皇冠／时间／心情组紧贴在左、⋯ 槽位仍在右缘；空间不足时垫片先缩到 0，
     /// 再由名字（defaultLow）截断。空 UILabel 自带基线，不破坏 firstBaseline 对齐。
     private let titleSpacerLabel: UILabel = {
         let lb = UILabel()
