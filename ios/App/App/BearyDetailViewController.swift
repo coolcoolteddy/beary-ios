@@ -350,7 +350,9 @@ final class BearyDetailViewController: UIViewController {
     }()
     private var moodEmoteView: BearyEmoteView?
     private lazy var authorRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameButton, crownWrapView, titleSpacerLabel, timeLabel, limitedPillView, moodStack])
+        // 2026-11-25 Li 定：时间贴昵称／皇冠右侧（垫片挪到时间组之后吸掉剩余
+        // 宽度），不再钉右缘；间距仍统一 6。
+        let st = UIStackView(arrangedSubviews: [nameButton, crownWrapView, timeLabel, limitedPillView, moodStack, titleSpacerLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         // 姓名→皇冠间距 6（2026-11-05 ChatGPT 间距跟进；徽章已下线摘掉，
@@ -362,7 +364,7 @@ final class BearyDetailViewController: UIViewController {
     }()
     /// 右上角 ⋯ 钮：时间线 moreButton 同款（21pt 灰色、28 框、44 热区），
     /// 挂顶栏右上角、与返回钮同一中心线（2026-11-12 Li 定：从作者行挪上来）；
-    /// 作者行不再给 ⋯ 留位，日期为行内最右元素。
+    /// 作者行不再给 ⋯ 留位。
     private let moreButton = BearyHit44Button(type: .custom)
     private let bodyLabel = UILabel()
     /// 审计 P2-12：详情补标题行（卡片同款 16.5 粗体，空标题不占位）。
