@@ -415,7 +415,11 @@ enum BearyEntrySyncStore {
         marker.syncedAtMs = Int(Date().timeIntervalSince1970 * 1000)
         guard let url = completionMarkerURL(accountId: accountId),
               let data = try? JSONEncoder().encode(marker) else { return }
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            NSLog("[BearyEntrySync] adjustCompletionCount write failed: accountId=%d error=%@", accountId, String(describing: error))
+        }
     }
 
     // MARK: - 归档修订号（搜索增量更新的快查门）
@@ -453,7 +457,7 @@ enum BearyEntrySyncStore {
 
     private static let revisionLock = NSLock()
 
-    /// 活盘日内容变化后记一次修订号（只增不减；写失败静默——修订号滞后
+    /// 活盘日内容变化后记一次修订号（只增不减；写失败记诊断日志——修订号滞后
     /// 时搜索侧指纹门仍会挡下，不会误认未变）。
     private static func bumpRevision(accountId: Int) {
         revisionLock.lock()
@@ -462,7 +466,11 @@ enum BearyEntrySyncStore {
         guard let url = revisionMarkerURL(accountId: accountId),
               let data = try? JSONEncoder().encode(ArchiveRevision(revision: next)) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            NSLog("[BearyEntrySync] bumpRevision write failed: accountId=%d revision=%d error=%@", accountId, next, String(describing: error))
+        }
     }
 
     /// 按北京日分组的结果。skippedCount = 无法归日的条目数（缺 createdAt、
