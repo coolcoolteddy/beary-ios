@@ -50,6 +50,28 @@ private enum BearyEmoteRecentStore {
     }
 }
 
+/// 节日组（composer 模式新增节）：10 组×20 款，与 BearyText.festivalMoodKeys 同表。
+/// 组名走本地化（emote_picker.festival.<id>），英文为 agent 译法、非 Li 定版。
+private struct BearyEmoteFestivalGroup {
+    let id: String
+    let titleKey: String
+    let keys: [String]
+    let representativeKey: String
+}
+
+private let bearyEmoteFestivalGroups: [BearyEmoteFestivalGroup] = [
+    BearyEmoteFestivalGroup(id: "newyear", titleKey: "emote_picker.festival.newyear", keys: BearyText.newyearMoodKeys, representativeKey: "clockstrikesmidnight"),
+    BearyEmoteFestivalGroup(id: "spring", titleKey: "emote_picker.festival.spring", keys: BearyText.springMoodKeys, representativeKey: "lantern"),
+    BearyEmoteFestivalGroup(id: "lantern", titleKey: "emote_picker.festival.lantern", keys: BearyText.lanternMoodKeys, representativeKey: "yuanxiaoinspoon"),
+    BearyEmoteFestivalGroup(id: "easter", titleKey: "emote_picker.festival.easter", keys: BearyText.easterMoodKeys, representativeKey: "easterbasket"),
+    BearyEmoteFestivalGroup(id: "children", titleKey: "emote_picker.festival.children", keys: BearyText.childrenMoodKeys, representativeKey: "paperplanebanks"),
+    BearyEmoteFestivalGroup(id: "qixi", titleKey: "emote_picker.festival.qixi", keys: BearyText.qixiMoodKeys, representativeKey: "magpiesbuildbridge"),
+    BearyEmoteFestivalGroup(id: "midautumn", titleKey: "emote_picker.festival.midautumn", keys: BearyText.midautumnMoodKeys, representativeKey: "moonbehindcloud"),
+    BearyEmoteFestivalGroup(id: "halloween", titleKey: "emote_picker.festival.halloween", keys: BearyText.halloweenMoodKeys, representativeKey: "pumpkin"),
+    BearyEmoteFestivalGroup(id: "dayofthedead", titleKey: "emote_picker.festival.dayofthedead", keys: BearyText.dayofthedeadMoodKeys, representativeKey: "marigoldbloom"),
+    BearyEmoteFestivalGroup(id: "christmas", titleKey: "emote_picker.festival.christmas", keys: BearyText.christmasMoodKeys, representativeKey: "christmastree"),
+]
+
 final class BearyEmotePickerSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UIGestureRecognizerDelegate {
 
     var onPick: ((String) -> Void)?
@@ -108,22 +130,45 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     }
 
     /// 节划分：reply 模式与旧口径一致（最近使用＋熊脸 32 只）；composer 模式
-    /// 内置放全部 40 只、再加自定义组。最近节存在时为第 0 节，其余顺延。
-    private enum PickerSection { case recent, builtin, custom }
+    /// 内置放全部 40 只、再加节日组（10 组×20 款，节内 pill 切换）与自定义组。
+    /// 最近节存在时为第 0 节，其余顺延。
+    private enum PickerSection { case recent, builtin, festival, custom }
     private var hasRecentSection: Bool { !recentEmoteKeys.isEmpty }
     private func pickerSections() -> [PickerSection] {
         var sections: [PickerSection] = []
         if hasRecentSection { sections.append(.recent) }
         sections.append(.builtin)
-        if mode == .composer { sections.append(.custom) }
+        if mode == .composer {
+            sections.append(.festival)
+            sections.append(.custom)
+        }
         return sections
     }
     private func emoteKeys(forSection section: Int) -> [String] {
         switch pickerSections()[section] {
         case .recent: return recentEmoteKeys
         case .builtin: return mode == .composer ? BearyEmoteKeys.all : BearyEmoteKeys.bearFaces
+        case .festival: return bearyEmoteFestivalGroups[selectedFestivalGroupIndex].keys
         case .custom: return customGifKeys
         }
+    }
+    /// 当前选中的节日组（composer 模式节日节），默认元旦。
+    private var selectedFestivalGroupIndex = 0
+
+    /// 切换节日组：只重载节日节的 20 格（其余节不动，header 不重建），
+    /// 网格切换走 reloadItems 的淡入淡出；各组同为 20 款、sheet 高度不动。
+    private func selectFestivalGroup(_ index: Int) {
+        guard bearyEmoteFestivalGroups.indices.contains(index), index != selectedFestivalGroupIndex else { return }
+        selectedFestivalGroupIndex = index
+        let sections = pickerSections()
+        guard let festivalSection = sections.firstIndex(of: .festival),
+              let collection = emoteCollectionView else { return }
+        if let header = collection.supplementaryView(forElementKind: UICollectionView.elementKindSectionHeader, at: IndexPath(item: 0, section: festivalSection)) as? BearyEmoteFestivalPillHeaderView {
+            header.setSelected(index, animated: true)
+        }
+        let items = (0..<bearyEmoteFestivalGroups[index].keys.count).map { IndexPath(item: $0, section: festivalSection) }
+        collection.reloadItems(at: items)
+        updateSheetHeightToContent()
     }
     /// 自定义组格数（含首格 ＋ 添加格）。
     private func customItemCount() -> Int { customGifKeys.count + 1 }
@@ -201,6 +246,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         collection.delegate = self
         collection.register(BearyEmotePickerSheetCell.self, forCellWithReuseIdentifier: "bearyEmotePickerSheetCell")
         collection.register(BearyEmotePickerSectionHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: "bearyEmotePickerSectionHeader")
+        collection.register(BearyEmoteFestivalPillHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: BearyEmoteFestivalPillHeaderView.reuseIdentifier)
         collection.register(BearyMoodPickerCell.self, forCellWithReuseIdentifier: "bearyMoodPickerCell")
         emoteCollectionView = collection
         sheetView.addSubview(collection)
@@ -440,10 +486,18 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     }
 
     /// 节标题：最近使用（旧口径）＋自定义（composer 模式）；内置网格不带标题，
-    /// 与旧全量网格同款。回应模式只出最近使用标题。
+    /// 与旧全量网格同款。回应模式只出最近使用标题。节日节的 header 是 pill
+    /// 切换条（见 BearyEmoteFestivalPillHeaderView），不是文字标题。
     func collectionView(_ collectionView: UICollectionView, viewForSupplementaryElementOfKind kind: String, at indexPath: IndexPath) -> UICollectionReusableView {
-        guard kind == UICollectionView.elementKindSectionHeader,
-              let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "bearyEmotePickerSectionHeader", for: indexPath) as? BearyEmotePickerSectionHeaderView else {
+        guard kind == UICollectionView.elementKindSectionHeader else { return UICollectionReusableView() }
+        if pickerSections()[indexPath.section] == .festival,
+           let pillHeader = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: BearyEmoteFestivalPillHeaderView.reuseIdentifier, for: indexPath) as? BearyEmoteFestivalPillHeaderView {
+            pillHeader.configure(selectedIndex: selectedFestivalGroupIndex) { [weak self] index in
+                self?.selectFestivalGroup(index)
+            }
+            return pillHeader
+        }
+        guard let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "bearyEmotePickerSectionHeader", for: indexPath) as? BearyEmotePickerSectionHeaderView else {
             return UICollectionReusableView()
         }
         switch pickerSections()[indexPath.section] {
@@ -451,7 +505,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             header.configure(title: NSLocalizedString("emote_picker.section.recent", comment: ""))
         case .custom:
             header.configure(title: NSLocalizedString("emote_picker.section.custom", comment: ""))
-        case .builtin:
+        case .builtin, .festival:
             return UICollectionReusableView()
         }
         return header
@@ -464,6 +518,8 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             return CGSize(width: collectionView.bounds.width, height: 28)
         case .custom:
             return CGSize(width: collectionView.bounds.width, height: 28)
+        case .festival:
+            return CGSize(width: collectionView.bounds.width, height: BearyEmoteFestivalPillHeaderView.height)
         case .builtin:
             return .zero
         }
@@ -747,5 +803,174 @@ final class BearyEmotePickerSheetCell: UICollectionViewCell {
         nameLabel.adjustsFontForContentSizeCategory = true
         nameLabel.textColor = BearyColors.gray
         nameLabel.text = name
+    }
+}
+
+// MARK: - 节日组切换 pill 条（composer 模式节日节的 section header）
+
+/// #2065 同款 pill 切换（10 组图标 pill 横向滚动，选中组图标上抬 14pt＋下方小圆点），
+/// 差别：不做悬浮底 bar——本选择器是 recent／builtin／festival／custom 多节纵向滚动，
+/// 悬浮条会盖住其他节且与节日节无关时也常驻；pill 行放在节日节自己的 header 里，随节滚动。
+final class BearyEmoteFestivalPillHeaderView: UICollectionReusableView {
+
+    static let reuseIdentifier = "bearyEmoteFestivalPillHeader"
+    /// header 总高：胶囊 56＋选中上抬 14。
+    static let height: CGFloat = 70
+
+    private static let pillHeight: CGFloat = 56
+    private static let pillItemWidth: CGFloat = 60
+    /// 选中组图标上抬高度（图标 36pt 在 56pt 胶囊内居中时顶边距 10pt，
+    /// 上抬 14pt 后顶端探出胶囊 4pt，与 #2065 的抬起形态一致）。
+    private static let pillSelectedRaise: CGFloat = 14
+    private static let pillIconSize: CGFloat = 36
+    private static let pillDotDiameter: CGFloat = 6
+
+    private let pillView = UIView()
+    private let pillScrollView = UIScrollView()
+    private var pillItemButtons: [UIButton] = []
+    private var pillIconSlots: [UIView] = []
+    private var pillDots: [UIView] = []
+    private var initialScrollDone = false
+    private var selectedIndex = 0
+    private var onSelectGroup: ((Int) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        pillView.translatesAutoresizingMaskIntoConstraints = false
+        pillView.backgroundColor = BearyColors.surface2
+        pillView.layer.cornerRadius = Self.pillHeight / 2
+        pillView.layer.masksToBounds = false
+        BearyShadow.applyRaised(to: pillView.layer)
+        addSubview(pillView)
+        pillScrollView.translatesAutoresizingMaskIntoConstraints = false
+        pillScrollView.showsHorizontalScrollIndicator = false
+        pillScrollView.showsVerticalScrollIndicator = false
+        pillScrollView.delaysContentTouches = false
+        pillView.addSubview(pillScrollView)
+        for (index, group) in bearyEmoteFestivalGroups.enumerated() {
+            let button = UIButton(type: .custom)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.accessibilityLabel = NSLocalizedString(group.titleKey, comment: "")
+            button.accessibilityTraits = [.button]
+            button.addTarget(self, action: #selector(pillItemTapped(_:)), for: .touchUpInside)
+            button.bearyAddPressFeedback()
+            button.tag = index
+            pillScrollView.addSubview(button)
+            pillItemButtons.append(button)
+            let iconSlot = UIView()
+            iconSlot.translatesAutoresizingMaskIntoConstraints = false
+            iconSlot.isUserInteractionEnabled = false
+            button.addSubview(iconSlot)
+            pillIconSlots.append(iconSlot)
+            let emoteView = BearyEmoteView(key: group.representativeKey, animated: true)
+            emoteView.translatesAutoresizingMaskIntoConstraints = false
+            emoteView.isUserInteractionEnabled = false
+            iconSlot.addSubview(emoteView)
+            NSLayoutConstraint.activate([
+                emoteView.topAnchor.constraint(equalTo: iconSlot.topAnchor),
+                emoteView.bottomAnchor.constraint(equalTo: iconSlot.bottomAnchor),
+                emoteView.leadingAnchor.constraint(equalTo: iconSlot.leadingAnchor),
+                emoteView.trailingAnchor.constraint(equalTo: iconSlot.trailingAnchor),
+            ])
+            let dot = UIView()
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.backgroundColor = BearyColors.ink
+            dot.layer.cornerRadius = Self.pillDotDiameter / 2
+            dot.alpha = 0
+            dot.isUserInteractionEnabled = false
+            button.addSubview(dot)
+            pillDots.append(dot)
+            NSLayoutConstraint.activate([
+                iconSlot.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+                iconSlot.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+                iconSlot.widthAnchor.constraint(equalToConstant: Self.pillIconSize),
+                iconSlot.heightAnchor.constraint(equalToConstant: Self.pillIconSize),
+                dot.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+                dot.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -6),
+                dot.widthAnchor.constraint(equalToConstant: Self.pillDotDiameter),
+                dot.heightAnchor.constraint(equalToConstant: Self.pillDotDiameter),
+            ])
+        }
+        NSLayoutConstraint.activate([
+            pillView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            pillView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            pillView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            pillView.heightAnchor.constraint(equalToConstant: Self.pillHeight),
+            pillScrollView.topAnchor.constraint(equalTo: pillView.topAnchor, constant: -Self.pillSelectedRaise),
+            pillScrollView.bottomAnchor.constraint(equalTo: pillView.bottomAnchor),
+            pillScrollView.leadingAnchor.constraint(equalTo: pillView.leadingAnchor),
+            pillScrollView.trailingAnchor.constraint(equalTo: pillView.trailingAnchor),
+        ])
+        for (index, button) in pillItemButtons.enumerated() {
+            NSLayoutConstraint.activate([
+                button.topAnchor.constraint(equalTo: pillScrollView.contentLayoutGuide.topAnchor, constant: Self.pillSelectedRaise),
+                button.heightAnchor.constraint(equalToConstant: Self.pillHeight),
+                button.widthAnchor.constraint(equalToConstant: Self.pillItemWidth),
+                button.leadingAnchor.constraint(equalTo: pillScrollView.contentLayoutGuide.leadingAnchor, constant: 8 + CGFloat(index) * Self.pillItemWidth),
+            ])
+        }
+        // 内容宽由末格右缘定（8 + 10×60 + 8 = 616pt）。
+        if let lastButton = pillItemButtons.last {
+            lastButton.trailingAnchor.constraint(equalTo: pillScrollView.contentLayoutGuide.trailingAnchor, constant: -8).isActive = true
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // 首次布局后把 pill 滚到当前选中组（默认元旦在最左，一般不用滚；
+        // 复用后选中组在右侧时初始不滚就看不到选中态）。
+        if !initialScrollDone, pillItemButtons.indices.contains(selectedIndex) {
+            initialScrollDone = true
+            pillScrollView.scrollRectToVisible(pillItemButtons[selectedIndex].frame, animated: false)
+        }
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        initialScrollDone = false
+        onSelectGroup = nil
+    }
+
+    /// pill 按钮在 init 时一次建好（10 组是静态表），这里只同步选中态与回调。
+    func configure(selectedIndex: Int, onSelectGroup: @escaping (Int) -> Void) {
+        self.selectedIndex = selectedIndex
+        self.onSelectGroup = onSelectGroup
+        refreshSelection(animated: false)
+    }
+
+    /// 选中态：选中组图标上抬（只动 transform）＋下方小圆点显现（只动 opacity）；
+    /// 未选中组图标回落、圆点隐藏；选中的组滚进视野。减动效时瞬时切换。
+    func setSelected(_ index: Int, animated: Bool) {
+        guard pillItemButtons.indices.contains(index) else { return }
+        selectedIndex = index
+        refreshSelection(animated: animated)
+        pillScrollView.scrollRectToVisible(pillItemButtons[index].frame.insetBy(dx: -8, dy: 0), animated: animated)
+    }
+
+    private func refreshSelection(animated: Bool) {
+        let apply = { [weak self] in
+            guard let self = self else { return }
+            for (index, slot) in self.pillIconSlots.enumerated() {
+                let selected = index == self.selectedIndex
+                slot.transform = selected ? CGAffineTransform(translationX: 0, y: -Self.pillSelectedRaise) : .identity
+                self.pillDots[index].alpha = selected ? 1 : 0
+            }
+            for (index, button) in self.pillItemButtons.enumerated() {
+                button.accessibilityTraits = index == self.selectedIndex ? [.button, .selected] : [.button]
+            }
+        }
+        if animated, UIAccessibility.isReduceMotionEnabled == false {
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: apply)
+        } else {
+            apply()
+        }
+    }
+
+    @objc private func pillItemTapped(_ sender: UIButton) {
+        onSelectGroup?(sender.tag)
     }
 }
