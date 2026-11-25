@@ -104,6 +104,18 @@ struct BearyPlusDetailResponse: Decodable {
     var grants: [BearyPlusGrant]?
 }
 
+/// POST /api/account/plus-verify 回包（内购验单）：ok:true 带 plus／plusUntil／
+/// permanent／productId／alreadyVerified；ok:false 带 error 码。
+struct BearyPlusVerifyResponse: Decodable {
+    var ok: Bool
+    var plus: Bool?
+    var plusUntil: Int?
+    var permanent: Bool?
+    var productId: String?
+    var alreadyVerified: Bool?
+    var error: String?
+}
+
 struct BearyAccountOkResponse: Decodable {
     var ok: Bool?
 }
@@ -131,6 +143,16 @@ extension BearyAPI {
     /// GET /api/account/plus-detail（Plus 分层 + 发放账本；未登录 401）。
     func fetchPlusDetail(completion: @escaping (Result<BearyPlusDetailResponse, APIError>) -> Void) {
         request("/api/account/plus-detail", completion: completion)
+    }
+
+    /// POST /api/account/plus-verify（内购验单，2026-11-25 Li 定现在做）：
+    /// body {jws: VerificationResult.jwsRepresentation}，服务端验 JWS 签名后发权益。
+    /// 200 回包两种：ok:true（plus／plus_until／permanent／product_id／
+    /// already_verified）与 ok:false（error 码：invalid_jws／bad_bundle／
+    /// bad_product→400；revoked／expired→200 带 ok:false）。
+    /// 服务端实现见 ~/workspace/plus-iap-server-diff/（只备 diff，不部署）。
+    func verifyPlusPurchase(jws: String, completion: @escaping (Result<BearyPlusVerifyResponse, APIError>) -> Void) {
+        request("/api/account/plus-verify", method: "POST", jsonBody: ["jws": jws], completion: completion)
     }
 
     /// DELETE /api/account/sessions/others（退出当前设备之外的全部会话；当前会话服务端必保留）。
@@ -227,6 +249,9 @@ enum BearyAccountText {
         case "admin": return "管理员开通"
         case "referral_inviter": return "邀请好友奖励"
         case "referral_invitee": return "受邀注册奖励"
+        case "iap_monthly": return NSLocalizedString("plus.grant.iap_monthly", comment: "")
+        case "iap_yearly": return NSLocalizedString("plus.grant.iap_yearly", comment: "")
+        case "iap_lifetime": return NSLocalizedString("plus.grant.iap_lifetime", comment: "")
         default: return "系统赠送"
         }
     }
