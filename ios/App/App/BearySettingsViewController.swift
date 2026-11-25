@@ -146,7 +146,7 @@ extension BearyAPI {
     }
 
     /// POST /api/account/plus-verify（内购验单，2026-11-25 Li 定现在做）：
-    /// body {jws: Transaction.jwsRepresentation}，服务端验 JWS 签名后发权益。
+    /// body {jws: VerificationResult.jwsRepresentation}，服务端验 JWS 签名后发权益。
     /// 200 回包两种：ok:true（plus／plus_until／permanent／product_id／
     /// already_verified）与 ok:false（error 码：invalid_jws／bad_bundle／
     /// bad_product→400；revoked／expired→200 带 ok:false）。

@@ -4,7 +4,7 @@ import StoreKit
 // ===== Plus 内购（StoreKit 2，2026-11-25 Li 定现在做）=====
 // 三件商品（App Store Connect 已建好、CREATED，随 1.0 重提一起交）：
 // 包月 plus1mon ¥12、包年 plus1year ¥68、永久 plus_lifetime ¥198。
-// 购买流程：系统支付 → 取 Transaction.jwsRepresentation →
+// 购买流程：系统支付 → 取 VerificationResult.jwsRepresentation →
 // POST /api/account/plus-verify 服务端校验（验 JWS 签名＋发权益）→
 // 校验通过才 finish 交易。校验失败／网络异常时不 finish，交易留在
 // 未完成队列里，下次启动由 Transaction.updates 重投递再验，不丢单。
@@ -133,6 +133,9 @@ final class BearyPlusStore {
         _ verification: VerificationResult<Transaction>,
         completion: @escaping (BearyPlusPurchaseResult) -> Void
     ) async {
+        // JWS 在外层 VerificationResult 上，不在 Transaction 上
+        // （Transaction 只有未签名的 jsonRepresentation，绝不能送服务端）。
+        let jws = verification.jwsRepresentation
         guard case .verified(let transaction) = verification else {
             await MainActor.run { completion(.failure(.verificationFailed)) }
             return
@@ -146,11 +149,6 @@ final class BearyPlusStore {
         if transaction.revocationDate != nil {
             await transaction.finish()
             await MainActor.run { completion(.failure(.revoked)) }
-            return
-        }
-        guard let jws = transaction.jwsRepresentation else {
-            // 无 JWS 无法验单：不 finish，等下次启动重投递。
-            await MainActor.run { completion(.failure(.verificationFailed)) }
             return
         }
         let outcome = await verify(jws: jws, retryOnce: true)
@@ -188,13 +186,14 @@ final class BearyPlusStore {
             }
             var restored = 0
             for await result in Transaction.currentEntitlements {
+                // JWS 在外层 VerificationResult 上（见 handleVerifiedPurchase 注释）。
+                let jws = result.jwsRepresentation
                 guard case .verified(let transaction) = result else { continue }
                 guard Self.productIDs.contains(transaction.productID) else { continue }
                 if transaction.revocationDate != nil {
                     await transaction.finish()
                     continue
                 }
-                guard let jws = transaction.jwsRepresentation else { continue }
                 switch await verify(jws: jws, retryOnce: false) {
                 case .granted:
                     restored += 1
@@ -222,13 +221,14 @@ final class BearyPlusStore {
         isObservingTransactions = true
         Task {
             for await result in Transaction.updates {
+                // JWS 在外层 VerificationResult 上（见 handleVerifiedPurchase 注释）。
+                let jws = result.jwsRepresentation
                 guard case .verified(let transaction) = result else { continue }
                 guard Self.productIDs.contains(transaction.productID) else { continue }
                 if transaction.revocationDate != nil {
                     await transaction.finish()
                     continue
                 }
-                guard let jws = transaction.jwsRepresentation else { continue }
                 switch await self.verify(jws: jws, retryOnce: false) {
                 case .granted:
                     await transaction.finish()
