@@ -76,7 +76,7 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .white
+        view.backgroundColor = .clear
         view.layer.cornerRadius = 26
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         buildForm()
@@ -674,7 +674,7 @@ final class BearyIDCardSheetViewController: UIViewController, BearySystemSheetSi
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .white
+        view.backgroundColor = .clear
         view.layer.cornerRadius = 26
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         buildContent()
