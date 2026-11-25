@@ -2168,7 +2168,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func buildTextArea() {
         buildHeadlineField()
         textView.delegate = self
-        textView.onBlockedImagePaste = { [weak self] in self?.showToast(message: "图片请用图片按钮添加") }
+        textView.onBlockedImagePaste = { [weak self] in self?.showToast(message: NSLocalizedString("composer.paste_image_use_button", comment: "")) }
         textView.font = bodyFont
         textView.textColor = BearyColors.ink
         // 无框正文：透明底。正式修法（2026-10-26，微信输入法×编辑器隔离结论）：
