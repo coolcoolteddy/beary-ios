@@ -275,8 +275,8 @@ final class BearyHistoryTodayViewController: UIViewController {
         } else {
             let parts = payload.date.split(separator: "-")
             if parts.count == 3, let month = Int(parts[1]), let day = Int(parts[2]) {
-                columns.addArrangedSubview(verticalChars("\(day)日"))
-                columns.addArrangedSubview(verticalChars("\(month)月"))
+                columns.addArrangedSubview(verticalChars(String(format: NSLocalizedString("historyToday.vertical.day", comment: ""), day)))
+                columns.addArrangedSubview(verticalChars(String(format: NSLocalizedString("historyToday.vertical.month", comment: ""), month)))
             } else {
                 columns.addArrangedSubview(verticalChars(payload.dateLabel))
             }

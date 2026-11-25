@@ -86,27 +86,36 @@ struct BearyHistoryToday: Codable {
     }
 
     /// 本地农历日期（"十月十七"）：服务端 lunar 字段未部署／缺省时的本地
-    /// 换算。月名／日名／干支表逐字抄服务端 history-today.diff（与服务端
-    /// 农历表同规则：1900–2049、闰月前缀"闰"）；苹果中国农历与服务端表
-    /// 同规则，已按服务端真值交叉核对（2026-11-25 十月十七／丙午年、
+    /// 换算。月名／日名／干支表在 Localizable.xcstrings 里（逐字抄服务端
+    /// history-today.diff 的表；农历是中文历法数据、v1 不翻译，en 值与
+    /// zh 相同——与服务端 lunar 字段中文直出同口径）；苹果中国农历与服务
+    /// 端表同规则，已按服务端真值交叉核对（2026-11-25 十月十七／丙午年、
     /// 2026-11-23 十月十五、2026-02-17 与 2025-01-29 正月初一）。
     var localLunarDay: String? {
         guard let lunar = Self.localLunarComponents(for: date) else { return nil }
-        let monthNames = ["正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "冬月", "腊月"]
-        let dayNames = ["初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十",
-                        "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
-                        "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"]
+        let monthNames = Self.localizedTable(prefix: "historyToday.lunar.month", count: 12)
+        let dayNames = Self.localizedTable(prefix: "historyToday.lunar.day", count: 30)
         guard lunar.month >= 1, lunar.month <= 12, lunar.day >= 1, lunar.day <= 30 else { return nil }
-        return (lunar.isLeapMonth ? "闰" : "") + monthNames[lunar.month - 1] + dayNames[lunar.day - 1]
+        let leap = NSLocalizedString("historyToday.lunar.leap", comment: "")
+        return (lunar.isLeapMonth ? leap : "") + monthNames[lunar.month - 1] + dayNames[lunar.day - 1]
     }
 
     /// 本地农历年份（"丙午年"）：与服务端 ganzhiYear 同口径，
     /// 干支 = GAN[(year-4)%10] + ZHI[(year-4)%12] + "年"。
     var localLunarYearText: String? {
         guard let lunar = Self.localLunarComponents(for: date) else { return nil }
-        let gan = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
-        let zhi = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
-        return gan[(lunar.year - 4) % 10] + zhi[(lunar.year - 4) % 12] + "年"
+        let gan = Self.localizedTable(prefix: "historyToday.lunar.gan", count: 10)
+        let zhi = Self.localizedTable(prefix: "historyToday.lunar.zhi", count: 12)
+        let suffix = NSLocalizedString("historyToday.lunar.year_suffix", comment: "")
+        return gan[(lunar.year - 4) % 10] + zhi[(lunar.year - 4) % 12] + suffix
+    }
+
+    /// 按 key 前缀＋序号取一组 catalog 值（序号 1...count，对应 key 须在
+    /// Localizable.xcstrings 里逐条存在）。序号只拼 catalog key、不拼文案，
+    /// 运行时查得到表——与 i18n-plan 里禁插值 key 的情形（变量文案拼进
+    /// key、catalog 查不到）不同。
+    private static func localizedTable(prefix: String, count: Int) -> [String] {
+        (1...count).map { NSLocalizedString("\(prefix).\($0)", comment: "") }
     }
 
     /// 公历日期键（"yyyy-MM-dd"）转中国农历年月日。date 用 en_US_POSIX＋
