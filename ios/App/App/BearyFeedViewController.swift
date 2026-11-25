@@ -2896,15 +2896,13 @@ class BearyFeedViewController: UIViewController {
             return
         }
         let sheet = BearyEmotePickerSheetViewController()
-        sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self, weak cell] pickedKey in
             let reduceMotion = UIAccessibility.isReduceMotionEnabled
             self?.dismiss(animated: reduceMotion == false) {
                 cell?.handleEmoteSheetPick(entryIdValue: entryIdValue, key: pickedKey)
             }
         }
-        let reduceMotion = UIAccessibility.isReduceMotionEnabled
-        present(sheet, animated: reduceMotion == false, completion: nil)
+        BearySystemSheet.present(sheet, from: self)
     }
 
     private func wireCell(_ cell: BearyDiaryCardCell, entry: Entry) {

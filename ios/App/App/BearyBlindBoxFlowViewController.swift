@@ -1693,7 +1693,6 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         let sheet = BearyEmotePickerSheetViewController()
         // 第 19 轮审计 B4：点选不在 Sheet 里播回应音，改由下方成功分支播一次。
         sheet.playsPickSound = false
-        sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self] pickedKey in
             let reduceMotion = UIAccessibility.isReduceMotionEnabled
             self?.dismiss(animated: reduceMotion == false) {
@@ -1728,7 +1727,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 }
             }
         }
-        present(sheet, animated: BearyMotion.animated(true), completion: nil)
+        BearySystemSheet.present(sheet, from: self)
     }
 
     // MARK: - 举报 / 撤回

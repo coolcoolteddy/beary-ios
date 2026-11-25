@@ -3656,13 +3656,12 @@ final class BearyDetailViewController: UIViewController {
     private func presentEmotePicker() {
         if presentedViewController != nil { return }
         let sheet = BearyEmotePickerSheetViewController()
-        sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self] pickedKey in
             self?.dismiss(animated: BearyMotion.animated(true)) {
                 self?.chooseEmote(key: pickedKey)
             }
         }
-        present(sheet, animated: BearyMotion.animated(true), completion: nil)
+        BearySystemSheet.present(sheet, from: self)
     }
 
     // MARK: - 分享

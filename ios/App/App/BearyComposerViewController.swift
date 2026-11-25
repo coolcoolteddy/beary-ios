@@ -4669,7 +4669,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             self?.didTapUploadGIF()
         }
         emotePickerSheet = sheet
-        present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: self)
     }
 
     /// 内置表情点选：按 [mood:<key>] 记号插进光标处（与手打 [mood:xxx] 同口径；
