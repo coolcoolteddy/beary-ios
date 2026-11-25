@@ -1405,6 +1405,21 @@ final class BearyChromeViewController: UIViewController {
             if userChanged {
                 NotificationCenter.default.post(name: .bearyUserDidChange, object: nil)
             }
+            // 账号隔离：冷启动首帧因身份未确认跳过加载（时间线/广场各持
+            // identityPendingFirstLoad 标记），/me 回包即身份确认，在此补调
+            // 一次读本号桶。id 真变且下方翻转分支会重调时（userChanged 且非
+            // 首个回包）不重复——翻转分支的加载会清掉两页的标记；首个回包时
+            // 翻转分支被 sessionFlipArmed 早退拦住，由本处补调。
+            // /me 网络失败不发 onUserChanged，标记留着、继续停在加载态，
+            // 等下一次 /me 或用户手动刷新。
+            if !(userChanged && sessionFlipArmed) {
+                if let tl = self.timelineVC, tl.isViewLoaded, tl.identityPendingFirstLoad {
+                    tl.loadTimelineCachedOrRefresh()
+                }
+                if let feed = self.feedVC, feed.isViewLoaded, feed.identityPendingFirstLoad {
+                    feed.loadCachedFeedOrRefresh()
+                }
+            }
             // 账号隔离 1/4 号：登录态每次变化先切草稿桶与图片桶（分桶路径
             // 随账号自动切换，内存态不跨账号）；旧全局草稿首启迁移到当前
             // 账号时 toast 明示一次（迁移后旧文件消失，不再触发）。

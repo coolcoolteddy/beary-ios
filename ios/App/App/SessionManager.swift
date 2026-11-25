@@ -69,6 +69,12 @@ final class SessionManager {
     /// 5-29：5xx 与解析失败与网络失败同口径（同置未知、同调
     /// onNetworkUnstable），仍不按游客处理、不弹登录页。
     private(set) var authUnknown: Bool = false
+    /// 账号隔离：最近一次 /me 是否已回包确认过身份。成功（含 success(nil)
+    /// 的游客确认）与 authFailure（封禁/踢下线/过期，清态即确认未登录）
+    /// 均算确认；网络/5xx/解析失败/业务码/取消不算，身份仍未知。
+    /// 时间线/广场首帧凭它区分“已确认游客”与“身份未知”——后者绝不
+    /// 渲染 lastKnownUserId 桶（冷启动登 demo 号却看到自己号数据的根因）。
+    private(set) var identityResolved: Bool = false
     /// G26：网络失败时的回调（容器可接 toast；默认不弹登录页）。
     var onNetworkUnstable: (() -> Void)?
 
@@ -256,6 +262,7 @@ final class SessionManager {
         switch result {
         case .success(let user):
             self.authUnknown = false
+            self.identityResolved = true
             // 用户 id 变化即权威登录态变迁：先应用新态，再推代际，
             // 使此前在途请求的 401 回调（BearyAPI 侧 epoch 校验）失效。
             if user?.id != previousUserId {
@@ -291,11 +298,13 @@ final class SessionManager {
                     // fetchMe 已把无 reason 的 401 映射为 success(nil)，此处理论上到不了；
                     // 万一到达，按已证实的游客处理并清未知标记。
                     self.authUnknown = false
+                    self.identityResolved = true
                 case .authFailure:
                     // 审计 P1-7：封禁/踢下线/过期——与 success(nil) 同口径清用户态
                     // （id 变化即代际推进，防在途旧请求 401 回调误踢新号），
                     // 原因与文案经 completion 透传给容器分流提示（见 SceneDelegate 冷启动处）。
                     self.authUnknown = false
+                    self.identityResolved = true
                     if previousUserId != nil {
                         self.sessionGeneration += 1
                         self.api.bumpAuthEpoch()
