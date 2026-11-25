@@ -2002,7 +2002,8 @@ final class BearyChromeViewController: UIViewController {
         // 页重算 FAB，不再与底栏同进退。启动时 currentPage 尚为 nil，首个
         // setBarsVisible(true) 先藏 FAB，随后 showPage(.home) 末尾的恢复
         // 调用即按首页重算为可见，首帧不留残态。
-        let fabVisible = visible && (currentPage == .home || currentPage == .timeline) && !SessionManager.shared.isGuestMode
+        // 远程开关：publish 关掉时 FAB 隐藏（写新入口关闭）；点按拦截仍在 presentComposer 兜底。
+        let fabVisible = visible && (currentPage == .home || currentPage == .timeline) && !SessionManager.shared.isGuestMode && !BearyForceUpdateCenter.shared.isFeatureDisabled(.publish)
         let applyBars = {
             if let seg = self.bottomSegmented {
                 seg.alpha = visible ? 1 : 0
@@ -2155,7 +2156,8 @@ final class BearyChromeViewController: UIViewController {
         // S10：refreshMe 失败时 onUserChanged 不触发，旧值自然保留，不按关闭处理。
         // “不再提示”后永久隐藏（isHomeInvitePromptDismissed），入口只留 Plus 页。
         if let user = user { referralEnabled = user.referral?.enabled ?? false }
-        setTopButtonVisible(giftButton, visible: user != nil && referralEnabled && !Self.isHomeInvitePromptDismissed)
+        // 远程开关：invite 关掉时礼物钮隐藏（邀请入口关闭）；点按拦截仍在 presentInvite 兜底。
+        setTopButtonVisible(giftButton, visible: user != nil && referralEnabled && !Self.isHomeInvitePromptDismissed && !BearyForceUpdateCenter.shared.isFeatureDisabled(.invite))
         if user == nil {
             referralEnabled = false
             // 审计 P0-1：退出后清拉黑缓存（防漏到下个账号；下次登录时 refresh 重拉）。

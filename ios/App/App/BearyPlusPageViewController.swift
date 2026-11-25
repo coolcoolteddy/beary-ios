@@ -331,6 +331,8 @@ final class BearyPlusPageViewController: UIViewController {
     }
 
     private func buildInviteRow() {
+        // 远程开关：invite 关掉时不建“免费得 Plus”行（邀请入口隐藏）；点按拦截仍在 inviteButtonTapped 兜底。
+        guard !BearyForceUpdateCenter.shared.isFeatureDisabled(.invite) else { return }
         let gap = UIView()
         gap.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([

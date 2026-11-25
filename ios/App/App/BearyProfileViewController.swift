@@ -7759,9 +7759,12 @@ class BearyProfileViewController: UIViewController {
                 totalHeight += 12 + 48
                 // 星图行：地图行下一行（12pt 间隔、同宽同高），再接状态脚部。
                 // （好友行已作废：好友列表改走底栏第四段，不再进个人页模块区。）
-                starEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
-                container.addSubview(starEntryRow)
-                totalHeight += 12 + 48
+                // 远程开关：starmap 关掉时不建星图行（入口隐藏）；点按拦截仍在 openStarMap 兜底。
+                if !BearyForceUpdateCenter.shared.isFeatureDisabled(.starmap) {
+                    starEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
+                    container.addSubview(starEntryRow)
+                    totalHeight += 12 + 48
+                }
             }
             if let stateValue = stateView {
                 let stateHeight = footerFittingHeight(view: stateValue, width: footerWidth)
@@ -9183,7 +9186,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     private func updateDMButton() {
         // 开发者模式速切（仅内存，只改显隐）：真发送仍按服务端档位走，403 即失败回滚。
         let can = BearyDevPreviewState.dmCanOverride ?? dmCan
-        dmButton.isHidden = isOwnProfile || viewerUserIdValue == nil || followBlockedByMe || can != true
+        // 远程开关：dm 关掉时私信钮隐藏（入口关闭）；点按拦截仍在 presentDMChat 兜底。
+        dmButton.isHidden = isOwnProfile || viewerUserIdValue == nil || followBlockedByMe || can != true || BearyForceUpdateCenter.shared.isFeatureDisabled(.dm)
     }
 
     /// can 重查：目标 id 已知才查；我方拉黑直接隐藏不发请求；查不到/失败一律隐藏。

@@ -783,7 +783,8 @@ class BearyFeedViewController: UIViewController {
             self?.presentAnnouncement(ann)
         }
         // 首帧先出盲盒页与历史卡；精选卡等广场首屏数据到了再补（见 rebuildCarouselItems）。
-        plazaCarouselView.setItems([.blindBox, .historyToday(BearyHistoryTodayLoader.cached())])
+        // 远程开关：blindbox 关掉时首帧也不建盲盒页（入口隐藏）。
+        plazaCarouselView.setItems(blindBoxFirstItems())
         // 历史上的今天：首帧即发起拉取（有缓存直接回包、无缓存发一次请求），
         // 到了重建轮播；在途去重见 BearyHistoryTodayLoader。
         BearyHistoryTodayLoader.load { [weak self] _ in
@@ -2052,8 +2053,8 @@ class BearyFeedViewController: UIViewController {
         followingSegmentLoaded = false
         // 身份已换：旧身份的精选卡立即撤下（只留盲盒页与历史卡），新身份数据到了再重建；
         // 旧桶选中 id 绝不经换桶渲染（挑法缓存键本身也按身份分桶；历史卡是
-        // 公开静态内容，不按身份分桶）。
-        plazaCarouselView.setItems([.blindBox, .historyToday(BearyHistoryTodayLoader.cached())])
+        // 公开静态内容，不按身份分桶）。远程开关：blindbox 关掉时不留盲盒页。
+        plazaCarouselView.setItems(blindBoxFirstItems())
         // 审计-广场（跨身份缓存残留，高）：换桶同步清空引用缓存——旧身份
         // 拉到的引用正文绝不留给新身份/游客渲染；读盘回包是新桶内容，
         // 其引用仍走 fetch 现拉，不依赖旧缓存。
@@ -2760,10 +2761,20 @@ class BearyFeedViewController: UIViewController {
     /// 正在关注段不走配置，仍是盲盒页与历史卡（#2499 定版）。
     /// 配置拉不到时用缓存或内置默认（见 BearyCarouselConfigLoader），轮播不空白。
     /// 内容不变时不重置滚动位（见 BearyPlazaCarouselView.setItems）。
+    /// 远程开关：blindbox 关掉时首帧/关注流不含盲盒页（入口隐藏）；点按拦截仍在 onSelectBlindBox 兜底。
+    private func blindBoxFirstItems() -> [BearyPlazaCarouselItem] {
+        var items: [BearyPlazaCarouselItem] = []
+        if !BearyForceUpdateCenter.shared.isFeatureDisabled(.blindbox) {
+            items.append(.blindBox)
+        }
+        items.append(.historyToday(BearyHistoryTodayLoader.cached()))
+        return items
+    }
+
     private func rebuildCarouselItems() {
         if feedFollowingSegment {
             let history = BearyHistoryTodayLoader.cached()
-            plazaCarouselView.setItems([.blindBox, .historyToday(history)])
+            plazaCarouselView.setItems(blindBoxFirstItems())
             if history == nil {
                 BearyHistoryTodayLoader.load { [weak self] _ in
                     self?.rebuildCarouselItems()
@@ -2782,7 +2793,10 @@ class BearyFeedViewController: UIViewController {
                 case .history:
                     items.append(.historyToday(BearyHistoryTodayLoader.cached()))
                 case .blindbox:
-                    items.append(.blindBox)
+                    // 远程开关：关掉时不建盲盒页（入口隐藏）。
+                    if !BearyForceUpdateCenter.shared.isFeatureDisabled(.blindbox) {
+                        items.append(.blindBox)
+                    }
                 case .announcement:
                     if let ann = BearyAnnouncementCenter.shared.latestAnnouncement() {
                         items.append(.announcement(ann))
