@@ -1900,9 +1900,20 @@ final class BearyNotificationsViewController: UIViewController {
 
     /// 第七轮 12：只刷新哨兵行——加载态翻转时行数不变（哨兵一直在位），
     /// 整表重载会丢滚动锚点；三态已同高 56，这里只换行内图标/文案。
+    /// 135 闪退：willDisplay 触发的 loadMore 会同步调这里；翻页回包的
+    /// performBatchUpdates 插行时新建 cell 走 willDisplay，isLoadingMore
+    /// 已在回包里清掉，守卫放行，又一次 loadMore 同步 reloadRows，
+    /// 嵌套进正在跑的批更新里，UIKit 报行数不一致直接 abort。
+    /// 改异步发：等当前批更新跑完再刷哨兵行（只晚一个 runloop，肉眼无感）；
+    /// 执行时重核哨兵仍在位且行号未越界，过期通知丢弃。
     private func refreshSentinelRow() {
         guard showsSentinelRow else { return }
-        tableView.reloadRows(at: [IndexPath(row: displayRows.count, section: 0)], with: .none)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.showsSentinelRow else { return }
+            let row = self.displayRows.count
+            guard row < self.tableView.numberOfRows(inSection: 0) else { return }
+            self.tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+        }
     }
 
     private func loadMore() {
