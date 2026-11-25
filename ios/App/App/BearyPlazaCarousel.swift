@@ -85,6 +85,59 @@ struct BearyHistoryToday: Codable {
         return lunarYear
     }
 
+    /// 本地农历日期（"十月十七"）：服务端 lunar 字段未部署／缺省时的本地
+    /// 换算。月名／日名／干支表在 Localizable.xcstrings 里（逐字抄服务端
+    /// history-today.diff 的表；农历是中文历法数据、v1 不翻译，en 值与
+    /// zh 相同——与服务端 lunar 字段中文直出同口径）；苹果中国农历与服务
+    /// 端表同规则，已按服务端真值交叉核对（2026-11-25 十月十七／丙午年、
+    /// 2026-11-23 十月十五、2026-02-17 与 2025-01-29 正月初一）。
+    var localLunarDay: String? {
+        guard let lunar = Self.localLunarComponents(for: date) else { return nil }
+        let monthNames = Self.localizedTable(prefix: "historyToday.lunar.month", count: 12)
+        let dayNames = Self.localizedTable(prefix: "historyToday.lunar.day", count: 30)
+        guard lunar.month >= 1, lunar.month <= 12, lunar.day >= 1, lunar.day <= 30 else { return nil }
+        let leap = NSLocalizedString("historyToday.lunar.leap", comment: "")
+        return (lunar.isLeapMonth ? leap : "") + monthNames[lunar.month - 1] + dayNames[lunar.day - 1]
+    }
+
+    /// 本地农历年份（"丙午年"）：与服务端 ganzhiYear 同口径，
+    /// 干支 = GAN[(year-4)%10] + ZHI[(year-4)%12] + "年"。
+    var localLunarYearText: String? {
+        guard let lunar = Self.localLunarComponents(for: date) else { return nil }
+        let gan = Self.localizedTable(prefix: "historyToday.lunar.gan", count: 10)
+        let zhi = Self.localizedTable(prefix: "historyToday.lunar.zhi", count: 12)
+        let suffix = NSLocalizedString("historyToday.lunar.year_suffix", comment: "")
+        return gan[(lunar.year - 4) % 10] + zhi[(lunar.year - 4) % 12] + suffix
+    }
+
+    /// 按 key 前缀＋序号取一组 catalog 值（序号 1...count，对应 key 须在
+    /// Localizable.xcstrings 里逐条存在）。序号只拼 catalog key、不拼文案，
+    /// 运行时查得到表——与 i18n-plan 里禁插值 key 的情形（变量文案拼进
+    /// key、catalog 查不到）不同。
+    private static func localizedTable(prefix: String, count: Int) -> [String] {
+        (1...count).map { NSLocalizedString("\(prefix).\($0)", comment: "") }
+    }
+
+    /// 公历日期键（"yyyy-MM-dd"）转中国农历年月日。date 用 en_US_POSIX＋
+    /// UTC 解析、农历日历时区也钉 UTC，避免时区拨动日期（与 gregorianLine
+    /// 同款）。公历年份与农历年份超出 1900…2049 回 nil，与服务端表的
+    /// 范围口径一致（服务端：公历年份超范围或 1900-01-31 之前均回 null）。
+    private static func localLunarComponents(for dateKey: String) -> (year: Int, month: Int, day: Int, isLeapMonth: Bool)? {
+        let parts = dateKey.split(separator: "-")
+        guard parts.count == 3, let gregorianYear = Int(parts[0]), gregorianYear >= 1900, gregorianYear <= 2049 else { return nil }
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.timeZone = TimeZone(secondsFromGMT: 0)
+        parser.dateFormat = "yyyy-MM-dd"
+        guard let date = parser.date(from: dateKey) else { return nil }
+        var calendar = Calendar(identifier: .chinese)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? TimeZone.current
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year, year >= 1900, year <= 2049,
+              let month = components.month, let day = components.day else { return nil }
+        return (year: year, month: month, day: day, isLeapMonth: components.isLeapMonth ?? false)
+    }
+
     /// 节日，空白当缺省；没有就不显示节日行。
     var festivalText: String? {
         guard let festival = festival?.trimmingCharacters(in: .whitespacesAndNewlines), !festival.isEmpty else { return nil }
