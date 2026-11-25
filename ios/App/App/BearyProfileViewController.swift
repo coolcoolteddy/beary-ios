@@ -1040,8 +1040,18 @@ class BearyProfileViewController: UIViewController {
         buttonValue.layer.cornerRadius = BearyCorners.single
         buttonValue.addTarget(self, action: #selector(followButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
-        buttonValue.isHidden = true
         return buttonValue
+    }()
+
+    /// 他人主页关注钮的截屏 logo 容器（Threads 同款，见 BearyScreenshotLogoView）：
+    /// 关注钮画进密码框图层、底下垫官方小熊 logo（side_beary_icon，深浅随
+    /// imageset 走）；屏幕上只看到关注钮，截屏时该位置显示小熊 logo。
+    /// 显隐与定宽一律走容器——按钮自身永不隐藏（藏按钮会把 logo 露出来）。
+    /// 只包这一处（他人主页关注钮），其余按钮不动。
+    private lazy var followButtonContainer: BearyScreenshotLogoView = {
+        let containerValue = BearyScreenshotLogoView(logoImageName: "side_beary_icon", content: followButton)
+        containerValue.isHidden = true
+        return containerValue
     }()
 
     /// 私信开放四档：他人主页私信钮（关注钮左侧同中心线、40×40，官方 icon_comment 空气泡）。
@@ -1079,8 +1089,9 @@ class BearyProfileViewController: UIViewController {
     private var followActionSeq = 0
     /// 关注钮上次实际渲染的态（跨帧动画判定用：只在已可见且态真变时播切换动效）。
     private var renderedFollowState: BearyFollowState?
-    /// 关注钮四态定宽约束（按四态最宽一态定宽，点按后尺寸恒定，左侧私信钮不再被顶）。
-    private var followButtonWidthConstraint: NSLayoutConstraint?
+    /// 关注钮四态定宽约束（按四态最宽一态定宽，点按后尺寸恒定，左侧私信钮不再被顶；
+    /// 约束落截屏 logo 容器上，按钮贴满容器、宽跟容器走）。
+    private var followButtonContainerWidthConstraint: NSLayoutConstraint?
     private var followButtonMeasuredCategory: UIContentSizeCategory?
 
     /// 关注钮四态映射（v5 定版，单源：渲染与定宽测量共用，改一处即两处生效）：
@@ -3174,7 +3185,7 @@ class BearyProfileViewController: UIViewController {
         avatarContainerView.addSubview(avatarLetterLabel)
         avatarContainerView.addSubview(avatarRetryButton)
         headerView.addSubview(editButton)
-        headerView.addSubview(followButton)
+        headerView.addSubview(followButtonContainer)
         headerView.addSubview(dmButton)
         headerView.addSubview(gearButton)
         headerView.addSubview(headerShareButton)
@@ -3269,12 +3280,13 @@ class BearyProfileViewController: UIViewController {
             editButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
             editButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
             // 好友钮锚点改为名字行中心（v5 定版）、右缘 -16：本人页隐藏、他人页独占该位。
-            followButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
-            followButton.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            followButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            // 截屏 logo 版：锚点落容器上，按钮贴满容器。
+            followButtonContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
+            followButtonContainer.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            followButtonContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
             // 私信钮贴关注钮左侧同中心线（隐藏钮仍参与布局，锚点有效，见好友钮注释）。
-            dmButton.trailingAnchor.constraint(equalTo: followButton.leadingAnchor, constant: -8),
-            dmButton.centerYAnchor.constraint(equalTo: followButton.centerYAnchor),
+            dmButton.trailingAnchor.constraint(equalTo: followButtonContainer.leadingAnchor, constant: -8),
+            dmButton.centerYAnchor.constraint(equalTo: followButtonContainer.centerYAnchor),
             dmButton.widthAnchor.constraint(equalToConstant: 40),
             dmButton.heightAnchor.constraint(equalToConstant: 40),
             gearButton.trailingAnchor.constraint(equalTo: editButton.leadingAnchor, constant: -8),
@@ -3541,7 +3553,8 @@ class BearyProfileViewController: UIViewController {
         // 关注钮只属他人主页：本人、游客（viewer 为空）一律隐藏；拉黑态由
         // refreshFollowState 按 state 接口复核（未到前先隐藏，不抢先画“关注”）。
         // 第三轮第 6 项：首轮失败占位态不在此藏按钮（applyFollowButton 显位）。
-        followButton.isHidden = own || viewerUserIdValue == nil || followBlockedByMe || (followState == nil && !followStateFirstLoadFailed)
+        // 截屏 logo 版：显隐走容器（藏按钮会把底下 logo 露出来）。
+        followButtonContainer.isHidden = own || viewerUserIdValue == nil || followBlockedByMe || (followState == nil && !followStateFirstLoadFailed)
         updateDMButton()
         // iCity：更多菜单只属他人主页（举报/拉黑均以他人为对象）。
         topMoreButton.isHidden = own
@@ -3582,7 +3595,7 @@ class BearyProfileViewController: UIViewController {
         guard !isOwnProfile, viewerUserIdValue != nil,
               let targetId = profile?.profileIdValue ?? targetUserIdValue,
               !followStateLoading else {
-            if isOwnProfile || viewerUserIdValue == nil { followButton.isHidden = true }
+            if isOwnProfile || viewerUserIdValue == nil { followButtonContainer.isHidden = true }
             return
         }
         followStateLoading = true
@@ -3659,18 +3672,18 @@ class BearyProfileViewController: UIViewController {
         guard !isOwnProfile, viewerUserIdValue != nil, !followBlockedByMe,
               let state = displayState,
               let config = Self.followButtonConfigs[state] else {
-            followButton.isHidden = true
+            followButtonContainer.isHidden = true
             renderedFollowState = nil
             return
         }
         // 只在已可见且态真变时播切换动效：首显、复现、同态重刷一律直设终值。
-        let wasVisible = !followButton.isHidden && followButton.window != nil
+        let wasVisible = !followButtonContainer.isHidden && followButtonContainer.window != nil
         let stateChanged = renderedFollowState != state
         // 字号档变化时定宽跟着重算（trait 钩子的延后重算未跑到时，下次渲染先纠正）。
         if followButtonMeasuredCategory != traitCollection.preferredContentSizeCategory {
             updateFollowButtonFixedWidth()
         }
-        followButton.isHidden = false
+        followButtonContainer.isHidden = false
         let shouldAnimate = animated && wasVisible && stateChanged && !UIAccessibility.isReduceMotionEnabled
         let image = BearyIconImages.image(named: config.imageName, pointSize: 17)
         if shouldAnimate {
@@ -3710,12 +3723,12 @@ class BearyProfileViewController: UIViewController {
             maxWidth = max(maxWidth, width)
         }
         let fixedWidth = ceil(maxWidth)
-        if let constraint = followButtonWidthConstraint {
+        if let constraint = followButtonContainerWidthConstraint {
             constraint.constant = fixedWidth
         } else {
-            let constraint = followButton.widthAnchor.constraint(equalToConstant: fixedWidth)
+            let constraint = followButtonContainer.widthAnchor.constraint(equalToConstant: fixedWidth)
             constraint.isActive = true
-            followButtonWidthConstraint = constraint
+            followButtonContainerWidthConstraint = constraint
         }
         followButtonMeasuredCategory = category
     }
@@ -4017,7 +4030,7 @@ class BearyProfileViewController: UIViewController {
                 // 更多菜单保持原样。
                 applyProfile()
                 applyMode()
-                followButton.isHidden = true
+                followButtonContainer.isHidden = true
                 dmButton.isHidden = true
                 diaryEntries = []
                 likedEntries = []
