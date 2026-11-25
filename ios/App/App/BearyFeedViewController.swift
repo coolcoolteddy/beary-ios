@@ -71,6 +71,11 @@ class BearyFeedViewController: UIViewController {
     /// 换桶，旧桶内容绝不渲染给新身份（见 handleFeedUserChanged）。
     private var feedCacheOwnerKey: String?
 
+    /// 账号隔离：冷启动首帧因身份未确认跳过加载的标记（见 loadCachedFeedOrRefresh）；
+    /// 任何一次真实加载（本函数放行、refreshAllInternal）即清掉；容器凭它在
+    /// /me 回包后补调首帧。须为 internal（SceneDelegate 读它）。
+    var identityPendingFirstLoad = false
+
     // MARK: - 广场流状态
 
     /// 原始拉取结果；展示时再按最近公开模块去重。
@@ -1102,6 +1107,8 @@ class BearyFeedViewController: UIViewController {
     }
 
     private func refreshAllInternal(showCentralSpinner: Bool) {
+        // 账号隔离：任何一次真实加载即结束首帧身份待确认态（见 identityPendingFirstLoad）。
+        identityPendingFirstLoad = false
         // 112 分段去重：首拉已在途时直接跳过——不 bump 代际（否则在途回包
         // 会被代际守卫丢弃、等于白白重拉一次），不重置 hasMore/模型；
         // 在途回包完成时经 maybeEndRefreshing 结束下拉头并更新模型。
@@ -1963,8 +1970,19 @@ class BearyFeedViewController: UIViewController {
     /// 冷启动进页：有缓存先瞬间出缓存（不走网络、不转菊花），再后台静默
     /// 刷新；无缓存走旧全量路径（菊花 + 网络）。缓存是上次首屏窗口，
     /// 读取时再过一次有效公开过滤（限时过期/翻私密的旧篇不出缓存）。
-    private func loadCachedFeedOrRefresh() {
-        let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
+    // 注意：本函数保持 internal（非 private）——SceneDelegate 冷启动首个 /me
+    // 回包确认身份后直接调它补首帧（身份未确认时跳过的那一次）；时间线同款。
+    func loadCachedFeedOrRefresh() {
+        // 账号隔离：身份未确认时绝不渲染 lastKnownUserId 桶（冷启动登 demo 号
+        // 却看到自己号数据的根因）；骨架加载态已由初始 isFirstLoad 撑起，
+        // 等 /me 回包后容器重调本函数读本号桶。
+        guard let bucket = BearyFeedCache.confirmedBucket() else {
+            identityPendingFirstLoad = true
+            tableView.reloadData()
+            updateOverlayState()
+            return
+        }
+        identityPendingFirstLoad = false
         feedCacheOwnerKey = bucket
         // 审计-广场：首桶即定引用缓存身份桶（同桶重调不清空，见 switchQuoteCacheOwner）。
         BearyDiaryCardCell.switchQuoteCacheOwner(to: bucket)
@@ -2024,6 +2042,8 @@ class BearyFeedViewController: UIViewController {
         guard newBucket != feedCacheOwnerKey else { return }
         lastFeedLoginUserId = SessionManager.shared.currentUser?.id
         feedCacheOwnerKey = newBucket
+        // 账号隔离：换桶即真实加载，首帧身份待确认态到此结束（容器补调凭此去重）。
+        identityPendingFirstLoad = false
         // 切段缓存跟身份走：换桶即清两段槽与拉过标记，旧身份的行绝不
         // 经切段恢复到新身份眼前（本函数后面的快照／清表分支会重建广场段）。
         plazaSegmentCache = FeedSegmentCache()
@@ -2069,15 +2089,21 @@ class BearyFeedViewController: UIViewController {
                 return
             }
         }
-        // 登录后新桶无缓存：不清表——广场只含有效公开篇，游客行与登录后
-        // 首屏是服务端同一批公开内容（仅点赞态等 viewer 字段待刷新），先留
-        // 着当占位、后台全量 diff 对齐；失败也保留旧行（首拉失败口径）。
+        // 账号隔离：新桶无缓存时先清表再拉——旧身份的行（含旧身份的 viewer 态）
+        // 绝不留给新身份当占位；失败时 refreshAll 自会定失败态，不恢复旧行。
         // bypass 强制走全量首拉而非 since 增量（since 只前插新篇、不刷新旧行 viewer 字段）。
+        strongSelf.plazaRaw = []
+        strongSelf.plazaNextPageBefore = nil
+        strongSelf.plazaNextPageBeforeId = nil
+        strongSelf.firstPageIds = []
+        strongSelf.tableView.reloadData()
         strongSelf.plazaHasMore = true
         strongSelf.plazaReachedEnd = false
         strongSelf.plazaError = false
         strongSelf.refreshAllBypassInFlight = true
         strongSelf.refreshAll()
+        // 首拉已同步置 plazaLoading：空态在此时必藏，不闪旧身份空态。
+        strongSelf.updateOverlayState()
         }
     }
 
@@ -3685,6 +3711,19 @@ enum BearyFeedCache {
 
     static func forgetUserId() {
         UserDefaults.standard.removeObject(forKey: lastUserIdKey)
+    }
+
+    /// 账号隔离：身份确认后的缓存桶（冷启动首帧用）。
+    /// - currentUser 已立（vault 恢复或 /me 回包均算确认）：本号桶。
+    /// - currentUser 为 nil 且 /me 已回包确认（游客）：guest 桶。
+    /// - currentUser 为 nil 且 /me 未回包、本地有旧号：nil——身份未知，
+    ///   绝不用旧号桶渲染，调用方显中性加载态、等 /me 回包后重调。
+    /// - currentUser 为 nil 且 /me 未回包、本地无旧号：guest 桶（无私密数据可漏）。
+    static func confirmedBucket() -> String? {
+        if let id = SessionManager.shared.currentUser?.id { return bucket(userId: id) }
+        if SessionManager.shared.identityResolved { return bucket(userId: nil) }
+        if lastKnownUserId() != nil { return nil }
+        return bucket(userId: nil)
     }
 
     static func visibleHead(_ entries: [Entry]) -> [Entry] {

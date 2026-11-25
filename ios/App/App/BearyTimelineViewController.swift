@@ -2098,6 +2098,10 @@ class BearyTimelineViewController: UIViewController {
     private var timelineEntries: [Entry] = [] { didSet { cachedSections = nil } }
     private var timelineHasMore = false
     private var timelineState = LoadState.idle
+    /// 账号隔离：冷启动首帧因身份未确认跳过加载的标记（见 loadTimelineCachedOrRefresh）；
+    /// 任何一次真实加载（本函数放行、loadTimelineFirstPage）即清掉；容器凭它在
+    /// /me 回包后补调首帧。须为 internal（SceneDelegate 读它）。
+    var identityPendingFirstLoad = false
     /// 80 包 B2：viewDidLoad 首拉已发起的标记（引导预加载步骤据此去重，不复发第二拉）。
     var initialLoadStarted = false
     private var timelineUnauthorized = false
@@ -3079,6 +3083,14 @@ class BearyTimelineViewController: UIViewController {
     // 注意：本函数保持 internal（非 private）——SceneDelegate 切号时直接调
     // 用它（秒开-本地持久化），#456 原支的 private 会断该调用，特此保留。
     func loadTimelineCachedOrRefresh() {
+        // 账号隔离：身份未确认时绝不渲染 lastKnownUserId 桶（冷启动登 demo 号
+        // 却看到自己号数据的根因）；显骨架加载态，等 /me 回包后容器重调。
+        guard let bucket = BearyFeedCache.confirmedBucket() else {
+            identityPendingFirstLoad = true
+            updateChrome()
+            return
+        }
+        identityPendingFirstLoad = false
         // 秒开-启动瘦身：自己的首载若与预取撞车，待发预取取消（自己的首拉
         // 已覆盖，不再重复发一份）；已发出的预取由首拉接手复用（见
         // fetchTimelineFirstPageFull 的 adoptFirstPageIfInFlight）。
@@ -3090,7 +3102,6 @@ class BearyTimelineViewController: UIViewController {
             pendingFilterSwitchOldIds = nil
         }
         BearyTimelinePrefetch.cancelPendingPrefetch()
-        let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
         // 审计 13：读盘 + 解码在缓存 IO 队列，界面先不阻塞；回包到主线程
         // 后再应用。桶已换（账号切换）时旧回包直接丢弃，不覆盖新桶内容。
         BearyTimelineCache.load(bucket: bucket) { [weak self] snap in
@@ -3103,7 +3114,9 @@ class BearyTimelineViewController: UIViewController {
     /// 在此落地；抽成方法只为避开逃逸闭包里的隐式 self，语义与原同步
     /// 版一致：桶已换时旧回包丢弃，空快照走 reloadTimeline 全量路径。
     private func applyTimelineCacheSnapshot(_ snap: (entries: [Entry], hasMore: Bool, trashCount: Int, total: Int?, priv: Int?, pub: Int?, savedAt: TimeInterval)?, bucket: String) {
-        let currentBucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
+        // 账号隔离：回包时再凭确认后身份算桶——身份未确认时算不出（nil），
+        // 旧回包直接丢弃，不覆盖新桶内容。
+        let currentBucket = BearyFeedCache.confirmedBucket()
         guard currentBucket == bucket else { return }
         guard let snap = snap, !snap.entries.isEmpty else {
             self.reloadTimeline()
@@ -4743,6 +4756,8 @@ class BearyTimelineViewController: UIViewController {
     }
 
     private func loadTimelineFirstPage(completion: (() -> Void)? = nil, force: Bool = false) {
+        // 账号隔离：任何一次真实取数即结束首帧身份待确认态（见 identityPendingFirstLoad）。
+        identityPendingFirstLoad = false
         // 112：在途跳过（force 除外）——跳过时不 bump seq、不改状态，
         // 在途回包自会渲染；completion 暂存、在途匹配完成时补调。
         if timelineFirstPageInFlight && force == false {
@@ -6527,7 +6542,7 @@ class BearyTimelineViewController: UIViewController {
         let hasRows = sections.contains { !$0.entries.isEmpty }
         let isLoginEmpty = (timelineState == .failed && timelineUnauthorized && timelineEntries.isEmpty)
         var newBackgroundKind = "none"
-        if timelineState == .loading && timelineEntries.isEmpty && !hasRows {
+        if (timelineState == .loading || identityPendingFirstLoad) && timelineEntries.isEmpty && !hasRows {
             // 双图标互斥（另一向）：自定义下拉刷新进行中由 pullView 图标独占
             // 指示，此时即使另有重载把表行清掉、首屏加载分支成立，背景加载
             // spinner 也不得再挂——否则刷新中同时出现下拉图标与背景 spinner
