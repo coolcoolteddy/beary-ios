@@ -2347,15 +2347,13 @@ enum BearyText {
     /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
     /// 2026-11-21 日期完全本地化：formatter 跟 App 语言（见 BearyLocalizedDate），
     /// 按语言缓存、语言切换后下次调用重建；中文输出与改前逐字节一致。
-    /// 时区沿用既有 GMT+8（原来写死的值，原样不动）。
-    private static var hourMinuteFormatter: DateFormatter {
-        BearyLocalizedDate.formatter(template: "jmm", zhFormat: "H:mm", timeZone: BearyLocalizedDate.gmt8)
-    }
     /// 审计四轮 14：月日时分静态复用——聊天页行渲染与 timeString 共用，
     /// 只在主线程用（DateFormatter 非线程安全，不跨线程用）。
     static var monthDayHourMinuteFormatter: DateFormatter {
         BearyLocalizedDate.formatter(template: "MMMMdjmm", zhFormat: "M月d日 H:mm", timeZone: BearyLocalizedDate.gmt8)
     }
+    /// 北京时区（存量口径：无篇场景与旧签名回落用）。
+    static var beijingTimeZone: TimeZone { BearyBeijingDay.timeZone(tzName: nil) }
 
     /// 跨年绝对日期（规范 §12）：同年不带年份，跨年「yyyy年M月d日」
     /// （不带时刻，与回收站 createdLabel 同口径）；显示走北京时区。
@@ -2364,32 +2362,42 @@ enum BearyText {
     }
 
     /// 7 天外绝对时间：同年「M月d日 H:mm」，跨年「yyyy年M月d日」；
-    /// 年份判定与显示均走北京日历/时区，不跟设备时区。
+    /// 年份判定与显示均走传入时区的日历/时区。
+    /// 无篇场景（旧签名）回落北京；日记面一律走带时区的重载。
     static func absoluteDateString(from date: Date) -> String {
-        let calendar = BearyBeijingDay.calendar
+        absoluteDateString(from: date, timeZone: beijingTimeZone)
+    }
+    static func absoluteDateString(from date: Date, timeZone: TimeZone) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
         let year = calendar.component(.year, from: date)
         let currentYear = calendar.component(.year, from: Date())
         if year == currentYear {
-            return monthDayHourMinuteFormatter.string(from: date)
+            return BearyLocalizedDate.formatter(template: "MMMMdjmm", zhFormat: "M月d日 H:mm", timeZone: timeZone).string(from: date)
         }
-        return yearMonthDayFormatter.string(from: date)
+        return BearyLocalizedDate.formatter(template: "yyyyMMMMd", zhFormat: "yyyy年M月d日", timeZone: timeZone).string(from: date)
     }
 
     /// [24] 小项 6：统一为项目主流口径——今天 → H:mm；昨天 → 昨天 H:mm；
     /// 否则 M月d日 H:mm（小时不补零，与卡片/详情/通知/时间线引用一致），
     /// 跨年「yyyy年M月d日」（规范 §12）。
-    /// 今天/昨天判定与显示均走北京日历/时区，不用设备时区。
+    /// 今天/昨天判定与显示走传入时区；无篇场景（旧签名）走查看设备时区——
+    /// 私信与通知行共用本函数，它们没有日记时区（2026-11-21 日记时区口径）。
     /// created_at 是毫秒时间戳。
     static func timeString(ms: Int) -> String {
+        timeString(ms: ms, timeZone: .current)
+    }
+    static func timeString(ms: Int, timeZone: TimeZone) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let cal = BearyBeijingDay.calendar
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = timeZone
         if cal.isDateInToday(date) {
-            return hourMinuteFormatter.string(from: date)
+            return BearyLocalizedDate.formatter(template: "jmm", zhFormat: "H:mm", timeZone: timeZone).string(from: date)
         }
         if cal.isDateInYesterday(date) {
-            return BearyLocalizedDate.yesterdayWord(timeZone: BearyLocalizedDate.gmt8) + " " + hourMinuteFormatter.string(from: date)
+            return BearyLocalizedDate.yesterdayWord(timeZone: timeZone) + " " + BearyLocalizedDate.formatter(template: "jmm", zhFormat: "H:mm", timeZone: timeZone).string(from: date)
         }
-        return absoluteDateString(from: date)
+        return absoluteDateString(from: date, timeZone: timeZone)
     }
 
     /// 心情 key → 中文名（32 只熊脸＋节日 200 款；与网页 MOOD_DEFS 的 40 种不同集，
@@ -2974,8 +2982,11 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, locationLatitude: Double? = nil, locationLongitude: Double? = nil, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, tags: [String]? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, locationLatitude: Double? = nil, locationLongitude: Double? = nil, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, tags: [String]? = nil, timeZoneName: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
+        // 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识；
+        // nil=省略不传（无记录的旧草稿），服务端回落 Asia/Shanghai。编辑不改时区，故 updateEntry 不发本键。
+        if let tz = timeZoneName { body["tz_name"] = tz }
         // 实况：非空才发 live_videos（无实况的新建与旧版 body 一字相同）；
         // 空映射不发（新建无旧态可清，编辑清实况走 updateEntry 的显式空映射）。
         if let live = liveVideos, !live.isEmpty { body["live_videos"] = live }
@@ -4032,6 +4043,12 @@ enum BearyVisibilityText {
     /// 口径：7 天内相对、7 天外绝对（同年 M月d日 H:mm、跨年 yyyy年M月d日，规范 §12），
     /// 时区沿用既有口径。本函数现只供私信／通知等非日记时间用；日记时间走 diaryTimeString。
     static func publishedRelativeString(publishedAtMs: Int?) -> String? {
+        publishedRelativeString(publishedAtMs: publishedAtMs, timeZone: nil)
+    }
+    /// timeZone：日记面传篇时区（entry.diaryTimeZone）；nil = 查看设备时区
+    /// （私信/通知行，它们没有日记时区）。相对部分（刚刚/分钟前/小时前/天前）
+    /// 是时长差，与时区无关；只有 7 天外绝对回落走时区。
+    static func publishedRelativeString(publishedAtMs: Int?, timeZone: TimeZone?) -> String? {
         guard let ms = publishedAtMs, ms > 0 else { return nil }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0

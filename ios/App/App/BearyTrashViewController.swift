@@ -1255,7 +1255,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
               trashItems.contains(where: { $0.id != trashValue.id && trashRowTitleBase($0) == base }) else {
             return base
         }
-        return "\(base) · \(TrashText.createdLabel(ms: createdAt))"
+        return "\(base) · \(TrashText.createdLabel(ms: createdAt, timeZone: trashValue.diaryTimeZone))"
     }
 
     /// 命名顺序本体：标题 → 净化后正文前 20 字 →「这篇日记」。
@@ -1637,19 +1637,20 @@ private enum TrashText {
     /// ms 无效时回落下方的“/”绝对格式）。
     /// 2026-11-25：日记创建日期走 diaryTimeString（设备时区兜底，日记时区由 #2094 接线）；
     /// 删除日期（deletedLabel）仍走 G8 北京口径，不动。
-    static func createdLabel(ms: Int) -> String {
+    /// 日记时区（2026-11-21 v20 §二）：“写于”是日记时间，按原篇时区显示。
+    static func createdLabel(ms: Int, timeZone: TimeZone? = nil) -> String {
         // #32：共用函数 7 天外也返回绝对串（“/”绝对日期，设备时区、无跨年分支），
         // 直接 early-return 会吞掉下方的跨年分支；只在 7 天内用它做相对显示，
-        // 7 天及以外落回下方的跨年分支（同年 M/d、跨年 yyyy/M/d，设备时区）。
+        // 7 天及以外落回下方的跨年分支（同年 M/d、跨年 yyyy/M/d，按篇时区）。
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
-        if diff < 7 * 24 * 3600, let relative = BearyVisibilityText.diaryTimeString(publishedAtMs: ms) {
+        if diff < 7 * 24 * 3600, let relative = BearyVisibilityText.diaryTimeString(publishedAtMs: ms, timeZone: timeZone) {
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         // 跨年显示年份（规范 §12）：同年 "M/d"，跨年 "yyyy/M/d"；
-        // 年份判定走设备日历（与 diaryTimeString 同口径）。
+        // 年份判定走篇时区日历（与 diaryTimeString 同口径）。
         // 2026-11-25：绝对日期改“/”格式（见 slashDateString）。
-        return BearyLocalizedDate.slashDateString(from: date)
+        return BearyLocalizedDate.slashDateString(from: date, timeZone: timeZone)
     }
 
     /// 网页 fmtDelLabel：今天 → 今天 H:mm；昨天 → 昨天；否则 M月d日。
@@ -1679,15 +1680,15 @@ private enum TrashText {
     static func metaLine(trashValue: TrashItem) -> String {
         let createdPart: String
         if let createdAt = trashValue.createdAt {
-            createdPart = "写于 " + createdLabel(ms: createdAt)
+            createdPart = String(format: NSLocalizedString("trash.meta.created", comment: ""), createdLabel(ms: createdAt, timeZone: trashValue.diaryTimeZone))
         } else {
-            createdPart = "写于 —"
+            createdPart = String(format: NSLocalizedString("trash.meta.created", comment: ""), "—")
         }
         let deletedPart: String
         if let deletedAt = trashValue.deletedAt {
-            deletedPart = "删除于 " + deletedLabel(ms: deletedAt)
+            deletedPart = String(format: NSLocalizedString("trash.meta.deleted", comment: ""), deletedLabel(ms: deletedAt))
         } else {
-            deletedPart = "删除于 —"
+            deletedPart = String(format: NSLocalizedString("trash.meta.deleted", comment: ""), "—")
         }
         // 扫荡 B：倒计时按 deletedAt 现算，不直接沿用服务端快照。
         // 本地桶的 daysLeft 是上次同步时的快照：离线多日后再进回收站，

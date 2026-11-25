@@ -1952,10 +1952,11 @@ final class BearyDetailViewController: UIViewController {
             // 冲突清单第 4 条：公开内容显示「编辑于 X」（编辑过才显；私密不显）。
             // 详情页时间（2026-11-25 Li 定）：日期＋时刻（11/25 14:20；英文跟系统
             // 12/24 小时制），见 BearyLocalizedDate.slashDateTimeString；时分只在详情页显示。
-            let createdText = BearyLocalizedDate.slashDateTimeString(from: Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000.0))
+            // 日记时区（2026-11-21 v20 §二）：创建时间与编辑时间均按本篇时区显示。
+            let createdText = BearyLocalizedDate.slashDateTimeString(from: Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000.0), timeZone: entry.diaryTimeZone)
             if BearyEphemeral.isEffectivelyPublic(entry),
                let updatedAt = entry.updatedAt, updatedAt > createdAt {
-                let editedText = BearyLocalizedDate.slashDateTimeString(from: Date(timeIntervalSince1970: TimeInterval(updatedAt) / 1000.0))
+                let editedText = BearyLocalizedDate.slashDateTimeString(from: Date(timeIntervalSince1970: TimeInterval(updatedAt) / 1000.0), timeZone: entry.diaryTimeZone)
                 timeLabel.text = "\(createdText) · 编辑于 \(editedText)"
             } else {
                 timeLabel.text = createdText
@@ -3122,7 +3123,7 @@ final class BearyDetailViewController: UIViewController {
             // A2：锁定为终态占位，忘掉该键的展开态。
             BearyQuoteExpandState.forget(key: detailExpandKey)
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: true, visibility: quote.visibility)
-            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt, sourceTimeZone: quote.diaryTimeZone)
             quoteView.isHidden = false
             return
         }
@@ -3132,7 +3133,7 @@ final class BearyDetailViewController: UIViewController {
             BearyQuoteExpandState.forget(key: detailExpandKey)
             if quote.isEffectivelyPublic == false {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
-                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
+                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt, sourceTimeZone: quote.diaryTimeZone)
             } else {
                 quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
             }
@@ -3144,7 +3145,7 @@ final class BearyDetailViewController: UIViewController {
         // （回包到达时若引用已换篇或已有更新的渲染则丢弃，fail-closed）；其余一律占位。
         let showPlaceholderForQuote = {
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
-            self.quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
+            self.quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt, sourceTimeZone: quote.diaryTimeZone)
             self.quoteView.isHidden = false
         }
         if quoteIsMine || quote.isEffectivelyPublic {
@@ -3159,7 +3160,8 @@ final class BearyDetailViewController: UIViewController {
                 authorHandle: quote.authorHandle,
                 sourceTappable: true,
                 quoteId: quote.id,
-                hostId: entry.id
+                hostId: entry.id,
+                sourceTimeZone: quote.diaryTimeZone
             )
             quoteView.isHidden = false
             return
@@ -3180,7 +3182,8 @@ final class BearyDetailViewController: UIViewController {
                     authorHandle: quote.authorHandle,
                     sourceTappable: true,
                     quoteId: quote.id,
-                    hostId: self.entry.id
+                    hostId: self.entry.id,
+                    sourceTimeZone: quote.diaryTimeZone
                 )
                 self.quoteView.isHidden = false
             }

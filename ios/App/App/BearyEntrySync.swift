@@ -484,7 +484,8 @@ final class BearyEntrySync {
     func enqueuePendingRefetch(entryId: String, accountId: Int) {
         queue.async { [weak self] in
             guard let self = self else { return }
-            let dayKey = BearyBeijingDay.dayKey(ofMs: Int(Date().timeIntervalSince1970 * 1000)) ?? ""
+            // 待发布回取的当日桶 key：按查看设备时区（与时间线 device-today 一致）。
+            let dayKey = BearyBeijingDay.dayKey(ofMs: Int(Date().timeIntervalSince1970 * 1000), tzName: TimeZone.current.identifier) ?? ""
             if BearyEntrySyncStore.addPendingPublishRefetch(accountId: accountId, entryId: entryId, dayKey: dayKey) {
                 NSLog("[BearyEntrySync] pending refetch enqueued account=%d entry=%@", accountId, entryId)
             } else {

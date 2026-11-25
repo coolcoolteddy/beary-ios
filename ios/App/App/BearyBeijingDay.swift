@@ -13,6 +13,57 @@ enum BearyBeijingDay {
         return cal
     }
 
+    /// 日记时区（2026-11-21 v20 §二）：写下时的设备时区 IANA 标识
+    /// （如 Asia/Shanghai、America/New_York）。
+    /// nil = 存量旧行（写时未记），回落 Asia/Shanghai，保持现有显示不变；
+    /// 非法标识也回落 Asia/Shanghai。
+    /// 存 IANA 名不存 offset：标识本身带夏令时规则，展示与分组由标识算出；
+    /// 服务端按篇过滤/聚合在 JS 层用 Intl.DateTimeFormat 算（D1/SQLite 不认 IANA 名）。
+    static func timeZone(tzName: String?) -> TimeZone {
+        TimeZone(identifier: tzName ?? "Asia/Shanghai") ?? TimeZone(identifier: "Asia/Shanghai") ?? .current
+    }
+
+    /// 按时区名取公历（周一起始，与 calendar 同口径）。
+    static func calendar(tzName: String?) -> Calendar {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = timeZone(tzName: tzName)
+        cal.firstWeekday = 2
+        return cal
+    }
+
+    /// 查看设备时区的公历（周条“今天”格、那年今日的“今天”走查看语境）。
+    static var deviceCalendar: Calendar {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = .current
+        cal.firstWeekday = 2
+        return cal
+    }
+
+    /// 毫秒时间戳 → 指定时区的年月日。
+    static func components(ofMs ms: Int, tzName: String?) -> (year: Int, month: Int, day: Int)? {
+        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let comps = calendar(tzName: tzName).dateComponents([.year, .month, .day], from: date)
+        guard let year = comps.year, let month = comps.month, let day = comps.day else { return nil }
+        return (year, month, day)
+    }
+
+    /// 毫秒时间戳 → 指定时区的日 key（yyyy-MM-dd）。
+    static func dayKey(ofMs ms: Int, tzName: String?) -> String? {
+        guard let c = components(ofMs: ms, tzName: tzName) else { return nil }
+        return dayKey(year: c.year, month: c.month, day: c.day)
+    }
+
+    /// 指定时区的今天（开发者模式假日优先，与 todayComponents 同口径）。
+    static func todayComponents(timeZone: TimeZone) -> (year: Int, month: Int, day: Int)? {
+        if let fake = BearyDevPreviewState.fakeDay { return fake }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = timeZone
+        cal.firstWeekday = 2
+        let comps = cal.dateComponents([.year, .month, .day], from: Date())
+        guard let year = comps.year, let month = comps.month, let day = comps.day else { return nil }
+        return (year, month, day)
+    }
+
     static func pad2(_ value: Int) -> String {
         return value < 10 ? "0\(value)" : "\(value)"
     }
