@@ -1091,9 +1091,11 @@ class BearyProfileViewController: UIViewController {
     private var followActionSeq = 0
     /// 关注钮上次实际渲染的态（跨帧动画判定用：只在已可见且态真变时播切换动效）。
     private var renderedFollowState: BearyFollowState?
-    /// 关注钮四态定宽约束（按四态最宽一态定宽，点按后尺寸恒定，左侧私信钮不再被顶；
-    /// 约束落截屏 logo 容器上，按钮贴满容器、宽跟容器走）。
+    /// 关注钮四态定宽约束：按四态最宽一态定宽，点按后尺寸恒定，左侧私信钮不再被顶。
+    /// 宽版截屏 logo：容器宽是条宽（BearyScreenshotLogoView.stripWidth = 93），
+    /// 按钮宽（fixedWidth）落按钮自己身上、居中放在条里，不再跟容器走。
     private var followButtonContainerWidthConstraint: NSLayoutConstraint?
+    private var followButtonWidthConstraint: NSLayoutConstraint?
     private var followButtonMeasuredCategory: UIContentSizeCategory?
 
     /// 关注钮四态映射（v5 定版，单源：渲染与定宽测量共用，改一处即两处生效）：
@@ -3282,7 +3284,7 @@ class BearyProfileViewController: UIViewController {
             editButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
             editButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
             // 好友钮锚点改为名字行中心（v5 定版）、右缘 -16：本人页隐藏、他人页独占该位。
-            // 截屏 logo 版：锚点落容器上，按钮贴满容器。
+            // 截屏 logo 宽版：锚点落容器（93 宽的条）上，按钮居中放在条里、宽按四态定宽。
             followButtonContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
             followButtonContainer.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             followButtonContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
@@ -3725,12 +3727,19 @@ class BearyProfileViewController: UIViewController {
             maxWidth = max(maxWidth, width)
         }
         let fixedWidth = ceil(maxWidth)
-        if let constraint = followButtonContainerWidthConstraint {
+        // 条宽固定 93（logo 内容 76.8 ＋ 两侧各一个 sm），只建一次；
+        // 按钮宽按四态最宽一态定，落按钮自己身上、居中放在条里。
+        if followButtonContainerWidthConstraint == nil {
+            let stripConstraint = followButtonContainer.widthAnchor.constraint(equalToConstant: BearyScreenshotLogoView.stripWidth)
+            stripConstraint.isActive = true
+            followButtonContainerWidthConstraint = stripConstraint
+        }
+        if let constraint = followButtonWidthConstraint {
             constraint.constant = fixedWidth
         } else {
-            let constraint = followButtonContainer.widthAnchor.constraint(equalToConstant: fixedWidth)
+            let constraint = followButton.widthAnchor.constraint(equalToConstant: fixedWidth)
             constraint.isActive = true
-            followButtonContainerWidthConstraint = constraint
+            followButtonWidthConstraint = constraint
         }
         followButtonMeasuredCategory = category
     }
