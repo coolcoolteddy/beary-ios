@@ -1042,9 +1042,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 「重新检查」态文案更宽，一并计入下限，否则网络失败后切到该态标题被裁。
         let restoreTitleWidth = max(
             ceil(("恢复" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
-            ceil(("恢复中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
-            ceil(("重新检查" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
-            ceil(("检查中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width)
+            ceil((NSLocalizedString("trash.recheck.restoring", comment: "") as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
+            ceil((NSLocalizedString("trash.recheck.recheck", comment: "") as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
+            ceil((NSLocalizedString("trash.recheck.checking", comment: "") as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width)
         )
         restoreButton.widthAnchor.constraint(greaterThanOrEqualToConstant: (restoreButton.currentImage?.size.width ?? 21) + 5 + restoreTitleWidth + 28).isActive = true
 
@@ -1263,7 +1263,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         let title = sanitizedTrashLabelText(trashValue.title ?? "")
         if !title.isEmpty { return title }
         let body = sanitizedTrashLabelText(trashValue.content ?? "")
-        if body.isEmpty { return "这篇日记" }
+        if body.isEmpty { return NSLocalizedString("trash.recheck.this_entry", comment: "") }
         return String(body.prefix(20))
     }
 
@@ -1371,9 +1371,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         // 网络错误：请求可能已送达、只是回包丢了，恢复与否未确认——
                         // 不报“恢复失败”，行按钮改成「重新检查」，点按先核对状态。
                         self.trashRecheckIdentifiers.insert(identifier)
-                        sender.setTitle("重新检查", for: .normal)
-                        sender.accessibilityLabel = "重新检查，\(self.trashRowTitle(trashValue))"
-                        self.showToast(message: "暂未确认是否恢复")
+                        sender.setTitle(NSLocalizedString("trash.recheck.recheck", comment: ""), for: .normal)
+                        sender.accessibilityLabel = String(format: NSLocalizedString("trash.recheck.recheck_entry_format", comment: ""), self.trashRowTitle(trashValue))
+                        self.showToast(message: NSLocalizedString("trash.recheck.unconfirmed", comment: ""))
                     } else {
                         self.shakeFailedRow(identifier: identifier)
                         self.showToast(message: "恢复失败，请刷新后重试")
@@ -1387,7 +1387,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// 确认该篇是否仍在回收站——在才可再次恢复，不在则行已失效。
     private func recheckTrashRestore(identifier: String, trashValue: TrashItem, button: UIButton) {
         trashBusyIdentifiers.insert(identifier)
-        setRowButtonBusy(button, busy: true, busyTitle: "检查中…", idleTitle: "重新检查")
+        setRowButtonBusy(button, busy: true, busyTitle: NSLocalizedString("trash.recheck.checking", comment: ""), idleTitle: NSLocalizedString("trash.recheck.recheck", comment: ""))
         // 扫荡 B 同款：核对期间同行彻底删除钮一并禁用，否则核对在途时
         // 点彻底删除会弹出确认框，与核对结果双请求齐飞。
         let purgeSibling = purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
@@ -1406,7 +1406,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     // 旧登录态回包：busy 复位仍执行（否则行按钮永久置灰），
                     // 未确认态保留，下次点按可再核对。
                     self.trashBusyIdentifiers.remove(identifier)
-                    self.setRowButtonBusy(button, busy: false, busyTitle: "检查中…", idleTitle: "重新检查")
+                    self.setRowButtonBusy(button, busy: false, busyTitle: NSLocalizedString("trash.recheck.checking", comment: ""), idleTitle: NSLocalizedString("trash.recheck.recheck", comment: ""))
                     purgeSibling?.isEnabled = true
                     purgeSibling?.alpha = 1
                     return
@@ -1417,11 +1417,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         // 仍在回收站：回到可恢复态，按钮恢复「恢复」。
                         self.trashRecheckIdentifiers.remove(identifier)
                         self.trashBusyIdentifiers.remove(identifier)
-                        self.setRowButtonBusy(button, busy: false, busyTitle: "检查中…", idleTitle: "恢复")
-                        button.accessibilityLabel = "恢复，\(self.trashRowTitle(trashValue))"
+                        self.setRowButtonBusy(button, busy: false, busyTitle: NSLocalizedString("trash.recheck.checking", comment: ""), idleTitle: NSLocalizedString("trash.recheck.restore", comment: ""))
+                        button.accessibilityLabel = String(format: NSLocalizedString("trash.recheck.restore_entry_format", comment: ""), self.trashRowTitle(trashValue))
                         purgeSibling?.isEnabled = true
                         purgeSibling?.alpha = 1
-                        self.showToast(message: "仍在回收站")
+                        self.showToast(message: NSLocalizedString("trash.recheck.still_in_trash", comment: ""))
                         return
                     }
                     if page.items.count < 50 {
@@ -1440,32 +1440,32 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                                 if !ok { NSLog("[BearyEntrySync] trash removeItem failed account=%d entry=%@", uid, identifier) }
                             }
                         }
-                        self.showToast(message: "这篇已不在回收站")
+                        self.showToast(message: NSLocalizedString("trash.recheck.no_longer_in_trash", comment: ""))
                         return
                     }
                     guard let last = page.items.last, let lastDeletedAt = last.deletedAt else {
                         // 游标缺失无法续翻：状态仍未确认，留在「重新检查」态。
                         self.trashBusyIdentifiers.remove(identifier)
-                        self.setRowButtonBusy(button, busy: false, busyTitle: "检查中…", idleTitle: "重新检查")
+                        self.setRowButtonBusy(button, busy: false, busyTitle: NSLocalizedString("trash.recheck.checking", comment: ""), idleTitle: NSLocalizedString("trash.recheck.recheck", comment: ""))
                         purgeSibling?.isEnabled = true
                         purgeSibling?.alpha = 1
-                        self.showToast(message: "暂未确认是否恢复")
+                        self.showToast(message: NSLocalizedString("trash.recheck.unconfirmed", comment: ""))
                         return
                     }
                     self.recheckTrashRestorePage(identifier: identifier, trashValue: trashValue, button: button, purgeSibling: purgeSibling, requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch, before: "\(lastDeletedAt)", beforeId: last.id)
                 case .failure(let error):
                     self.trashBusyIdentifiers.remove(identifier)
-                    self.setRowButtonBusy(button, busy: false, busyTitle: "检查中…", idleTitle: "重新检查")
+                    self.setRowButtonBusy(button, busy: false, busyTitle: NSLocalizedString("trash.recheck.checking", comment: ""), idleTitle: NSLocalizedString("trash.recheck.recheck", comment: ""))
                     purgeSibling?.isEnabled = true
                     purgeSibling?.alpha = 1
                     if case .unauthorized = error {
                         self.notifyTrashLoginOnce()
                     } else if case .network = error {
                         // 核对本身也断网：状态仍未确认，留在「重新检查」态。
-                        self.showToast(message: "暂未确认是否恢复")
+                        self.showToast(message: NSLocalizedString("trash.recheck.unconfirmed", comment: ""))
                     } else {
                         self.shakeFailedRow(identifier: identifier)
-                        self.showToast(message: "检查失败，请重试")
+                        self.showToast(message: NSLocalizedString("trash.recheck.check_failed", comment: ""))
                     }
                 }
             }
