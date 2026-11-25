@@ -626,10 +626,6 @@ final class BearyChromeViewController: UIViewController {
     private var sideDecoBuiltSize: CGSize?
     /// 减动效变化观察者（A10）：减动效开关翻转时停/启 matrix 动画。
     private var reduceMotionObserver: NSObjectProtocol?
-    /// 邀请弹窗模态的 transitioningDelegate（弱引用，必须强持有到 dismiss 完成；
-    /// 宽屏居中与窄屏底 sheet 各持一个，互不覆盖持有）
-    private var inviteCentered: BearyCenteredTransitioningDelegate?
-    private var inviteSheet: BearyComposerSheetTransitioningDelegate?
 
     // 栏内颜色一律走 BearyColors（§0 单一来源，顶栏不再自带旧的 blue/line 近似值）。
     private var ink: UIColor { BearyColors.ink }
@@ -3167,10 +3163,9 @@ final class BearyChromeViewController: UIViewController {
         setTopButtonVisible(giftButton, visible: false)
     }
 
-    /// 邀请弹窗：礼物钮点开的不再是整页切换，而是与编辑器同款的模态——
-    /// 宽 ≥821 时居中卡片（BearyCenteredTransitioningDelegate），宽 ≤820 时底 sheet
-    /// （BearyComposerSheetTransitioningDelegate，带抓手与下滑关闭）；内容、门控与
-    /// 未登录处理一律不动（礼物钮显隐仍由 applyLoginState/onUserChanged 的
+    /// 邀请弹窗：礼物钮点开系统 sheet（BearySystemSheet.present，宽 ≥821 居中 600、
+    /// 宽 ≤820 底 sheet，带抓手与下滑关闭，点遮罩关闭由系统 sheet 自带 outside-tap
+    /// 补齐）；内容、门控与未登录处理一律不动（礼物钮显隐仍由 applyLoginState/onUserChanged 的
     /// referral.enabled 门控决定；未登录时仍走本页 load() 的 onRequireLogin →
     /// presentLogin，与整页版同路径）。每次点开新建一页，viewDidLoad 拉取最新
     /// 邀请码与统计，不复用旧页；关闭只关弹窗，回到弹窗下的原页（不再强制回首页）。
@@ -3190,6 +3185,8 @@ final class BearyChromeViewController: UIViewController {
             presentLoginGate()
             return
         }
+        // 有在途弹窗时不叠弹（确认 sheet 同款口径，先到的弹窗为准）。
+        guard presentedViewController == nil else { return }
         let vc = BearyInviteViewController()
         // 首页打开的邀请提示带“不再提示”：点后首页礼物钮永久隐藏，入口只留 Plus 页。
         vc.showsHomeDismissButton = true
@@ -3199,35 +3196,7 @@ final class BearyChromeViewController: UIViewController {
         }
         vc.onClose = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
-        // 审计 2026-11-02 弹窗组：两形态统一为点遮罩关闭，且关闭一律走取消路径
-        // （onClose）；dismiss 完成后清强持有与 transitioningDelegate（拖动关闭、
-        // dim 关闭、关闭钮均经 dismissalHandler 覆盖，旧路径从不清 nil）。
-        let inviteDismissalCleanup: () -> Void = { [weak self, weak vc] in
-            self?.inviteCentered = nil
-            self?.inviteSheet = nil
-            vc?.transitioningDelegate = nil
-        }
-        if view.bounds.width >= 821 {
-            let centered = BearyCenteredTransitioningDelegate()
-            // F9：邀请弹窗宽屏版单独给 dim 加点击关闭（编辑器保持不动，见 BearyCenteredModal）。
-            centered.dimTapCloses = true
-            centered.dimTapHandler = { [weak vc] in vc?.onClose?() }
-            centered.dismissalHandler = inviteDismissalCleanup
-            vc.modalPresentationStyle = .custom
-            vc.transitioningDelegate = centered
-            inviteCentered = centered
-        } else {
-            let sheet = BearyComposerSheetTransitioningDelegate()
-            // 窄屏底 sheet 旧无 dim 手势（点遮罩不关闭），与宽屏分裂；本处补齐，
-            // 与宽屏统一为点遮罩关闭、同样走 onClose 取消路径。
-            sheet.dimTapCloses = true
-            sheet.dimTapHandler = { [weak vc] in vc?.onClose?() }
-            sheet.dismissalHandler = inviteDismissalCleanup
-            vc.modalPresentationStyle = .custom
-            vc.transitioningDelegate = sheet
-            inviteSheet = sheet
-        }
-        present(vc, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(vc, from: self)
     }
 
     private func ensureUserVC() -> UIViewController {
