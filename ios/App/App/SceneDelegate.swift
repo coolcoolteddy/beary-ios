@@ -3098,7 +3098,9 @@ final class BearyChromeViewController: UIViewController {
     /// 好友第一期（私信）：会话页 modal 全屏（聊天页）。peer 由调用方给
     ///（会话列表行自带对方信息；通知 dm 行现场拼最小 peer）。关闭后刷新
     /// 会话列表与通知未读（两页各走已有刷新入口）。
-    private func presentDMChat(peer: BearyAPI.FriendUser) {
+    /// fileprivate：同文件内的 SceneDelegate 推送点按路由（userNotificationCenter
+    /// didReceive）也调此处，private 会编译不过；调用方仍只限本文件。
+    fileprivate func presentDMChat(peer: BearyAPI.FriendUser) {
         // 远程开关（2026-11-19）：dm 关掉时不进聊天页，点按只 toast、不跳转；
         // 消息 tab 本身不动（通知行仍在里面）。四路入口（消息页会话行、通知
         // 页私信行、会话列表行、他人主页私信钮）都经此处，一处关全关。
