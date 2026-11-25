@@ -1133,6 +1133,9 @@ class BearyProfileViewController: UIViewController {
         // 皇冠会员标按 plus 数据显示（网页 pfPlusPill 口径：d.plus 才显示）；
         // 工厂态先隐藏，避免资料加载前首帧闪出皇冠，applyProfile 按 plus 复核。
         imageViewValue.isHidden = true
+        // 默认锁静态：资料未到、Plus 未确认前绝不播放；
+        // updateCrownDisplay 只在确认已开通时才打开动画。
+        imageViewValue.allowsAnimation = false
         return imageViewValue
     }()
 
@@ -10323,21 +10326,25 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     }
 
     /// Plus 页入口①：皇冠显隐与点亮态。Plus 时点亮（播动＋全不透明）；
-    /// 本人页非 Plus 时不再隐藏，改显未点亮态（停播＋0.35 透明度、可点进 Plus 页）；
+    /// 本人页非 Plus 时不再隐藏，改显未点亮态（停播＋0.35 透明度、可点进 Plus 页），
+    /// 且用 allowsAnimation=false 锁死静态（停第 0 帧，trait 变化也不会重播）；
     /// 他人页非 Plus 时仍隐藏（口径不变）。皇冠资产缺失（hasCrown=false）时一律
     /// 隐藏、不留空位（BearyCrownView 既定契约）。
     private func updateCrownDisplay() {
         guard let profileValue = profile else { return }
         let isPlus = BearyDeveloperMode.effectivePlus(profileValue.plus ?? false)
         if isPlus {
+            crownView.allowsAnimation = true
             crownView.isHidden = !crownView.hasCrown
             crownView.alpha = 1
             if crownView.isHidden { crownView.stop() } else { crownView.start() }
         } else if isOwnProfile {
+            crownView.allowsAnimation = false
             crownView.isHidden = !crownView.hasCrown
             crownView.alpha = crownView.isHidden ? 1 : 0.35
             crownView.stop()
         } else {
+            crownView.allowsAnimation = false
             crownView.isHidden = true
             crownView.alpha = 1
             crownView.stop()
