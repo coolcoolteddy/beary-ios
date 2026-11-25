@@ -1782,10 +1782,18 @@ class BearyProfileViewController: UIViewController {
     private let mapEntryRow: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.surface1
+        viewValue.backgroundColor = .clear
         viewValue.layer.cornerRadius = 12
         viewValue.layer.borderWidth = 0
         viewValue.clipsToBounds = true
+        let divider = bearyModuleDivider()
+        viewValue.addSubview(divider)
+        NSLayoutConstraint.activate([
+            divider.topAnchor.constraint(equalTo: viewValue.topAnchor),
+            divider.leadingAnchor.constraint(equalTo: viewValue.leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: viewValue.trailingAnchor),
+            divider.heightAnchor.constraint(equalToConstant: 0.5),
+        ])
         return viewValue
     }()
 
@@ -1833,7 +1841,7 @@ class BearyProfileViewController: UIViewController {
     private let starEntryRow: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.surface1
+        viewValue.backgroundColor = .clear
         viewValue.layer.cornerRadius = 12
         viewValue.layer.borderWidth = 0
         viewValue.clipsToBounds = true
@@ -4362,7 +4370,7 @@ class BearyProfileViewController: UIViewController {
         func makeStatTile(valueLabel: UILabel, keyText: String) -> UIView {
             let tile = UIView()
             tile.translatesAutoresizingMaskIntoConstraints = false
-            tile.backgroundColor = BearyColors.surface2
+            tile.backgroundColor = .clear
             tile.layer.cornerRadius = 12
             tile.clipsToBounds = true
             let stack = UIStackView(arrangedSubviews: [valueLabel, BearyProfilePersonalModulesCard.statKeyLabel(text: keyText)])
