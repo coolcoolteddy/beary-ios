@@ -252,7 +252,7 @@ enum BearyTheme {
     }
 }
 
-/// 语言（通用 → 语言子页）：跟随系统 / 中国大陆（强制简体中文）。
+/// 语言（通用 → 语言子页）：跟随系统 / 中国大陆（强制简体中文）/ English（强制英文）。
 /// 实现：Bundle 子类覆盖 localizedString，切换后重建根界面即时生效，
 /// 不靠重启、不靠退出重进。String Catalog（.xcstrings）编译后走
 /// Bundle.main 的字符串表，子类覆盖对其生效。
@@ -309,7 +309,7 @@ enum BearyAppLanguage {
 }
 
 /// Bundle.main 的语言覆盖子类：强制简体中文时走 zh-Hans.lproj，
-/// 否则走系统默认。只覆盖 localizedString 一个入口。
+/// 强制英文时走 en.lproj，否则走系统默认。只覆盖 localizedString 一个入口。
 final class BearyLanguageBundle: Bundle {
     override func localizedString(forKey key: String, value: String?, table tableName: String?) -> String {
         if let forced = BearyAppLanguage.forcedBundle {
