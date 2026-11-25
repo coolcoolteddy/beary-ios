@@ -18,8 +18,8 @@ import UIKit
 // 数据来源：SessionManager.refreshMe（复用本次会话的 /me：已确认字段
 // 先渲染，在途 /me 订阅结果、不多发请求，字段缺失再等待请求），与网页
 // openInvite 的 fetchMe 刷新同口径；绑定走 BearyAPI.bindReferral。
-// 呈现方式：容器以弹窗呈现（宽 ≥821 居中卡片 / 宽 ≤820 底 sheet，与编辑器
-// 模态同款）；本页不决定呈现，只定内容与弹窗高度（见 updatePreferredSheetHeight）。
+// 呈现方式：系统 sheet（BearySystemSheet.present，宽 ≥821 居中 600 / 宽 ≤820 底 sheet）；
+// 本页不决定呈现，只定内容与弹窗高度（见 updatePreferredSheetHeight）。
 // 容器接线：
 //   - onClose：用户点关闭钮；本页不自己 dismiss，容器负责关闭弹窗。
 //   - onRequireLogin：未登录（fetchMe 返回 nil 或 401）时调用，容器接登录页；
@@ -27,10 +27,10 @@ import UIKit
 //   - reload()：手动刷新（每次点开新建一页，打开时 viewDidLoad 已拉取一次）。
 // 礼物钮门控不在本页：容器用 refreshMe 结果（/me 的
 // referral.enabled，网页 giftBtn 显示逻辑同款）决定是否显示礼物钮。
-// 颜色一律走 BearyColors，不新增字面量颜色；弹窗背板走 BearyGlass（中性 bg 52%
-// tint，见 BearyNativeCommon），关闭/复制钮已撤回玻璃（2026-10-27）；无 force unwrap。
+// 颜色一律走 BearyColors，不新增字面量颜色；弹窗面板透明、走系统液态玻璃
+// （2026-11-25 Li 定，见 #2536）；关闭/复制钮是内容元素，颜色不动；无 force unwrap。
 
-final class BearyInviteViewController: UIViewController {
+final class BearyInviteViewController: UIViewController, BearySystemSheetSizing {
     /// 用户点关闭钮。本页不自己 dismiss，容器负责关闭。
     var onClose: (() -> Void)?
     /// 未登录时调用，容器接登录页；为 nil 时页内显示“请先登录”。
@@ -94,10 +94,6 @@ final class BearyInviteViewController: UIViewController {
     /// 升起动画中途算出的弹窗高度（/me 回包改内容时）：先记下不写，
     /// 动画完成后再一次性落位，见 updatePreferredSheetHeight 与 viewDidAppear。
     private var pendingSheetHeight: CGFloat?
-    /// 键盘动画进行中的时长与曲线（inviteKeyboardWillShow/Hide 记下）：
-    /// 高度更新落在其动画窗口内时沿用同一组参数，与键盘避让同拍；
-    /// 窗口过后恢复弹窗本体弹簧。
-    private var activeKeyboardAnimation: (duration: TimeInterval, curveRaw: UInt, expiresAt: Date)?
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -115,7 +111,8 @@ final class BearyInviteViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.surface3
+        // 面板透明：系统 sheet 自带液态玻璃底，实色会盖住它（2026-11-25 Li 定，见 #2536）。
+        view.backgroundColor = .clear
         buildLayout()
         // 审计 8 项：键盘避让（与反馈页同口径，见 inviteKeyboardWillShow）。
         NotificationCenter.default.addObserver(self, selector: #selector(inviteKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
@@ -143,16 +140,15 @@ final class BearyInviteViewController: UIViewController {
     /// 弹窗高度跟内容走：固定关闭行高（44）+ 内容栈 fitting 高 + 上下边距
     /// （栈顶 34 = 原 16 上边距 + 原 closeRow 后间距 18，标题首帧位置不变；
     /// 栈底 24）+ 上下安全区；
-    /// 底 sheet 与居中卡片的 presentation 方各以 88% / 80% 容器高封顶取小，
-    /// 内容超高时内层 scrollView 可滚（关闭行固定在面板顶部不随滚走）。
+    /// 系统 sheet 以 custom detent 封顶 88% 容器高，内容超高时内层 scrollView 可滚
+    /// （关闭行固定在面板顶部不随滚走）。
     /// 绑定区显隐变化时布局重算即跟高；
     /// 仅高度变化超 0.5pt 才写 preferredContentSize，避免布局循环。
-    /// 玻璃批：弹窗本体已改玻璃背板（view 底 clear + BearyGlass 背板钉满），
-    /// 外形圆角仍由呈现层定，本方法只算高度不动玻璃。
-    /// 52 批：此前只写 preferredContentSize、不通知呈现层，导致首帧 0 高 fallback 走 88%/80%
-    /// 满高封顶后不回落（即“弹窗过高”）；现与编辑器同款，写完即请父视图重布局，
-    /// 呈现层 containerViewWillLayoutSubviews 重算帧；首帧 view.bounds 仍为 0 时按屏宽估算。
-    private func updatePreferredSheetHeight() {
+    /// 面板透明、走系统液态玻璃（2026-11-25 Li 定）；外形圆角由系统 sheet 定，
+    /// 本方法只算高度不动面板。
+    /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐
+    /// （确认 sheet 同款）；首帧 view.bounds 仍为 0 时按屏宽估算。
+    private func updatePreferredSheetHeight(extraBottomInset: CGFloat = 0) {
         let baseWidth = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
         let width = min(max(0, baseWidth - 44), 432)
         let fitting = stackView.systemLayoutSizeFitting(
@@ -160,7 +156,8 @@ final class BearyInviteViewController: UIViewController {
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         )
-        let height = view.safeAreaInsets.top + 44 + fitting.height + 34 + 24 + view.safeAreaInsets.bottom
+        let bottomInset = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
+        let height = view.safeAreaInsets.top + 44 + fitting.height + 34 + 24 + bottomInset
         // 升起动画进行中（/me 回包改内容常落在这个窗口）：此时写
         // preferredContentSize 会让呈现层在弹簧中途直接改 presentedView 的帧，
         // 升起卡一下。先记下，等动画完成后再落位（viewDidAppear）。
@@ -178,28 +175,20 @@ final class BearyInviteViewController: UIViewController {
     }
 
     /// 高度落位唯一入口（转场中暂存后更新／转场后直接更新共用）：
-    /// 先测出目标高度并写 preferredContentSize，再协调弹窗容器的布局动画——
-    /// 入场完成后的回包改高同样走动画，弹窗顶部不再瞬间变高；
-    /// 键盘正在变化时沿用键盘的时长与曲线（剩余时长），与键盘避让同拍；
-    /// 减动效时直接落位。
+    /// 写 preferredContentSize 后调 refreshDetentsIfNeeded 让系统 sheet 重算
+    /// detent（确认／输入 sheet 同款）；旧自研容器那套父视图重布局动画随
+    /// 容器退役一并撤掉。
     private func applySheetHeight(_ height: CGFloat) {
         guard abs(height - lastPreferredSheetHeight) > 0.5 else { return }
         lastPreferredSheetHeight = height
         preferredContentSize = CGSize(width: 0, height: height)
-        guard !UIAccessibility.isReduceMotionEnabled else {
-            view.superview?.setNeedsLayout()
-            return
-        }
-        if let keyboard = activeKeyboardAnimation, keyboard.expiresAt.timeIntervalSinceNow > 0 {
-            let remaining = max(keyboard.expiresAt.timeIntervalSinceNow, 0.01)
-            UIView.animate(withDuration: remaining, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: keyboard.curveRaw << 16)], animations: {
-                self.view.superview?.layoutIfNeeded()
-            })
-            return
-        }
-        UIView.animate(withDuration: BearyMotion.screen, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [.beginFromCurrentState], animations: {
-            self.view.superview?.layoutIfNeeded()
-        })
+        BearySystemSheet.refreshDetentsIfNeeded(for: self)
+    }
+
+    /// 系统 sheet sizing：进场前由 BearySystemSheet.present 调，extraBottomInset
+    /// 为调用方的安全区底（未进窗口时 view.safeAreaInsets.bottom 为 0）。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
+        updatePreferredSheetHeight(extraBottomInset: extraBottomInset)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -218,9 +207,9 @@ final class BearyInviteViewController: UIViewController {
     // MARK: - 布局（与登录页同尺寸体系：左右 22、输入框高 48、内容列 ≤432）
 
     private func buildLayout() {
-        // 视觉清单第 12 项：弹窗玻璃背板已撤，改实色 surface3 底（sheet 层底色；
-        // 玻璃范围 Token 只允许栏/菜单，弹窗不在内）；外形圆角仍由呈现层
-        // presentedView 的圆角 20 + 裁剪定（居中卡片/底 sheet 呈现层均已设，本文件不动）。
+        // 面板透明、走系统液态玻璃（2026-11-25 Li 定，见 #2536；旧口径“弹窗
+        // 不在玻璃范围”已作废）；外形圆角由系统 sheet 的 preferredCornerRadius（20）
+        // 定，本文件不动。
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         scrollView.delaysContentTouches = false
@@ -487,8 +476,6 @@ final class BearyInviteViewController: UIViewController {
         let bottom = overlapsInput ? max(0, view.bounds.maxY - view.safeAreaInsets.bottom - frameInView.minY) : 0
         let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
         let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
-        // 高度更新落在其动画窗口内时沿用同一组参数（见 applySheetHeight）。
-        activeKeyboardAnimation = (duration: duration, curveRaw: curveRaw, expiresAt: Date().addingTimeInterval(duration))
         UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
             self.scrollView.contentInset.bottom = bottom
             self.scrollView.verticalScrollIndicatorInsets.bottom = bottom
@@ -504,8 +491,6 @@ final class BearyInviteViewController: UIViewController {
     @objc private func inviteKeyboardWillHide(_ note: Notification) {
         let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
         let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
-        // 高度更新落在其动画窗口内时沿用同一组参数（见 applySheetHeight）。
-        activeKeyboardAnimation = (duration: duration, curveRaw: curveRaw, expiresAt: Date().addingTimeInterval(duration))
         UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
             self.scrollView.contentInset.bottom = 0
             self.scrollView.verticalScrollIndicatorInsets.bottom = 0

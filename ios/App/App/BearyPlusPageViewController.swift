@@ -18,7 +18,6 @@ final class BearyPlusPageViewController: UIViewController {
     /// A2：设置页的 Plus 共享加载结果（同会话在途结果共用）；为 nil 时
     /// 本页自己拉一次（防御性兜底，设置页现行必传）。
     private var sharedLoad: BearySharedLoad<BearyPlusDetailResponse>?
-    private var inviteTransitionDelegate: UIViewControllerTransitioningDelegate?
 
     init(isPlus: Bool, sharedLoad: BearySharedLoad<BearyPlusDetailResponse>? = nil) {
         self.isPlusValue = isPlus
@@ -1083,30 +1082,13 @@ final class BearyPlusPageViewController: UIViewController {
             BearyToast.show(in: view, message: NSLocalizedString("common.feature_maintenance", comment: ""))
             return
         }
-        // 邀请页是容器负责关闭的 sheet 页：此处按 SceneDelegate.presentInvite 同款
-        // 转场自己当容器（宽屏居中弹窗、窄屏底 sheet，点遮罩走 onClose 关闭）。
+        // 邀请页走系统 sheet（BearySystemSheet.present，宽屏居中 600、窄屏底 sheet；
+        // 点遮罩关闭由系统 sheet 自带 outside-tap 补齐，下滑关闭走系统默认）。
         // 本页三个入口均为已登录语境，onRequireLogin 仅作兜底（关邀请页、不弹登录门）。
         guard presentedViewController == nil else { return }
         let vc = BearyInviteViewController()
         vc.onClose = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
         vc.onRequireLogin = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
-        if view.bounds.width >= 821 {
-            let centered = BearyCenteredTransitioningDelegate()
-            centered.dimTapCloses = true
-            centered.dimTapHandler = { [weak vc] in vc?.onClose?() }
-            centered.dismissalHandler = { [weak self] in self?.inviteTransitionDelegate = nil }
-            vc.modalPresentationStyle = .custom
-            vc.transitioningDelegate = centered
-            inviteTransitionDelegate = centered
-        } else {
-            let sheet = BearyComposerSheetTransitioningDelegate()
-            sheet.dimTapCloses = true
-            sheet.dimTapHandler = { [weak vc] in vc?.onClose?() }
-            sheet.dismissalHandler = { [weak self] in self?.inviteTransitionDelegate = nil }
-            vc.modalPresentationStyle = .custom
-            vc.transitioningDelegate = sheet
-            inviteTransitionDelegate = sheet
-        }
-        present(vc, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(vc, from: self)
     }
 }
