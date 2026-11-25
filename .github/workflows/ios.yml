@@ -2,7 +2,7 @@ name: iOS build
 
 on:
   push:
-    branches: [main]
+    branches: [main, spec-sideload/*]
   pull_request:
     branches: [main]
   workflow_dispatch:
