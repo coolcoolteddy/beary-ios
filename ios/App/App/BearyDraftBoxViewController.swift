@@ -73,7 +73,7 @@ final class BearyDraftMetaFlowView: UIView {
     }
 }
 
-final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizing {
+final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizing, UIGestureRecognizerDelegate {
 
     // MARK: - 对外 API（编辑器代理按此调用，勿改名）
 
@@ -1454,7 +1454,8 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
         if presentedViewController != nil { return }
         if !pendingUndos.isEmpty {
             // 原 alert 无标题，底 sheet 标题传空（只显说明＋按钮，不另起文案）。
-            BearyConfirmSheet.show(from: self, title: "", message: "关闭草稿箱后，刚删除的草稿将无法撤销", actions: [
+            // 说明走 catalog（draftbox.undo_exit_message），与系统关闭守卫共用同一 key。
+            BearyConfirmSheet.show(from: self, title: "", message: NSLocalizedString("draftbox.undo_exit_message", comment: ""), actions: [
                 BearyConfirmSheet.Action(title: confirmTitle, style: .destructive) {
                     confirmedExit()
                 },
@@ -2001,7 +2002,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
 /// viewDidAppear 里挂上，见上）。有待撤销笔时先弹确认并拦下（return false），
 /// 确认才放行（undoExitConfirmed 置位后第二次 shouldDismiss 不再拦截）；
 /// 取消则箱子原样留着，撤销队列不动。确认框已在 shouldDismiss 里弹出，
-/// didAttemptToDismiss 不再重复弹。文案与新建／点开路的确认框同一句。
+/// didAttemptToDismiss 不再重复弹。文案与新建／点开路的确认框共用同一组 catalog key。
 extension BearyDraftBoxViewController: UIAdaptivePresentationControllerDelegate {
 
     func presentationControllerShouldDismiss(_ presentationController: UIPresentationController) -> Bool {
@@ -2016,8 +2017,10 @@ extension BearyDraftBoxViewController: UIAdaptivePresentationControllerDelegate 
         // 确认框已在途时不再叠弹（用户连点遮罩／重复下滑时，第二次
         // shouldDismiss 仍回 false，箱子不动，等用户在确认框里决定）。
         if presentedViewController != nil { return }
-        BearyConfirmSheet.show(from: self, title: "", message: "关闭草稿箱后，刚删除的草稿将无法撤销", actions: [
-            BearyConfirmSheet.Action(title: "仍要关闭", style: .destructive) { [weak self] in
+        // 确认钮与说明走 catalog（与 exitWithUndoGuard 共用同一组 key，
+        // 中文原文即旧硬编码文案原样，英文为本批草稿译法、非 Li 定版）。
+        BearyConfirmSheet.show(from: self, title: "", message: NSLocalizedString("draftbox.undo_exit_message", comment: ""), actions: [
+            BearyConfirmSheet.Action(title: NSLocalizedString("draftbox.undo_exit_confirm", comment: ""), style: .destructive) { [weak self] in
                 self?.undoExitConfirmed = true
                 self?.dismissWithExitAnimation(completion: nil)
             },
