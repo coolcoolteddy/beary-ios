@@ -9620,7 +9620,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                         } else {
                             cell?.shakeEmoteAddButton()
                         }
-                        BearyToast.show(in: strongSelf.view, message: "操作失败，请重试")
+                        BearyToast.show(in: strongSelf.view, message: NSLocalizedString("common.operation_failed_retry", comment: ""))
                         // 失败：排队意图丢弃（回滚已恢复确认态，用户重拍即可），不继续补发。
                         strongSelf.emotePendingById.removeValue(forKey: entryId)
                         return
