@@ -1666,7 +1666,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 // 翻出的本地页），服务端重渲不丢离线翻页追加的行。
                 self.searchMineLocalOnly = false
                 data.mine = self.mergedMine(serverMine: data.mine, ftsMine: self.searchLocalMineEntries)
-                self.renderResults(data: data, query: trimmed)
+                // 搜索审计第 3 条：服务端先到且结果为空时，FTS 还在路上就先不渲
+                // 空态（allowEmptyState: ftsDone）；FTS 晚到会再走一次本分支补渲。
+                self.renderResults(data: data, query: trimmed, allowEmptyState: ftsDone)
                 // FTS 晚到时再渲一次：同 query 走行复用路径，只补「我的」组行；
                 // 两路都到齐才停框内圈。
                 if ftsDone { self.setBoxBusy(false) }
@@ -2486,6 +2488,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 正常态 FTS 结果是服务端全集的子集、并集首批仍是服务端页宽；两边万一
     /// 有不重合的篇，并集全显、余下仍由翻页按服务端游标续取，不丢篇。
     /// 无 id 的行渲染时本就建不出行（makeEntryRow 返回 nil），这里一并跳过。
+    /// 搜索审计第 4 条：同 id 两边版本不同时按 updatedAt 取新版——另一台设备
+    /// 改过标题后服务端版 updatedAt 更新，取服务端版；行签名含标题与正文，
+    /// 同关键词重渲时签名一变即重建该行、锚点保位（见 renderResults）。
+    /// 本机版 updatedAt 更新（或相等、或两边都无）时保留本机版。
+    /// 本机未同步编辑没有可查标记：本地归档只存服务端回显（upsertEntry 只
+    /// 在同步拉取里调），编辑器 checkpoint 是 composer 私有的、搜索侧按
+    /// id 查不到；故以 updatedAt 为准——两边都是服务端写的时间戳（本机编
+    /// 辑成功后本地副本记的也是同一时刻），无时钟偏差问题。未编辑过的篇
+    /// 两边 updatedAt 均为 nil，按相等处理、留本机版。
     private func mergedMine(serverMine: [Entry]?, ftsMine: [Entry]) -> [Entry]? {
         if ftsMine.isEmpty { return serverMine }
         var seen = Set<String>()
@@ -2496,9 +2507,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             merged.append(entry)
         }
         for entry in serverMine ?? [] {
-            guard let id = entry.id, !seen.contains(id) else { continue }
-            seen.insert(id)
-            merged.append(entry)
+            guard let id = entry.id else { continue }
+            if let index = merged.firstIndex(where: { $0.id == id }) {
+                // 同 id：服务端版更新才替换本机版（updatedAt 是毫秒时间戳，
+                // nil 按 0 算——未编辑过的篇两边都无，相等留本机版）。
+                if (entry.updatedAt ?? 0) > (merged[index].updatedAt ?? 0) {
+                    merged[index] = entry
+                }
+            } else {
+                merged.append(entry)
+            }
         }
         merged.sort { (a, b) in
             if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
@@ -2512,7 +2530,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var lastRenderedData: SearchResult?
     private var lastRenderedQuery: String?
 
-    private func renderResults(data: SearchResult, query: String) {
+    private func renderResults(data: SearchResult, query: String, allowEmptyState: Bool = true) {
         // 开发者模式强制态：在途搜索回包不接受，按强制态渲染。
         if BearyDevPreviewState.forcedSearch != .none {
             applyDevForcedSearch()
@@ -2546,6 +2564,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let publicEntries = (data.entries ?? []).filter { ($0.visibility == "public" || $0.isPublic == true) && !BearyEphemeral.isExpired($0) }.filter { !isBlockedForSearch(userId: $0.authorId) }.filter { $0.id.map { !mineEntryIds.contains($0) } ?? true }
         let users = (data.users ?? []).filter { !isBlockedForSearch(userId: $0.id) }
         if mineEntries.isEmpty && publicEntries.isEmpty && users.isEmpty {
+            // 搜索审计第 3 条：空态只在两路都回完且三组都空时才亮；任一路还在
+            // 路上时保持加载态（框内圈继续转），不先亮「没有找到」。
+            guard allowEmptyState else { return }
             showNoneState(query: query)
             return
         }
