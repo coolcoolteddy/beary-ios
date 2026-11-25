@@ -3250,8 +3250,8 @@ final class BearySettingsViewController: UIViewController {
     /// 语言行尾文案（与语言子页选项同词：跟随系统／中国大陆／English）。
     private func languageRowDetailText() -> String {
         switch BearyAppLanguage.mode {
-        case .system: return "跟随系统"
-        case .mainland: return "中国大陆"
+        case .system: return NSLocalizedString("settings.language.follow_system", comment: "")
+        case .mainland: return NSLocalizedString("settings.language.mainland_china", comment: "")
         case .english: return "English"
         }
     }
