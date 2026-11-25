@@ -3552,7 +3552,12 @@ class BearyProfileViewController: UIViewController {
         // refreshFollowState 按 state 接口复核（未到前先隐藏，不抢先画“关注”）。
         // 第三轮第 6 项：首轮失败占位态不在此藏按钮（applyFollowButton 显位）。
         // 截屏 logo 版：显隐走容器（藏按钮会把底下 logo 露出来）。
-        followButtonContainer.isHidden = own || viewerUserIdValue == nil || followBlockedByMe || (followState == nil && !followStateFirstLoadFailed)
+        // 只藏不显：显由 applyFollowButton 在按钮配好（标题／图标／定宽）后做；
+        // 这里一旦按旧 followState 抢先显位，按钮未配好、条还是 0 宽，logo 会
+        // 按错位算出来且不再纠正（2026-11-25 截屏 logo 漏出事故）。
+        if own || viewerUserIdValue == nil || followBlockedByMe || (followState == nil && !followStateFirstLoadFailed) {
+            followButtonContainer.isHidden = true
+        }
         updateDMButton()
         // iCity：更多菜单只属他人主页（举报/拉黑均以他人为对象）。
         topMoreButton.isHidden = own
