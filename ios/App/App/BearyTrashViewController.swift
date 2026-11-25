@@ -29,6 +29,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// closeTrash 的 syncOpenSurfaces + setTrashCount(-1) 口径）。
     var onRestored: ((TrashItem) -> Void)?
     var onPurged: ((TrashItem) -> Void)?
+    /// 恢复成功 toast 的「查看日记」：调用方接详情页（与 onRequireLogin 同口径）。
+    var onOpenEntry: ((String) -> Void)?
 
     // MARK: - 状态
 
@@ -60,6 +62,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private var trashBucketLoading = false
     private var trashFirstLoadFailed = false
     private var trashLoginEmpty = false
+    /// 旧空缓存未确认态：本地桶为空、静默刷新失败（非 401），服务器未确认
+    /// 列表为空——此时不显示「回收站是空的」，改显「暂时无法确认回收站内容」
+    /// ＋重试；服务器确认（静默刷新成功提交／网络首拉成功）后清掉。
+    private var trashStaleEmpty = false
     private var trashBusyIdentifiers: Set<String> = []
     private var restoreEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var purgeEntries: [(button: UIButton, trashValue: TrashItem)] = []
@@ -453,6 +459,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
 
     /// 开发者模式回收站强制态（仅内存）：error / empty / loading 直接置旗渲染，不读桶、不发请求。
     private func applyDevForcedTrash() {
+        // 强制态是精确态：旧空缓存未确认态不带入。
+        trashStaleEmpty = false
         switch BearyDevPreviewState.forcedTrash {
         case .none:
             loadFirstPage()
@@ -539,6 +547,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashLoading = true
         trashFirstLoadFailed = false
         trashLoginEmpty = false
+        // 新一轮网络首拉即新的确认尝试：旧空缓存未确认态由本轮结果重新判定，
+        // 失败走 trashFirstLoadFailed（「加载失败」）、成功即服务器已确认。
+        trashStaleEmpty = false
         trashHasMore = false
         renderStateViews()
         // 在途切号门：发起时捕获账号 ID 与鉴权代际（与恢复/彻底删除同款口径）；
@@ -635,6 +646,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     self.trashRemovedDuringSilentRefresh.removeAll()
                     if case .unauthorized = error {
                         self.notifyTrashLoginOnce()
+                    } else if self.trashItems.isEmpty {
+                        // 其他失败静默：有旧条目时保留本地显示（现行口径不动）；
+                        // 旧空缓存时不把「空」当成当前结果——立未确认态，
+                        // 原位显示「暂时无法确认回收站内容」＋重试，下次进页重刷。
+                        // 401 不进此态（走登录门，重试只会反复 401）。
+                        self.trashStaleEmpty = true
+                        self.renderStateViews()
                     }
                     // 其他失败静默：保留本地显示，下次进页重刷。
                 case .success(let page):
@@ -680,6 +698,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                             if !ok { NSLog("[BearyEntrySync] trash saveAll failed account=%d", accountId) }
                         }
                         // 增量更新：无变化时各行原地不动（见 updateListRowsIncrementally）。
+                        // 服务器已确认本轮列表：旧空缓存未确认态清掉——空即真空。
+                        self.trashStaleEmpty = false
                         self.trashItems = deduped
                         self.trashHasMore = false
                         self.updateListRowsIncrementally()
@@ -804,13 +824,21 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         } else {
             loadingView.stopSpinning()
         }
-        emptyStateView.isHidden = hasItems || trashLoading || trashFirstLoadFailed || trashLoginEmpty
+        emptyStateView.isHidden = hasItems || trashLoading || trashFirstLoadFailed || trashLoginEmpty || trashStaleEmpty
         emptyTopSpacer.isHidden = emptyStateView.isHidden
         // B-G14: in empty state the 4pt spacing after noteRow would stack on top
         // of the 40pt pad (44 total), so empty state uses 0 there and the pad
         // alone gives exactly 40; non-empty state restores 4.
         contentStack.setCustomSpacing(emptyStateView.isHidden ? 4 : 0, after: noteRow)
-        failureWrap.isHidden = trashFirstLoadFailed == false || trashLoginEmpty
+        // 失败态复用 failureWrap：首拉失败仍是「加载失败」；旧空缓存未确认
+        // 时同一位置显示「暂时无法确认回收站内容」，重试同走 retryTapped。
+        // configure 可重调（同样式不重建按钮），此处按当前失败旗取值。
+        if trashFirstLoadFailed {
+            failureStateView.configure(kind: .error, title: NSLocalizedString("trash.load_failed.title", comment: ""), subtitle: nil, iconName: nil, actionTitle: NSLocalizedString("common.retry", comment: ""), onAction: { [weak self] in self?.retryTapped() })
+        } else if trashStaleEmpty {
+            failureStateView.configure(kind: .error, title: NSLocalizedString("trash.load_failed.unconfirmed", comment: ""), subtitle: nil, iconName: nil, actionTitle: NSLocalizedString("common.retry", comment: ""), onAction: { [weak self] in self?.retryTapped() })
+        }
+        failureWrap.isHidden = (trashFirstLoadFailed == false && trashStaleEmpty == false) || trashLoginEmpty
         loginWrap.isHidden = trashLoginEmpty == false
         if UIAccessibility.isReduceMotionEnabled == false {
             for (view, wasHidden) in [(emptyStateView, emptyWasHidden), (failureWrap, failureWasHidden), (loginWrap, loginWasHidden)] {
@@ -1265,14 +1293,20 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     // iCity：恢复回原可见性——服务端返回 published/isPublic 时按其分流，
                     // 均缺失时用通用文案，时间线重拉为准，不猜原态。
                     // 好友第一期：visibility=friends 时显“仅好友”文案（恢复回仅好友）。
+                    let restoredMessage: String
                     if resp.visibility == "friends" {
-                        self.showToast(message: "已恢复为仅好友")
+                        restoredMessage = NSLocalizedString("trash.restored.friends_only", comment: "")
                     } else if resp.published == 1 || resp.isPublic == true {
-                        self.showToast(message: "已恢复为公开")
+                        restoredMessage = NSLocalizedString("trash.restored.public", comment: "")
                     } else if resp.published == 0 || resp.isPublic == false {
-                        self.showToast(message: "已恢复为私密")
+                        restoredMessage = NSLocalizedString("trash.restored.private", comment: "")
                     } else {
-                        self.showToast(message: "已恢复")
+                        restoredMessage = NSLocalizedString("trash.restored.generic", comment: "")
+                    }
+                    // 恢复后行即移除、唯一一篇时随即变空态：toast 上挂「查看日记」，
+                    // 点了才打开刚恢复的那篇（不点则留在列表，连续恢复多篇不受影响）。
+                    self.showToast(message: restoredMessage, actionTitle: NSLocalizedString("trash.restored.view_entry", comment: "")) { [weak self] in
+                        self?.onOpenEntry?(identifier)
                     }
                     self.removeRow(identifier: identifier)
                     // 防回插：先在主线程记下本轮已移除 id（静默终态检查时
@@ -1446,8 +1480,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         rowView.layer.add(shake, forKey: "bearyTrashFailShake")
     }
 
-    private func showToast(message: String) {
-        BearyToast.show(in: view, message: message)
+    private func showToast(message: String, actionTitle: String? = nil, action: (() -> Void)? = nil) {
+        BearyToast.show(in: view, message: message, actionTitle: actionTitle, action: action)
     }
 }
 
