@@ -1057,7 +1057,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private static let emojiOnlyFontScale: CGFloat = 2
     /// 当前正文是否处于“仅表情放大”态（textViewDidChange / 回填时更新）。
     private var bodyEmojiOnlyEnlarged = false
-    /// 正文当前生效字号：仅表情（≤3 个、无其他文字、无附件）时 2 倍，否则 bodyFont。
+    /// 正文当前生效字号：仅表情（≤3 个、无其他文字、无无记号附件）时 2 倍，否则 bodyFont。
     private var effectiveBodyFont: UIFont {
         bodyEmojiOnlyEnlarged ? bodyFont.withSize(bodyFont.pointSize * Self.emojiOnlyFontScale) : bodyFont
     }
@@ -5443,13 +5443,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 正文有无任何附件（内联图/熊脸/粘贴图）：有附件即不是纯表情。
+    /// 正文有无“无记号附件”（粘贴进来的图片）：[mood:]/[gif:] 记号转成的
+    /// 附件不算在内——它们是表情；放大门只防粘贴图误触发（#2148 后记号
+    /// 算表情，门须同口径，否则记号正文永远进不了放大态）。
     /// 注意 inlinePlainText 会把无记号的粘贴图直接丢掉，故不能只凭纯文本判断。
-    private static func bodyHasAttachment(_ attributed: NSAttributedString?) -> Bool {
+    private static func bodyHasNonTokenAttachment(_ attributed: NSAttributedString?) -> Bool {
         guard let attributed = attributed, attributed.length > 0 else { return false }
         var found = false
-        attributed.enumerateAttribute(.attachment, in: NSRange(location: 0, length: attributed.length), options: []) { value, _, stop in
-            if value != nil {
+        attributed.enumerateAttributes(in: NSRange(location: 0, length: attributed.length), options: []) { attrs, _, stop in
+            if attrs[.attachment] != nil
+                && attrs[BearyText.inlineMoodKeyAttribute] == nil
+                && attrs[BearyText.inlineGifKeyAttribute] == nil {
                 found = true
                 stop.pointee = true
             }
@@ -5458,17 +5462,43 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 按当前正文重算“仅表情放大”态并落字体：态变了才动（不打断输入）；
-    /// 组词中不切，落字后下一轮 textViewDidChange 补上。
+    /// 已是放大态时新插的记号附件按需重建尺寸；组词中不切，落字后下一轮
+    /// textViewDidChange 补上。
     private func updateBodyEmojiOnlyFont() {
         guard textView.markedTextRange == nil else { return }
-        let only = Self.isEmojiOnlyBodyText(committedContent()) && !Self.bodyHasAttachment(textView.attributedText)
-        guard only != bodyEmojiOnlyEnlarged else { return }
-        bodyEmojiOnlyEnlarged = only
+        let only = Self.isEmojiOnlyBodyText(committedContent()) && !Self.bodyHasNonTokenAttachment(textView.attributedText)
+        if only != bodyEmojiOnlyEnlarged {
+            bodyEmojiOnlyEnlarged = only
+            applyEffectiveBodyFont()
+        } else if only {
+            // 已是放大态：新插的记号附件按基础字号建，须按生效字号重建尺寸。
+            rebuildTokenAttachmentSizesIfNeeded()
+        }
+    }
+
+    /// 已是放大态时：新插的记号附件按基础字号建，须按生效字号重建尺寸；
+    /// 附件自带的 .font 与生效字号一致时不动，免得每次敲字都重建附件。
+    private func rebuildTokenAttachmentSizesIfNeeded() {
+        let font = effectiveBodyFont
+        let current = textView.attributedText ?? NSAttributedString()
+        guard current.length > 0 else { return }
+        var stale = false
+        current.enumerateAttributes(in: NSRange(location: 0, length: current.length), options: []) { attrs, _, stop in
+            if attrs[.attachment] != nil,
+               (attrs[BearyText.inlineMoodKeyAttribute] != nil || attrs[BearyText.inlineGifKeyAttribute] != nil),
+               let runFont = attrs[.font] as? UIFont, runFont.pointSize != font.pointSize {
+                stale = true
+                stop.pointee = true
+            }
+        }
+        guard stale else { return }
         applyEffectiveBodyFont()
     }
 
-    /// 把当前生效字号落到正文：全文文字格换字体、附件格不动；typingAttributes 同步；
-    /// 字符偏移不变，光标与选区原地保留（程序化重建不触发 textViewDidChange，不重入）。
+    /// 把当前生效字号落到正文：全文文字格换字体、记号附件按生效字号重建
+    /// 尺寸（放大态 60pt／回落 30pt）、无记号附件原样保留；typingAttributes
+    /// 同步；字符偏移不变，光标与选区原地保留（程序化重建不触发
+    /// textViewDidChange，不重入）。
     private func applyEffectiveBodyFont() {
         let font = effectiveBodyFont
         let current = textView.attributedText ?? NSAttributedString()
@@ -5476,9 +5506,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if current.length > 0 {
             let styled = NSMutableAttributedString()
             let fullString = current.string as NSString
+            let dark = traitCollection.userInterfaceStyle == .dark
             current.enumerateAttributes(in: NSRange(location: 0, length: current.length), options: []) { attrs, range, _ in
                 if attrs[.attachment] != nil {
-                    styled.append(current.attributedSubstring(from: range))
+                    // 记号附件按生效字号重建（心情／GIF 同款）；重建失败
+                    // （未知 key）或无记号附件（粘贴图）原样保留。
+                    if let key = attrs[BearyText.inlineMoodKeyAttribute] as? String,
+                       let rebuilt = BearyText.inlineAttachment(for: key, font: font, dark: dark) {
+                        styled.append(rebuilt)
+                    } else if let rand = attrs[BearyText.inlineGifKeyAttribute] as? String,
+                              let rebuilt = BearyText.inlineGIFAttachment(randKey: rand, font: font, firstFrame: gifFirstFrames[rand]) {
+                        styled.append(rebuilt)
+                    } else {
+                        styled.append(current.attributedSubstring(from: range))
+                    }
                 } else {
                     var newAttrs = attrs
                     newAttrs[.font] = font
