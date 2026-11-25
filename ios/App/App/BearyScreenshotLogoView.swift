@@ -21,14 +21,16 @@ final class BearyScreenshotLogoView: UIView {
     /// 内容框 288×90 px（在 (11,11)–(299,101)，四边各约 11px 透明边）。
     /// 目标是内容框正好落到 76.8×24（高 = 容器高 − 2×sm = 24，宽 = 24 × 288/90）：
     /// 整图必须等比放，scale = 76.8/288，image view = 82.7×29.3，竖直居中
-    /// 放条里、水平按右对齐算（见 layoutSubviews），contentMode 用
+    /// 放条里、水平按右对齐算（见 init 的约束），contentMode 用
     /// .scaleAspectFit。绝不能把整图缩进 76.8×24 的框——
     /// 那会竖向压约 12%（v6 预览就是这么错的，Li 看出压扁了）；也不能按原图
     /// 比例 310/110 直接算框宽（得 67.6，可见内容只剩 62.8×19.6）。
-    private static let imagePixelWidth: CGFloat = 310
-    private static let imagePixelHeight: CGFloat = 110
-    private static let contentPixelWidth: CGFloat = 288
-    private static let contentPixelHeight: CGFloat = 90
+    /// LogoHorizontal 在条里的固定尺寸（推导见文件头注释：文件 310×110、
+    /// 内容框 288×90，目标内容框 76.8×24，整图等比放得 82.7×29.3）。
+    /// 固定值，不随按钮高缩放——旧代码按 bounds 高现算，首布局按钮未配好时
+    /// 算错位且不再纠正。
+    private static let logoImageWidth: CGFloat = 82.7
+    private static let logoImageHeight: CGFloat = 29.3
     /// 密码框本体：只用来取内部容器图层，不进视图层级、不参与触摸与读屏。
     private let secureField = UITextField()
     /// 密码框内部容器（Expo 实现同款取法）：内容真正挂在这里。
@@ -42,18 +44,37 @@ final class BearyScreenshotLogoView: UIView {
         self.logoImageView = UIImageView(image: UIImage(named: logoImageName))
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+        // 位置错了也画不出去：logo 与条都钉在容器内，容器裁剪，绝不压到
+        // 左侧私信钮（2026-11-25 截屏 logo 漏出事故：手算 frame 依赖按钮
+        // 先配好，首布局按钮未配好时 logo 落在 maxX≈15、偏左约 84pt 且不再纠正）。
+        clipsToBounds = true
         logoImageView.contentMode = .scaleAspectFit
         logoImageView.isUserInteractionEnabled = false
+        logoImageView.translatesAutoresizingMaskIntoConstraints = false
         secureField.isSecureTextEntry = true
         secureField.isUserInteractionEnabled = false
         if let container = secureField.layer.sublayers?.first?.delegate as? UIView {
             secureContainer = container
             container.isUserInteractionEnabled = true
             container.clipsToBounds = false
+            container.translatesAutoresizingMaskIntoConstraints = false
             // 条的底色不在这里定：容器还没进视图层级，背后底色未知；见
             // layoutSubviews，按父视图（headerView）的 backgroundColor 取。
             addSubview(logoImageView)
             addSubview(container)
+            // 条贴满本容器、logo 右对齐钉死：位置一律走 Auto Layout，不再
+            // 在 layoutSubviews 里按内容 frame 手算——手算依赖按钮先配好，
+            // 首布局时按钮未配好（无标题／图标／定宽）会把 logo 算到容器外。
+            NSLayoutConstraint.activate([
+                container.topAnchor.constraint(equalTo: topAnchor),
+                container.bottomAnchor.constraint(equalTo: bottomAnchor),
+                container.leadingAnchor.constraint(equalTo: leadingAnchor),
+                container.trailingAnchor.constraint(equalTo: trailingAnchor),
+                logoImageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                logoImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
+                logoImageView.widthAnchor.constraint(equalToConstant: Self.logoImageWidth),
+                logoImageView.heightAnchor.constraint(equalToConstant: Self.logoImageHeight),
+            ])
         }
         setContent(content)
     }
@@ -86,52 +107,17 @@ final class BearyScreenshotLogoView: UIView {
                 view.centerXAnchor.constraint(equalTo: centerXAnchor),
             ])
         }
+        setNeedsLayout()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        guard let strip = secureContainer,
-              let image = logoImageView.image,
-              bounds.height > BearySpace.sm * 2,
-              image.size.height > 0 else {
-            secureContainer?.frame = bounds
-            return
-        }
-        // logo 右对齐：内容框右缘 = 按钮右缘（按钮贴满条，条右缘距页眉边 16，
-        // 与名字左缘 16 对称；v7 居中放时右缘只剩约 9pt，看着偏右。跟 Bluesky
-        // 的做法一致：logo 在按钮框内右对齐。视觉以 v8 预览为准）。
-        // 按钮右缘取内容视图当前 frame（Auto Layout 已在本次布局前定好）；
-        // 未布局时退回居中（v7 位置），下一轮布局会按按钮右缘重算。
-        // 按压 0.95 与拒绝摇头 ±8pt 是按钮的 transform，不触发布局，logo 不跟动。
-        let contentHeight = bounds.height - BearySpace.sm * 2
-        let contentWidth = contentHeight * Self.contentPixelWidth / Self.contentPixelHeight
-        var imageWidth = contentWidth * Self.imagePixelWidth / Self.contentPixelWidth
-        imageWidth = min(imageWidth, bounds.width)
-        let imageHeight = imageWidth * Self.imagePixelHeight / Self.imagePixelWidth
-        // 大字号下 image view 被条宽封顶时，实际内容框按等比收小，右对齐仍按
-        // 收小后的内容框算（默认字号下无封顶，内容框正好 76.8×24）。
-        let actualContentWidth = imageWidth * Self.contentPixelWidth / Self.imagePixelWidth
-        let contentRight: CGFloat
-        if let content = contentView, content.frame.width > 0 {
-            contentRight = content.frame.maxX
-        } else {
-            contentRight = (bounds.width + actualContentWidth) / 2
-        }
-        // 内容框在 image view 内居中：image view 比内容框每侧各宽
-        // (imageWidth − actualContentWidth) / 2 的透明边。
-        let imageX = contentRight + (imageWidth - actualContentWidth) / 2 - imageWidth
-        logoImageView.frame = CGRect(
-            x: imageX,
-            y: (bounds.height - imageHeight) / 2,
-            width: imageWidth,
-            height: imageHeight
-        )
-        // 条 = 密码框容器本身，贴满本容器（宽 = 按钮定宽，高 40）。底色跟容器背后那块页面
-        // 底色走（读父视图 headerView 的 backgroundColor，浅色／深色／氛围色
-        // 都跟上，屏幕上看不出条的边）；截屏时系统把密码框那层整个抹掉，条连
-        // 同内容一起消失，底下的 logo 露出来。条不跟内容动：按压 0.95 与拒绝
-        // 摇头 ±8pt 都只动内容，条不动，logo 始终被条盖住。
-        strip.frame = bounds
-        strip.backgroundColor = superview?.backgroundColor ?? BearyColors.bg
+        // 只剩条底色：跟容器背后那块页面底色走（读父视图 headerView 的
+        // backgroundColor，浅色／深色／氛围色都跟上，屏幕上看不出条的边）；
+        // 截屏时系统把密码框那层整个抹掉，条连同内容一起消失，底下的 logo
+        // 露出来。条与 logo 的位置一律走 Auto Layout（见 init），这里不再
+        // 算 frame——手算 frame 依赖按钮先配好，首布局时按钮未配好会把 logo
+        // 算错位且再也不纠正；条 frame 也改走约束贴满容器，不再 strip.frame = bounds。
+        secureContainer?.backgroundColor = superview?.backgroundColor ?? BearyColors.bg
     }
 }
