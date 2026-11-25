@@ -1046,8 +1046,8 @@ class BearyProfileViewController: UIViewController {
     /// 他人主页关注钮的截屏 logo 容器（Threads 同款，见 BearyScreenshotLogoView）：
     /// 关注钮画进密码框图层、底下垫官方横版 logo（LogoHorizontal，熊左＋beary
     /// 字右，深浅随 imageset 走）；屏幕上只看到关注钮，截屏时该位置显示横版
-    /// logo。盖住 logo 的是密码框容器这条底色条（比按钮宽，logo 比按钮宽也
-    /// 盖得住），不是按钮本身。
+    /// logo。盖住 logo 的是密码框容器这条底色条（宽锚按钮宽、按钮正好贴满
+    /// 条，logo 可见内容 76.8 比按钮窄、右对齐落在条内），不是按钮本身。
     /// 显隐与定宽一律走容器——按钮自身永不隐藏（藏按钮会把 logo 露出来）。
     /// 只包这一处（他人主页关注钮），其余按钮不动。
     private lazy var followButtonContainer: BearyScreenshotLogoView = {
@@ -1092,8 +1092,9 @@ class BearyProfileViewController: UIViewController {
     /// 关注钮上次实际渲染的态（跨帧动画判定用：只在已可见且态真变时播切换动效）。
     private var renderedFollowState: BearyFollowState?
     /// 关注钮四态定宽约束：按四态最宽一态定宽，点按后尺寸恒定，左侧私信钮不再被顶。
-    /// 宽版截屏 logo：容器宽是条宽（BearyScreenshotLogoView.stripWidth = 93），
-    /// 按钮宽（fixedWidth）落按钮自己身上、居中放在条里，不再跟容器走。
+    /// 宽版截屏 logo：容器宽锚到按钮宽上（widthAnchor = followButton.widthAnchor，
+    /// 只建一次、随动态字号走），默认字号下两者都是约 98：容器 276–374，按钮
+    /// 正好贴满容器；私信钮锚容器左缘外 8pt、右缘 268，与改动前原位一致。
     private var followButtonContainerWidthConstraint: NSLayoutConstraint?
     private var followButtonWidthConstraint: NSLayoutConstraint?
     private var followButtonMeasuredCategory: UIContentSizeCategory?
@@ -3284,7 +3285,7 @@ class BearyProfileViewController: UIViewController {
             editButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
             editButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
             // 好友钮锚点改为名字行中心（v5 定版）、右缘 -16：本人页隐藏、他人页独占该位。
-            // 截屏 logo 宽版：锚点落容器（93 宽的条）上，按钮居中放在条里、宽按四态定宽。
+            // 截屏 logo 宽版：锚点落容器上；容器宽锚按钮宽，默认字号下 276–374，按钮贴满容器，私信钮右缘 268。
             followButtonContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
             followButtonContainer.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             followButtonContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
@@ -3727,12 +3728,13 @@ class BearyProfileViewController: UIViewController {
             maxWidth = max(maxWidth, width)
         }
         let fixedWidth = ceil(maxWidth)
-        // 条宽固定 93（logo 内容 76.8 ＋ 两侧各一个 sm），只建一次；
-        // 按钮宽按四态最宽一态定，落按钮自己身上、居中放在条里。
+        // 容器宽锚按钮宽（只建一次）：按钮定宽随动态字号变时容器跟着变，
+        // 默认字号下两者都是约 98，按钮正好贴满容器；logo 内容 76.8 落在条内、
+        // 右缘与按钮右缘齐（距页眉边 16）。
         if followButtonContainerWidthConstraint == nil {
-            let stripConstraint = followButtonContainer.widthAnchor.constraint(equalToConstant: BearyScreenshotLogoView.stripWidth)
-            stripConstraint.isActive = true
-            followButtonContainerWidthConstraint = stripConstraint
+            let containerConstraint = followButtonContainer.widthAnchor.constraint(equalTo: followButton.widthAnchor)
+            containerConstraint.isActive = true
+            followButtonContainerWidthConstraint = containerConstraint
         }
         if let constraint = followButtonWidthConstraint {
             constraint.constant = fixedWidth
