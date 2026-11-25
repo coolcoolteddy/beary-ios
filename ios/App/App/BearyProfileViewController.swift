@@ -1044,12 +1044,14 @@ class BearyProfileViewController: UIViewController {
     }()
 
     /// 他人主页关注钮的截屏 logo 容器（Threads 同款，见 BearyScreenshotLogoView）：
-    /// 关注钮画进密码框图层、底下垫官方小熊 logo（side_beary_icon，深浅随
-    /// imageset 走）；屏幕上只看到关注钮，截屏时该位置显示小熊 logo。
+    /// 关注钮画进密码框图层、底下垫官方横版 logo（LogoHorizontal，熊左＋beary
+    /// 字右，深浅随 imageset 走）；屏幕上只看到关注钮，截屏时该位置显示横版
+    /// logo。盖住 logo 的是密码框容器这条底色条（比按钮宽，logo 比按钮宽也
+    /// 盖得住），不是按钮本身。
     /// 显隐与定宽一律走容器——按钮自身永不隐藏（藏按钮会把 logo 露出来）。
     /// 只包这一处（他人主页关注钮），其余按钮不动。
     private lazy var followButtonContainer: BearyScreenshotLogoView = {
-        let containerValue = BearyScreenshotLogoView(logoImageName: "side_beary_icon", content: followButton)
+        let containerValue = BearyScreenshotLogoView(logoImageName: "LogoHorizontal", content: followButton)
         containerValue.isHidden = true
         return containerValue
     }()
