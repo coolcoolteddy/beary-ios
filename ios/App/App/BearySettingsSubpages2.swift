@@ -947,6 +947,7 @@ final class BearyNotificationSettingsViewController: BearySettingsSubpageViewCon
             (.limitedExpiry, "限时日记到期", "限时结束、转回私密时提醒"),
             (.pastDay, "那年今日", "早上 9:00（北京时间），往年今天有日记才提醒"),
             (.pastSelfDelivery, "留给明年的自己", "留言送达当天早上 9:00（北京时间）提醒"),
+            (.dmUnread, BearyLocalNotifications.Kind.dmUnread.title, NSLocalizedString("local_notifications.dm_unread.detail", comment: "")),
         ]
         var rows: [UIView] = []
         for (index, item) in items.enumerated() {
@@ -963,10 +964,10 @@ final class BearyNotificationSettingsViewController: BearySettingsSubpageViewCon
         hintRowView.isHidden = true
         hintRow = hintRowView
         rows.append(hintRowView)
-        // 第 25 轮 59：广场有新日记的提醒不另设开关，纳入上面四类——任一类
-        // 开着才发，四类全关即停；说明放组末行。
+        // 第 25 轮 59：广场有新日记的提醒不另设开关，纳入上面五类——任一类
+        // 开着才发，五类全关即停；说明放组末行。
         let plazaNoteLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        plazaNoteLabel.text = "广场有新日记时也会发一条提醒；上面四类提醒全关时不再发。"
+        plazaNoteLabel.text = NSLocalizedString("local_notifications.plaza_note", comment: "")
         rows.append(plazaNoteLabel)
         contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: rows))
     }
