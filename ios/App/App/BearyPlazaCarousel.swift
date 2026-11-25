@@ -707,6 +707,7 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
         super.prepareForReuse()
         eyebrowLabel.isHidden = false
         metaLabel.isHidden = false
+        titleLabel.isHidden = false
         textStack.isHidden = false
         historyContainer.isHidden = true
         onSelect = nil
@@ -728,15 +729,16 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
                 // 正常走不到这里；万一走到，按首个事件卡渲染。
                 showHistoryEvent(payload: payload, event: event)
             } else {
-                // 未加载：眉标给标题、标题给日期、副行明说正在加载，不编一条假事件。
+                // 未加载：眉标给标题、副行明说正在加载，不编一条假事件；
+                // 标题行藏起，不留孤零零的日期。
                 textStack.isHidden = false
                 historyContainer.isHidden = true
                 eyebrowLabel.isHidden = false
                 eyebrowLabel.text = NSLocalizedString("historyToday.title", comment: "")
-                titleLabel.text = BearyHistoryToday.dateLabel(for: BlindBoxDate.todayKey())
+                titleLabel.isHidden = true
                 metaLabel.isHidden = false
                 metaLabel.text = NSLocalizedString("historyToday.loading", comment: "")
-                bodyButton.accessibilityLabel = String(format: NSLocalizedString("historyToday.carousel_a11y", comment: ""), NSLocalizedString("historyToday.title", comment: ""), titleLabel.text ?? "")
+                bodyButton.accessibilityLabel = String(format: NSLocalizedString("historyToday.carousel_a11y", comment: ""), NSLocalizedString("historyToday.title", comment: ""), NSLocalizedString("historyToday.loading", comment: ""))
             }
         case .historyTodayEvent(let payload, let index):
             showHistoryEvent(payload: payload, event: payload.displayEvents[index])
@@ -783,7 +785,7 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
         } else {
             historyRailStack.isHidden = true
         }
-        historyDateLabel.text = payload.dateLabel
+        historyDateLabel.text = NSLocalizedString("historyToday.title", comment: "")
         if let year = event.year {
             historyTitleLabel.text = String(format: NSLocalizedString("historyToday.carousel_title", comment: ""), year, event.text)
         } else {
