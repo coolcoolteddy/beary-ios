@@ -109,12 +109,17 @@ final class BearyConfirmSheetViewController: UIViewController, BearySystemSheetS
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
 
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = sheetTitle
-        titleLabel.font = BearyDynamicType.smallActionFont()
-        titleLabel.textColor = BearyColors.ink
-        titleLabel.numberOfLines = 0
-        view.addSubview(titleLabel)
+        // 空标题时标题行整个折叠：不建 label、不参与布局，首行直接贴顶距
+        // （个人页 ••• 菜单等无标题调用方，上面不再空一大块）；有标题时原样。
+        let hasTitle = !sheetTitle.isEmpty
+        if hasTitle {
+            titleLabel.translatesAutoresizingMaskIntoConstraints = false
+            titleLabel.text = sheetTitle
+            titleLabel.font = BearyDynamicType.smallActionFont()
+            titleLabel.textColor = BearyColors.ink
+            titleLabel.numberOfLines = 0
+            view.addSubview(titleLabel)
+        }
 
         let hasMessage = (sheetMessage?.isEmpty == false)
         if hasMessage {
@@ -200,31 +205,37 @@ final class BearyConfirmSheetViewController: UIViewController, BearySystemSheetS
         }
         view.addSubview(buttonStack)
 
-        NSLayoutConstraint.activate([
-            // 顶部留白与旧抓手区等高（抓手顶 10＋高 4＋标题间距 16）：系统抓手
-            // 占顶区，标题位置不动；一律不要 ×，标题右缘放回内容边 -16。
-            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16),
-            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-        ])
+        // 顶距 30（抓手顶 10＋高 4＋间距 16）：标题在时标题贴此距，标题空时
+        // 首行（说明／勾选行／按钮组）直接贴此距。
+        let topInset = BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16
+        if hasTitle {
+            NSLayoutConstraint.activate([
+                // 顶部留白与旧抓手区等高：系统抓手占顶区，标题位置不动；
+                // 一律不要 ×，标题右缘放回内容边 -16。
+                titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: topInset),
+                titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            ])
+        }
         if hasMessage {
             NSLayoutConstraint.activate([
-                messageLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+                messageLabel.topAnchor.constraint(equalTo: hasTitle ? titleLabel.bottomAnchor : view.topAnchor, constant: hasTitle ? 8 : topInset),
                 messageLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
                 messageLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             ])
         }
-        // 按钮组顶缘：有勾选行时贴勾选行，否则贴说明（无说明贴标题）。
-        let aboveButtons: UIView = toggleRow ?? (hasMessage ? messageLabel : titleLabel)
+        // 按钮组顶缘：有勾选行时贴勾选行，否则贴说明（无说明贴标题；标题空时贴顶距）。
+        let aboveButtons: UIView? = toggleRow ?? (hasMessage ? messageLabel : (hasTitle ? titleLabel : nil))
         if let row = toggleRow {
+            let aboveToggle: UIView? = hasMessage ? messageLabel : (hasTitle ? titleLabel : nil)
             NSLayoutConstraint.activate([
-                row.topAnchor.constraint(equalTo: (hasMessage ? messageLabel.bottomAnchor : titleLabel.bottomAnchor), constant: 16),
+                row.topAnchor.constraint(equalTo: aboveToggle?.bottomAnchor ?? view.topAnchor, constant: aboveToggle == nil ? topInset : 16),
                 row.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
                 row.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             ])
         }
         NSLayoutConstraint.activate([
-            buttonStack.topAnchor.constraint(equalTo: aboveButtons.bottomAnchor, constant: 16),
+            buttonStack.topAnchor.constraint(equalTo: aboveButtons?.bottomAnchor ?? view.topAnchor, constant: aboveButtons == nil ? topInset : 16),
         ])
         NSLayoutConstraint.activate([
             buttonStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
