@@ -4068,7 +4068,7 @@ enum BearyVisibilityText {
         let dayDiff = calendar.dateComponents([.day], from: startOfDate, to: startOfToday).day ?? 0
         if dayDiff <= 0 { return BearyLocalizedDate.hoursAgoString(Int(diff / 3600)) }
         if dayDiff == 1 { return BearyLocalizedDate.yesterdayWord(timeZone: calendar.timeZone) }
-        if dayDiff == 2 { return "前天" }
+        if dayDiff == 2 { return NSLocalizedString("date.relative.dayBeforeYesterday", comment: "") }
         if dayDiff < 7 { return BearyLocalizedDate.daysAgoString(dayDiff) }
         return BearyText.absoluteDateString(from: date)
     }
