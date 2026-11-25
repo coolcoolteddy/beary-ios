@@ -762,13 +762,16 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 个人页控制器快连点时读取可见行最新点按态（不依赖 configure 时捕获的旧 entry；
     /// cellLikedByMe/cellLikeCount 由就地同步维护，恒等于最后一次点按态）。
     var profileLikeState: (liked: Bool, count: Int) { (cellLikedByMe, cellLikeCount) }
+    /// 个人页控制器读行内最新先行回应态（快连点下控制器收到的 entry 形参是
+    /// configure 时的旧快照，方向须按本值算；点赞同款 profileLikeState 口径）。
+    var profileEmoteState: [EmoteCount] { currentEntry?.emotes ?? [] }
     var profileBookmarkedState: Bool { cellBookmarkedByMe }
     private var cellEmoteSignature = ""
     /// 回应行签名守卫有效标记：仅 renderEmotes 完成一次拆建后才置真，
     /// prepareForReuse 时清掉。没有它时，复用后首次渲染空列表会因
     /// 签名同为空串而误判“无变化”跳过拆建、旧篇 chip 残留。
     private var cellEmoteSignatureValid = false
-    /// 个人主页模式互动禁用态（控制器 busy 集合现算后传入，渲染与同步共用）。
+    /// 个人主页模式互动禁用态（控制器传入；回应快连点改代次后不再按在途禁用）。
     private var profileDisabled = false
     private var authorTapInstalled = false
 
