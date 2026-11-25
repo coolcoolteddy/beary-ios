@@ -112,6 +112,8 @@ enum BearyFriends {
         // 跳动审计第 6 条：关系变化时该作者的仅好友引用互关验证标记同清，
         // 下次按现行关系重验；userId 为 nil 时清当前桶全部。
         BearyDiaryCardCell.invalidateQuoteMutualAccess(forAuthorId: userId)
+        // v15：仅好友回应互关验证结论同清，下次按现行关系重验。
+        BearyDiaryCardCell.invalidateEmoteMutualAccess(forAuthorId: userId)
         var userInfo: [AnyHashable: Any]?
         if let userId = userId {
             userInfo = [friendsChangedUserIdKey: userId]
