@@ -257,20 +257,29 @@ final class BearyHistoryTodayViewController: UIViewController {
 
     // MARK: - 竖排农历
 
-    /// 竖排农历列：年列在右、日列在左（传统竖排右起）；农历缺省时退回
-    /// 公历日期逐字竖排，不编一个假农历。
+    /// 竖排农历列：年列在右、日列在左（传统竖排右起）；服务端 lunar 字段
+    /// 未部署时用本地农历换算（localLunarDay／localLunarYearText），
+    /// 服务端值优先。两者都没有时不再把公历 "11月25日" 逐字拆开（数字
+    /// 会被拆成 "1 1 月 2 5 日"），改按月／日分组竖排：日组在左、月组
+    /// 在右（大单位在右）；date 解析不出才保留旧的逐字兜底。
     private func lunarColumns(for payload: BearyHistoryToday) -> UIStackView {
         let columns = UIStackView()
         columns.axis = .horizontal
         columns.alignment = .center
         columns.spacing = BearySpace.lg
-        if let lunarDay = payload.lunarDay {
+        if let lunarDay = payload.lunarDay ?? payload.localLunarDay {
             columns.addArrangedSubview(verticalChars(lunarDay))
-            if let lunarYear = payload.lunarYearText {
+            if let lunarYear = payload.lunarYearText ?? payload.localLunarYearText {
                 columns.addArrangedSubview(verticalChars(lunarYear))
             }
         } else {
-            columns.addArrangedSubview(verticalChars(payload.dateLabel))
+            let parts = payload.date.split(separator: "-")
+            if parts.count == 3, let month = Int(parts[1]), let day = Int(parts[2]) {
+                columns.addArrangedSubview(verticalChars("\(day)日"))
+                columns.addArrangedSubview(verticalChars("\(month)月"))
+            } else {
+                columns.addArrangedSubview(verticalChars(payload.dateLabel))
+            }
         }
         return columns
     }

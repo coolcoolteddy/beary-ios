@@ -85,6 +85,50 @@ struct BearyHistoryToday: Codable {
         return lunarYear
     }
 
+    /// 本地农历日期（"十月十七"）：服务端 lunar 字段未部署／缺省时的本地
+    /// 换算。月名／日名／干支表逐字抄服务端 history-today.diff（与服务端
+    /// 农历表同规则：1900–2049、闰月前缀"闰"）；苹果中国农历与服务端表
+    /// 同规则，已按服务端真值交叉核对（2026-11-25 十月十七／丙午年、
+    /// 2026-11-23 十月十五、2026-02-17 与 2025-01-29 正月初一）。
+    var localLunarDay: String? {
+        guard let lunar = Self.localLunarComponents(for: date) else { return nil }
+        let monthNames = ["正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "冬月", "腊月"]
+        let dayNames = ["初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十",
+                        "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
+                        "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"]
+        guard lunar.month >= 1, lunar.month <= 12, lunar.day >= 1, lunar.day <= 30 else { return nil }
+        return (lunar.isLeapMonth ? "闰" : "") + monthNames[lunar.month - 1] + dayNames[lunar.day - 1]
+    }
+
+    /// 本地农历年份（"丙午年"）：与服务端 ganzhiYear 同口径，
+    /// 干支 = GAN[(year-4)%10] + ZHI[(year-4)%12] + "年"。
+    var localLunarYearText: String? {
+        guard let lunar = Self.localLunarComponents(for: date) else { return nil }
+        let gan = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"]
+        let zhi = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"]
+        return gan[(lunar.year - 4) % 10] + zhi[(lunar.year - 4) % 12] + "年"
+    }
+
+    /// 公历日期键（"yyyy-MM-dd"）转中国农历年月日。date 用 en_US_POSIX＋
+    /// UTC 解析、农历日历时区也钉 UTC，避免时区拨动日期（与 gregorianLine
+    /// 同款）。公历年份与农历年份超出 1900…2049 回 nil，与服务端表的
+    /// 范围口径一致（服务端：公历年份超范围或 1900-01-31 之前均回 null）。
+    private static func localLunarComponents(for dateKey: String) -> (year: Int, month: Int, day: Int, isLeapMonth: Bool)? {
+        let parts = dateKey.split(separator: "-")
+        guard parts.count == 3, let gregorianYear = Int(parts[0]), gregorianYear >= 1900, gregorianYear <= 2049 else { return nil }
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.timeZone = TimeZone(secondsFromGMT: 0)
+        parser.dateFormat = "yyyy-MM-dd"
+        guard let date = parser.date(from: dateKey) else { return nil }
+        var calendar = Calendar(identifier: .chinese)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? TimeZone.current
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year, year >= 1900, year <= 2049,
+              let month = components.month, let day = components.day else { return nil }
+        return (year: year, month: month, day: day, isLeapMonth: components.isLeapMonth ?? false)
+    }
+
     /// 节日，空白当缺省；没有就不显示节日行。
     var festivalText: String? {
         guard let festival = festival?.trimmingCharacters(in: .whitespacesAndNewlines), !festival.isEmpty else { return nil }
