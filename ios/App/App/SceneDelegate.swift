@@ -380,6 +380,19 @@ final class BearyChromeViewController: UIViewController {
     private var bottomFadePad: BearyProgressiveBlurView?
     /// 分段器 touchDown 瞬间记录的旧选段（供重拍手势与 valueChanged 时序竞态判定用）。
     private var segmentIndexAtTouchDown: Int = -1
+    /// 底栏四段图标名（描边版／填色版一一对应，顺序：时间线、首页、消息、我的）。
+    /// 填色版是线条本身颜色的黑色剪影 template 图（tint 跟随主题：浅色黑、深色白），
+    /// 外轮廓与描边版一致（首页门洞留空、我的身体涂满；时间线是折线加圆点、
+    /// 无封闭面可填，填色即加粗）。
+    private let tabOutlineIcons: [(String, String)] = [
+        ("IconTimeline", "icon_calendar"),
+        ("IconHome", "icon_home"),
+        ("icon_comment", "icon_comment"),
+        ("IconUser", "icon_user"),
+    ]
+    private let tabFilledIcons: [String] = [
+        "IconTimelineFilled", "IconHomeFilled", "icon_comment_filled", "icon_user_filled",
+    ]
     /// 同 tab 连点刷新：上一拍重拍的页、时间、上一拍是否只回了顶（未刷新）。
     /// 第二下在 0.35s 内点同 tab 时直接刷新，不等回顶动画走完（见 retapCurrentPage）。
     private var lastRetapPage: ContainerPage?
@@ -934,13 +947,7 @@ final class BearyChromeViewController: UIViewController {
         //（icon_comment）。底栏顺序（第十轮审计 VI，规范第 157 行）：
         // 时间线、首页、消息、我的。
         // 好友列表页仍保留，由消息页顶栏用户列表钮进入。
-        let tabIcons: [(String, String)] = [
-            ("IconTimeline", "icon_calendar"),
-            ("IconHome", "icon_home"),
-            ("icon_comment", "icon_comment"),
-            ("IconUser", "icon_user"),
-        ]
-        let seg = BearyHit44SegmentedControl(items: tabIcons.map { segmentIcon(named: $0.0, officialFallback: $0.1) })
+        let seg = BearyHit44SegmentedControl(items: tabOutlineIcons.map { segmentIcon(named: $0.0, officialFallback: $0.1) })
         seg.apportionsSegmentWidthsByContent = false
         // 67 包反馈修：分段器自身底色显式 clear——之前没设，系统默认灰底透出来，
         // 选中格 bg 52% 盖在灰底上就是截图里那截灰；clear 后选中格直接落在玻璃衬底上，
@@ -976,6 +983,7 @@ final class BearyChromeViewController: UIViewController {
         seg.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(seg)
         bottomSegmented = seg
+        updateBottomSegmentIcons()
         seg.alpha = 0
         seg.isUserInteractionEnabled = false
         NSLayoutConstraint.activate([
@@ -2115,6 +2123,23 @@ final class BearyChromeViewController: UIViewController {
     /// 52 批：hidden=false 时底栏分段器与 FAB 恢复，header 只在首页恢复（他页恒收起）；hidden=true 时 header 高度塌掉 + 底栏藏起。
     func setChromeHidden(_ hidden: Bool, animated: Bool) { setBarsVisible(!hidden, animated: animated) }
 
+    /// 底栏选中填色（Li 2026-11-22 定）：选中段显填色图、其余段显描边图；
+    /// noSegment 时四段全描边。点按切换（valueChanged）、手指触下（touchDown）、
+    /// 程序化同步（updateTabSelection）三路都调这里实时换图；选中底色、尺寸、
+    /// 位置与回顶／刷新手势一律不动。
+    private func updateBottomSegmentIcons() {
+        guard let seg = bottomSegmented else { return }
+        let selected = seg.selectedSegmentIndex
+        for index in 0..<4 {
+            if index == selected {
+                seg.setImage(segmentIcon(named: tabFilledIcons[index], officialFallback: tabFilledIcons[index]), forSegmentAt: index)
+            } else {
+                let pair = tabOutlineIcons[index]
+                seg.setImage(segmentIcon(named: pair.0, officialFallback: pair.1), forSegmentAt: index)
+            }
+        }
+    }
+
     /// 底栏选中态：分段器选段与 currentPage 双向同步。当前页不是 tab（搜索 /
     /// 铃铛 / 邀请 / 个人主页）时选段置 noSegment，对应旧“全部灰色、无 pill”口径。
     /// 铃铛页（.notif）无 tab，置 noSegment；消息页（.messages）与好友列表页
@@ -2132,6 +2157,7 @@ final class BearyChromeViewController: UIViewController {
         }
         if seg.selectedSegmentIndex != index {
             seg.selectedSegmentIndex = index
+            updateBottomSegmentIcons()
         }
     }
 
@@ -2241,11 +2267,13 @@ final class BearyChromeViewController: UIViewController {
     /// 时序不定，故重拍判定不以手势触发时的 selectedSegmentIndex 为准，只认 touchDown 快照。
     @objc private func bottomSegmentTouchDown() {
         segmentIndexAtTouchDown = bottomSegmented.selectedSegmentIndex
+        updateBottomSegmentIcons()
     }
 
     /// 底栏分段切换：只在选段变化时触发（点已选段不触发），逐段沿用旧钮的导航调用，
     /// home 走 showPage、其余走 navigator.goTab，与旧钮行为完全一致。
     @objc private func bottomSegmentChanged() {
+        updateBottomSegmentIcons()
         switch bottomSegmented.selectedSegmentIndex {
         case 0: didTapTimeline()
         case 1: didTapHome()
