@@ -4579,8 +4579,14 @@ final class BearyChromeViewController: UIViewController {
 
     /// iCity：拉黑后离页——modal 主页先 dismiss 再回首页，.user 页直接回首页；
     /// 信息流侧由 bearyDidBlockUser 广播自行清行，容器不重拉。
+    /// 嵌套 modal（标签页 → 个人页）：chrome 直呈的是标签 nav，旧条件
+    /// （直呈 nav 的首个 VC 是个人页）走不到，只切页不关 modal，两层
+    /// modal 留在屏上。改为看最上层：最上层是个人页 nav 即从 chrome 起
+    /// 整条 dismiss（UIKit 会连同其上呈出的层一起关），再回首页；直呈
+    /// modal 时最上层即本层 nav，行为与旧口径一致；.user 页无 modal，
+    /// 最上层是 chrome 自身，走 else 直接回首页。
     private func leaveBlockedProfile() {
-        if let nav = presentedViewController as? UINavigationController,
+        if let nav = topmostViewController() as? UINavigationController,
            nav.viewControllers.first is BearyProfileViewController {
             dismiss(animated: BearyMotion.animated(true)) { [weak self] in
                 self?.showPage(.home)
