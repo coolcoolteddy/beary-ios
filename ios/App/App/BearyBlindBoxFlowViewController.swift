@@ -134,7 +134,7 @@ private final class BlindBoxPoolRowView: UIView {
                 }
             }
         }
-        let dateText = BlindBoxDate.displayString(ms: entry.publishedAt ?? entry.createdAt)
+        let dateText = BlindBoxDate.displayString(ms: entry.publishedAt ?? entry.createdAt, timeZone: entry.diaryTimeZone)
         let eligibility = BlindBoxPool.eligibility(for: entry)
         switch eligibility {
         case .eligible:
@@ -1321,7 +1321,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         let title = (received.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         receivedTitleLabel.attributedText = title.isEmpty ? nil : BearyText.inlineAttributedText(from: title, font: receivedTitleLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: received.images)
         receivedTitleLabel.isHidden = title.isEmpty
-        receivedDateLabel.text = BlindBoxDate.displayString(ms: received.publishedAt)
+        receivedDateLabel.text = BlindBoxDate.displayString(ms: received.publishedAt, timeZone: received.diaryTimeZone)
         receivedDateLabel.isHidden = receivedDateLabel.text?.isEmpty != false
         renderReceivedContent()
         renderReceivedImages(keys: received.images ?? [])

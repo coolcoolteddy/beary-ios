@@ -3312,7 +3312,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         dateLabel.adjustsFontForContentSizeCategory = true
         dateLabel.textColor = BearyColors.gray
         if let created = entry.createdAt {
-            dateLabel.text = searchDateString(ms: created)
+            dateLabel.text = searchDateString(ms: created, timeZone: entry.diaryTimeZone)
         }
 
         let contentText = collapsedWhitespace(entry.content ?? "")
@@ -3493,7 +3493,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             entryA11yParts.append("作者：" + author)
         }
         if let created = entry.createdAt {
-            entryA11yParts.append(searchDateString(ms: created))
+            entryA11yParts.append(searchDateString(ms: created, timeZone: entry.diaryTimeZone))
         }
         if BearyEphemeral.isLive(entry) {
             entryA11yParts.append("限时")
@@ -4119,8 +4119,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     /// 搜索结果日记行日期：7 天内相对时间、7 天外“/”绝对日期（同年只写月日，
     /// 跨年带年；月日顺序跟地区走），不带时分。见 BearyVisibilityText.diaryTimeString。
-    private func searchDateString(ms: Int) -> String {
-        BearyVisibilityText.diaryTimeString(publishedAtMs: ms) ?? BearyDiaryCardCell.feedTimeString(ms: ms)
+    /// 日记时区（2026-11-21 v20 §二）：绝对回落按篇时区显示。
+    private func searchDateString(ms: Int, timeZone: TimeZone) -> String {
+        BearyVisibilityText.diaryTimeString(publishedAtMs: ms, timeZone: timeZone) ?? BearyDiaryCardCell.feedTimeString(ms: ms, timeZone: timeZone)
     }
 
     /// 网页用户行名字回退口径：display_name || ('@' + handle) || 'beary 用户'。

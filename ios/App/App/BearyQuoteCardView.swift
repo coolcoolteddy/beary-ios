@@ -462,12 +462,13 @@ final class BearyQuoteCardView: UIView {
     /// 来源行文案组装（handle/日期皆无时返回 nil，调用方据此隐藏整行，不编造）。
     /// deleted 时无可信 handle/日期，固定写“引用自已删除的日记”。
     /// 注意：dateText 为 String?，不得直接插值（会原样显示 Optional("...")）。
-    private static func sourceRowText(handle: String?, dateMs: Int?, deleted: Bool) -> String? {
+    /// 日记时区（2026-11-21 v20 §二）：来源行日期按被引篇时区；nil = 设备时区。
+    private static func sourceRowText(handle: String?, dateMs: Int?, deleted: Bool, timeZone: TimeZone? = nil) -> String? {
         if deleted {
             return "引用自已删除的日记"
         }
         let handleText = (handle ?? "").isEmpty ? nil : "@\(handle!)"
-        let dateText = (dateMs ?? 0) > 0 ? (BearyVisibilityText.diaryTimeString(publishedAtMs: dateMs) ?? BearyDiaryCardCell.feedTimeString(ms: dateMs!)) : nil
+        let dateText = (dateMs ?? 0) > 0 ? (BearyVisibilityText.diaryTimeString(publishedAtMs: dateMs, timeZone: timeZone) ?? BearyDiaryCardCell.feedTimeString(ms: dateMs!, timeZone: timeZone)) : nil
         if let handleText = handleText, let dateText = dateText {
             return "引用自 \(handleText) · \(dateText)"
         }
@@ -482,8 +483,8 @@ final class BearyQuoteCardView: UIView {
 
     /// 来源行唯一写入口：configure 与 showGone 均走这里，保证两态口径一致。
     /// tappable=false 时按钮禁用（灰字不变，见 .disabled 同色），点按无动作。
-    func setSourceRow(handle: String?, dateMs: Int?, tappable: Bool, deleted: Bool) {
-        guard let text = BearyQuoteCardView.sourceRowText(handle: handle, dateMs: dateMs, deleted: deleted) else {
+    func setSourceRow(handle: String?, dateMs: Int?, tappable: Bool, deleted: Bool, timeZone: TimeZone? = nil) {
+        guard let text = BearyQuoteCardView.sourceRowText(handle: handle, dateMs: dateMs, deleted: deleted, timeZone: timeZone) else {
             sourceButton.setTitle(nil, for: .normal)
             sourceButton.isHidden = true
             sourceButton.isEnabled = false
@@ -622,9 +623,9 @@ final class BearyQuoteCardView: UIView {
     /// 115 批去重：sourceDeleted 时来源行已说清“已删除”，正文重复行
     /// “引用的日记已删除”不再显示（占位行整行隐藏，只留来源行）；点按仍由
     /// isGoneState 拦住，不因行隐藏而误导航。已私密 + 提醒句、未公开口径不动。
-    func showGone(message: String, iconName: String = "icon_quote", detail: String? = nil, sourceHandle: String? = nil, sourceDateMs: Int? = nil, sourceDeleted: Bool = false) {
+    func showGone(message: String, iconName: String = "icon_quote", detail: String? = nil, sourceHandle: String? = nil, sourceDateMs: Int? = nil, sourceDeleted: Bool = false, sourceTimeZone: TimeZone? = nil) {
         clear()
-        setSourceRow(handle: sourceHandle, dateMs: sourceDateMs, tappable: false, deleted: sourceDeleted)
+        setSourceRow(handle: sourceHandle, dateMs: sourceDateMs, tappable: false, deleted: sourceDeleted, timeZone: sourceTimeZone)
         isGoneState = true
         if sourceDeleted {
             goneLabel.attributedText = nil
@@ -681,7 +682,7 @@ final class BearyQuoteCardView: UIView {
     /// 引用规则简化（2026-10-31）：“仅你可见”角标随混合态取消而下线，本函数不再接受
     /// showOnlyYouBadge，调用点亦全部清掉。占位态（showGone）不带日期与缩略图：
     /// clear() 已把日期行与缩略图区藏起，showGone 只显图标 + 占位文案（+ 可选提醒句）。
-    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, allowThumbs: Bool = true, authorHandle: String? = nil, sourceTappable: Bool = false, quoteId: String? = nil, hostId: String? = nil) {
+    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, allowThumbs: Bool = true, authorHandle: String? = nil, sourceTappable: Bool = false, quoteId: String? = nil, hostId: String? = nil, sourceTimeZone: TimeZone? = nil) {
         // A2：展开态改按宿主 + 引用稳定 ID 查视图外存储——同键跨 cell 实例、
         // 跨异步重拉仍恢复；换引用时键不同自然重置。hostId 未传时（编辑器/
         // 时间线等旧调用点）仍走旧的同实例 keepExpanded 口径，不改其行为。
@@ -700,7 +701,7 @@ final class BearyQuoteCardView: UIView {
         let authorName = bearyDeletedAuthorDisplayName(authorName) ?? authorName
         // 52 批：lite 卡不带头像名——authorName/authorAvatar 参数仅为调用点兼容保留，不再赋值给任何视图。
         // 来源行：handle + 原尾部日期（feedTimeString 口径）并入本行，尾部不再重复显日期。
-        setSourceRow(handle: authorHandle, dateMs: createdAt, tappable: sourceTappable, deleted: false)
+        setSourceRow(handle: authorHandle, dateMs: createdAt, tappable: sourceTappable, deleted: false, timeZone: sourceTimeZone)
         if content.isEmpty {
             contentLabel.isHidden = true
         } else {

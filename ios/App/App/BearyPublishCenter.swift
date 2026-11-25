@@ -32,6 +32,11 @@ struct PublishSnapshot {
     let locationRegion: String?
     let locationCity: String?
     let locationStreet: String?
+    /// 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识
+    /// （草稿创建时取一次，之后编辑/发布都不改；无记录的旧草稿回落发布时设备时区）。
+    /// 快照不做 Codable 持久化，只经 saveDraftNow 落草稿，加字段安全。
+    /// 编辑不改时区：updateEntry 不发本键。
+    let tzName: String?
     let clientReq: String
     /// 快照拍定时的发起账号：发布中心起飞前再校验一次，防门禁/
     /// setVisibility 在途期间账号已变仍把旧篇以新账号发出。
@@ -591,6 +596,7 @@ final class BearyPublishCenter {
             liveVideos: runningJob.liveVideos.isEmpty ? nil : runningJob.liveVideos,
             visibility: snapshot.visibility,
             tags: snapshot.tags,
+            timeZoneName: snapshot.tzName,
             uploadProgress: progressHandler
         ) { [weak self, weak runningJob] result in
             DispatchQueue.main.async {
