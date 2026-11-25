@@ -723,7 +723,7 @@ final class BearyDetailViewController: UIViewController {
         return v
     }()
 
-    /// 限时 pill（作者行时间后；13 semibold 蓝档，存活“限时”虚线边／到期“私密”实线边）。
+    /// 限时 pill（作者行时间后；13 semibold，按态取色：存活“限时”深紫虚线边／到期“私密”深蓝实线边）。
     private let limitedPillView = BearyLimitedPillView()
 
     /// 限时倒计时 1 秒 tick：仅存活期限时篇在页时跑；离页／到期即停。
@@ -2399,7 +2399,7 @@ final class BearyDetailViewController: UIViewController {
     private func refreshEphemeralViews() {
         let hasEphemeral = entry.ephemeralUntil != nil
         let live = BearyEphemeral.isLive(entry)
-        // pill：限时篇才显（存活“限时”／到期“私密”，蓝档）；其余不显。
+        // pill：限时篇才显（存活“限时”深紫／到期“私密”深蓝）；其余不显。
         if hasEphemeral {
             limitedPillView.isHidden = false
             limitedPillView.configure(text: live ? "限时" : "私密", expired: !live)

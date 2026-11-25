@@ -53,6 +53,23 @@ enum BearyColors {
     /// 浅色白底对比约 7.13:1、绿底 0.12 浅底对比约 6.42:1；深色黑底对比约 9.46:1。
     /// 只用于文字前景；语义绿填充 #2fbf71 底色不动。
     static var deepGreenText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 52.0/255.0, green: 199.0/255.0, blue: 89.0/255.0, alpha: 1) : UIColor(red: 22.0/255.0, green: 101.0/255.0, blue: 52.0/255.0, alpha: 1) } }
+    /// 正文用深蓝（G6 对比度修复，2026-11-21）：浅 #0066CC / 深 #0A84FF。
+    /// 浅色白底对比约 5.57:1、蓝 13% 底对比约 4.71:1；深色黑底对比约 5.39:1、
+    /// 蓝 13% 深底对比约 4.77:1，均 ≥4.5:1。只用于私密 pill 文字前景；
+    /// 图标／描边／填充仍走 blue，不动。
+    static var deepBlueText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 10.0/255.0, green: 132.0/255.0, blue: 1.0, alpha: 1) : UIColor(red: 0.0, green: 102.0/255.0, blue: 204.0/255.0, alpha: 1) } }
+    /// 限时紫（规范值，深浅同值 #AF52DE）：限时 pill 的紫底／紫字基色。
+    static var limitedPurple: UIColor { UIColor(red: 175.0/255.0, green: 82.0/255.0, blue: 222.0/255.0, alpha: 1) }
+    /// 正文用深紫（G6 对比度修复，2026-11-21）：浅 #8E2FB8 / 深 #AF52DE。
+    /// 浅色白底对比约 6.46:1；深色黑底对比约 4.76:1，均 ≥4.5:1。
+    /// 只用于限时 pill 文字前景（无底／白底／黑底）；13% 紫底上的搜索 pill
+    /// 文字走 deepPurpleTextOnTint（深色 #AF52DE 在紫 13% 深底上仅 4.27:1）。
+    static var deepPurpleText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? BearyColors.limitedPurple : UIColor(red: 142.0/255.0, green: 47.0/255.0, blue: 184.0/255.0, alpha: 1) } }
+    /// 搜索 pill 限时文字专用（G6 对比度修复，2026-11-21）：浅 #8E2FB8 /
+    /// 深 #BE6FE8。深色 #AF52DE 在紫 13% 深底上仅约 4.27:1、未达 4.5:1，
+    /// 加亮为 #BE6FE8 后约 5.56:1；浅色紫 13% 底上约 5.52:1。
+    /// 只用于搜索页限时 pill 文字＋锁图标；卡片／详情限时 pill 走 deepPurpleText。
+    static var deepPurpleTextOnTint: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 190.0/255.0, green: 111.0/255.0, blue: 232.0/255.0, alpha: 1) : UIColor(red: 142.0/255.0, green: 47.0/255.0, blue: 184.0/255.0, alpha: 1) } }
     /// 网页 --line：浅 #dbdbdb / 深 #3a3a40（深色带蓝偏，单 white 值复现不了）。
     static var line: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 58.0/255.0, green: 58.0/255.0, blue: 64.0/255.0, alpha: 1) : UIColor(white: 0.86, alpha: 1) } }
     /// 网页 --bg：浅 #fff / 深 #0B0B0D（2026-11-07 微明度定版推翻 2026-10-27 纯黑决定：
@@ -82,9 +99,13 @@ enum BearyColors {
     static var limitedNear: UIColor { UIColor(red: 181.0/255.0, green: 127.0/255.0, blue: 30.0/255.0, alpha: 1) }
     static var limitedUrgent: UIColor { UIColor(red: 224.0/255.0, green: 90.0/255.0, blue: 30.0/255.0, alpha: 1) }
     static var limitedExpiredDash: UIColor { UIColor(red: 85.0/255.0, green: 85.0/255.0, blue: 79.0/255.0, alpha: 1) }
-    /// 限时倒计时文字色（预览值）：充裕 #8e8e8a、到期 #6d6d68；临近／紧急与虚线同色。
-    static var limitedCalmCountdown: UIColor { UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 138.0/255.0, alpha: 1) }
-    static var limitedExpiredCountdown: UIColor { UIColor(red: 109.0/255.0, green: 109.0/255.0, blue: 104.0/255.0, alpha: 1) }
+    /// 限时倒计时文字色（G6 对比度修复，2026-11-21；倒计时在操作行，底为页面底
+    /// 白／#0B0B0D，不是气泡底）：充裕浅 #73736E（白底约 4.77:1；旧 #8E8E8A
+    /// 仅 3.29:1）、深 #8E8E8A（黑底约 5.98:1）；到期浅 #6D6D68（白底约
+    /// 5.20:1）、深 #8E8E8A（黑底约 5.98:1；旧 #6D6D68 深色仅 3.78:1）。
+    /// 临近／紧急与虚线同色（未动：浅色 1.91:1／2.59:1 未达标，见 NOTES 待定）。
+    static var limitedCalmCountdown: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 138.0/255.0, alpha: 1) : UIColor(red: 115.0/255.0, green: 115.0/255.0, blue: 110.0/255.0, alpha: 1) } }
+    static var limitedExpiredCountdown: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 138.0/255.0, alpha: 1) : UIColor(red: 109.0/255.0, green: 109.0/255.0, blue: 104.0/255.0, alpha: 1) } }
     /// 限时气泡底（预览值）：深 #1d1d1f／浅 #f4f4f2。
     static var limitedBubbleBg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 29.0/255.0, green: 29.0/255.0, blue: 31.0/255.0, alpha: 1) : UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 242.0/255.0, alpha: 1) } }
 
