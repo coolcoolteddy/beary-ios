@@ -13,7 +13,7 @@ import UIKit
 // BearySheetKeyboardAvoidance 做（只跟停靠键盘，浮动/分屏不动，旧口径）；
 // 登录页自带 inset 处理，不动。
 // 系统 sheet 做不到旧容器那套，迁移带来的变化（见 PR 正文）：背后页面不再
-// 缩 0.92（只压暗）；登录 sheet 的玻璃 chrome 条退役、改实色 surface3；
+// 缩 0.92（只压暗）；面板底色透明、走系统液态玻璃（2026-11-25 Li 定）；
 // 出现/消失走系统弹簧，不再是 0.38s/damping 0.7 定制弹簧；iPad 宽屏 600
 // iPad 宽屏 600 居中靠 widthFollowsPreferredContentSizeWhenEdgeAttached 保证。
 // 部署目标 iOS 16.0。
@@ -34,7 +34,8 @@ enum BearySystemSheet {
     /// 调用方 show() 原有的 loadViewIfNeeded／frame／layout／updatePreferredContentSize
     /// 由本方法统一做，不再各写一套。
     static func present(_ sheet: UIViewController, from presenter: UIViewController) {
-        sheet.view.backgroundColor = BearyColors.surface3
+        // 面板透明：系统 sheet 自带液态玻璃底，实色会盖住它（2026-11-25 Li 定）。
+        sheet.view.backgroundColor = .clear
         sheet.loadViewIfNeeded()
         let presenterWidth = presenter.view.bounds.width
         let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
@@ -57,7 +58,8 @@ enum BearySystemSheet {
     /// 调用方须先 loadViewIfNeeded＋layoutIfNeeded 算好 preferredContentSize，
     /// 再调本方法（登录页 make() 内即此顺序）。
     static func configure(_ sheet: UIViewController) {
-        sheet.view.backgroundColor = BearyColors.surface3
+        // 面板透明：系统 sheet 自带液态玻璃底，实色会盖住它（2026-11-25 Li 定）。
+        sheet.view.backgroundColor = .clear
         sheet.modalPresentationStyle = .pageSheet
         guard let spc = sheet.sheetPresentationController else { return }
         spc.prefersGrabberVisible = true

@@ -49,7 +49,7 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.surface3
+        view.backgroundColor = .clear
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
@@ -79,7 +79,7 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
         view.addSubview(descriptionLabel)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
-        tableView.backgroundColor = BearyColors.surface3
+        tableView.backgroundColor = .clear
         // 列表 sheet 统一无分隔线（2026-11-18，规范 §1）。
         tableView.separatorStyle = .none
         tableView.rowHeight = Self.rowHeight
@@ -256,7 +256,7 @@ private final class BearySnapshotRowCell: UITableViewCell {
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         selectionStyle = .none
-        backgroundColor = BearyColors.surface3
+        backgroundColor = .clear
         accessoryType = .disclosureIndicator
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
         timeLabel.font = BearyDynamicType.tabularDigitsFont(ofSize: 17, weight: .semibold)
