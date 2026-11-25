@@ -9432,13 +9432,12 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         // 审计 P0-4：有效态门控（过期限时篇不放行分享/回应）；仅好友篇互关好友可贴（v15）。
         guard BearyEphemeral.isEffectivelyPublic(entry) || (entry.isFriendsOnly && isMutualFriend) else { return }
         let sheet = BearyEmotePickerSheetViewController()
-        sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self] pickedKey in
             self?.dismiss(animated: BearyMotion.animated(true)) {
                 self?.handleCellEmote(entry: entry, key: pickedKey)
             }
         }
-        present(sheet, animated: BearyMotion.animated(true), completion: nil)
+        BearySystemSheet.present(sheet, from: self)
     }
 
     /// 多选回应：POST 同一回应即撤下该只，POST 未贴过的回应只新增该只；
