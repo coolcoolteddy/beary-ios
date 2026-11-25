@@ -2633,12 +2633,13 @@ enum BearyText {
         }
         return out
     }
-    /// 记号 → 附件：尺寸为传入字号的 1.2 倍（正文 16pt 时为 19.2pt），
-    /// 基线按 descender 对齐；1.2 倍是行高不被撑高的上限（系统字体
-    /// ascent+descent 约为字号的 1.196 倍，再大就会把有表情的行顶高、行距不匀）。
+    /// 记号 → 附件：尺寸为传入字号的 1.875 倍（正文 16pt 时约 30pt，
+    /// 2026-11-22 Li 定全站放大），基线按 descender 对齐；1.875 倍已超过
+    /// 系统字体 ascent+descent（约 1.196 倍），有表情的行会被顶高、行距
+    /// 不匀，Li 已接受（贴纸式显示）。
     static func inlineAttachment(for key: String, font: UIFont, dark: Bool) -> NSAttributedString? {
         guard bearMoodKeys.contains(key) else { return nil }
-        let emoteSize = font.pointSize * 1.2
+        let emoteSize = font.pointSize * 1.875
         let image: UIImage?
         if BearyText.festivalMoodKeys.contains(key) {
             // 节日款无 PNG：不走 BearyEmoteImages（深色缺失会进 C3 上报），
@@ -2657,12 +2658,12 @@ enum BearyText {
         result.addAttribute(.font, value: font, range: NSRange(location: 0, length: 1))
         return result
     }
-    /// 记号 → GIF 附件：尺寸与心情同款（字号 1.2 倍、descender 基线）；
+    /// 记号 → GIF 附件：尺寸与心情同款（字号 1.875 倍、descender 基线）；
     /// image 是首帧（有缓存首帧时用它，否则 surface2 圆角占位）；动画不走
     /// 附件——编辑器只显首帧静态图，卡片/详情/时间线走覆盖层播。
     static func inlineGIFAttachment(randKey: String, font: UIFont, firstFrame: UIImage? = nil) -> NSAttributedString? {
         guard inlineGIFToken(for: randKey) != nil else { return nil }
-        let emoteSize = font.pointSize * 1.2
+        let emoteSize = font.pointSize * 1.875
         let attachment = NSTextAttachment()
         attachment.image = firstFrame ?? inlineGIFPlaceholderImage(size: emoteSize)
         attachment.bounds = CGRect(x: 0, y: font.descender, width: emoteSize, height: emoteSize)
@@ -2689,13 +2690,22 @@ enum BearyText {
     /// 仅表情放大倍数：与写日记页同款 ×2（参考图实测放大后约 2.2 倍，取 2 倍）。
     static let emojiOnlyFontScale: CGFloat = 2
 
-    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情字符、个数 1...3。
-    /// 空白（空格/换行）不计；[mood:]/[gif:] 记号是文字，不算表情。
-    /// 口径与写日记页 #1964（BearyComposerViewController 的同名私有实现）
-    /// 一字相同——该支未合入、写日记页文件不能动，故这里单写一份；
-    /// #1964 合入后两处统一到这里，删作曲侧的私有副本。
+    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情、个数 1...3。
+    /// 空白（空格/换行）不计；[mood:]/[gif:] 记号各算一个表情（2026-11-22
+    /// Li 定）：先把记号换成单个表情占位再数，正则与 inlineAttributedText
+    /// 的记号正则相同。
+    /// 口径与写日记页 BearyComposerViewController 的同名私有实现一字相同
+    /// （两处在表情放大支里同步改）；#1964 合入后两处统一到这里，删作曲侧
+    /// 的私有副本。
     static func isEmojiOnlyBodyText(_ plain: String) -> Bool {
-        let meaningful = plain.filter { !$0.isWhitespace }
+        let replaced: String
+        if let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]|\\[gif:([a-z0-9]+)\\]", options: []) {
+            let ns = plain as NSString
+            replaced = regex.stringByReplacingMatches(in: plain, options: [], range: NSRange(location: 0, length: ns.length), withTemplate: "🙂")
+        } else {
+            replaced = plain
+        }
+        let meaningful = replaced.filter { !$0.isWhitespace }
         guard (1...3).contains(meaningful.count) else { return false }
         return meaningful.allSatisfy { isEmojiCluster($0) }
     }
@@ -2716,7 +2726,7 @@ enum BearyText {
         }
     }
 
-    /// 正文生效字号：仅表情（≤3 个、无其他文字）时基准字号 ×2，否则基准字号。
+    /// 正文生效字号：仅表情（≤3 个、无其他文字，[mood:]/[gif:] 记号算表情）时基准字号 ×2，否则基准字号。
     /// 与写日记页同款算法（bodyFont.withSize(pointSize × 2））。
     static func effectiveBodyFont(_ baseFont: UIFont, for plain: String) -> UIFont {
         isEmojiOnlyBodyText(plain) ? baseFont.withSize(baseFont.pointSize * emojiOnlyFontScale) : baseFont

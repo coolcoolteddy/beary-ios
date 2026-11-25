@@ -1879,8 +1879,8 @@ final class BearyDetailViewController: UIViewController {
     /// 无空格）；无心情时原样返回；正文为空且有心情时只显附件。
     /// 深浅变体按当前 trait 取，主题切换时由 trait handler 重建正文。
     private func detailBodyAttributedText(_ content: String, moodKey: String?, fontSize: CGFloat = 16) -> NSAttributedString {
-        // 正文仅表情放大：1–3 个纯表情时字号 ×2（与写日记页 #1964、卡片同口径）；
-        // 行高倍数 1.6 跟字号走；心情缀尾附件按生效字号 ×1.2。
+        // 正文仅表情放大：1–3 个表情（含 [mood:]/[gif:] 记号）时字号 ×2（与写日记页 #1964、卡片同口径）；
+        // 行高倍数 1.6 跟字号走；心情缀尾附件按生效字号 ×1.875。
         // 限时篇字号由调用方按 BearyEphemeral.bodyFontSize 传入（短句 19／长文 16.5）。
         let font = BearyText.effectiveBodyFont(BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize)), for: content)
         let paragraph = NSMutableParagraphStyle()
@@ -1893,7 +1893,7 @@ final class BearyDetailViewController: UIViewController {
               let image = BearyEmoteImages.image(for: key, dark: traitCollection.userInterfaceStyle == .dark) else { return base }
         let attachment = NSTextAttachment()
         attachment.image = image
-        let emoteSize = font.pointSize * 1.2
+        let emoteSize = font.pointSize * 1.875
         attachment.bounds = CGRect(x: 0, y: font.descender, width: emoteSize, height: emoteSize)
         let result = NSMutableAttributedString(attributedString: base)
         result.append(NSAttributedString(attachment: attachment))
