@@ -4437,7 +4437,7 @@ final class BearyChromeViewController: UIViewController {
         if isBlockedAuthor(entry) {
             entry.placeholder = true
         }
-        let detail = BearyDetailViewController(entry: entry, isGuest: SessionManager.shared.isGuestMode)
+        let detail = BearyDetailViewController(entry: entry)
         detail.modalPresentationStyle = .fullScreen
         // 全站返回手势补齐：详情此前只有 fadeRise、没有左边缘右滑；改走
         // EdgeDismiss（slide 右滑入 + 跟手 dismiss；详情关闭无副作用，onDismissed
