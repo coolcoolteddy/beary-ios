@@ -2547,9 +2547,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 网页选人即 saveDraftQuiet 立即落盘，不走防抖（500ms 内杀 App 会丢改动）。
             self.saveDraftNow()
         }
-        present(picker, animated: !UIAccessibility.isReduceMotionEnabled) { [weak self] in
-            self?.isRecipientPickerPresenting = false
-        }
+        // 系统 sheet 呈现（见 BearySystemSheet）：present 即置 presentedViewController，
+        // 连点仍由上方守卫挡住，在途标记随即清掉。
+        BearySystemSheet.present(picker, from: self)
+        isRecipientPickerPresenting = false
     }
 
     @objc private func didTapClearRecipient() {
@@ -3015,9 +3016,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quoteSheet = sheet
             quotePanelOpen = true
             quoteSheetTransitioning = true
-            present(sheet, animated: BearyMotion.animated(true)) { [weak self] in
-                self?.quoteSheetTransitioning = false
-            }
+            // 系统 sheet 呈现（见 BearySystemSheet）：present 即置 presentedViewController，
+            // 重入仍由上方守卫挡住，在途标记随即清掉。
+            BearySystemSheet.present(sheet, from: self)
+            quoteSheetTransitioning = false
             refreshQuoteTabs()
             loadQuotePanelTab()
         } else {
@@ -3034,6 +3036,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 return
             }
             quoteSheetTransitioning = true
+            if sheet.presentingViewController == nil {
+                // 系统手势／点外已关掉 sheet（didDismiss 已回编辑器）：无须再 dismiss，直接卸载。
+                uninstallQuotePanelFromSheet()
+                quoteSheet = nil
+                quoteSheetTransitioning = false
+                return
+            }
             sheet.dismiss(animated: BearyMotion.animated(true)) { [weak self] in
                 self?.uninstallQuotePanelFromSheet()
                 self?.quoteSheet = nil

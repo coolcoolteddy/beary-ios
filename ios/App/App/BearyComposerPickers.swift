@@ -3,13 +3,10 @@ import UIKit
 // ===== 编辑器 @ 选人（网页对齐批）=====
 // @ 选人：调 GET /beary/api/search?q=，只取 users 组（display_name/handle 匹配，≤8 条，
 // 与网页搜索同口径），结果过滤掉本人；点行即回传 SearchUser，调用方负责 @ chip。
-// 呈现：自定义底 sheet（文件内自包含，不碰 SceneDelegate）：手机端 max-height 82vh 底 sheet、
-// 圆角 20/20/0/0、阴影 0 −12 32 rgba(0,0,0,.22)；宽 ≥821 时居中 440
-// 全圆角 20 + 边框 1 + 阴影 0 24 60 rgba(0,0,0,.30)；自定义抓手 40×4（不用系统抓手）。
-// 遮罩为通用 0.45 黑遮罩（网页 .modal .backdrop 口径），点遮罩关闭；第 30 项起遮罩与面板
-// 转场解耦（BearySheetSlideTransition）：面板上滑／下滑，遮罩只做 0.26s 透明度淡入／淡出，
-// 遮罩本身永不位移、永不瞬间消失；键盘弹出时 sheet
-// 底边抬到键盘上方（此前由 UISheet 承担的避让，改自定义 sheet 后在本文件内补上）。
+// 呈现：系统底部 sheet（UISheetPresentationController，见 BearySystemSheet）：
+// 内容高跟内容走、封顶 320（超出部分列表内滚动）；点外面收起、下滑关闭均走
+// 系统；键盘弹出时列表区底边按停靠键盘顶升（BearySheetKeyboardAvoidance），
+// 搜索框不被键盘盖住。
 // 搜索框为图标 + “搜索昵称或 @用户名”；init/loading/none/fail 四态齐全；
 // 加载态为搜索图标位 18×18：闲时放大镜，搜索中换 beary-loading 并旋转
 // （网页 addrSetIconBusy 同款，不再用系统 spinner，也不再转放大镜）。
@@ -19,7 +16,7 @@ import UIKit
 
 // MARK: - @ 选人（底 sheet；单选、本人已过滤）
 
-final class BearyRecipientPickerViewController: UIViewController, UITextFieldDelegate, BearySheetTransitionable {
+final class BearyRecipientPickerViewController: UIViewController, UITextFieldDelegate, BearySystemSheetSizing {
 
     /// 点行回传（调用方写 selectedRecipient；本页随后自行 dismiss）。
     /// iCity：@ 提醒无按篇开关——第二参仅为签名兼容保留，调用方忽略。
@@ -27,27 +24,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 旧面板内通知开关当前值；iCity 起开关行隐藏，本字段仅作初值占位保留。
     var notifyRecipient = true
 
-    /// 第 30 项：专属转场强持有（transitioningDelegate 弱引用）。
-    private let sheetTransition = BearySheetSlideTransition()
-
-    override init(nibName: String?, bundle: Bundle?) {
-        super.init(nibName: nibName, bundle: bundle)
-        modalPresentationStyle = .overFullScreen
-        transitioningDelegate = sheetTransition
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    private let backdropButton = UIButton(type: .custom)
-    private let sheetView = UIView()
-    private let grabberWrap = UIView()
-    private let grabberView = UIView()
-    /// 2026-10-30 抓手批：此前只有抓手视觉、没有 pan 手势。透明热区
-    /// 盖在 sheet 顶部 70pt（抓手行 + 标题行）；搜索框顶在 y70，正在热区
-    /// 边界之外，不受影响。
-    private let grabHitView = BearyGrabHitView()
     private let headerTitle = UILabel()
     private let searchBox = UIView()
     private let searchIcon = UIImageView()
@@ -84,40 +60,40 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 视觉审计 08：搜索框焦点态（聚焦＝聚焦阴影、失焦＝清掉阴影，搜索页同口径）；
     /// 阴影只归 updateSearchBoxShadow 管，边框恒为 0。
     private var searchBoxFocused = false
-    private var isPadLayout = false
-    private var keyboardHeight: CGFloat = 0
     /// 编辑器打开选人器时键盘已弹起的高度（编辑器 currentKeyboardHeight 传进来；
     /// 0 = 键盘没起，走正常通知路径）。见 viewWillAppear/viewDidAppear 的初始抬升。
     var initialKeyboardHeight: CGFloat = 0
-    /// 审计 D-4：换算到 view 坐标后的键盘终帧（.zero = 无键盘/键盘不在屏上）；
-    /// 键盘通知给的是屏幕坐标，直接对 view.bounds.height 算高度在浮动键盘、
-    /// 分屏/台前调度下会错位，故一律先经屏幕坐标空间 convert。
-    private var keyboardFrameInView: CGRect = .zero
-    /// 第 10 项：sheet 最大高度——高度按内容算（见 updateSheetHeight），320 只作封顶，
-    /// 不再是写死高；首帧未布局前先以封顶值占位，首轮布局即被内容高替换。
+    /// 第 10 项：sheet 最大高度——高度按内容算（见 updatePreferredContentSize），320 只作封顶，
+    /// 不再是写死高；超出部分由 listScrollView 滚动承担。
     private let sheetMaxHeight: CGFloat = 320
-    private var sheetHeightConstraint: NSLayoutConstraint?
-    private var sheetWidthConstraint: NSLayoutConstraint?
-    /// L11：iPad 居中卡片的 centerY 约束——键盘弹出时按遮挡量上抬，收起时归零。
-    private var padCenterYConstraint: NSLayoutConstraint?
-    private var phoneConstraints: [NSLayoutConstraint] = []
-    private var padConstraints: [NSLayoutConstraint] = []
-    private var phoneBottomConstraint: NSLayoutConstraint?
+    /// 列表区底边约束：贴视图底边 -（14＋安全区底边＋键盘顶升量），见 updateListBottomConstraint。
     private var listBottomConstraint: NSLayoutConstraint?
     private var stateRetryBottomConstraint: NSLayoutConstraint?
+    /// 停靠键盘顶升量（BearySheetKeyboardAvoidance 回调／初始抬升写入）。
+    private var keyboardLift: CGFloat = 0
+    /// 停靠键盘顶升（只跟停靠键盘，浮动/分屏不动，见 BearySystemSheet）。
+    private var keyboardAvoidance: BearySheetKeyboardAvoidance?
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor.clear
+        view.backgroundColor = .clear
+        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.layer.masksToBounds = true
         buildViews()
-        buildSheetConstraints()
-        applySheetChrome()
         showState(kind: "init", query: "")
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
-        // 审计 D-4：补 WillChangeFrame——候选栏显隐、旋转、浮动键盘拖动只发本通知，
-        // 不发 WillShow/WillHide；与 WillShow 同一处理（绝对量重算，重复调用无叠加）。
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+        // 停靠键盘顶升列表区底边（只跟停靠键盘，浮动/分屏不动；顶升量＝键盘盖住安全区底边的部分）。
+        keyboardAvoidance = BearySheetKeyboardAvoidance(view: view) { [weak self] keyboardTop in
+            guard let self = self else { return }
+            let lift: CGFloat
+            if let top = keyboardTop {
+                lift = max(0, self.view.bounds.maxY - self.view.safeAreaInsets.bottom - top)
+            } else {
+                lift = 0
+            }
+            self.keyboardLift = lift
+            self.updateListBottomConstraint()
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -138,30 +114,35 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 键盘已弹起时打开选人器的初始抬升：编辑器里正打字时点 @，键盘本就开着，
     /// 此时切 first responder 不发 WillShow，只靠通知的旧代码抬不起 sheet，
     /// 搜索框会被键盘盖住（搜索框离 sheet 底约 230pt，小于键盘高）。
-    /// 编辑器把当时的键盘高经 initialKeyboardHeight 传进来，这里按同一套避让
-    /// 逻辑（applyKeyboardFrame，绝对量重算）先抬一次，用完即清；之后的
-    /// WillShow/WillChangeFrame/WillHide 仍按绝对量重算接管，不叠加。
+    /// 编辑器把当时的键盘高经 initialKeyboardHeight 传进来，这里按同一套顶升
+    /// 口径（updateListBottomConstraint）先抬一次，用完即清；之后的键盘通知
+    /// 仍由 BearySheetKeyboardAvoidance 接管，不叠加。
     private func applyInitialKeyboardLiftIfNeeded() {
         guard initialKeyboardHeight > 0, view.bounds.height > 0 else { return }
         let height = initialKeyboardHeight
         initialKeyboardHeight = 0
-        let frame = CGRect(x: 0, y: view.bounds.height - height, width: view.bounds.width, height: height)
-        applyKeyboardFrame(frame, note: nil)
+        keyboardLift = max(0, height - view.safeAreaInsets.bottom)
+        updateListBottomConstraint()
+    }
+
+    /// 列表区底边常量：14＋安全区底边＋键盘顶升量（与 BearySheetKeyboardAvoidance
+    /// 的顶升口径同值：键盘顶沿上方 14pt 处收住，安全区底边不重复计）。
+    private func updateListBottomConstraint() {
+        listBottomConstraint?.constant = -(14 + view.safeAreaInsets.bottom + keyboardLift)
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        updateLayoutModeIfNeeded()
-        updateSheetHeight()
+        updateListBottomConstraint()
+        updatePreferredContentSize()
         // 视觉审计 08：bounds 变了（旋转／分屏）跟进阴影 path，免得聚焦阴影还按旧框画。
         updateSearchBoxShadow()
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 形态与通知开关描边。
+        // CGColor 只在赋值时解析一次：深浅切换时重刷通知开关描边。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            applySheetChrome()
             // 视觉审计 08：深浅切换重刷阴影时走焦点态（聚焦仍是聚焦阴影、
             // 失焦清掉阴影），不再无条件写回 line 丢掉焦点态。
             updateSearchBoxShadow()
@@ -175,23 +156,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     private func buildViews() {
-        backdropButton.backgroundColor = BearySheetChrome.scrimColor
-        backdropButton.accessibilityLabel = "关闭"
-        backdropButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
-        backdropButton.bearyAddPressFeedback()
-
-        // 审计 D-16：浮层背景与回应 Sheet 一致走 surface3（深色 #18181C；
-        // 浅色下 surface3 #F5F5F5 几贴 bg 白，观感贴底）；全屏页面仍用 bg，不动。
-        sheetView.backgroundColor = BearyColors.surface3
-        sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
-        // 阴影：手机端走底 sheet 档；iPad 卡片走 raised 档（2026-11-02 定版第 2 组，
-        // 旧 0.30/30/(0, 24) 档已废弃），此处不再自写数值。
-
-        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #F5F5F5）
-        // 对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-
         // v2 黑白灰：标题行去掉 40×40 橙圈＋橙色 icon_at，改纯文字标题
         // （15 bold、墨色，与表情 sheet、草稿箱标题同款）；标题顶距 14，
         // 与旧 40 行同中心（见约束），纵向节奏不动。
@@ -283,21 +247,15 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.isHidden = true
         stateRetryButton.addTarget(self, action: #selector(didTapStateRetry), for: .touchUpInside)
         stateRetryButton.bearyAddPressFeedback()
-        for v in [backdropButton, sheetView, grabberWrap, grabberView, grabHitView, headerTitle, searchBox, searchIcon, searchField, notifyRow, notifyCheckButton, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
+        for v in [headerTitle, searchBox, searchIcon, searchField, notifyRow, notifyCheckButton, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
-        view.addSubview(backdropButton)
-        view.addSubview(sheetView)
-        sheetView.addSubview(grabberWrap)
-        grabHitView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(grabberPanGesture(_:))))
-        sheetView.addSubview(grabHitView)
-        sheetView.addSubview(headerTitle)
-        grabberWrap.addSubview(grabberView)
-        sheetView.addSubview(searchBox)
+        view.addSubview(headerTitle)
+        view.addSubview(searchBox)
         searchBox.addSubview(searchIcon)
         searchBox.addSubview(searchField)
-        sheetView.addSubview(notifyRow)
-        sheetView.addSubview(listContainer)
+        view.addSubview(notifyRow)
+        view.addSubview(listContainer)
         listContainer.addSubview(listScrollView)
         listScrollView.delaysContentTouches = false
         listScrollView.addSubview(rowsStack)
@@ -316,31 +274,18 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateView.addSubview(stateRetryButton)
         let retryBottom = stateRetryButton.bottomAnchor.constraint(equalTo: stateView.bottomAnchor)
         stateRetryBottomConstraint = retryBottom
+        let listBottom = listContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -(14 + view.safeAreaInsets.bottom + keyboardLift))
+        listBottomConstraint = listBottom
         NSLayoutConstraint.activate([
-            backdropButton.topAnchor.constraint(equalTo: view.topAnchor),
-            backdropButton.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            backdropButton.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            backdropButton.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            grabberWrap.topAnchor.constraint(equalTo: sheetView.topAnchor),
-            grabberWrap.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
-            grabberWrap.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-            grabberView.centerXAnchor.constraint(equalTo: grabberWrap.centerXAnchor),
-            grabberView.topAnchor.constraint(equalTo: grabberWrap.topAnchor, constant: BearySheetChrome.listTopPadding),
-            grabberView.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
-            grabHitView.topAnchor.constraint(equalTo: sheetView.topAnchor),
-            grabHitView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
-            grabHitView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
-            grabHitView.heightAnchor.constraint(equalToConstant: 70),
+            // 顶部留白与旧抓手区等高（列表顶留白 6＋抓手高 4＋标题间距 14）：系统抓手占顶区，标题位置不动。
+            headerTitle.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding + BearySheetChrome.grabberHeight + 14),
             // v2：标题行无图标圈——标题顶距 14（与旧 40 行同中心：旧中心为
             // 抓手底 4＋20，新中心为 14＋标题半高≈24），左缘 16，右缘贴视图边距。
-            headerTitle.topAnchor.constraint(equalTo: grabberWrap.bottomAnchor, constant: 14),
-            headerTitle.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
-            headerTitle.trailingAnchor.constraint(lessThanOrEqualTo: sheetView.trailingAnchor, constant: -16),
+            headerTitle.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            headerTitle.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             searchBox.topAnchor.constraint(equalTo: headerTitle.bottomAnchor, constant: 12),
-            searchBox.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
-            searchBox.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
+            searchBox.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            searchBox.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             // R13 方案 B：搜索框显式高度 48pt（不再内容驱动，避免 sheet fitting 压高导致图标/占位看不见）。
             // 32 清单第 25 项：搜索框改 ≥48——16pt 输入字跟随放大时框随字长高、不裁字；默认字号下仍为 48。
             searchBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
@@ -355,13 +300,13 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             // iCity：通知行隐藏——列表直接贴搜索框下 10pt；通知行约束保留、
             // 行本身隐藏（不绘图、不接手势），与列表区的少量重叠不可见、无害。
             notifyRow.topAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: 8),
-            notifyRow.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
-            notifyRow.trailingAnchor.constraint(lessThanOrEqualTo: sheetView.trailingAnchor, constant: -16),
+            notifyRow.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            notifyRow.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             notifyCheckButton.widthAnchor.constraint(equalToConstant: 16),
             notifyCheckButton.heightAnchor.constraint(equalToConstant: 16),
             listContainer.topAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: 10),
-            listContainer.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 10),
-            listContainer.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -10),
+            listContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
+            listContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
             listScrollView.topAnchor.constraint(equalTo: listContainer.topAnchor),
             listScrollView.leadingAnchor.constraint(equalTo: listContainer.leadingAnchor),
             listScrollView.trailingAnchor.constraint(equalTo: listContainer.trailingAnchor),
@@ -392,76 +337,18 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             stateRetryButton.topAnchor.constraint(equalTo: stateSubtitle.bottomAnchor, constant: 8),
             stateRetryButton.centerXAnchor.constraint(equalTo: stateView.centerXAnchor),
             // 审计 D-10：失败态“重试”改 BearyHit44Button（见声明处）并补 ≥44 宽高约束，
-            // 视觉帧本身即达标，不依赖热区外扩；父容器 stateView/listContainer/sheetView
+            // 视觉帧本身即达标，不依赖热区外扩；父容器 stateView/listContainer
             // 均未设 clipsToBounds/masksToBounds，且按钮上下均有约束锚点（顶贴副标题、
             // 底贴 stateView 底），扩展热区无截断；文字与位置不动。
             stateRetryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
             stateRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             retryBottom,
+            listBottom,
         ])
     }
 
-    // MARK: - 自定义 sheet 布局（手机端底 sheet / 宽 ≥821 居中卡片）
-
-    private func buildSheetConstraints() {
-        let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: sheetMaxHeight)
-        heightConstraint.isActive = true
-        sheetHeightConstraint = heightConstraint
-        let widthConstraint = sheetView.widthAnchor.constraint(equalToConstant: 440)
-        sheetWidthConstraint = widthConstraint
-        let bottomConstraint = sheetView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        phoneBottomConstraint = bottomConstraint
-        phoneConstraints = [
-            sheetView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            sheetView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bottomConstraint,
-        ]
-        let padCenterY = sheetView.centerYAnchor.constraint(equalTo: view.centerYAnchor)
-        padCenterYConstraint = padCenterY
-        padConstraints = [
-            sheetView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            padCenterY,
-            widthConstraint,
-        ]
-        let listBottom = listContainer.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor, constant: -BearySheetChrome.listBottomPadding)
-        listBottom.isActive = true
-        listBottomConstraint = listBottom
-        NSLayoutConstraint.activate(phoneConstraints)
-    }
-
-    private func updateLayoutModeIfNeeded() {
-        let pad = view.bounds.width >= 821
-        if pad == isPadLayout {
-            return
-        }
-        isPadLayout = pad
-        // L11：布局模式切换时清掉键盘抬升量（键盘事件会按新布局重算，避免旧抬升量叠加）。
-        padCenterYConstraint?.constant = 0
-        if pad {
-            NSLayoutConstraint.deactivate(phoneConstraints)
-            NSLayoutConstraint.activate(padConstraints)
-        } else {
-            NSLayoutConstraint.deactivate(padConstraints)
-            NSLayoutConstraint.activate(phoneConstraints)
-        }
-        applySheetChrome()
-    }
-
-    private func applySheetChrome() {
-        if isPadLayout {
-            sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-            sheetView.layer.borderWidth = 0
-            BearyShadow.applyRaised(to: sheetView.layer)
-        } else {
-            sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-            sheetView.layer.borderWidth = 0
-            BearyShadow.applyRaised(to: sheetView.layer)
-        }
-    }
-
     /// 内容量出的 sheet 度量（与键盘无关）：宽度、标题高、搜索框高、内容拟合高。
-    /// updateSheetHeight 与 applyKeyboardFrame 共用——同一键盘终帧算出同一目标高，
-    /// 键盘事件不再先按旧高算位移、等布局遍改高后再算一次（第 5 轮第 2 项）。
+    /// updatePreferredContentSize 用——同一内容算出同一目标高。
     private struct SheetContentMetrics {
         var sheetWidth: CGFloat
         var titleHeight: CGFloat
@@ -470,9 +357,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     private func sheetContentMetrics() -> SheetContentMetrics? {
-        let containerHeight = view.bounds.height
-        guard containerHeight > 0 else { return nil }
-        let sheetWidth = isPadLayout ? min(440, view.bounds.width - 80) : view.bounds.width
+        let sheetWidth = view.bounds.width
+        guard sheetWidth > 0 else { return nil }
         let searchHeight = searchBox.systemLayoutSizeFitting(
             CGSize(width: max(sheetWidth - 32, 0), height: 0),
             withHorizontalFittingPriority: .required,
@@ -494,7 +380,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 verticalFittingPriority: .fittingSizeLevel
             ).height
         }
-        let bottomPad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
+        // 底 padding 与列表区底约束同值（14＋安全区底边）：进场前安全区为 0 时
+        // 用调用方传的 extraBottomInset 补齐，见 updatePreferredContentSize。
+        let bottomPad = 14 + view.safeAreaInsets.bottom
         // 抓手 14 + 标题顶 14 + 标题高 + 标题到搜索 12 + 搜索框高 + 搜索到列表 10
         // + 列表高 + 底 padding（iCity：通知行隐藏后不再占 8 + 行高 + 10；
         // v2：标题行橙圈已删，行高由标题本身定，标题高取 intrinsic，首帧为 0 时兜底 20）。
@@ -503,235 +391,18 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         return SheetContentMetrics(sheetWidth: sheetWidth, titleHeight: titleHeight, searchHeight: searchHeight, fittingHeight: fittingHeight)
     }
 
-    /// 给定键盘高（view 坐标下键盘顶沿到 view 底的距离）算 sheet 目标高。
-    /// 审计 D-4：可用高按键盘顶沿计——手机端键盘顶沿即为可见高（此前 iPad 直接
-    /// 不扣键盘高度，浮动/分屏键盘会盖住居中卡片）；iPad 另受“上抬后卡片顶不得
-    /// 顶出安全区”约束：卡片底 = 键盘顶 - 14，故高上限 = 键盘顶 - 14 - 安全区顶。
-    /// 超出上限的部分由 listScrollView 滚动承担（列表区已是滚动容器，行不裁）。
-    private func targetSheetHeight(keyboardHeight: CGFloat, metrics: SheetContentMetrics) -> CGFloat {
-        let containerHeight = view.bounds.height
-        let visibleHeight: CGFloat
-        if isPadLayout {
-            visibleHeight = containerHeight
-        } else {
-            visibleHeight = keyboardHeight > 0 ? max(containerHeight - keyboardHeight, 0) : containerHeight
-        }
-        var maxHeight = max(visibleHeight * 0.82, 0)
-        if isPadLayout, keyboardHeight > 0 {
-            let keyboardTop = containerHeight - keyboardHeight
-            let keyboardFitHeight = keyboardTop - 14 - view.safeAreaInsets.top
-            maxHeight = min(maxHeight, max(keyboardFitHeight, 0))
-        }
-        return min(metrics.fittingHeight, maxHeight, sheetMaxHeight)
-    }
-
-    /// sheet 高 = 内容高，上限 82vh（键盘弹出时手机端上限改按键盘上方的可见高计），
-    /// 且不超过 320（第 10 项封顶；超出部分由 listScrollView 滚动承担）。
-    private func updateSheetHeight() {
-        let containerHeight = view.bounds.height
-        guard containerHeight > 0 else { return }
-        let sheetWidth = isPadLayout ? min(440, view.bounds.width - 80) : view.bounds.width
-        if let widthConstraint = sheetWidthConstraint, isPadLayout {
-            widthConstraint.constant = max(sheetWidth, 0)
-        }
-        if let listBottom = listBottomConstraint {
-            let pad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
-            listBottom.constant = -pad
-        }
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高；宽/字号档变化时跟帧补齐。
+    /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
+    /// sheet 高 = 内容高，不超过 320（第 10 项封顶；超出部分由 listScrollView
+    /// 滚动承担）；键盘弹出时高度不动，只顶升列表区底边（见 keyboardAvoidance）。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         guard let metrics = sheetContentMetrics() else { return }
-        let target = targetSheetHeight(keyboardHeight: keyboardHeight, metrics: metrics)
-        if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - target) > 0.5 {
-            heightConstraint.constant = target
-        }
-    }
-
-    @objc private func keyboardWillShow(_ note: Notification) {
-        applyKeyboardFrame(keyboardFrameFrom(note), note: note)
-    }
-
-    @objc private func keyboardWillChangeFrame(_ note: Notification) {
-        applyKeyboardFrame(keyboardFrameFrom(note), note: note)
-    }
-
-    @objc private func keyboardWillHide(_ note: Notification) {
-        keyboardFrameInView = .zero
-        keyboardHeight = 0
-        if let bottomConstraint = phoneBottomConstraint, !isPadLayout {
-            bottomConstraint.constant = 0
-        }
-        padCenterYConstraint?.constant = 0
-        animateKeyboardLayout(note)
-    }
-
-    /// 审计 D-4：键盘终帧由屏幕坐标换算到 view 坐标（旧 keyboardHeightFrom 直接
-    /// 用屏幕坐标对 view.bounds.height 相减，分屏/浮动键盘下错位）；换算走屏幕坐标空间。
-    private func keyboardFrameFrom(_ note: Notification) -> CGRect {
-        guard let info = note.userInfo else { return .zero }
-        guard let value = info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return .zero }
-        return view.convert(value.cgRectValue, from: UIScreen.main.coordinateSpace)
-    }
-
-    /// 审计 D-4：键盘避让统一处理（WillShow/WillChangeFrame 共用，绝对量重算）：
-    /// 手机端：键盘帧非空即抬升，不再以键盘帧与当前卡片帧相交为门禁——初始抬升后
-    /// 卡片底恰贴键盘顶沿，焦点切到搜索框时系统发 WillChangeFrame（候选栏显隐），
-    /// 帧顶贴着或略低于已抬升的卡片底时门禁会误判 false，把抬升整个撤销；
-    /// initialKeyboardHeight 已在 willAppear 消费，不会再抬第二次，卡片跌回屏底。
-    /// iPad 端（第 5 轮第 1、2 项）：先按“容器＋内容＋键盘”算出目标高度，再用
-    /// 目标高度构造未避让基准帧（居中、目标高），与换算到同一坐标系的键盘矩形
-    /// 求交——只有真正遮挡时才避让；浮动键盘在弹窗旁边、或底边已在弹窗上方时
-    /// 不算遮挡。随后一次性提交高度与位置约束，不再先按旧高算位移、等布局遍
-    /// 改高后再算一次；相同键盘终帧得到相同的目标尺寸与位置，去重直接比目标值。
-    /// 遮挡时分两种：键盘横向盖住整个弹窗（停靠键盘）按旧口径整张抬到键盘顶沿
-    /// 之上（+14 间隙，L11 口径保留），高度上限仍按键盘顶沿计；浮动键盘只遮住
-    /// 局部时，只抬到露出被遮的输入框（搜索框），不整张抬，高度也不再按键盘顶
-    /// 沿压（keyboardHeight 归 0，使 updateSheetHeight 算出同一目标高）。
-    /// keyboardHeight 供 updateSheetHeight 计可用高（手机端 = 到键盘顶沿的距离，
-    /// iPad 端同样计入后由那里的键盘适配高上限再约束一次）。
-    private func applyKeyboardFrame(_ frame: CGRect, note: Notification?) {
-        guard isPadLayout else {
-            // 手机端：原逻辑不动。
-            let targetKeyboardHeight: CGFloat = frame.isEmpty ? 0 : max(view.bounds.height - frame.minY, 0)
-            // 相同键盘帧去重：帧未变且本次目标值与当前值一致时不再重复布局。
-            if frame.isEmpty == false, frame == keyboardFrameInView, keyboardHeight == targetKeyboardHeight,
-               phoneBottomConstraint?.constant == -targetKeyboardHeight {
-                return
-            }
-            keyboardFrameInView = frame
-            keyboardHeight = targetKeyboardHeight
-            if let bottomConstraint = phoneBottomConstraint {
-                bottomConstraint.constant = -keyboardHeight
-            }
-            animateKeyboardLayout(note)
-            return
-        }
-        // iPad 端：目标高度先行——高度与位置都由同一组目标值一次提交，
-        // 随后布局遍里 updateSheetHeight 用同一 keyboardHeight 算出同一目标高，不二次改高。
-        guard let metrics = sheetContentMetrics() else { return }
-        let heightNoKeyboard = targetSheetHeight(keyboardHeight: 0, metrics: metrics)
-        let baselineRect = CGRect(
-            x: (view.bounds.width - metrics.sheetWidth) / 2,
-            y: view.bounds.midY - heightNoKeyboard / 2,
-            width: metrics.sheetWidth,
-            height: heightNoKeyboard
-        )
-        var targetHeight = heightNoKeyboard
-        var targetLift: CGFloat = 0
-        var targetKeyboardHeight: CGFloat = 0
-        if frame.isEmpty == false, frame.intersects(baselineRect) {
-            let keyboardTop = frame.minY
-            if frame.minX <= baselineRect.minX, frame.maxX >= baselineRect.maxX {
-                // 停靠/全宽键盘：整张抬到键盘顶沿之上，高度上限按键盘顶沿计。
-                targetKeyboardHeight = max(view.bounds.height - keyboardTop, 0)
-                targetHeight = targetSheetHeight(keyboardHeight: targetKeyboardHeight, metrics: metrics)
-                let rect = CGRect(
-                    x: baselineRect.minX,
-                    y: view.bounds.midY - targetHeight / 2,
-                    width: metrics.sheetWidth,
-                    height: targetHeight
-                )
-                targetLift = rect.maxY > keyboardTop ? -(rect.maxY - keyboardTop + 14) : 0
-            } else {
-                // 浮动键盘局部遮挡：只抬到露出被遮的输入框（搜索框），不整张抬、不压高。
-                // 搜索框在 sheet 内偏移：抓手 14 + 标题顶 14 + 标题高 + 标题到搜索 12。
-                let searchTop = baselineRect.minY + 14 + 14 + metrics.titleHeight + 12
-                let searchRect = CGRect(
-                    x: baselineRect.minX + 16,
-                    y: searchTop,
-                    width: max(metrics.sheetWidth - 32, 0),
-                    height: metrics.searchHeight
-                )
-                if frame.intersects(searchRect) {
-                    let neededLift = searchRect.maxY - keyboardTop + 14
-                    // 抬升后卡片顶不得顶出安全区。
-                    let maxLift = max(0, baselineRect.minY - view.safeAreaInsets.top)
-                    targetLift = -min(max(0, neededLift), maxLift)
-                }
-            }
-        }
-        // 相同键盘帧去重：帧未变且本次目标值与当前值一致时不再重复布局；布局
-        // 模式切换清掉抬升量后目标值与当前值不同，不命中去重，仍会重算。
-        if frame == keyboardFrameInView, keyboardHeight == targetKeyboardHeight,
-           abs((sheetHeightConstraint?.constant ?? 0) - targetHeight) <= 0.5,
-           padCenterYConstraint?.constant == targetLift {
-            return
-        }
-        keyboardFrameInView = frame
-        keyboardHeight = targetKeyboardHeight
-        if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - targetHeight) > 0.5 {
-            heightConstraint.constant = targetHeight
-        }
-        padCenterYConstraint?.constant = targetLift
-        animateKeyboardLayout(note)
-    }
-
-    /// M8：sheet 高度/位置变化走键盘动画同曲线（duration + curve 均取键盘通知，不再固定 0.25 线性）。
-    /// 6-3 例外：本函数内 layoutIfNeeded 在键盘动画内、duration/curve 均取键盘通知，
-    /// 属系统曲线同步，保留不重写（不要当作通用约束动画口径扩散）。
-    private func animateKeyboardLayout(_ note: Notification?) {
-        var duration: TimeInterval = 0.25
-        var options: UIView.AnimationOptions = []
-        if let info = note?.userInfo {
-            if let value = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval {
-                duration = value
-            }
-            if let curveValue = info[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int {
-                options = UIView.AnimationOptions(rawValue: UInt(curveValue << 16))
-            }
-        }
-        if UIAccessibility.isReduceMotionEnabled {
-            view.layoutIfNeeded()
-        } else {
-            UIView.animate(withDuration: duration, delay: 0, options: options, animations: {
-                self.view.layoutIfNeeded()
-            }, completion: nil)
-        }
-    }
-
-    @objc private func didTapClose() {
-        dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
-    }
-
-    /// 2026-10-30 抓手批：@ 选人 sheet 抓手下滑跟手——下滑超 80pt
-    /// 或快速下滑（速度 > 600）关闭，否则统一弹簧（0.26s／damping 0.7＋松手速度）弹回原位；上滑不动
-    /// （弹窗贴底，底部不空）。遮罩点按关闭不动。
-    /// 注意：键盘抬升走约束（phoneBottomConstraint / padCenterY），
-    /// 本处理只动 transform，不改约束，两者不打架。
-    @objc private func grabberPanGesture(_ gesture: UIPanGestureRecognizer) {
-        let translation = gesture.translation(in: view)
-        switch gesture.state {
-        case .changed:
-            let offset = BearySheetDrag.offset(for: translation.y)
-            sheetView.transform = CGAffineTransform(translationX: 0, y: offset)
-            // 审计第 14 项：遮罩跟手变淡，与游客提示同口径（共用映射）。
-            backdropButton.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheetView.bounds.height)
-        case .ended:
-            let velocity = gesture.velocity(in: view).y
-            if translation.y > 80 || velocity > 600 {
-                didTapClose()
-            } else {
-                let restore = {
-                    self.sheetView.transform = .identity
-                    self.backdropButton.alpha = 1
-                }
-                if UIAccessibility.isReduceMotionEnabled {
-                    restore()
-                } else {
-                    let offset = BearySheetDrag.offset(for: translation.y)
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
-                }
-            }
-        case .cancelled, .failed:
-            let restore = {
-                self.sheetView.transform = .identity
-                self.backdropButton.alpha = 1
-            }
-            if UIAccessibility.isReduceMotionEnabled {
-                restore()
-            } else {
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
-            }
-        default:
-            break
+        let safeBottom = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
+        let height = min(metrics.fittingHeight - view.safeAreaInsets.bottom + safeBottom, sheetMaxHeight)
+        let preferred = CGSize(width: metrics.sheetWidth, height: height)
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 
@@ -823,6 +494,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             listScrollView.isHidden = false
             // 结果区“搜索结果”分组 label：stack 的 arranged 子项，隐藏时自动塌掉。
             resultsLabelWrap.isHidden = false
+            updatePreferredContentSize()
             return
         }
         resultsLabelWrap.isHidden = true
@@ -856,6 +528,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             stateTitle.text = "@ 谁"
             stateSubtitle.text = "公开后对方会收到提醒"
         }
+        updatePreferredContentSize()
     }
 
     /// 第 25 轮第 3 项（规范 §9）：搜索框内图标恒为放大镜、静态——搜索中也不换
@@ -1217,8 +890,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         recipientRowViews = newViews
         // M8：搜索结果行错峰滑入（减动效跳过；审计 P2-24：只播新 key 行——
         // 同一选人会话内多次搜索，已播过的行不重播；错峰序号按本轮新行动）。
-        // sheet 高度由 viewDidLayoutSubviews 的 updateSheetHeight 跟进，键盘事件下的
-        // 高度变化走 animateKeyboardLayout 的键盘曲线。
+        // sheet 高度由 viewDidLayoutSubviews 的 updatePreferredContentSize 跟进。
         if UIAccessibility.isReduceMotionEnabled == false {
             var animIndex = 0
             for (index, button) in rowButtons.enumerated() {
@@ -1236,6 +908,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             }
         }
         // 行按钮、行视图与 rowUsers 按顺序对应（渲染时同步重建）；点行时按按钮身份取用户。
+        updatePreferredContentSize()
     }
 
     private var rowButtons: [UIButton] = []
@@ -1247,20 +920,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 审计 P2-24：@ 选人已播入场行的键集（搜索页 lastResultRowKeys 同口径）——
     /// 同一选人会话内多次搜索只播新 key 行；选人页每次新建实例，键集随实例生灭。
     private var animatedRowKeys: Set<String> = []
-
-    /// 第 30 项：过渡动画用——遮罩 alpha（只动透明度，永不位移）与面板位移（只动 transform）。
-    func transitionSetScrimAlpha(_ alpha: CGFloat) {
-        backdropButton.alpha = alpha
-    }
-
-    func transitionSetSheetOffset(_ offsetY: CGFloat) {
-        sheetView.transform = offsetY == 0 ? .identity : CGAffineTransform(translationX: 0, y: offsetY)
-    }
-
-    func transitionSheetHeight() -> CGFloat {
-        view.layoutIfNeeded()
-        return sheetView.bounds.height
-    }
 
     @objc private func didTapRow(_ sender: UIButton) {
         var picked: SearchUser?
@@ -1275,286 +934,102 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 }
 
-/// 底 sheet 滑入／滑出转场统一口径（面板上滑／下滑 0.26s，遮罩只淡透明度、
-/// 永不位移）：@ 选人 sheet 与选择引用 sheet 共用 BearySheetSlideTransition；
-/// 各 sheet 只需实现三处过渡钩子（遮罩 alpha／面板位移／面板高）。
-protocol BearySheetTransitionable: AnyObject {
-    func transitionSetScrimAlpha(_ alpha: CGFloat)
-    func transitionSetSheetOffset(_ offsetY: CGFloat)
-    func transitionSheetHeight() -> CGFloat
-}
-
-/// 第 30 项：底 sheet 专属过渡——此前本页无 transitioningDelegate，系统默认把整个 view（含遮罩）
-/// 一起从底部滑入，遮罩顶缘的深浅差异线 visibly 从下方扫上来；关闭时遮罩同样随面板下滑。
-/// 改后与回应 Sheet 同口径解耦：面板上滑／下滑均走 motion.screen 0.38s，遮罩只做透明度 0.38s 淡入／淡出，
-/// 遮罩本身永不位移、永不瞬间消失。面板本身的上滑、抓手、圆角一字不动。
-final class BearySheetSlideTransition: NSObject, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning {
-
-    private var presenting = true
-
-    func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        self.presenting = true
-        return self
-    }
-
-    func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        self.presenting = false
-        return self
-    }
-
-    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        if UIAccessibility.isReduceMotionEnabled { return 0 }
-        // 第 25 轮第 4 项（规范 §6）：底 sheet 出现／消失走 motion.screen 0.38s；
-        // 减动效仍直出终态（见上行 return 0，animateTransition 内同样直置终态）。
-        return BearyMotion.screen
-    }
-
-    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
-        let key: UITransitionContextViewControllerKey = presenting ? .to : .from
-        guard let sheet = transitionContext.viewController(forKey: key) as? BearySheetTransitionable else {
-            transitionContext.completeTransition(false)
-            return
-        }
-        if presenting {
-            guard let toView = transitionContext.view(forKey: .to) else {
-                transitionContext.completeTransition(false)
-                return
-            }
-            transitionContext.containerView.addSubview(toView)
-            toView.frame = transitionContext.containerView.bounds
-            let height = sheet.transitionSheetHeight()
-            sheet.transitionSetScrimAlpha(0)
-            sheet.transitionSetSheetOffset(height)
-            if UIAccessibility.isReduceMotionEnabled {
-                sheet.transitionSetScrimAlpha(1)
-                sheet.transitionSetSheetOffset(0)
-                transitionContext.completeTransition(true)
-                return
-            }
-            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut], animations: {
-                sheet.transitionSetSheetOffset(0)
-            }, completion: { _ in transitionContext.completeTransition(true) })
-            // 遮罩 0.38s 单独淡入（与面板滑入解耦，遮罩本身不位移）。
-            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut], animations: {
-                sheet.transitionSetScrimAlpha(1)
-            })
-            return
-        }
-        let height = sheet.transitionSheetHeight()
-        if UIAccessibility.isReduceMotionEnabled {
-            transitionContext.completeTransition(true)
-            return
-        }
-        UIView.animate(withDuration: BearyMotion.screen, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
-            sheet.transitionSetSheetOffset(height)
-        }, completion: { _ in transitionContext.completeTransition(true) })
-        // 遮罩 0.38s 单独淡出（与面板下滑解耦，遮罩本身不位移、不瞬间消失）。
-        UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut], animations: {
-            sheet.transitionSetScrimAlpha(0)
-        })
-    }
-}
-
 // MARK: - 写日记页选择引用（通顶底 sheet）
 
 /// 选择引用底 sheet（2026-11-17 Li 定：内嵌面板改通顶底部弹窗）：
 /// 内容仍是编辑器自有的 quoteTabStack + quotePanel 两棵视图（行渲染／加载／
-/// 选行逻辑全留在编辑器，不搬家）；本页只负责呈现——遮罩点按关、抓手下滑关、
-/// 通顶高度、iPad 居中卡片。手机端顶贴安全区 +8、底贴屏底；iPad（≥821）
-/// 居中 440 宽卡片、上下各留 8。底色走 surface1（写日记页弹窗定版色）。
+/// 选行逻辑全留在编辑器，不搬家）；本页只负责呈现。走系统底部 sheet
+/// （UISheetPresentationController，见 BearySystemSheet）：通顶高度（系统
+/// sheet 封顶 88% 容器高），点外面收起、下滑关闭均走系统，一律不要 ×。
 /// 关闭一律走 onRequestClose 回编辑器（编辑器跑 setQuotePanelOpen(false)
-/// 做卸载＋状态收敛），本页不直接 dismiss、不碰编辑器状态。
-/// 转场与 @ 选人 sheet 同款 BearySheetSlideTransition（面板滑入／滑出 0.26s，
-/// 遮罩只淡透明度不位移）。
-final class BearyQuoteSheetViewController: UIViewController, BearySheetTransitionable {
+/// 做卸载＋状态收敛），本页不直接 dismiss、不碰编辑器状态；系统手势／点外
+/// 关掉 sheet 时经 presentationControllerDidDismiss 同样回编辑器收敛。
+final class BearyQuoteSheetViewController: UIViewController, BearySystemSheetSizing, UIAdaptivePresentationControllerDelegate {
 
-    /// 关闭请求：遮罩点按／关闭钮／抓手下滑达阈值时调用，编辑器据此关面板。
+    /// 关闭请求：系统手势／点外关掉 sheet 或关闭路径调用，编辑器据此关面板。
     var onRequestClose: (() -> Void)?
 
-    private let sheetTransition = BearySheetSlideTransition()
-
-    override init(nibName: String?, bundle: Bundle?) {
-        super.init(nibName: nibName, bundle: bundle)
-        modalPresentationStyle = .overFullScreen
-        transitioningDelegate = sheetTransition
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    private let backdropButton = UIButton(type: .custom)
-    private let sheetView = UIView()
-    private let grabberWrap = UIView()
-    private let grabberView = UIView()
-    private let grabHitView = BearyGrabHitView()
     private let headerTitle = UILabel()
-    private let closeButton = BearyButton.closeButton()
     /// tab 条宿主：编辑器把 quoteTabStack 挂进来（36 高、左右 16）。
     let tabHost = UIView()
     /// 面板滚动区：编辑器把 quotePanel 挂进来，内容高由面板内在高定。
     let panelScrollView = BearyCancellableScrollView()
 
-    private var isPadLayout = false
-    private var phoneConstraints: [NSLayoutConstraint] = []
-    private var padConstraints: [NSLayoutConstraint] = []
-    private var sheetWidthConstraint: NSLayoutConstraint?
-
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor.clear
+        view.backgroundColor = .clear
+        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.layer.masksToBounds = true
         buildViews()
-        buildSheetConstraints()
-        applySheetChrome()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // 系统手势／点外关掉 sheet 时经 didDismiss 回编辑器收敛（见下）。
+        presentationController?.delegate = self
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        updateLayoutModeIfNeeded()
-        updateSheetWidthIfNeeded()
+        updatePreferredContentSize()
     }
 
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 形态（与 @ 选人 sheet 同款）。
-        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            applySheetChrome()
+    /// 按当前容器算内容高，推给系统 sheet 当 detent 高；宽/字号档变化时跟帧补齐。
+    /// 通顶：高取容器高 - 安全区顶 - 8（旧通顶口径），系统 sheet 封顶 88% 后
+    /// 落到 88% 容器高；面板内容在滚动区内纵向滚动。容器高取窗口高（已呈现时）、
+    /// 未呈现时取屏幕高——两个值在呈现前后都大于 88% 封顶，detent 不变，
+    /// 不会因用 view.bounds（即 detent 高本身）量高而逐轮收窄。
+    /// extraBottomInset 在此不用：高度按顶锚算，不含安全区底边。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
+        _ = extraBottomInset
+        let width = view.bounds.width > 0 ? view.bounds.width : 375
+        let containerHeight = view.window?.bounds.height ?? UIScreen.main.bounds.height
+        let height = containerHeight - view.safeAreaInsets.top - 8
+        let preferred = CGSize(width: width, height: height)
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 
+    /// 系统手势下滑／点外收起关掉 sheet 后回编辑器收敛（卸载面板＋状态复位）；
+    /// 编辑器编程式关闭时 quotePanelOpen 已为 false，setQuotePanelOpen(false)
+    /// 直接早退，不重复卸载。
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        requestClose()
+    }
+
     private func buildViews() {
-        backdropButton.backgroundColor = BearySheetChrome.scrimColor
-        backdropButton.accessibilityLabel = "关闭"
-        backdropButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
-        backdropButton.bearyAddPressFeedback()
-
-        // 底色走 surface1（写日记页弹窗定版色；与 @ 选人 sheet 的 surface3 不同，
-        // 本页不跟全 App sheet 色，只跟写日记页弹窗口径）。
-        sheetView.backgroundColor = BearyColors.surface1
-        sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
-
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-
         headerTitle.text = "选择引用"
         headerTitle.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
         headerTitle.adjustsFontForContentSizeCategory = true
         headerTitle.textColor = BearyColors.ink
 
-        closeButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-
         tabHost.backgroundColor = UIColor.clear
         panelScrollView.backgroundColor = UIColor.clear
         panelScrollView.delaysContentTouches = false
 
-        for v in [backdropButton, sheetView, grabberWrap, grabberView, grabHitView, headerTitle, closeButton, tabHost, panelScrollView] {
+        for v in [headerTitle, tabHost, panelScrollView] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
-        view.addSubview(backdropButton)
-        view.addSubview(sheetView)
-        sheetView.addSubview(grabberWrap)
-        // 抓手批同款：热区挂在 sheetView 顶部，关闭钮透传。
-        grabHitView.passthroughView = closeButton
-        grabHitView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(grabberPanGesture(_:))))
-        sheetView.addSubview(grabHitView)
-        sheetView.addSubview(headerTitle)
-        grabberWrap.addSubview(grabberView)
-        sheetView.addSubview(closeButton)
-        sheetView.addSubview(tabHost)
-        sheetView.addSubview(panelScrollView)
+        view.addSubview(headerTitle)
+        view.addSubview(tabHost)
+        view.addSubview(panelScrollView)
         NSLayoutConstraint.activate([
-            backdropButton.topAnchor.constraint(equalTo: view.topAnchor),
-            backdropButton.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            backdropButton.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            backdropButton.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            grabberWrap.topAnchor.constraint(equalTo: sheetView.topAnchor),
-            grabberWrap.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
-            grabberWrap.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-            grabberView.centerXAnchor.constraint(equalTo: grabberWrap.centerXAnchor),
-            grabberView.topAnchor.constraint(equalTo: grabberWrap.topAnchor, constant: BearySheetChrome.grabberTop),
-            grabberView.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
-            grabHitView.topAnchor.constraint(equalTo: sheetView.topAnchor),
-            grabHitView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
-            grabHitView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
-            grabHitView.heightAnchor.constraint(equalToConstant: 70),
-            // 标题行与 @ 选人 sheet 同节奏：标题顶距抓手底 14，左缘 16，叉叉与标题同中心。
-            headerTitle.topAnchor.constraint(equalTo: grabberWrap.bottomAnchor, constant: 14),
-            headerTitle.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
-            closeButton.centerYAnchor.constraint(equalTo: headerTitle.centerYAnchor),
-            closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-            tabHost.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 12),
-            tabHost.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
-            tabHost.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
+            // 顶部留白与旧抓手区等高（抓手顶 10＋高 4＋标题间距 14）：系统抓手占顶区，标题位置不动；一律不要 ×。
+            headerTitle.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 14),
+            headerTitle.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            headerTitle.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+            tabHost.topAnchor.constraint(equalTo: headerTitle.bottomAnchor, constant: 12),
+            tabHost.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            tabHost.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             tabHost.heightAnchor.constraint(equalToConstant: 36),
             panelScrollView.topAnchor.constraint(equalTo: tabHost.bottomAnchor, constant: 8),
-            panelScrollView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
-            panelScrollView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
-            panelScrollView.bottomAnchor.constraint(equalTo: sheetView.safeAreaLayoutGuide.bottomAnchor, constant: -8),
+            panelScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            panelScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            panelScrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
         ])
-    }
-
-    // MARK: - 自定义 sheet 布局（手机端通顶底 sheet / 宽 ≥821 居中卡片）
-
-    private func buildSheetConstraints() {
-        let widthConstraint = sheetView.widthAnchor.constraint(equalToConstant: 440)
-        sheetWidthConstraint = widthConstraint
-        // 通顶：顶边两模式共用（贴安全区顶 +8），底边按模式分（手机贴屏底、iPad 贴安全区底 -8）。
-        let topConstraint = sheetView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8)
-        topConstraint.isActive = true
-        phoneConstraints = [
-            sheetView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            sheetView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            sheetView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ]
-        padConstraints = [
-            sheetView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            widthConstraint,
-            sheetView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
-        ]
-        NSLayoutConstraint.activate(phoneConstraints)
-    }
-
-    private func updateLayoutModeIfNeeded() {
-        let pad = view.bounds.width >= 821
-        if pad == isPadLayout {
-            return
-        }
-        isPadLayout = pad
-        if pad {
-            NSLayoutConstraint.deactivate(phoneConstraints)
-            NSLayoutConstraint.activate(padConstraints)
-        } else {
-            NSLayoutConstraint.deactivate(padConstraints)
-            NSLayoutConstraint.activate(phoneConstraints)
-        }
-        applySheetChrome()
-    }
-
-    private func updateSheetWidthIfNeeded() {
-        guard isPadLayout, let widthConstraint = sheetWidthConstraint else { return }
-        let target = min(440, view.bounds.width - 80)
-        if abs(widthConstraint.constant - target) > 0.5 {
-            widthConstraint.constant = max(target, 0)
-        }
-    }
-
-    private func applySheetChrome() {
-        if isPadLayout {
-            sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-        } else {
-            sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        }
-        sheetView.layer.borderWidth = 0
-        BearyShadow.applyRaised(to: sheetView.layer)
-    }
-
-    @objc private func didTapClose() {
-        requestClose()
     }
 
     private func requestClose() {
@@ -1563,61 +1038,5 @@ final class BearyQuoteSheetViewController: UIViewController, BearySheetTransitio
         } else {
             dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
         }
-    }
-
-    /// 抓手下滑跟手（与 @ 选人 sheet 同口径）：下滑超 80pt 或快速下滑（速度 > 600）
-    /// 关闭，否则 0.26s 弹簧弹回原位；上滑阻尼微移后回弹，不扩高、不关闭。
-    /// 只动 transform，不改约束，与转场不打架。
-    @objc private func grabberPanGesture(_ gesture: UIPanGestureRecognizer) {
-        let translation = gesture.translation(in: view)
-        switch gesture.state {
-        case .changed:
-            let offset = BearySheetDrag.offset(for: translation.y)
-            sheetView.transform = CGAffineTransform(translationX: 0, y: offset)
-            backdropButton.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheetView.bounds.height)
-        case .ended:
-            let velocity = gesture.velocity(in: view).y
-            if translation.y > 80 || velocity > 600 {
-                requestClose()
-            } else {
-                let restore = {
-                    self.sheetView.transform = .identity
-                    self.backdropButton.alpha = 1
-                }
-                if UIAccessibility.isReduceMotionEnabled {
-                    restore()
-                } else {
-                    let offset = BearySheetDrag.offset(for: translation.y)
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore)
-                }
-            }
-        case .cancelled, .failed:
-            let restore = {
-                self.sheetView.transform = .identity
-                self.backdropButton.alpha = 1
-            }
-            if UIAccessibility.isReduceMotionEnabled {
-                restore()
-            } else {
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore)
-            }
-        default:
-            break
-        }
-    }
-
-    // MARK: - BearySheetTransitionable
-
-    func transitionSetScrimAlpha(_ alpha: CGFloat) {
-        backdropButton.alpha = alpha
-    }
-
-    func transitionSetSheetOffset(_ offsetY: CGFloat) {
-        sheetView.transform = offsetY == 0 ? .identity : CGAffineTransform(translationX: 0, y: offsetY)
-    }
-
-    func transitionSheetHeight() -> CGFloat {
-        view.layoutIfNeeded()
-        return sheetView.bounds.height
     }
 }
