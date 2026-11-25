@@ -2076,6 +2076,9 @@ extension UIImageView {
 /// 中文当原文：语言为中文时沿用既有格式串，输出与改前逐字节一致；非中文走系统模板
 /// （setLocalizedDateFormatFromTemplate／RelativeDateTimeFormatter），英文输出以系统
 /// 模板实际输出为准，是草稿、待 Li 定稿。@handle 不本地化，不归这里管。
+/// 2026-11-25 日记时间改版（Li 定）：日记绝对日期改“/”格式（见 slashDateString／
+/// slashDateTimeString），时分只在详情页显示；日记时间走 BearyVisibilityText
+/// .diaryTimeString；时区参数已留口（nil = 设备时区），日记时区由 #2094 接线。
 /// 语言切换重建根界面（见 BearyAppLanguage.didChangeNotification），formatter 按
 /// 当前语言缓存、语言变了下次调用重建；调用方只在主线程做行渲染
 /// （DateFormatter 非线程安全，与既有静态 formatter 同约束）。
@@ -2229,6 +2232,28 @@ enum BearyLocalizedDate {
     /// yyyy/M/d HH:mm（注销倒计时括号里的短日期时间）。
     static func shortDateTimeString(from date: Date, timeZone: TimeZone? = nil) -> String {
         formatter(template: "yyyyMdjmm", zhFormat: "yyyy/M/d HH:mm", timeZone: timeZone).string(from: date)
+    }
+    /// 日记“/”绝对日期（2026-11-25 Li 定，取代 M月d日 H:mm）：
+    /// 同年只写月日、跨年带年，月日顺序跟地区走（中文／美式 11/25、英式 25/11），
+    /// 不带时分；年份判定与显示走传入时区（nil = 设备时区，日记时区由 #2094 接线）。
+    static func slashDateString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        let year = calendar(for: timeZone).component(.year, from: date)
+        let currentYear = calendar(for: timeZone).component(.year, from: Date())
+        if year == currentYear {
+            return formatter(template: "Md", zhFormat: "M/d", timeZone: timeZone).string(from: date)
+        }
+        return formatter(template: "yMd", zhFormat: "yyyy/M/d", timeZone: timeZone).string(from: date)
+    }
+    /// 日记详情页时间（2026-11-25 Li 定）：日期＋时刻；同年 M/d H:mm、
+    /// 跨年 yyyy/M/d H:mm；英文时刻跟系统 12/24 小时制（模板 jmm）。
+    /// 时分只在详情页显示，卡片等处用 slashDateString。
+    static func slashDateTimeString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        let year = calendar(for: timeZone).component(.year, from: date)
+        let currentYear = calendar(for: timeZone).component(.year, from: Date())
+        if year == currentYear {
+            return formatter(template: "Mdhmm", zhFormat: "M/d H:mm", timeZone: timeZone).string(from: date)
+        }
+        return formatter(template: "yMdhmm", zhFormat: "yyyy/M/d H:mm", timeZone: timeZone).string(from: date)
     }
     /// yyyy年M月d日 HH:mm（账号类日期时间）。
     static func yearMonthDayTimeString(from date: Date, timeZone: TimeZone? = nil) -> String {
@@ -3990,8 +4015,8 @@ enum BearyVisibilityText {
     /// 2026-11-21 日期完全本地化：相对时间跟 App 语言（见 BearyLocalizedDate），
     /// 中文沿用既有词、输出与改前逐字节一致；非中文走 RelativeDateTimeFormatter
     /// （英文如 now／5 minutes ago／2 hours ago／yesterday／3 days ago，草稿待 Li 定稿）。
-    /// 口径不变：7 天内相对、7 天外绝对（同年 M月d日 H:mm、跨年 yyyy年M月d日，规范 §12），
-    /// 时区沿用既有口径。所有调用点（详情、卡片、私信、通知、我的页）自动跟这条口径。
+    /// 口径：7 天内相对、7 天外绝对（同年 M月d日 H:mm、跨年 yyyy年M月d日，规范 §12），
+    /// 时区沿用既有口径。本函数现只供私信／通知等非日记时间用；日记时间走 diaryTimeString。
     static func publishedRelativeString(publishedAtMs: Int?) -> String? {
         guard let ms = publishedAtMs, ms > 0 else { return nil }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
@@ -4004,6 +4029,23 @@ enum BearyVisibilityText {
         // 北京时间。
         if diff < 7 * 86400 { return BearyLocalizedDate.daysAgoString(Int(diff / 86400)) }
         return BearyText.absoluteDateString(from: date)
+    }
+
+    /// 日记时间（2026-11-25 Li 定，取代日记各处对 publishedRelativeString 的调用）：
+    /// 7 天内相对时间（刚刚／X 分钟前／X 小时前／X 天前，跟 App 语言），7 天外“/”
+    /// 绝对日期（同年只写月日、跨年带年，月日顺序跟地区走），不带时分（时分只在详情页
+    /// 显示，见 BearyLocalizedDate.slashDateTimeString）。时区：传入日记时区，
+    /// nil = 设备时区（日记时区由 #2094 接线，在此之前按设备时区显示，不再写死北京）。
+    /// 相对时间部分与 publishedRelativeString 同口径；#2108 的昨天／前天口径落地后同步改这里。
+    static func diaryTimeString(publishedAtMs: Int?, timeZone: TimeZone? = nil) -> String? {
+        guard let ms = publishedAtMs, ms > 0 else { return nil }
+        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
+        if diff < 60 { return BearyLocalizedDate.justNowString(date: date) }
+        if diff < 3600 { return BearyLocalizedDate.minutesAgoString(Int(diff / 60)) }
+        if diff < 86400 { return BearyLocalizedDate.hoursAgoString(Int(diff / 3600)) }
+        if diff < 7 * 86400 { return BearyLocalizedDate.daysAgoString(Int(diff / 86400)) }
+        return BearyLocalizedDate.slashDateString(from: date, timeZone: timeZone)
     }
 }
 

@@ -73,15 +73,15 @@ enum BlindBoxDate {
         return Int(start.timeIntervalSince1970 * 1000)
     }
 
-    /// 卡片日期：7 天内相对时间、7 天外绝对时间（共用口径）。
+    /// 卡片日期：7 天内相对时间、7 天外“/”绝对日期（见 BearyVisibilityText.diaryTimeString）。
     static func displayString(ms: Int?) -> String {
         guard let ms = ms, ms > 0 else { return "" }
-        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+        if let relative = BearyVisibilityText.diaryTimeString(publishedAtMs: ms) {
             return relative
         }
         // 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；兜底沿用
-        // 原来的 "M月d日 H:mm"（不带年）与既有时区（Asia/Shanghai）。
-        return BearyLocalizedDate.monthDayTimeString(from: Date(timeIntervalSince1970: TimeInterval(ms) / 1000), timeZone: BearyLocalizedDate.shanghai)
+        // 原来的“/”绝对日期与既有时区（原来没写时区，跟设备走）。
+        return BearyDiaryCardCell.feedTimeString(ms: ms)
     }
 }
 

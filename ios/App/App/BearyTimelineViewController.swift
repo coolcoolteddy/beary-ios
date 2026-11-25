@@ -1576,9 +1576,10 @@ final class BearyTimelineCell: UITableViewCell {
             arranged.removeFromSuperview()
         }
         if let createdMs = entry.createdAt {
-            let date = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
-            // G8：行内时间走北京时区，与服务端日界一致（静态 formatter 同口径）。
-            timeLabel.text = Self.timelineTimeFormatter.string(from: date)
+            // 日记时间（2026-11-25 Li 定）：7 天内相对、7 天外“/”绝对日期，不带时分
+            // （时分只在详情页显示）；见 BearyVisibilityText.diaryTimeString。
+            // 时间线按日分组，meta 行以时间开头（13 号灰字）。
+            timeLabel.text = BearyVisibilityText.diaryTimeString(publishedAtMs: createdMs) ?? BearyDiaryCardCell.feedTimeString(ms: createdMs)
         } else {
             timeLabel.text = ""
         }
@@ -1949,13 +1950,6 @@ final class BearyTimelineCell: UITableViewCell {
             tableView.beginUpdates()
             tableView.endUpdates()
         }
-    }
-
-    /// 80 包 B4-1：行内时间与引用日期 formatter 静态复用（原每次 configure 新建）。
-    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；时区沿用既有 GMT+8；
-    /// 中文仍为 HH:mm（小时补零），输出与改前一致。
-    private static var timelineTimeFormatter: DateFormatter {
-        BearyLocalizedDate.formatter(template: "jmm", zhFormat: "HH:mm", timeZone: BearyLocalizedDate.gmt8)
     }
 
     private func footItem(iconName: String, text: String?, accessibilityName: String, highlighted: Bool = false) -> UIView {

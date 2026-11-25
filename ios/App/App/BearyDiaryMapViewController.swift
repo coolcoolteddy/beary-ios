@@ -1320,7 +1320,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             }
             var secondary = ""
             if let created = entry.createdAt, created > 0 {
-                secondary = BearyVisibilityText.publishedRelativeString(publishedAtMs: created) ?? BearyDiaryCardCell.feedTimeString(ms: created)
+                secondary = BearyVisibilityText.diaryTimeString(publishedAtMs: created) ?? BearyDiaryCardCell.feedTimeString(ms: created)
             }
             if let line = BearyLocationDisplay.display(entry: entry) {
                 // 2026-11-14 存经纬度：有坐标的篇按当前语言重取位置行，解析出后只刷该行。

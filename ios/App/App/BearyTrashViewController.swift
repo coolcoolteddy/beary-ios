@@ -1633,23 +1633,23 @@ private enum TrashText {
         return NSAttributedString(string: text, attributes: attributes)
     }
 
-    /// [24] 小项 6：7 天内相对时间、7 天外绝对时间（共用口径，M月d日 H:mm；
-    /// 小时不补零；ms 无效时回落下方的旧绝对格式）。
-    /// G8：显示用 formatter 统一设北京时区，与服务端日界一致。
+    /// [24] 小项 6：7 天内相对时间、7 天外“/”绝对日期（见 BearyVisibilityText.diaryTimeString；
+    /// ms 无效时回落下方的“/”绝对格式）。
+    /// 2026-11-25：日记创建日期走 diaryTimeString（设备时区兜底，日记时区由 #2094 接线）；
+    /// 删除日期（deletedLabel）仍走 G8 北京口径，不动。
     static func createdLabel(ms: Int) -> String {
-        // #32：共用函数 7 天外也返回绝对串（M月d日 H:mm，设备时区、无跨年分支），
+        // #32：共用函数 7 天外也返回绝对串（“/”绝对日期，设备时区、无跨年分支），
         // 直接 early-return 会吞掉下方的跨年分支；只在 7 天内用它做相对显示，
-        // 7 天及以外落回下方的跨年分支（同年 M月d日 H:mm／跨年 yyyy年M月d日，北京时间）。
+        // 7 天及以外落回下方的跨年分支（同年 M/d、跨年 yyyy/M/d，设备时区）。
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
-        if diff < 7 * 86400, let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+        if diff < 7 * 86400, let relative = BearyVisibilityText.diaryTimeString(publishedAtMs: ms) {
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        // 跨年显示年份（规范 §12）：同年 "M月d日 H:mm"，跨年 "yyyy年M月d日"；
-        // 年份判定走北京日历，与本文件 G8 时区口径一致。
-        // 2026-11-21 日期完全本地化：走共享 helper（跟 App 语言；时区沿用既有 GMT+8），
-        // 中文输出与改前一致。
-        return BearyText.absoluteDateString(from: date)
+        // 跨年显示年份（规范 §12）：同年 "M/d"，跨年 "yyyy/M/d"；
+        // 年份判定走设备日历（与 diaryTimeString 同口径）。
+        // 2026-11-25：绝对日期改“/”格式（见 slashDateString）。
+        return BearyLocalizedDate.slashDateString(from: date)
     }
 
     /// 网页 fmtDelLabel：今天 → 今天 H:mm；昨天 → 昨天；否则 M月d日。

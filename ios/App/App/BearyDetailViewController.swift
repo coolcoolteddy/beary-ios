@@ -1845,12 +1845,12 @@ final class BearyDetailViewController: UIViewController {
         avatarInitialLabel.text = String(authorNameValue.prefix(1)).uppercased()
         if let createdAt = entry.createdAt {
             // 冲突清单第 4 条：公开内容显示「编辑于 X」（编辑过才显；私密不显）。
-            // 时间一律相对时间（与私信/通知/广场卡同口径：刚刚/X 分钟前/X 小时前/X 天前，
-            // 7 天外回绝对时间，见 BearyVisibilityText.publishedRelativeString；2026-11-15 改，取代绝对时间）。
-            let createdText = BearyVisibilityText.publishedRelativeString(publishedAtMs: createdAt) ?? BearyDiaryCardCell.feedTimeString(ms: createdAt)
+            // 详情页时间（2026-11-25 Li 定）：日期＋时刻（11/25 14:20；英文跟系统
+            // 12/24 小时制），见 BearyLocalizedDate.slashDateTimeString；时分只在详情页显示。
+            let createdText = BearyLocalizedDate.slashDateTimeString(from: Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000.0))
             if BearyEphemeral.isEffectivelyPublic(entry),
                let updatedAt = entry.updatedAt, updatedAt > createdAt {
-                let editedText = BearyVisibilityText.publishedRelativeString(publishedAtMs: updatedAt) ?? BearyDiaryCardCell.feedTimeString(ms: updatedAt)
+                let editedText = BearyLocalizedDate.slashDateTimeString(from: Date(timeIntervalSince1970: TimeInterval(updatedAt) / 1000.0))
                 timeLabel.text = "\(createdText) · 编辑于 \(editedText)"
             } else {
                 timeLabel.text = createdText

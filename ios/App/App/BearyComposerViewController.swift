@@ -3937,15 +3937,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return parts.joined(separator: "，")
     }
 
-    /// 面板行日期：7 天内相对时间、7 天外绝对时间（共用口径；小时不补零）。
+    /// 面板行日期：7 天内相对时间、7 天外“/”绝对日期（见 BearyVisibilityText.diaryTimeString）。
     /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；兜底沿用
-    /// 原来的 "M月d日 H:mm"（不带年）与既有时区（原来没写时区，跟设备走）。
+    /// 原来的“/”绝对日期（不带年时分）与既有时区（原来没写时区，跟设备走）。
     private func quoteRowDate(ms: Int) -> String {
-        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+        if let relative = BearyVisibilityText.diaryTimeString(publishedAtMs: ms) {
             return relative
         }
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        return BearyLocalizedDate.monthDayTimeString(from: date)
+        return BearyDiaryCardCell.feedTimeString(ms: ms)
     }
 
     // MARK: - 图片预览（网页 img-preview：无标题、无 + 块，空时整条隐藏）
