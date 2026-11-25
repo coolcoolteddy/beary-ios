@@ -96,17 +96,31 @@ final class BearyScreenshotLogoView: UIView {
             secureContainer?.frame = bounds
             return
         }
-        // logo 居中：内容框高 = 容器高 − 两侧各一个 sm 边距（40 高时 24），
-        // 宽按内容框比例 288/90（76.8）；整图等比放，image view = 82.7×29.3，
-        // 可见内容正好 76.8×24、不变形（见 v7 预览，4 倍放大核过比例正常）。
-        // 大字号下容器变高、图跟着变宽时以条宽为上限收住，不让图宽出条。
+        // logo 右对齐：内容框右缘 = 按钮右缘（按钮居中放在条里，右缘距页眉边 16，
+        // 与名字左缘 16 对称；v7 居中放时右缘只剩约 9pt，看着偏右。跟 Bluesky
+        // 的做法一致：logo 在按钮框内右对齐。视觉以 v8 预览为准）。
+        // 按钮右缘取内容视图当前 frame（Auto Layout 已在本次布局前定好）；
+        // 未布局时退回居中（v7 位置），下一轮布局会按按钮右缘重算。
+        // 按压 0.95 与拒绝摇头 ±8pt 是按钮的 transform，不触发布局，logo 不跟动。
         let contentHeight = bounds.height - BearySpace.sm * 2
         let contentWidth = contentHeight * Self.contentPixelWidth / Self.contentPixelHeight
         var imageWidth = contentWidth * Self.imagePixelWidth / Self.contentPixelWidth
         imageWidth = min(imageWidth, bounds.width)
         let imageHeight = imageWidth * Self.imagePixelHeight / Self.imagePixelWidth
+        // 大字号下 image view 被条宽封顶时，实际内容框按等比收小，右对齐仍按
+        // 收小后的内容框算（默认字号下无封顶，内容框正好 76.8×24）。
+        let actualContentWidth = imageWidth * Self.contentPixelWidth / Self.imagePixelWidth
+        let contentRight: CGFloat
+        if let content = contentView, content.frame.width > 0 {
+            contentRight = content.frame.maxX
+        } else {
+            contentRight = (bounds.width + actualContentWidth) / 2
+        }
+        // 内容框在 image view 内居中：image view 比内容框每侧各宽
+        // (imageWidth − actualContentWidth) / 2 的透明边。
+        let imageX = contentRight + (imageWidth - actualContentWidth) / 2 - imageWidth
         logoImageView.frame = CGRect(
-            x: (bounds.width - imageWidth) / 2,
+            x: imageX,
             y: (bounds.height - imageHeight) / 2,
             width: imageWidth,
             height: imageHeight
