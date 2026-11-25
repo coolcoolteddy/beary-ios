@@ -41,7 +41,7 @@ final class BearySubpageLayoutGuard {
         // BearySubpageTopBarHeight），守卫只记不治，不再加一层通用守卫。
         let topHeightOff = topView.map { $0.frame.height > BearySubpageTopBarHeight.max } ?? false
         let contentFrames = contentViews.map { NSCoder.string(for: $0.frame) }.joined(separator: " | ")
-        NSLog("[Diag] subpage-layout page=%@ view=%@ top=%@ topH=%@ safeArea=%@ frameOff=%@ transformOff=%@ topOff=%@ topHeightOff=%@ content=[%@] presentation=%@",
+        BearyLog.debug(tag: "Diag", "subpage-layout page=%@ view=%@ top=%@ topH=%@ safeArea=%@ frameOff=%@ transformOff=%@ topOff=%@ topHeightOff=%@ content=[%@] presentation=%@",
               page, NSCoder.string(for: view.frame),
               topView.map { NSCoder.string(for: $0.frame) } ?? "nil",
               topView.map { String(format: "%.1f", $0.frame.height) } ?? "nil",
@@ -53,7 +53,7 @@ final class BearySubpageLayoutGuard {
         if frameOff { view.frame = bounds }
         view.setNeedsLayout()
         view.layoutIfNeeded()
-        NSLog("[Diag] subpage-layout-reset page=%@", page)
+        BearyLog.debug(tag: "Diag", "subpage-layout-reset page=%@", page)
         return true
     }
 }

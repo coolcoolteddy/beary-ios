@@ -952,21 +952,21 @@ enum BearyDraftStore {
                     lastPartialRecovery = (kept: good.count, skipped: skipped)
                     let backup = backupCorruptFile(at: url)
                     if backup != nil, saveAll(good, forAccount: accountId) {
-                        NSLog("[BearyDraft] partial v3 store recovered: kept \(good.count), skipped \(skipped), backup=\(backup?.path ?? "nil")")
+                        BearyLog.debug(tag: "BearyDraft", message: "partial v3 store recovered: kept \(good.count), skipped \(skipped), backup=\(backup?.path ?? "nil")")
                         lastLoadError = nil
                         return .success(sortedNormalized(good, forAccount: accountId))
                     }
                     // A1：回写失败——不落回“整库损坏、好草稿全藏”的旧口径。
                     // 原文件与备份都在，不丢数据；已读出的好草稿随失败带回，
                     // 草稿箱先预览，不把好草稿藏起来。
-                    NSLog("[BearyDraft] partial v3 store recovery save failed: kept \(good.count), skipped \(skipped), original kept")
+                    BearyLog.debug(tag: "BearyDraft", message: "partial v3 store recovery save failed: kept \(good.count), skipped \(skipped), original kept")
                     let err = LoadError.partialSaveFailed(drafts: sortedNormalized(good, forAccount: accountId), kept: good.count, skipped: skipped, backupURL: backup)
                     lastLoadError = err
                     return .failure(err)
                 }
             }
             let backup = backupCorruptFile(at: url)
-            NSLog("[BearyDraft] corrupt v3 store, original kept")
+            BearyLog.debug(tag: "BearyDraft", message: "corrupt v3 store, original kept")
             // 审计四轮 05：诊断绑定账号＋文件＋指纹＋代次，供清除时复核。
             let err = LoadError.corruptStore(backupURL: backup, accountId: accountId, fileURL: url, fingerprint: fileFingerprint(at: url), generation: loadGeneration)
             // B5：读失败时清缓存，损坏的库不得用旧快照冒充成功。
@@ -986,7 +986,7 @@ enum BearyDraftStore {
                 return .success(sortedNormalized(drafts, forAccount: accountId))
             }
             let backup = backupCorruptFile(at: legacyURL)
-            NSLog("[BearyDraft] corrupt legacy global v3 store, original kept")
+            BearyLog.debug(tag: "BearyDraft", message: "corrupt legacy global v3 store, original kept")
             let err = LoadError.corruptStore(backupURL: backup, accountId: accountId, fileURL: legacyURL, fingerprint: fileFingerprint(at: legacyURL), generation: loadGeneration)
             // B5：读失败时清缓存（与 v3 损坏路径同口径）。
             clearCachedDrafts()
@@ -1007,7 +1007,7 @@ enum BearyDraftStore {
         }
         if let v2url = legacyV2FileURL(), FileManager.default.fileExists(atPath: v2url.path) {
             let backup = backupCorruptFile(at: v2url)
-            NSLog("[BearyDraft] corrupt legacy v2 store, original kept")
+            BearyLog.debug(tag: "BearyDraft", message: "corrupt legacy v2 store, original kept")
             let err = LoadError.legacyCorrupt(backupURL: backup)
             clearCachedDrafts()
             lastLoadError = err
@@ -1491,7 +1491,7 @@ enum BearyDraftStore {
             return checkpoint
         }
         let backup = backupCorruptFile(at: url)
-        NSLog("[BearyDraft] corrupt edit checkpoint, original kept, backup=\(backup?.path ?? "nil")")
+        BearyLog.debug(tag: "BearyDraft", message: "corrupt edit checkpoint, original kept, backup=\(backup?.path ?? "nil")")
         if checkpoint == nil {
             lastEditCheckpointError = .corrupt(backupURL: backup, accountId: accountId, fileURL: url, entryId: entryId)
         } else {

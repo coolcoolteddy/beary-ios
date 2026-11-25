@@ -32,7 +32,7 @@ enum BearyBackgroundRefresh {
         let registered = BGTaskScheduler.shared.register(
             forTaskWithIdentifier: taskIdentifier, using: nil, launchHandler: handle)
         if !registered {
-            NSLog("[BearyBackgroundRefresh] register failed: %@", taskIdentifier)
+            BearyLog.debug(tag: "BearyBackgroundRefresh", "register failed: %@", taskIdentifier)
             return
         }
         schedule()
@@ -46,7 +46,7 @@ enum BearyBackgroundRefresh {
         do {
             try BGTaskScheduler.shared.submit(request)
         } catch {
-            NSLog("[BearyBackgroundRefresh] schedule failed: %@", error.localizedDescription)
+            BearyLog.debug(tag: "BearyBackgroundRefresh", "schedule failed: %@", error.localizedDescription)
         }
     }
 
@@ -349,7 +349,7 @@ enum BearyBackgroundRefresh {
         )
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
-                NSLog("[BearyBackgroundRefresh] plaza-new notification failed: %@", error.localizedDescription)
+                BearyLog.debug(tag: "BearyBackgroundRefresh", "plaza-new notification failed: %@", error.localizedDescription)
             }
         }
     }

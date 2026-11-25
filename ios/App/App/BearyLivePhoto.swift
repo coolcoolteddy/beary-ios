@@ -573,10 +573,10 @@ final class BearyLivePhotoLoader {
                 // 加载直接复用，不用重复盖章；重复盖章同值亦无害。
                 try? stamped.write(to: stillFile, options: .atomic)
             } else {
-                NSLog("[BearyLivePhoto] stamp identifier failed liveKey=%@ staticKey=%@", liveKey, staticKey)
+                BearyLog.debug(tag: "BearyLivePhoto", "stamp identifier failed liveKey=%@ staticKey=%@", liveKey, staticKey)
             }
         } else {
-            NSLog("[BearyLivePhoto] no content identifier in video liveKey=%@ staticKey=%@", liveKey, staticKey)
+            BearyLog.debug(tag: "BearyLivePhoto", "no content identifier in video liveKey=%@ staticKey=%@", liveKey, staticKey)
         }
         let scale = UIScreen.main.scale
         let targetSize = CGSize(width: placeholder.size.width * scale, height: placeholder.size.height * scale)
@@ -589,7 +589,7 @@ final class BearyLivePhotoLoader {
             if let infoError = info[PHLivePhotoInfoErrorKey] as? Error {
                 // 组装失败不再静默：此前 error 直接丢弃（photo, _ in），
                 // 标识对不上时静默退化成静态帧，用户只看到“不播放”。
-                NSLog("[BearyLivePhoto] PHLivePhoto.request failed liveKey=%@ staticKey=%@: %@", liveKey, staticKey, infoError.localizedDescription)
+                BearyLog.debug(tag: "BearyLivePhoto", "PHLivePhoto.request failed liveKey=%@ staticKey=%@: %@", liveKey, staticKey, infoError.localizedDescription)
             }
             DispatchQueue.main.async {
                 // 桶已切换的回包直接丢弃、不进新桶内存缓存（视图层 token 同样守门）。

@@ -681,7 +681,7 @@ final class BearyChromeViewController: UIViewController {
         if let img = UIImage(named: named)?.withRenderingMode(.alwaysTemplate) { return img }
         if let img = UIImage(named: officialFallback)?.withRenderingMode(.alwaysTemplate) { return img }
         #if DEBUG
-        NSLog("[BearyIconMissing] top icon asset missing: %@ (official fallback %@ also missing)", named, officialFallback)
+        BearyLog.debug(tag: "BearyIconMissing", "top icon asset missing: %@ (official fallback %@ also missing)", named, officialFallback)
         #endif
         return nil
     }
@@ -4615,8 +4615,8 @@ final class BearyChromeViewController: UIViewController {
             return
         }
         // 闪退诊断打点（容器侧，只记日志不改行为）：本文件此前无日志，循仓内
-        // NSLog("[Tag] ...") 惯例（BearyEmotePlayer 等同款），每调用一次记一行。
-        NSLog("[Diag] presentComposer-enter")
+        // BearyLog.debug(tag:message:) 惯例（BearyEmotePlayer 等同款），每调用一次记一行。
+        BearyLog.debug(tag: "Diag", message: "presentComposer-enter")
         // 临时诊断（81 包，定根因后删除）：文件级埋点，与 NSLog 点一一对应（用户无 Mac 看不到控制台，改走文件）。
         DiagFile.mark("presentComposer-enter")
         // 未登录不再走网页登录，弹原生登录页；原生编辑器只接已登录态。
@@ -5362,7 +5362,7 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
-        NSLog("[Diag] sheetAnimator-enter")
+        BearyLog.debug(tag: "Diag", message: "sheetAnimator-enter")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("sheetAnimator-enter")
         let container = transitionContext.containerView

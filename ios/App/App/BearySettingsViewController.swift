@@ -586,7 +586,7 @@ final class BearySettingsViewController: UIViewController {
         guard !settingsLayoutLogged || tag == "guard-reset" else { return }
         if tag == "appear" { settingsLayoutLogged = true }
         let topBar = closeButton.superview
-        NSLog("[Diag] settings-layout tag=%@ view=%@ topBar=%@ scrollView=%@ safeArea=%@",
+        BearyLog.debug(tag: "Diag", "settings-layout tag=%@ view=%@ topBar=%@ scrollView=%@ safeArea=%@",
               tag, NSCoder.string(for: view.frame),
               topBar.map { NSCoder.string(for: $0.frame) } ?? "nil",
               NSCoder.string(for: scrollView.frame),

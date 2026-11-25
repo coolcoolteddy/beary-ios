@@ -469,7 +469,7 @@ final class BearyEntrySync {
                         if ok {
                             BearyEntrySync.shared.dequeuePendingRefetch(entryId: entryId, accountId: accountId)
                         } else {
-                            NSLog("[BearyEntrySync] upsertEntry failed account=%d entry=%@", accountId, entry.id ?? "-")
+                            BearyLog.debug(tag: "BearyEntrySync", "upsertEntry failed account=%d entry=%@", accountId, entry.id ?? "-")
                             BearyEntrySync.shared.enqueuePendingRefetch(entryId: entryId, accountId: accountId)
                         }
                         DispatchQueue.main.async { completion?() }
@@ -487,9 +487,9 @@ final class BearyEntrySync {
             // 待发布回取的当日桶 key：按查看设备时区（与时间线 device-today 一致）。
             let dayKey = BearyBeijingDay.dayKey(ofMs: Int(Date().timeIntervalSince1970 * 1000), tzName: TimeZone.current.identifier) ?? ""
             if BearyEntrySyncStore.addPendingPublishRefetch(accountId: accountId, entryId: entryId, dayKey: dayKey) {
-                NSLog("[BearyEntrySync] pending refetch enqueued account=%d entry=%@", accountId, entryId)
+                BearyLog.debug(tag: "BearyEntrySync", "pending refetch enqueued account=%d entry=%@", accountId, entryId)
             } else {
-                NSLog("[BearyEntrySync] pending refetch enqueue failed account=%d entry=%@", accountId, entryId)
+                BearyLog.debug(tag: "BearyEntrySync", "pending refetch enqueue failed account=%d entry=%@", accountId, entryId)
             }
             self.publishPendingRefetch(accountId: accountId)
         }
@@ -575,7 +575,7 @@ final class BearyEntrySync {
                 _ = BearyEntrySyncStore.savePendingPublishRefetch(accountId: accountId, items: items)
                 publishPendingRefetch(accountId: accountId)
             } else {
-                NSLog("[BearyEntrySync] pending refetch upsert failed account=%d entry=%@", accountId, item.entryId)
+                BearyLog.debug(tag: "BearyEntrySync", "pending refetch upsert failed account=%d entry=%@", accountId, item.entryId)
                 bumpPendingRefetchAttempt(items: &items, index: idx, accountId: accountId)
             }
         case .failure(let error):
@@ -594,7 +594,7 @@ final class BearyEntrySync {
     private func bumpPendingRefetchAttempt(items: inout [BearyEntrySyncStore.PendingPublishRefetch], index: Int, accountId: Int) {
         items[index].attempts += 1
         if items[index].attempts >= BearyEntrySyncStore.publishRefetchMaxAttempts {
-            NSLog("[BearyEntrySync] pending refetch attempts exhausted account=%d entry=%@", accountId, items[index].entryId)
+            BearyLog.debug(tag: "BearyEntrySync", "pending refetch attempts exhausted account=%d entry=%@", accountId, items[index].entryId)
             items.remove(at: index)
         }
         _ = BearyEntrySyncStore.savePendingPublishRefetch(accountId: accountId, items: items)
@@ -607,7 +607,7 @@ final class BearyEntrySync {
             guard SessionManager.shared.currentUser?.id == accountId else { return }
             BearyEntrySync.shared.runDiaryDiskWrite(accountId: accountId) {
                 let ok = BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
-                if !ok { NSLog("[BearyEntrySync] upsertEntry failed account=%d entry=%@", accountId, entry.id ?? "-") }
+                if !ok { BearyLog.debug(tag: "BearyEntrySync", "upsertEntry failed account=%d entry=%@", accountId, entry.id ?? "-") }
             }
         }
     }
@@ -639,7 +639,7 @@ final class BearyEntrySync {
                     // 恒下发数组（worker listPayload），nil 说明回包形状异常，
                     // 中止本次同步并记失败态，不清缓存、不记已同步。
                     guard let page = list.entries else {
-                        NSLog("[BearyEntrySync] diary page entries missing, aborting sync")
+                        BearyLog.debug(tag: "BearyEntrySync", message: "diary page entries missing, aborting sync")
                         self.abandonDiaryRun(run, failed: true)
                         return
                     }
@@ -648,7 +648,7 @@ final class BearyEntrySync {
                     // 行为的收尾、不记已同步、记失败态；已落盘的页是有效服务端
                     // 数据的 additive 合并，保留。
                     if grouped.skippedCount > 0 {
-                        NSLog("[BearyEntrySync] diary page has %d ungroupable entries, aborting sync", grouped.skippedCount)
+                        BearyLog.debug(tag: "BearyEntrySync", "diary page has %d ungroupable entries, aborting sync", grouped.skippedCount)
                         self.abandonDiaryRun(run, failed: true)
                         return
                     }
@@ -675,19 +675,19 @@ final class BearyEntrySync {
                     } else if let last = page.last, let lastCreated = last.createdAt, let lastId = last.id {
                         // 无进展保护：满页但游标与本页入参相同，服务端在原地打转。
                         if run.before == lastCreated && run.beforeId == lastId {
-                            NSLog("[BearyEntrySync] diary page cursor did not advance, aborting sync")
+                            BearyLog.debug(tag: "BearyEntrySync", message: "diary page cursor did not advance, aborting sync")
                             self.abandonDiaryRun(run, failed: true)
                             return
                         }
                         run.before = lastCreated
                         run.beforeId = lastId
                         if !BearyEntrySyncStore.saveDiaryProgress(accountId: run.accountId, progress: run.progressSnapshot(writeSequence: self.diaryWriteSequence)) {
-                            NSLog("[BearyEntrySync] diary progress save failed, resume unavailable")
+                            BearyLog.debug(tag: "BearyEntrySync", message: "diary progress save failed, resume unavailable")
                         }
                         self.fetchDiaryPage(run: run)
                     } else {
                         // 满页却无游标（末条缺 createdAt/id）：无法续翻，中止记失败态。
-                        NSLog("[BearyEntrySync] diary page has no cursor for next page, aborting sync")
+                        BearyLog.debug(tag: "BearyEntrySync", message: "diary page has no cursor for next page, aborting sync")
                         self.abandonDiaryRun(run, failed: true)
                     }
                 }
@@ -864,19 +864,19 @@ final class BearyEntrySync {
                     } else if let last = items.last, let lastDeletedAt = last.deletedAt {
                         // 无进展保护：满页但游标与本页入参相同，服务端在原地打转。
                         if run.before == "\(lastDeletedAt)" && run.beforeId == last.id {
-                            NSLog("[BearyEntrySync] trash page cursor did not advance, aborting sync")
+                            BearyLog.debug(tag: "BearyEntrySync", message: "trash page cursor did not advance, aborting sync")
                             self.abandonTrashRun(run, failed: true)
                             return
                         }
                         run.before = "\(lastDeletedAt)"
                         run.beforeId = last.id
                         if !BearyTrashSyncStore.saveTrashProgress(accountId: run.accountId, progress: run.progressSnapshot(writeSequence: BearyTrashSyncStore.currentWriteSequence())) {
-                            NSLog("[BearyEntrySync] trash progress save failed, resume unavailable")
+                            BearyLog.debug(tag: "BearyEntrySync", message: "trash progress save failed, resume unavailable")
                         }
                         self.fetchTrashPage(run: run)
                     } else {
                         // 满页却无游标（末条缺 deletedAt）：无法续翻，中止记失败态。
-                        NSLog("[BearyEntrySync] trash page has no cursor for next page, aborting sync")
+                        BearyLog.debug(tag: "BearyEntrySync", message: "trash page has no cursor for next page, aborting sync")
                         self.abandonTrashRun(run, failed: true)
                     }
                 }
@@ -1232,7 +1232,7 @@ final class BearySharedEntryLoader {
                         // （重复返回同一页），停翻并按部分结果回，避免翻到
                         // 10 页才停、空耗请求。
                         if page?.before == cursor && page?.beforeId == lastId {
-                            NSLog("[BearyEntrySync] shared load cursor did not advance, stopping as partial")
+                            BearyLog.debug(tag: "BearyEntrySync", message: "shared load cursor did not advance, stopping as partial")
                             completion(SharedEntryLoad(
                                 entries: nextCollected, isCapped: false, isPartial: true,
                                 resumeBefore: page?.before, resumeBeforeId: page?.beforeId,
@@ -1247,7 +1247,7 @@ final class BearySharedEntryLoader {
                     let capped = isFullPage && pageNumber >= Self.maxPages
                     let noCursorTruncated = isFullPage && pageNumber < Self.maxPages && !hasCursor
                     if noCursorTruncated {
-                        NSLog("[BearyEntrySync] shared load full page has no cursor, stopping as partial")
+                        BearyLog.debug(tag: "BearyEntrySync", message: "shared load full page has no cursor, stopping as partial")
                     }
                     // 触顶时亦带末页游标：地图“加载更多”从该游标续拉新一批
                     // （resumePage 从 1 重新计）；末页满页却无游标时不留入口。

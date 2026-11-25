@@ -37,7 +37,7 @@ enum BearyEmoteImages {
             }
             missingDarkKeysLock.unlock()
             if isFirstMissing {
-                NSLog("[BearyEmoteImages] missing dark asset for key=%@", key)
+                BearyLog.debug(tag: "BearyEmoteImages", "missing dark asset for key=%@", key)
                 NotificationCenter.default.post(name: darkAssetMissingNotification, object: nil, userInfo: ["key": key])
             }
             return nil

@@ -99,7 +99,7 @@ final class BearyNavigationCoordinator {
         case "notif": handler(.notifications)
         case "me": handler(.profile)
         // 9-2：未知 key 原先静默 break，联调时难发现——记一条日志。
-        default: NSLog("[BearyNavigator] goTab unknown key: %@", key)
+        default: BearyLog.debug(tag: "BearyNavigator", "goTab unknown key: %@", key)
         }
     }
 

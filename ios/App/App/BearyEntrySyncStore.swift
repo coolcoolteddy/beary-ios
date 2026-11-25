@@ -483,7 +483,7 @@ enum BearyEntrySyncStore {
                   let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt, tzName: entry.tzName) else {
                 // 5-30：静默丢条改记一条日志——若服务端某天漏发或改名字段，
                 // 联调时能从日志发现，而不是无声少篇。
-                NSLog("[BearyEntrySync] groupByDay dropped entry without createdAt or id: id=%@", entry.id ?? "-")
+                BearyLog.debug(tag: "BearyEntrySync", "groupByDay dropped entry without createdAt or id: id=%@", entry.id ?? "-")
                 result.skippedCount += 1
                 continue
             }

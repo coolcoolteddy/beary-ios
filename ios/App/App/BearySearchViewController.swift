@@ -2975,7 +2975,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let totalMs = Date().timeIntervalSince(appendStart) * 1000
-            NSLog("[BearySearch] append page: +\(newRowCount) rows, total \(totalRows), build \(String(format: "%.1f", buildMs)) ms, build+layout \(String(format: "%.1f", totalMs)) ms, mem \(String(format: "%.1f", self.searchResidentMemoryMB())) MB")
+            BearyLog.debug(tag: "BearySearch", message: "append page: +\(newRowCount) rows, total \(totalRows), build \(String(format: "%.1f", buildMs)) ms, build+layout \(String(format: "%.1f", totalMs)) ms, mem \(String(format: "%.1f", self.searchResidentMemoryMB())) MB")
         }
         // S5：新行帧已定，可见行（+下一屏）的关注状态优先请求。
         requestFollowStatesForVisibleRows()

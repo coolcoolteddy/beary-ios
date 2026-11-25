@@ -2344,7 +2344,7 @@ class BearyTimelineViewController: UIViewController {
             BearyEntrySync.shared.runDiaryDiskWrite(accountId: uid) {
                 // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                 let ok = BearyEntrySyncStore.saveDay(accountId: uid, dayKey: key, entries: entries)
-                if !ok { NSLog("[BearyEntrySync] saveDay failed account=%d day=%@", uid, key) }
+                if !ok { BearyLog.debug(tag: "BearyEntrySync", "saveDay failed account=%d day=%@", uid, key) }
             }
         }
     }
@@ -2972,7 +2972,7 @@ class BearyTimelineViewController: UIViewController {
             BearyEntrySync.shared.runDiaryDiskWrite(accountId: uid) {
                 // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                 let ok = BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
-                if !ok { NSLog("[BearyEntrySync] removeEntry failed account=%d entry=%@", uid, entryId) }
+                if !ok { BearyLog.debug(tag: "BearyEntrySync", "removeEntry failed account=%d entry=%@", uid, entryId) }
             }
         }
     }
@@ -3308,7 +3308,7 @@ class BearyTimelineViewController: UIViewController {
             BearyEntrySync.shared.runDiaryDiskWrite(accountId: uid) {
                 // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
                 let ok = BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
-                if !ok { NSLog("[BearyEntrySync] removeEntry failed account=%d entry=%@", uid, entryId) }
+                if !ok { BearyLog.debug(tag: "BearyEntrySync", "removeEntry failed account=%d entry=%@", uid, entryId) }
             }
             // 回收站桶同增：删帖即进回收站，下次进回收站页先读本地就能看到该条
             //（桶不存在时不建半截桶，进页走网络首拉；下次静默刷新用服务端值纠正残差）。
@@ -3317,7 +3317,7 @@ class BearyTimelineViewController: UIViewController {
             // r17-C2：进桶写返回结果，失败记日志（无桶可写时返回 true，不记日志）。
             BearyEntrySync.shared.runTrashDiskWrite(accountId: uid) {
                 if !BearyTrashSyncStore.prependDeleted(accountId: uid, entry: entry) {
-                    NSLog("[BearyEntrySync] prependDeleted failed account=%d entry=%@", uid, entry.id ?? "-")
+                    BearyLog.debug(tag: "BearyEntrySync", "prependDeleted failed account=%d entry=%@", uid, entry.id ?? "-")
                 }
             }
         }
@@ -7579,14 +7579,14 @@ enum BearyCalendarSnapshotStore {
             guard capturedLocal == generation(for: bucket) else { return }
             guard let url = fileURL(accountId: accountId, monthKey: monthKey),
                   let data = try? JSONEncoder().encode(snap) else {
-                NSLog("[BearyCalendarSnapshot] encode failed month=%@", monthKey)
+                BearyLog.debug(tag: "BearyCalendarSnapshot", "encode failed month=%@", monthKey)
                 return
             }
             do {
                 try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try data.write(to: url, options: .atomic)
             } catch {
-                NSLog("[BearyCalendarSnapshot] write failed month=%@ error=%@", monthKey, error as NSError)
+                BearyLog.debug(tag: "BearyCalendarSnapshot", "write failed month=%@ error=%@", monthKey, error as NSError)
             }
         }
     }

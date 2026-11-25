@@ -950,7 +950,7 @@ public final class BearyEmoteView: UIView {
     private static func loadEmoteFromBundle(for key: String, dark: Bool) -> CachedEmote? {
         let name = dark ? "\(key)_dark" : key
         guard let url = Bundle.main.url(forResource: name, withExtension: "json") else {
-            NSLog("[BearyEmote] load failed key=%@ dark=%@ reason=missing-json", key, dark ? "dark" : "light")
+            BearyLog.debug(tag: "BearyEmote", "load failed key=%@ dark=%@ reason=missing-json", key, dark ? "dark" : "light")
             return nil
         }
         // G24：op 取自 LottieAnimation.filepath 解析后的模型（endFrame）。
@@ -959,7 +959,7 @@ public final class BearyEmoteView: UIView {
         // markers 数组（cm=名、tm=帧号，与旧 Marker.time 同值），
         // 首帧缓存后不再重复读盘。
         guard let animation = LottieAnimation.filepath(url.path) else {
-            NSLog("[BearyEmote] load failed key=%@ dark=%@ reason=animation-parse-failed", key, dark ? "dark" : "light")
+            BearyLog.debug(tag: "BearyEmote", "load failed key=%@ dark=%@ reason=animation-parse-failed", key, dark ? "dark" : "light")
             return nil
         }
         // 审计 29 项：缓存预算计价——JSON 文件字节 × 解析后模型膨胀系数
@@ -971,7 +971,7 @@ public final class BearyEmoteView: UIView {
         let estimatedCost = fileSize * parsedModelCostMultiplier
         let endFrame = CGFloat(animation.endFrame)
         guard endFrame > 0 else {
-            NSLog("[BearyEmote] load failed key=%@ dark=%@ reason=nonpositive-endFrame endFrame=%f", key, dark ? "dark" : "light", endFrame)
+            BearyLog.debug(tag: "BearyEmote", "load failed key=%@ dark=%@ reason=nonpositive-endFrame endFrame=%f", key, dark ? "dark" : "light", endFrame)
             return nil
         }
         // markers 缺失时的兜底：loop_start 缺失则从 0 循环，loop_end 缺失则循环到 op。
@@ -1002,7 +1002,7 @@ public final class BearyEmoteView: UIView {
         // G25：零长循环段（loopEnd <= loopStart，如两者同为 endFrame）不得
         // 以 .loop 播放——退化为循环整段 0…endFrame，并打日志。
         if loopEnd <= loopStart {
-            NSLog("[BearyEmote] degenerate loop key=%@ dark=%@ loopStart=%f loopEnd=%f endFrame=%f; falling back to full-segment loop", key, dark ? "dark" : "light", loopStart, loopEnd, endFrame)
+            BearyLog.debug(tag: "BearyEmote", "degenerate loop key=%@ dark=%@ loopStart=%f loopEnd=%f endFrame=%f; falling back to full-segment loop", key, dark ? "dark" : "light", loopStart, loopEnd, endFrame)
             loopStart = 0
             loopEnd = endFrame
         }

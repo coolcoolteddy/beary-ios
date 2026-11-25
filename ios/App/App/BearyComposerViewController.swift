@@ -1328,7 +1328,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        NSLog("[Diag] composer-viewDidLoad-enter")
+        BearyLog.debug(tag: "Diag", message: "composer-viewDidLoad-enter")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("viewDidLoad-enter")
         // 编辑器页底改与首页（广场）同色：玻璃背板已撤，实色 bg 底（浅白／深纯黑）；
@@ -1382,7 +1382,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         NotificationCenter.default.addObserver(self, selector: #selector(handleEditOriginAccountChanged), name: .bearyUserDidChange, object: nil)
         // 开发者模式 Plus 开关变化：清掉本会话缓存的 Plus 态，下次取时重拉并按新开关算。
         NotificationCenter.default.addObserver(self, selector: #selector(handleDeveloperPlusChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
-        NSLog("[Diag] composer-viewDidLoad-exit")
+        BearyLog.debug(tag: "Diag", message: "composer-viewDidLoad-exit")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("viewDidLoad-exit")
     }
@@ -1537,7 +1537,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         composerDidAppear = true
         maybePresentStoredQuotePrompt()
         maybePresentEditCheckpointPrompt()
-        NSLog("[Diag] composer-viewDidAppear")
+        BearyLog.debug(tag: "Diag", message: "composer-viewDidAppear")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("viewDidAppear")
         // 打开即聚焦正文：编辑器唯一目的就是写，首屏就绪后直接可打字；只做一次，
@@ -4526,7 +4526,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             weatherChipButton.setTitle(weatherTitle, for: .normal)
             let icon = BearyIconImages.image(named: "icon_wx_\(BearyText.weatherStaticKey(for: weather))", pointSize: 15)
             if icon == nil {
-                NSLog("[BearyComposer] selected weather chip icon missing key=%@", weather)
+                BearyLog.debug(tag: "BearyComposer", "selected weather chip icon missing key=%@", weather)
             }
             weatherChipButton.setImage(icon, for: .normal)
             weatherChipButton.tintColor = BearyColors.ink
@@ -10511,7 +10511,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func keyboardWillShow(_ notification: Notification) {
-        NSLog("[Diag] composer-keyboard-willShow")
+        BearyLog.debug(tag: "Diag", message: "composer-keyboard-willShow")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("keyboard-willShow")
         applyKeyboard(notification, showing: true)
