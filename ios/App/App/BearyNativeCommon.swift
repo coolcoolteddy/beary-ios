@@ -4051,14 +4051,25 @@ enum BearyVisibilityText {
     static func publishedRelativeString(publishedAtMs: Int?, timeZone: TimeZone?) -> String? {
         guard let ms = publishedAtMs, ms > 0 else { return nil }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
+        let now = Date()
+        let diff = now.timeIntervalSince1970 - TimeInterval(ms) / 1000.0
         if diff < 60 { return BearyLocalizedDate.justNowString(date: date) }
         if diff < 3600 { return BearyLocalizedDate.minutesAgoString(Int(diff / 60)) }
-        if diff < 24 * 3600 { return BearyLocalizedDate.hoursAgoString(Int(diff / 3600)) }
-        // 7 天口径（2026-11-15 Li 定，全站日记时间统一）：7 天内用相对时间，
-        // 7 天外回落绝对时间：同年 M月d日 H:mm、跨年 yyyy年M月d日（规范 §12），
-        // 北京时间。
-        if diff < 7 * 24 * 3600 { return BearyLocalizedDate.daysAgoString(Int(diff / (24 * 3600))) }
+        // 满 1 小时按日历日判定（2026-11-21 Li 定，F1＝A；P3 24–48 小时按日历日）：
+        // 今天 → X 小时前；昨天 → 昨天；前天 → 前天；3–6 天前 → X 天前；
+        // 7 天外回落绝对时间：同年 M月d日 H:mm、跨年 yyyy年M月d日（规范 §12）。
+        // 判定走北京日历，与 timeString／absoluteDateString 同口径；截断放在
+        // 共用工具里，所有调用点（详情、卡片、私信、通知、我的页）自动跟这条
+        // 口径，不用各处另处理。例：23:50 写的日记，次日 00:10 看是“20 分钟前”，
+        // 次日 01:00 看是“昨天”。
+        let calendar = BearyBeijingDay.calendar
+        let startOfDate = calendar.startOfDay(for: date)
+        let startOfToday = calendar.startOfDay(for: now)
+        let dayDiff = calendar.dateComponents([.day], from: startOfDate, to: startOfToday).day ?? 0
+        if dayDiff <= 0 { return BearyLocalizedDate.hoursAgoString(Int(diff / 3600)) }
+        if dayDiff == 1 { return BearyLocalizedDate.yesterdayWord(timeZone: calendar.timeZone) }
+        if dayDiff == 2 { return NSLocalizedString("date.relative.dayBeforeYesterday", comment: "") }
+        if dayDiff < 7 { return BearyLocalizedDate.daysAgoString(dayDiff) }
         return BearyText.absoluteDateString(from: date)
     }
 
