@@ -230,7 +230,7 @@ enum BearyAccountText {
     /// 网页 pdGrants 同款来源文案；未知来源一律“系统赠送”，不编造新来源名。
     static func grantSourceName(_ source: String?) -> String {
         switch source {
-        case "admin": return "管理员开通"
+        case "admin": return NSLocalizedString("plus.grant.admin", comment: "")
         case "referral_inviter": return "邀请好友奖励"
         case "referral_invitee": return "受邀注册奖励"
         case "iap_monthly": return NSLocalizedString("plus.grant.iap_monthly", comment: "")
@@ -2499,7 +2499,7 @@ final class BearySettingsViewController: UIViewController {
                     }
                     if case .cancelled = error { return }
                     if case .server(let code, _) = error, code == "admin_cannot_delete" {
-                        self.showToast("管理员账号不能注销")
+                        self.showToast(NSLocalizedString("account.delete.admin_cannot_delete", comment: ""))
                         return
                     }
                     self.showToast("注销失败，请重试")
@@ -4174,7 +4174,7 @@ beary 日记文字、图片。默认私密，仅本人可见；写完即按所�
 
 行为记录仅记操作类型、目标 ID 与时间（如打开 App、详情阅读停留时长、搜索结果点按），不记日记正文、标题与搜索词原文；游客阅读仅记匿名计数，用于年度报告与风控
 
-MC 白名单申请Minecraft 用户名、申请时间、审批状态（站长可见，用于审批；保留 1 年）
+MC 白名单申请Minecraft 用户名、申请时间、审批状态（Beary 团队可见，用于审批；保留 1 年）
 
 2.3 设备与日志信息
 
@@ -4396,7 +4396,7 @@ Cookie见 2.4过期自动失效
 
 1.2 内测说明
 
-本站目前处于内测阶段，站长可能视情况开启注册名额限制或邀请码注册。
+本站目前处于内测阶段，Beary 团队可能视情况开启注册名额限制或邀请码注册。
 
 如开启名额限制：名额满后新注册将被拒绝，已注册用户不受影响，具体以站内显示为准。
 
@@ -4518,7 +4518,7 @@ Cookie见 2.4过期自动失效
 
 在本站提交 Minecraft Java 版用户名申请白名单。
 
-申请信息将发送给站长，由站长手动审批。
+申请信息将发送给 Beary 团队，由 Beary 团队手动审批。
 
 审批不保证时效，请耐心等待。
 
@@ -4554,7 +4554,7 @@ MC 服务器为免费公益服，不保证 7×24 在线。
 
 逆向工程、试图获取他人数据；
 
-冒充站长或本站工作人员。
+冒充 Beary 团队或本站工作人员。
 
 4.2 限流
 
