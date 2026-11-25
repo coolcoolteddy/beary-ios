@@ -207,10 +207,6 @@ final class BearyPlusPageViewController: UIViewController {
         for dot in planDots {
             dot.layer.cornerRadius = dot.bounds.height / 2
         }
-        // 解锁光晕的渐变层跟随光晕视图尺寸。
-        if let glow = unlockGlowView, let layer = unlockGlowLayer {
-            layer.frame = glow.bounds
-        }
     }
 
     // MARK: - 区块
@@ -724,7 +720,6 @@ final class BearyPlusPageViewController: UIViewController {
     private var isPurchasing = false
     private var isRestoring = false
     private var unlockGlowView: UIView?
-    private var unlockGlowLayer: CAGradientLayer?
 
     /// 恢复购买入口（3.1.1：终身是非消耗品，须有恢复入口）；已开通时隐藏。
     private lazy var restoreButton: UIButton = {
@@ -1029,19 +1024,12 @@ final class BearyPlusPageViewController: UIViewController {
     }
 
     /// 橙色外发光：径向渐变（中心橙 35% → 透明）罩在皇冠后方，2.4s 呼吸常驻到页面消失。
-    /// 径向半径由圆心 startPoint → endPoint 的距离决定（见 AGENTS.md）。
+    /// CAGradientLayer 的径向渐变实测整块实色填充（不渐隐），改用 Core Graphics 画径向渐变图。
     private func startUnlockGlow() {
         guard let superview = crownView.superview, unlockGlowView == nil else { return }
-        let glow = UIView()
+        let glow = UIImageView(image: Self.unlockGlowImage())
         glow.translatesAutoresizingMaskIntoConstraints = false
         glow.isUserInteractionEnabled = false
-        let layer = CAGradientLayer()
-        layer.type = .radial
-        layer.colors = [BearyColors.alpha(BearyColors.orange, 0.35).cgColor, UIColor.clear.cgColor]
-        layer.locations = [0, 1]
-        layer.startPoint = CGPoint(x: 0.5, y: 0.5)
-        layer.endPoint = CGPoint(x: 1, y: 0.5)
-        glow.layer.addSublayer(layer)
         superview.insertSubview(glow, belowSubview: crownView)
         NSLayoutConstraint.activate([
             glow.centerXAnchor.constraint(equalTo: crownView.centerXAnchor),
@@ -1049,8 +1037,6 @@ final class BearyPlusPageViewController: UIViewController {
             glow.widthAnchor.constraint(equalToConstant: 96),
             glow.heightAnchor.constraint(equalToConstant: 96),
         ])
-        superview.layoutIfNeeded()
-        layer.frame = glow.bounds
         glow.layer.opacity = 0.35
         let breathe = CABasicAnimation(keyPath: "opacity")
         breathe.fromValue = 0.35
@@ -1060,13 +1046,23 @@ final class BearyPlusPageViewController: UIViewController {
         breathe.repeatCount = .infinity
         glow.layer.add(breathe, forKey: "breathe")
         unlockGlowView = glow
-        unlockGlowLayer = layer
+    }
+
+    /// 96×96 径向光晕图：圆心橙 35% → 半径 48 处透明，边缘收尽不留硬边。
+    private static func unlockGlowImage() -> UIImage {
+        let size = CGSize(width: 96, height: 96)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { ctx in
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            let colors = [BearyColors.alpha(BearyColors.orange, 0.35).cgColor, UIColor.clear.cgColor] as CFArray
+            guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) else { return }
+            ctx.cgContext.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: size.width / 2, options: [])
+        }
     }
 
     private func stopUnlockGlow() {
         unlockGlowView?.removeFromSuperview()
         unlockGlowView = nil
-        unlockGlowLayer = nil
     }
 
     // MARK: - 动作
