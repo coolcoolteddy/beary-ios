@@ -8900,9 +8900,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             if self.presentedViewController != nil || self.isDraftBoxPresenting { return }
             self.isDraftBoxPresenting = true
-            // 弹窗审计 E1-18：草稿箱内部已统一退场——新建/打开先播同一
-            // 0.26s 退场、dismiss 后再调回调，故编辑器侧不再另行 dismiss
-            // （旧 dismiss 经 BearyDraftBoxInstantAnimator 瞬时消失，绕过了退场动画）。
+            // 弹窗审计 E1-18：草稿箱内部已统一退场——新建/打开先退场、
+            // dismiss 后再调回调，故编辑器侧不再另行 dismiss。
             let box = BearyDraftBoxViewController(
                 onNew: { [weak self] in
                     self?.openBlankDraftFromBox()
@@ -8958,7 +8957,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                 }
             }
-            self.present(box, animated: !UIAccessibility.isReduceMotionEnabled) { [weak self] in
+            BearySystemSheet.present(box, from: self) { [weak self] in
                 self?.isDraftBoxPresenting = false
             }
         }
