@@ -65,6 +65,51 @@ private final class BearyBodyTextView: UITextView {
     /// 正文编辑器恒定的行高倍数，由 Composer 在 buildTextArea 里与 typingAttributes
     /// 用同一个 bodyParagraph 一并设定；本类只用于正文编辑器，倍数恒定。
     var fixedLineHeightMultiple: CGFloat?
+    /// 粘贴被拦图片时的回调（规范 v15 §三）：由 Composer 接到后弹 toast
+    /// “图片请用图片按钮添加”；纯文本／记号附件粘贴不触发。
+    var onBlockedImagePaste: (() -> Void)?
+
+    /// 粘贴拦截（规范 v15 §三）：无记号的图片附件不插入，粘贴时立即提示，
+    /// 不留到保存时再丢。默认粘贴会把照片／截图当附件插进正文，保存时
+    /// inlinePlainText 又把无记号附件直接丢掉（见 BearyText.inlinePlainText），
+    /// 用户写完才发现图没了。带 [mood:]/[gif:] 记号的附件
+    /// （inlineMoodKeyAttribute／inlineGifKeyAttribute）按原记号还原，不动；
+    /// 纯文本粘贴不动。
+    /// 做法：先让系统完成粘贴，再扫描本次插入区间，把无记号附件删掉
+    /// （同一 undo 组内，撤销即回到粘贴前，不会把图“撤销回来”）；
+    /// 删掉过附件才回调提示。
+    override func paste(_ sender: Any?) {
+        let start = selectedRange.location
+        undoManager?.beginUndoGrouping()
+        super.paste(sender)
+        let end = selectedRange.location
+        var removedAny = false
+        if end > start {
+            let text = attributedText ?? NSAttributedString()
+            let scanEnd = min(end, text.length)
+            if scanEnd > start {
+                var doomed: [NSRange] = []
+                text.enumerateAttribute(.attachment, in: NSRange(location: start, length: scanEnd - start), options: []) { value, range, _ in
+                    guard value != nil else { return }
+                    let hasMood = text.attribute(BearyText.inlineMoodKeyAttribute, at: range.location, effectiveRange: nil) != nil
+                    let hasGif = text.attribute(BearyText.inlineGifKeyAttribute, at: range.location, effectiveRange: nil) != nil
+                    if !hasMood && !hasGif { doomed.append(range) }
+                }
+                if !doomed.isEmpty {
+                    let storage = textStorage
+                    storage.beginEditing()
+                    for range in doomed.reversed() {
+                        storage.deleteCharacters(in: range)
+                    }
+                    storage.endEditing()
+                    removedAny = true
+                }
+            }
+        }
+        undoManager?.endUndoGrouping()
+        if removedAny { onBlockedImagePaste?() }
+    }
+
     /// 光标行实际渲染字体：优先取光标处 attributedText 的字体属性（粘贴/
     /// 回填后该处字体可能与 typingAttributes 不一致时，以渲染字体为准），
     /// 取不到时回退 typingAttributes，再回退 textView.font。
@@ -2123,6 +2168,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func buildTextArea() {
         buildHeadlineField()
         textView.delegate = self
+        textView.onBlockedImagePaste = { [weak self] in self?.showToast(message: NSLocalizedString("composer.paste_image_use_button", comment: "")) }
         textView.font = bodyFont
         textView.textColor = BearyColors.ink
         // 无框正文：透明底。正式修法（2026-10-26，微信输入法×编辑器隔离结论）：
