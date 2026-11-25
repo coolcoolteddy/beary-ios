@@ -834,9 +834,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 时同一位置显示「暂时无法确认回收站内容」，重试同走 retryTapped。
         // configure 可重调（同样式不重建按钮），此处按当前失败旗取值。
         if trashFirstLoadFailed {
-            failureStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
+            failureStateView.configure(kind: .error, title: NSLocalizedString("trash.load_failed.title", comment: ""), subtitle: nil, iconName: nil, actionTitle: NSLocalizedString("common.retry", comment: ""), onAction: { [weak self] in self?.retryTapped() })
         } else if trashStaleEmpty {
-            failureStateView.configure(kind: .error, title: "暂时无法确认回收站内容", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
+            failureStateView.configure(kind: .error, title: NSLocalizedString("trash.load_failed.unconfirmed", comment: ""), subtitle: nil, iconName: nil, actionTitle: NSLocalizedString("common.retry", comment: ""), onAction: { [weak self] in self?.retryTapped() })
         }
         failureWrap.isHidden = (trashFirstLoadFailed == false && trashStaleEmpty == false) || trashLoginEmpty
         loginWrap.isHidden = trashLoginEmpty == false
@@ -1295,17 +1295,17 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     // 好友第一期：visibility=friends 时显“仅好友”文案（恢复回仅好友）。
                     let restoredMessage: String
                     if resp.visibility == "friends" {
-                        restoredMessage = "已恢复为仅好友"
+                        restoredMessage = NSLocalizedString("trash.restored.friends_only", comment: "")
                     } else if resp.published == 1 || resp.isPublic == true {
-                        restoredMessage = "已恢复为公开"
+                        restoredMessage = NSLocalizedString("trash.restored.public", comment: "")
                     } else if resp.published == 0 || resp.isPublic == false {
-                        restoredMessage = "已恢复为私密"
+                        restoredMessage = NSLocalizedString("trash.restored.private", comment: "")
                     } else {
-                        restoredMessage = "已恢复"
+                        restoredMessage = NSLocalizedString("trash.restored.generic", comment: "")
                     }
                     // 恢复后行即移除、唯一一篇时随即变空态：toast 上挂「查看日记」，
                     // 点了才打开刚恢复的那篇（不点则留在列表，连续恢复多篇不受影响）。
-                    self.showToast(message: restoredMessage, actionTitle: "查看日记") { [weak self] in
+                    self.showToast(message: restoredMessage, actionTitle: NSLocalizedString("trash.restored.view_entry", comment: "")) { [weak self] in
                         self?.onOpenEntry?(identifier)
                     }
                     self.removeRow(identifier: identifier)
