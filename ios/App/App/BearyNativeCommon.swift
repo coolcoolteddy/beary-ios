@@ -2278,22 +2278,38 @@ enum BearyLocalizedDate {
         NSLocalizedString("date.relative.justNow", comment: "")
     }
     /// X 分钟前：中文走 catalog（date.relative.minutesAgo），非中文如 5 minutes ago。
+    /// 私信／通知用；日记去“前”走 diaryMinutesString。
     static func minutesAgoString(_ value: Int) -> String {
         if isChinese { return String(format: NSLocalizedString("date.relative.minutesAgo", comment: ""), value) }
         let ref = Date().addingTimeInterval(TimeInterval(-value * 60))
         return relativeFormatter().localizedString(for: ref, relativeTo: Date())
     }
     /// X 小时前：中文走 catalog（date.relative.hoursAgo），非中文如 2 hours ago。
+    /// 私信／通知用；日记去“前”走 diaryHoursString。
     static func hoursAgoString(_ value: Int) -> String {
         if isChinese { return String(format: NSLocalizedString("date.relative.hoursAgo", comment: ""), value) }
         let ref = Date().addingTimeInterval(TimeInterval(-value * 3600))
         return relativeFormatter().localizedString(for: ref, relativeTo: Date())
     }
     /// X 天前：中文走 catalog（date.relative.daysAgo），非中文如 3 days ago（1 天为 yesterday）。
+    /// 私信／通知用；日记去“前”走 diaryDaysString。
     static func daysAgoString(_ value: Int) -> String {
         if isChinese { return String(format: NSLocalizedString("date.relative.daysAgo", comment: ""), value) }
         let ref = Date().addingTimeInterval(TimeInterval(-value * 24 * 3600))
         return relativeFormatter().localizedString(for: ref, relativeTo: Date())
+    }
+
+    /// 日记相对时间（2026-11-25 Li 定去“前”）：X 分钟／X 小时／X 天，中英文都走
+    /// catalog（date.relative.minutes／hours／days），不带“前”／"ago"。
+    /// 刚刚／昨天／前天不动（前天是一个词，不是后缀）。
+    static func diaryMinutesString(_ value: Int) -> String {
+        String(format: NSLocalizedString("date.relative.minutes", comment: ""), value)
+    }
+    static func diaryHoursString(_ value: Int) -> String {
+        String(format: NSLocalizedString("date.relative.hours", comment: ""), value)
+    }
+    static func diaryDaysString(_ value: Int) -> String {
+        String(format: NSLocalizedString("date.relative.days", comment: ""), value)
     }
 
     /// “今天／昨天”：中文走 catalog（date.relative.today／yesterday），非中文走 doesRelativeDateFormatting（如 Today／Yesterday）。
@@ -3878,7 +3894,7 @@ enum BearyHaptics {
 
 // MARK: - iCity 共享助手（可见性相对时间 / 已举报本地态 / 举报与拉黑流程）
 
-/// 广场卡相对时间：“X 分钟 / 小时 / 天前”；1 分钟内为“刚刚”。
+/// 广场卡相对时间：“X 分钟 / 小时 / 天”（2026-11-25 Li 定去“前”）；1 分钟内为“刚刚”。
 /// publishedAt 缺失时返回 nil（调用方回退绝对时间）。
 /// 限时日记有效态（客户端唯一口径）：ephemeralUntil 非空且未到期 = 存活期；
 /// 已到期 = 普通私密（不建 sweep，读时按时间判定；手动翻转可见性时服务端清标记，
@@ -4028,7 +4044,7 @@ enum BearyVisibilityText {
     }
 
     /// 日记时间（2026-11-25 Li 定，取代日记各处对 publishedRelativeString 的调用）：
-    /// 7 天内相对时间（刚刚／X 分钟前／X 小时前／X 天前，跟 App 语言），7 天外“/”
+    /// 7 天内相对时间（刚刚／X 分钟／X 小时／X 天，跟 App 语言；2026-11-25 Li 定去“前”／"ago"），7 天外“/”
     /// 绝对日期（同年只写月日、跨年带年，月日顺序跟地区走），不带时分（时分只在详情页
     /// 显示，见 BearyLocalizedDate.slashDateTimeString）。时区：传入日记时区，
     /// nil = 设备时区（日记时区由 #2094 接线，在此之前按设备时区显示，不再写死北京）。
@@ -4038,9 +4054,9 @@ enum BearyVisibilityText {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
         if diff < 60 { return BearyLocalizedDate.justNowString(date: date) }
-        if diff < 3600 { return BearyLocalizedDate.minutesAgoString(Int(diff / 60)) }
-        if diff < 24 * 3600 { return BearyLocalizedDate.hoursAgoString(Int(diff / 3600)) }
-        if diff < 7 * 24 * 3600 { return BearyLocalizedDate.daysAgoString(Int(diff / (24 * 3600))) }
+        if diff < 3600 { return BearyLocalizedDate.diaryMinutesString(Int(diff / 60)) }
+        if diff < 24 * 3600 { return BearyLocalizedDate.diaryHoursString(Int(diff / 3600)) }
+        if diff < 7 * 24 * 3600 { return BearyLocalizedDate.diaryDaysString(Int(diff / (24 * 3600))) }
         return BearyLocalizedDate.slashDateString(from: date, timeZone: timeZone)
     }
 }

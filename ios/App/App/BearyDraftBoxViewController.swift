@@ -1612,13 +1612,14 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// 2026-11-21 日期完全本地化：相对时间与绝对日期跟 App 语言（见 BearyLocalizedDate），
     /// 中文输出与改前一致（昨天仍补零 HH:mm，W9 定版口径不变）；今天／昨天判定与
     /// 显示沿用既有北京日历／GMT+8 口径（扫荡 B 定版），本支只改语言、不动时区。
+    /// 2026-11-25 Li 定去“前”：分钟／小时走日记版 helper（X 分钟／X 小时）。
     private func draftTimeText(updatedAtSeconds: TimeInterval) -> String {
         let date = Date(timeIntervalSince1970: updatedAtSeconds)
         let now = Date()
         let diff = now.timeIntervalSince(date)
         if diff < 3600 {
             let minutes = max(1, Int(floor(diff / 60)))
-            return BearyLocalizedDate.minutesAgoString(minutes)
+            return BearyLocalizedDate.diaryMinutesString(minutes)
         }
         // 扫荡 B：今天/昨天判定走北京日历，与显示的北京时区一致。
         // 旧口径用 Calendar.current（设备时区）：设备时区非北京时，跨北京午夜
@@ -1627,7 +1628,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         let calendar = BearyBeijingDay.calendar
         if calendar.isDateInToday(date) {
             let hours = Int(floor(diff / 3600))
-            return BearyLocalizedDate.hoursAgoString(hours)
+            return BearyLocalizedDate.diaryHoursString(hours)
         }
         if calendar.isDateInYesterday(date) {
             // W9：原生定版统一补零（HH:mm），不再以网页昨天 H:mm 口径为准。
