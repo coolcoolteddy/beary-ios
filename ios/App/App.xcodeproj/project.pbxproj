@@ -112,6 +112,7 @@
 		F1A2B3C4D5E6F78901234567 /* BearyWishWallViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */; };
 		1FC91D33C400D730D6210457 /* BearyPastSelf.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */; };
 		A18F72C3F038DEF72FAE3CD8 /* BearyLocalNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9698DE7FF6E3775C5D608E74 /* BearyLocalNotifications.swift */; };
+		9011505840454BD0AFA83067 /* BearyPushNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67904A4D15B94FDD805AD496 /* BearyPushNotifications.swift */; };
 		A2F2E2235A1F072D15CF258A /* BearyBackgroundRefresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AE0E6FD17767205B88B368D /* BearyBackgroundRefresh.swift */; };
 		5D2FD2FF5C7D291B2137C185 /* BearyDevPreviewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62185EA5A9463B3B9E1B409F /* BearyDevPreviewState.swift */; };
 		B99668F3B4F38B28D660E8CA /* BearyDevPreviewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62185EA5A9463B3B9E1B409F /* BearyDevPreviewState.swift */; };
@@ -847,6 +848,7 @@
 		A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyWishWallViewController.swift; sourceTree = "<group>"; };
 		A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPastSelf.swift; sourceTree = "<group>"; };
 		9698DE7FF6E3775C5D608E74 /* BearyLocalNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLocalNotifications.swift; sourceTree = "<group>"; };
+		67904A4D15B94FDD805AD496 /* BearyPushNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPushNotifications.swift; sourceTree = "<group>"; };
 		9AE0E6FD17767205B88B368D /* BearyBackgroundRefresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBackgroundRefresh.swift; sourceTree = "<group>"; };
 		62185EA5A9463B3B9E1B409F /* BearyDevPreviewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDevPreviewState.swift; sourceTree = "<group>"; };
 		81B7CB6E375BC1F0688281F3 /* BearyDeveloperMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDeveloperMode.swift; sourceTree = "<group>"; };
@@ -1593,6 +1595,7 @@
 				A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */,
 				A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */,
 				9698DE7FF6E3775C5D608E74 /* BearyLocalNotifications.swift */,
+				67904A4D15B94FDD805AD496 /* BearyPushNotifications.swift */,
 				9AE0E6FD17767205B88B368D /* BearyBackgroundRefresh.swift */,
 				62185EA5A9463B3B9E1B409F /* BearyDevPreviewState.swift */,
 				81B7CB6E375BC1F0688281F3 /* BearyDeveloperMode.swift */,
@@ -3009,6 +3012,7 @@
 				F1A2B3C4D5E6F78901234567 /* BearyWishWallViewController.swift in Sources */,
 				1FC91D33C400D730D6210457 /* BearyPastSelf.swift in Sources */,
 				A18F72C3F038DEF72FAE3CD8 /* BearyLocalNotifications.swift in Sources */,
+				9011505840454BD0AFA83067 /* BearyPushNotifications.swift in Sources */,
 				A2F2E2235A1F072D15CF258A /* BearyBackgroundRefresh.swift in Sources */,
 				5D2FD2FF5C7D291B2137C185 /* BearyDevPreviewState.swift in Sources */,
 				53FA15F6301B7A5AE47882A2 /* BearyDeveloperMode.swift in Sources */,
