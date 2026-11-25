@@ -4707,7 +4707,7 @@ final class BearyChromeViewController: UIViewController {
             onNew: { [weak self] in self?.presentComposer() },
             onOpen: { [weak self] draft in self?.presentComposer(openingDraft: draft) }
         )
-        topmostViewController().present(box, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(box, from: topmostViewController())
     }
 
     /// P1-1：FAB 等 /me 回包后的再判（复用我页延迟三重复核口径的语义，不用

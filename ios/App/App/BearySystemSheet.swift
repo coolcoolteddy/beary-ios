@@ -32,8 +32,9 @@ enum BearySystemSheet {
 
     /// 标准弹出：按 presenter 宽算 sheet 宽并预排一次内容高，再配系统 sheet 并 present。
     /// 调用方 show() 原有的 loadViewIfNeeded／frame／layout／updatePreferredContentSize
-    /// 由本方法统一做，不再各写一套。
-    static func present(_ sheet: UIViewController, from presenter: UIViewController) {
+    /// 由本方法统一做，不再各写一套。completion 在 present 完成回调里调
+    /// （草稿箱编辑器侧的 isDraftBoxPresenting 防重入旗靠它复位，见调用点）。
+    static func present(_ sheet: UIViewController, from presenter: UIViewController, completion: (() -> Void)? = nil) {
         // 面板透明：系统 sheet 自带液态玻璃底，实色会盖住它（2026-11-25 Li 定）。
         sheet.view.backgroundColor = .clear
         sheet.loadViewIfNeeded()
@@ -51,6 +52,7 @@ enum BearySystemSheet {
         configure(sheet)
         presenter.present(sheet, animated: BearyMotion.animated(true)) {
             installOutsideTapDismiss(for: sheet)
+            completion?()
         }
     }
 
