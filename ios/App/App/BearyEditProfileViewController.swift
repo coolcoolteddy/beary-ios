@@ -1154,9 +1154,9 @@ class BearyEditProfileViewController: UIViewController {
     /// 才回退 /u/id，两者皆无时请先登录；与个人主页分享口径一致）。
     @objc private func copyLinkButtonTapped() {
         if !effectiveHandle.isEmpty {
-            UIPasteboard.general.string = "https://teddyhn.com/beary/@\(effectiveHandle)"
+            UIPasteboard.general.string = BearyRoute.userByHandle(effectiveHandle).webURL?.absoluteString
         } else if let id = fetchedUserId {
-            UIPasteboard.general.string = "https://teddyhn.com/beary/u/\(id)"
+            UIPasteboard.general.string = BearyRoute.userById(id).webURL?.absoluteString
         } else if meFetchFailed {
             // 5-4：已登录但 /me 加载失败时不误报“请先登录”，给重试
             // （重新拉 /me 再刷新链接行，拿到 id/handle 即补复制）。

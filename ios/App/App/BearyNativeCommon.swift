@@ -2790,6 +2790,16 @@ enum BearyText {
         return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
     }
 
+    /// 分享／纯文本面：去掉完整的 [mood:]/[gif:] 记号，只留文字。
+    /// 与 inlineAttributedText 同一记号正则（渲染时留原文的未知 key／
+    /// 大写等，这里同样保留）。未闭合的手打残段不在此处理——
+    /// 截断后再走 stripTrailingPartialInlineToken 去尾部残段。
+    static func plainTextWithoutInlineTokens(_ text: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]|\\[gif:([a-z0-9]+)\\]", options: []) else { return text }
+        let range = NSRange(location: 0, length: (text as NSString).length)
+        return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
+    }
+
     /// 天气 key → 中文名（与网页 WX_DEFS 同集 9 种）。
     static let weatherNames: [String: String] = [
         "sun": "晴", "cloud": "多云", "cloudy": "阴", "rain": "雨", "snow": "雪",

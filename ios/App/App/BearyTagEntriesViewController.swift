@@ -347,7 +347,9 @@ final class BearyTagEntriesViewController: UIViewController {
         }
         cell.onShareRequested = { [weak self] _ in
             guard let self = self else { return }
-            let sheet = UIActivityViewController(activityItems: [entry.content ?? ""], applicationActivities: nil)
+            // 全文分享也剥记号：收到方不看 [mood:]/[gif:] 原文；末尾手打残段一并去掉。
+            let shareText = BearyText.stripTrailingPartialInlineToken(BearyText.plainTextWithoutInlineTokens(entry.content ?? ""))
+            let sheet = UIActivityViewController(activityItems: [shareText], applicationActivities: nil)
             self.present(sheet, animated: true)
         }
         cell.onActionFailed = { [weak self] in

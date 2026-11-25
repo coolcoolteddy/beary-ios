@@ -3670,36 +3670,9 @@ final class BearyDetailViewController: UIViewController {
     // MARK: - 分享
 
     private func presentShareSheet() {
-        // 现有分享流程同口径：私密直接 return，不交出正文与链接。
-        // 限时已到期按私密算。
-        if !BearyEphemeral.isEffectivelyPublic(entry) { return }
-        guard let entryId = entry.id, !entryId.isEmpty,
-              let url = URL(string: "https://teddyhn.com/beary/d/" + entryId) else { return }
-        let shareText = (entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        var items: [Any] = ["beary 日记"]
-        if !shareText.isEmpty {
-            items.append(String(shareText.prefix(60)))
-        }
-        items.append(url)
-        if presentedViewController != nil {
-            UIPasteboard.general.string = url.absoluteString
-            BearyToast.show(in: view, message: "链接已复制")
-            return
-        }
-        let activity = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        activity.completionWithItemsHandler = { [weak self] _, completed, _, error in
-            if completed == false, error != nil {
-                UIPasteboard.general.string = url.absoluteString
-                if let self = self {
-                    BearyToast.show(in: self.view, message: "链接已复制")
-                }
-            }
-        }
-        if let popover = activity.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
-        }
-        present(activity, animated: BearyMotion.animated(true), completion: nil)
+        // 门控／拼链／组 items／兜底／popover 全在共享入口 BearyDiaryShare
+        // 里一次写好；此处只定锚点（view 中心）与占用态 toast 文案。
+        BearyDiaryShare.present(entry: entry, from: self, anchor: .centered(in: view), occupiedMessage: "链接已复制")
     }
 
     // MARK: - 停留埋点

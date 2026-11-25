@@ -8510,10 +8510,10 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     /// 任一分支取不到 handle 与 id 时返回 nil，绝不拼 broken 链接。
     private func shareProfileURL() -> URL? {
         if let handle = profile?.handle ?? targetHandleValue, !handle.isEmpty {
-            return URL(string: "https://teddyhn.com/beary/@\(handle)")
+            return BearyRoute.userByHandle(handle).webURL
         }
         if let profileId = profile?.profileIdValue ?? targetUserIdValue {
-            return URL(string: "https://teddyhn.com/beary/u/\(profileId)")
+            return BearyRoute.userById(profileId).webURL
         }
         return nil
     }
@@ -9420,22 +9420,10 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     }
 
     private func handleCellShare(entry: Entry) {
-        guard let entryId = entry.id, !entryId.isEmpty else { return }
-        // 审计 P0-4：有效态门控（过期限时篇不放行分享/回应）。
-        guard BearyEphemeral.isEffectivelyPublic(entry) else { return }
-        guard let shareURL = URL(string: "https://teddyhn.com/beary/d/\(entryId)") else { return }
-        var items: [Any] = []
-        if let content = entry.content, !content.isEmpty {
-            items.append(String(content.prefix(60)))
-        }
-        items.append(shareURL)
-        let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
-            popover.permittedArrowDirections = []
-        }
-        present(sheet, animated: BearyMotion.animated(true), completion: nil)
+        // 门控／拼链／组 items／兜底全在共享入口 BearyDiaryShare 里一次写好；
+        // 此处只定锚点（view 中心、无箭头）与占用态 toast 文案。
+        // 审计 P0-4：有效态门控（过期限时篇不放行分享/回应）在共享入口内。
+        BearyDiaryShare.present(entry: entry, from: self, anchor: .centered(in: view, permittedArrowDirections: []), occupiedMessage: "链接已复制")
     }
 
     private func handleCellEmoteAdd(entry: Entry) {

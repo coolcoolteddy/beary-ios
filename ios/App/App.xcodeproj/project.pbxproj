@@ -747,6 +747,7 @@
 		CB5D246C81D576E1DC471B44 /* keep_v3_hold_light.png in Resources */ = {isa = PBXBuildFile; fileRef = BE07B090D304A418C102D6C5 /* keep_v3_hold_light.png */; };
 		985366A89C5D0D001010E6BB /* keep_v3_hold_dark.png in Resources */ = {isa = PBXBuildFile; fileRef = BBA0D0BEA2AE929C2EB3A121 /* keep_v3_hold_dark.png */; };
 		3AA12B2885B64262BB5A9AD8 /* BearySoundPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */; };
+		D4152C0143B196EAD2128D27 /* BearyDiaryShare.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A0611D58A9DC2D1FB1B26C0 /* BearyDiaryShare.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -1478,6 +1479,7 @@
 		BE07B090D304A418C102D6C5 /* keep_v3_hold_light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = LottieSlogan/keep_v3_hold_light.png; sourceTree = "<group>"; };
 		BBA0D0BEA2AE929C2EB3A121 /* keep_v3_hold_dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = LottieSlogan/keep_v3_hold_dark.png; sourceTree = "<group>"; };
 		0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySoundPlayer.swift; sourceTree = "<group>"; };
+		2A0611D58A9DC2D1FB1B26C0 /* BearyDiaryShare.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryShare.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -2238,6 +2240,7 @@
 				700BCB7FD3714D819FF46A5B /* marigold-petal-2.png */,
 				83F9E849A8524DB6B1B70A05 /* marigold-petal-3.png */,
 				6D27C7127DA84CBEA31FF651 /* marigold-petal-4.png */,
+				2A0611D58A9DC2D1FB1B26C0 /* BearyDiaryShare.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -3074,6 +3077,7 @@
 				EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */,
 				3AA12B2885B64262BB5A9AD8 /* BearySoundPlayer.swift in Sources */,
 				AEA9D9D3FBCB5ACEDC623626 /* BearyProfileCoverView.swift in Sources */,
+				D4152C0143B196EAD2128D27 /* BearyDiaryShare.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

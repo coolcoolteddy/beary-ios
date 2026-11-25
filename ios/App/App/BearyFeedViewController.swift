@@ -1242,44 +1242,15 @@ class BearyFeedViewController: UIViewController {
     /// 回退（原生能力映射）：① 系统分享 sheet；② 已有 presented 时复制到剪贴板 + toast；
     /// ③ sheet 回调带错时同样复制 + toast。
     private func presentShareSheet(for entry: Entry) {
-        // B3：私密直接 return，不进分享 sheet、不交出正文前 60 字、不走剪贴板回退。
-        // 审计-广场（分享守卫有效态，中）：存储态 isPublic 不够——已过期限时篇
-        // 存储公开、有效私密，旧口径仍可分享出正文与深链；改与菜单/可见性切换
-        // 同口径的有效态 isEffectivelyPublic。
-        if BearyEphemeral.isEffectivelyPublic(entry) == false { return }
-        guard let entryIdValue = entry.id, !entryIdValue.isEmpty,
-              let urlValue = URL(string: "https://teddyhn.com/beary/d/" + entryIdValue) else { return }
-        let shareText = (entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        var items: [Any] = ["beary 日记"]
-        if !shareText.isEmpty {
-            items.append(String(shareText.prefix(60)))
+        // 门控／拼链／组 items／兜底全在共享入口 BearyDiaryShare 里一次写好；
+        // 此处只定锚点（所在行，无行时表中心）与占用态 toast 文案。
+        // B3：私密直接 return，不进分享 sheet、不交出正文前 60 字、不走剪贴板回退——
+        // 门控在共享入口内（有效态 isEffectivelyPublic，限时已到期按私密算）。
+        var anchorRect = CGRect(x: tableView.bounds.midX, y: tableView.bounds.midY, width: 0, height: 0)
+        if let entryId = entry.id, let path = indexPath(for: entryId) {
+            anchorRect = tableView.rectForRow(at: path)
         }
-        items.append(urlValue)
-        if presentedViewController != nil {
-            // 审计-广场（低风险）：被占用时先 toast 说明再复制，不再静默改复制——
-            // 单条 toast 同时说明占用与复制结果（Toast 新盖旧，两条连发只剩后一条可见）。
-            BearyToast.show(in: view, message: "当前有弹窗打开，链接已复制")
-            UIPasteboard.general.string = urlValue.absoluteString
-            return
-        }
-        let activity = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        activity.completionWithItemsHandler = { [weak self] _, completed, _, error in
-            if completed == false, error != nil {
-                UIPasteboard.general.string = urlValue.absoluteString
-                if let strongSelf = self {
-                    BearyToast.show(in: strongSelf.view, message: "链接已复制")
-                }
-            }
-        }
-        if let popover = activity.popoverPresentationController {
-            popover.sourceView = tableView
-            if let path = indexPath(for: entryIdValue) {
-                popover.sourceRect = tableView.rectForRow(at: path)
-            } else {
-                popover.sourceRect = CGRect(x: tableView.bounds.midX, y: tableView.bounds.midY, width: 0, height: 0)
-            }
-        }
-        present(activity, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
+        BearyDiaryShare.present(entry: entry, from: self, anchor: BearyDiaryShare.Anchor(sourceView: tableView, sourceRect: anchorRect), occupiedMessage: "当前有弹窗打开，链接已复制")
     }
 
     /// F1：图片查看器统一复用 BearyEntryImageViewerViewController（自定义
