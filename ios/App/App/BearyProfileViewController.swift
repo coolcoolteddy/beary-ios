@@ -10342,7 +10342,10 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     /// 隐藏、不留空位（BearyCrownView 既定契约）。
     private func updateCrownDisplay() {
         guard let profileValue = profile else { return }
+        // TF 本地 Plus（2026-11-26 Li 定）：本人页上本地买过 Plus 也点亮；
+        // 他人页不读本地标记（本地标记只属于本机当前用户）。
         let isPlus = BearyDeveloperMode.effectivePlus(profileValue.plus ?? false)
+            || (isOwnProfile && BearyPlusGate.isLocalTestFlightPlus)
         if isPlus {
             crownView.allowsAnimation = true
             crownView.isHidden = !crownView.hasCrown
@@ -10369,7 +10372,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     /// （窄屏全屏＋左边缘右滑，宽屏默认呈现）；页内状态取当前 profile.plus。
     private func presentPlusPage() {
         guard presentedViewController == nil else { return }
-        let page = BearyPlusPageViewController(isPlus: BearyDeveloperMode.effectivePlus(profile?.plus == true))
+        let page = BearyPlusPageViewController(isPlus: BearyDeveloperMode.effectivePlus(profile?.plus == true)
+            || (isOwnProfile && BearyPlusGate.isLocalTestFlightPlus))
         if traitCollection.horizontalSizeClass == .compact {
             page.modalPresentationStyle = .fullScreen
             let edgeDismiss = BearyEdgeDismissController()
