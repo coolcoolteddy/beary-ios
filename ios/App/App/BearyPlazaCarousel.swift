@@ -675,6 +675,7 @@ final class BearyPlazaCarouselCell: UICollectionViewCell {
         historyContainer.addArrangedSubview(historyRailStack)
         historyContainer.addArrangedSubview(historyStack)
         historyContainer.isHidden = true
+        historyContainer.isUserInteractionEnabled = false
         contentView.addSubview(historyContainer)
 
         // 卡片主体点按（整张卡）。
