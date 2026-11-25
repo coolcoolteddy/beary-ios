@@ -91,6 +91,10 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
 
     private let scrimView = UIView()
     private let sheetView = UIView()
+    /// 底 sheet 玻璃背板（Li 2026-11-25 新定：底部弹窗走液态玻璃）：BearyGlass
+    /// 中性配方，只做视觉（helper 已设 isUserInteractionEnabled=false）；圆角
+    /// 与 sheetView 同步（见 updateSheetChrome）。
+    private var sheetGlassView: UIVisualEffectView?
     private let grabView = UIView()
     private let titleLabel = UILabel()
     /// 审计 D-7：手势门控按布局后实测帧划分，需持有 collection 引用（见 gestureRecognizerShouldBegin）。
@@ -157,7 +161,22 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         let scrimTap = UITapGestureRecognizer(target: self, action: #selector(closeTapped))
         scrimView.addGestureRecognizer(scrimTap)
         view.addSubview(scrimView)
-        sheetView.backgroundColor = BearyColors.surface3
+        // Li 2026-11-25 新定：底部弹窗走液态玻璃——sheet 底色改透明，玻璃背板
+        // 贴在 sheetView 底层（BearyGlass 中性配方）；阴影挂本层，玻璃层自裁圆角。
+        sheetView.backgroundColor = .clear
+        let sheetGlass = BearyGlass.effectView(tint: BearyGlass.neutralTint)
+        sheetGlass.translatesAutoresizingMaskIntoConstraints = false
+        sheetGlass.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        sheetGlass.layer.maskedCorners = sheetView.layer.maskedCorners
+        sheetGlass.clipsToBounds = true
+        sheetView.insertSubview(sheetGlass, at: 0)
+        NSLayoutConstraint.activate([
+            sheetGlass.topAnchor.constraint(equalTo: sheetView.topAnchor),
+            sheetGlass.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor),
+            sheetGlass.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            sheetGlass.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+        ])
+        sheetGlassView = sheetGlass
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         // 2026-11-02 定版第 2 组：回应 Sheet 补 raised 阴影（0.12 / 8 / (0, 2)），此前无阴影。
@@ -171,8 +190,8 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         let sheetPan = UIPanGestureRecognizer(target: self, action: #selector(sheetPanGesture(_:)))
         sheetPan.delegate = self
         sheetView.addGestureRecognizer(sheetPan)
-        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #F5F5F5）
-        // 对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
+        // 抓手走 gray：底原是 surface3、现为玻璃背板（见上）；line（浅 #DBDBDB）
+        // 与旧底（浅 #F5F5F5）对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
         grabView.backgroundColor = BearyColors.gray
         grabView.layer.cornerRadius = 2
         grabView.clipsToBounds = true
@@ -194,7 +213,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         layout.sectionInset = UIEdgeInsets(top: 4, left: 18, bottom: 14, right: 18)
         let collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
         collection.translatesAutoresizingMaskIntoConstraints = false
-        collection.backgroundColor = BearyColors.surface3
+        collection.backgroundColor = .clear
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         collection.delaysContentTouches = false
         collection.dataSource = self
@@ -328,6 +347,8 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             sheetView.layer.borderWidth = 0
             sheetBottomConstraint?.constant = 0
         }
+        // 玻璃背板圆角与 sheetView 同步（手机端只顶圆角、宽屏四角，见上）。
+        sheetGlassView?.layer.maskedCorners = sheetView.layer.maskedCorners
     }
 
     @objc private func closeTapped() {

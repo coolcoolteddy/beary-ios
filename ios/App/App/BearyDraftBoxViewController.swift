@@ -158,6 +158,10 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
 
     private let backdropButton = UIButton(type: .custom)
     private let sheetView = UIView()
+    /// 底 sheet 玻璃背板（Li 2026-11-25 新定：底部弹窗走液态玻璃）：BearyGlass
+    /// 中性配方，只做视觉（helper 已设 isUserInteractionEnabled=false）；圆角
+    /// 与 sheetView 同步（见 applySheetChrome）。
+    private var sheetGlassView: UIVisualEffectView?
     // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
     // 从卡片/删除等按钮上起滑时滚动视图能抢到 pan，点按行为不变。
     private let sheetScrollView = BearyCancellableScrollView()
@@ -388,9 +392,23 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         backdropButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(backdropButton)
 
-        // 视觉清单第 12 项：sheet 玻璃背板已撤，改实色 surface3 底（sheet 层底色；
-        // 玻璃范围 Token 只允许栏/菜单，底 sheet 不在内）；sheetView 本身不裁剪，阴影保留。
-        sheetView.backgroundColor = BearyColors.surface3
+        // 视觉清单第 12 项（Li 2026-11-25 新定：底部弹窗走液态玻璃）：sheet 底色
+        // 改透明，玻璃背板贴在 sheetView 底层（BearyGlass 中性配方）；sheetView
+        // 本身不裁剪，阴影保留，玻璃层自裁圆角。
+        sheetView.backgroundColor = UIColor.clear
+        let sheetGlass = BearyGlass.effectView(tint: BearyGlass.neutralTint)
+        sheetGlass.translatesAutoresizingMaskIntoConstraints = false
+        sheetGlass.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        sheetGlass.layer.maskedCorners = sheetView.layer.maskedCorners
+        sheetGlass.clipsToBounds = true
+        sheetView.insertSubview(sheetGlass, at: 0)
+        NSLayoutConstraint.activate([
+            sheetGlass.topAnchor.constraint(equalTo: sheetView.topAnchor),
+            sheetGlass.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor),
+            sheetGlass.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            sheetGlass.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+        ])
+        sheetGlassView = sheetGlass
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         // 无障碍：面板是 overFullScreen 呈现，底层编辑器仍在视图层级里，
         // 不置 modal 则 VoiceOver 滑动能滑到被遮的编辑器内容；置 modal 后
@@ -413,8 +431,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         sheetScrollView.addSubview(contentStack)
 
-        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #F5F5F5）
-        // 对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
+        // 抓手走 gray：底原是 surface3、现为玻璃背板（见上）；line（浅 #DBDBDB）
+        // 与旧底（浅 #F5F5F5）对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
         handleView.backgroundColor = BearyColors.gray
         handleView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         handleView.translatesAutoresizingMaskIntoConstraints = false
@@ -467,7 +485,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         // 标题行移出滚动栈，钉在 sheetView 顶部的固定容器内；
         // 滚动区改为从容器下方起，余下内容（副标题起）按原顺序仍在
         // 滚动栈内。关闭动作、标题文案、抓手样式与头高均不动。
-        fixedHeaderView.backgroundColor = BearyColors.surface3
+        fixedHeaderView.backgroundColor = UIColor.clear
         fixedHeaderView.translatesAutoresizingMaskIntoConstraints = false
         fixedHeaderView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         fixedHeaderView.layer.masksToBounds = true
@@ -690,6 +708,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             fixedHeaderView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetScrollView.layer.maskedCorners = []
         }
+        // 玻璃背板圆角与 sheetView 同步（手机端只顶圆角、iPad 端四角，见上）。
+        sheetGlassView?.layer.maskedCorners = sheetView.layer.maskedCorners
     }
 
     /// 审计第 8 轮第 5 项：首轮数据未到时不跟内容改面板高——面板保持

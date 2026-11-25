@@ -42,6 +42,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
     private let backdropButton = UIButton(type: .custom)
     private let sheetView = UIView()
+    /// 底 sheet 玻璃背板（Li 2026-11-25 新定：底部弹窗走液态玻璃）：BearyGlass
+    /// 中性配方，只做视觉（helper 已设 isUserInteractionEnabled=false）；圆角
+    /// 与 sheetView 同步（见 applySheetChrome）。
+    private var sheetGlassView: UIVisualEffectView?
     private let grabberWrap = UIView()
     private let grabberView = UIView()
     /// 2026-10-30 抓手批：此前只有抓手视觉、没有 pan 手势。透明热区
@@ -180,15 +184,28 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         backdropButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
         backdropButton.bearyAddPressFeedback()
 
-        // 审计 D-16：浮层背景与回应 Sheet 一致走 surface3（深色 #18181C；
-        // 浅色下 surface3 #F5F5F5 几贴 bg 白，观感贴底）；全屏页面仍用 bg，不动。
-        sheetView.backgroundColor = BearyColors.surface3
+        // 审计 D-16（Li 2026-11-25 新定：底部弹窗走液态玻璃）：浮层底色改透明，
+        // 玻璃背板贴在 sheetView 底层（BearyGlass 中性配方）；全屏页面仍用 bg，不动。
+        sheetView.backgroundColor = UIColor.clear
+        let sheetGlass = BearyGlass.effectView(tint: BearyGlass.neutralTint)
+        sheetGlass.translatesAutoresizingMaskIntoConstraints = false
+        sheetGlass.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        sheetGlass.layer.maskedCorners = sheetView.layer.maskedCorners
+        sheetGlass.clipsToBounds = true
+        sheetView.insertSubview(sheetGlass, at: 0)
+        NSLayoutConstraint.activate([
+            sheetGlass.topAnchor.constraint(equalTo: sheetView.topAnchor),
+            sheetGlass.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor),
+            sheetGlass.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            sheetGlass.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+        ])
+        sheetGlassView = sheetGlass
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         // 阴影：手机端走底 sheet 档；iPad 卡片走 raised 档（2026-11-02 定版第 2 组，
         // 旧 0.30/30/(0, 24) 档已废弃），此处不再自写数值。
 
-        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #F5F5F5）
-        // 对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
+        // 抓手走 gray：底原是 surface3、现为玻璃背板（见上）；line（浅 #DBDBDB）
+        // 与旧底（浅 #F5F5F5）对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
         grabberView.backgroundColor = BearyColors.gray
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
 
@@ -457,6 +474,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             sheetView.layer.borderWidth = 0
             BearyShadow.applyRaised(to: sheetView.layer)
         }
+        // 玻璃背板圆角与 sheetView 同步（手机端只顶圆角、iPad 端四角，见上）。
+        sheetGlassView?.layer.maskedCorners = sheetView.layer.maskedCorners
     }
 
     /// 内容量出的 sheet 度量（与键盘无关）：宽度、标题高、搜索框高、内容拟合高。

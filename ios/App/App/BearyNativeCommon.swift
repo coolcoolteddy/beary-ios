@@ -249,7 +249,9 @@ enum BearySheetDrag {
 
 /// 玻璃适用范围 Token（视觉清单第 12 项）：系统材质（UIGlassEffect /
 /// systemMaterial 降级）只允许在栏与菜单区域使用——顶栏、底栏衬底、顶栏内
-/// 登录 pill、菜单卡（bearyMenuGlassView）。窗口 / 弹窗 / Toast / 浮动按钮
+/// 登录 pill、菜单卡（bearyMenuGlassView）——以及底部弹窗（Li 2026-11-25 新定：
+/// 底部弹窗要不带颜色的液态玻璃效果，覆盖本条对弹窗的限制；系统 sheet 走系统
+/// 材质、自研容器贴本配方中性玻璃背板）。其余窗口 / 弹窗 / Toast / 浮动按钮
 /// 一律不用系统材质，改走实色底（见各调用点注释）。
 /// 注意：本令推翻 Li 2026-10-26“所有窗口弹窗与全 App 按钮都用官方玻璃”
 /// 的旧令，可逆——恢复旧令 = 把本支删掉的玻璃背板原样贴回（见 PR 描述清单）。
@@ -258,9 +260,9 @@ enum BearySheetDrag {
 /// tint 只用两档：中性 bg 52%（与顶栏/底栏同款）、主操作橙（顶栏登录 pill 同款）。
 /// SceneDelegate.makeGlassView 与本 helper 同配方，调用点按需任选其一，不新增配方。
 /// 部署目标 iOS 15.0：分支内 #available 兜底，不抬部署目标，不引新依赖。
-/// 例外（Li 2026-11-02 批准）：登录底 sheet 弹窗（BearyLoginSheet）用本配方
-/// 中性玻璃（顶栏同款），不属于上条“窗口/弹窗不用系统材质”的清理范围；
-/// 不要把登录弹窗的玻璃“统一”回实色底，其余窗口/弹窗仍走实色底。
+/// 例外（Li 2026-11-02 批准）：登录底 sheet 弹窗（BearyLoginSheet）是最早一例，
+/// 用本配方中性玻璃（顶栏同款）；2026-11-25 起该口径扩至全部底部弹窗。
+/// 不要把底部弹窗的玻璃“统一”回实色底，其余窗口/弹窗仍走实色底。
 enum BearyGlass {
     static func effectView(tint: UIColor? = nil) -> UIVisualEffectView {
         let view: UIVisualEffectView
