@@ -3936,8 +3936,12 @@ enum BearyEphemeral {
         let now = nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000)
         return until <= now
     }
+    /// 有效公开＝isPublic 且限时未过期。公式唯一来源是 BearyStarMap.isEffectivelyPublic
+    ///（带 nowMs 的纯函数，App 与 BearyCoreTests 双 target 可编）；此处只按 isExpired
+    /// 同口径解析 now（开发者预览强制过期／假时刻）再委托，不再手写第二份公式。
     static func isEffectivelyPublic(_ entry: Entry) -> Bool {
-        entry.isPublic == true && !isExpired(entry)
+        if entry.ephemeralUntil != nil && BearyDevPreviewState.forceLimitedExpired { return false }
+        return BearyStarMap.isEffectivelyPublic(entry, nowMs: BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000))
     }
     /// 存活期倒计时灰字（只留这一行，不另加“限时日记”小标签）。
     static func remainingText(until: Int, nowMs: Int? = nil) -> String {
