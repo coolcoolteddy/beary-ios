@@ -80,6 +80,83 @@ final class BearyDetailViewController: UIViewController {
         }
         return entry.isMine == true
     }
+
+    /// 作者是否已注销：后端把已注销作者的原名下发为哨兵串，显示名与原名
+    /// 不一致即已注销（见 BearyAPI.bearyDeletedAuthorDisplayName）。
+    /// 不直接比较哨兵串，避免新增行里出现中文 literal（i18n-guard）。
+    private var isDeletedAuthor: Bool {
+        guard let name = entry.authorName else { return false }
+        return bearyDeletedAuthorDisplayName(name) != name
+    }
+
+    // MARK: - 好友第一期：详情页作者关注钮（个人页同款）
+
+    /// 详情页作者关注钮：个人页 followButton 同款（17pt 图标＋文字、ink 底＋
+    /// bg 字、四态定宽；点按走同款状态机，见下方的 refresh/apply/tap）。
+    /// 显隐与个人页同规则：自己的日记、游客（无 viewer）、被我拉黑、作者 id
+    /// 缺失／已注销、占位态一律隐藏。截屏 logo 版：显隐走容器（藏按钮会把
+    /// 底下 logo 露出来）。
+    private lazy var followButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitleColor(BearyColors.bg, for: .normal)
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17)) // beary-lint: allow（17 regular＝个人页关注钮同款字号，无对应语义入口）
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        buttonValue.tintColor = BearyColors.bg
+        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpace.md, bottom: 0, right: BearySpace.md)
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0) // beary-lint: allow（个人页关注钮同款 6pt 图文间距，无对应 token）
+        buttonValue.layer.borderWidth = 0
+        buttonValue.backgroundColor = BearyColors.ink
+        buttonValue.clipsToBounds = true
+        buttonValue.layer.cornerRadius = BearyCorners.single
+        buttonValue.addTarget(self, action: #selector(followButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    /// 详情页作者关注钮的截屏 logo 容器（个人页 #2529 同款，见
+    /// BearyScreenshotLogoView）：关注钮画进密码框图层、底下垫官方横版 logo；
+    /// 屏幕上只看到关注钮，截屏时该位置显示横版 logo。容器宽锚按钮宽上
+    /// （修正版，不用 #2529 旧头的 stripWidth=93 写死值）。
+    private lazy var followButtonContainer: BearyScreenshotLogoView = {
+        let containerValue = BearyScreenshotLogoView(logoImageName: "LogoHorizontal", content: followButton)
+        containerValue.isHidden = true
+        return containerValue
+    }()
+
+    /// 当前作者的关注态（nil = 未拉取；拉取失败时按个人页同款占位处理）。
+    private var followState: BearyFollowState?
+    private var followStateFirstLoadFailed = false
+    private var followStateLoading = false
+    private var followBlockedByMe = false
+    /// 关注钮乐观更新（点赞同款）：confirmedFollowState 为最后服务端确认态，
+    /// 失败回滚到它；followActionSeq 为点按代次，过期在途回包一律丢弃。
+    private var confirmedFollowState: BearyFollowState?
+    private var followActionSeq = 0
+    private var renderedFollowState: BearyFollowState?
+    private var followButtonContainerWidthConstraint: NSLayoutConstraint?
+    private var followButtonWidthConstraint: NSLayoutConstraint?
+    private var followButtonMeasuredCategory: UIContentSizeCategory?
+
+    /// 关注钮四态映射：与个人页 BearyProfileViewController.followButtonConfigs
+    /// 同值（图标＋文案）；个人页改文案时此处同步改。
+    private struct FollowButtonConfig {
+        let imageName: String
+        let title: String
+        let accessibilityLabel: String
+    }
+    private static let followButtonConfigs: [BearyFollowState: FollowButtonConfig] = [
+        .none: FollowButtonConfig(imageName: "icon_user_plus", title: NSLocalizedString("follow.button.follow", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.follow", comment: "")),
+        .following: FollowButtonConfig(imageName: "icon_user_check", title: NSLocalizedString("follow.button.following", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.following.accessibility", comment: "")),
+        .followedBy: FollowButtonConfig(imageName: "icon_user_plus", title: NSLocalizedString("follow.button.followedBy", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.followedBy", comment: "")),
+        .mutual: FollowButtonConfig(imageName: "icon_users", title: NSLocalizedString("follow.button.mutual", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.mutual.accessibility", comment: "")),
+    ]
+
+    /// 头行右缩进：作者行右缘上限。按钮显时头行右缘收到按钮左缘外 8pt，
+    /// 名字／时间在按钮前截断；按钮藏时恢复到内容列右缘。两条约束只激活
+    /// 一条，见 updateHeaderStackTrailing()。
+    private var headerStackTrailingConstraint: NSLayoutConstraint?
+    private var headerStackTrailingToFollowButtonConstraint: NSLayoutConstraint?
     /// R22-A1：详情落盘桶——进页时按当时账号钉住，不跟随后来的切号走；
     /// 旧账号回包已由容器复核丢弃，此处再钉一次桶，防写盘时账号已变。
     private let snapshotBucket: String
@@ -765,6 +842,8 @@ final class BearyDetailViewController: UIViewController {
             showPlaceholder(visibility: entry.visibility)
         } else {
             renderAll()
+            // 好友第一期：作者关注态随页拉取（占位态不拉，见 refreshFollowState）。
+            refreshFollowState()
             // 单篇快照：进页只记浏览（卡片/已拉数据都算看过的内容），弱网 id 直达
             // 时先显这份旧正文；旧快照的确认时间与正文一字不动。
             markDetailSnapshotViewed()
@@ -779,6 +858,8 @@ final class BearyDetailViewController: UIViewController {
         // 已改实时读，见本文件头）；账号变化通知到时按补拉路径重拉本篇，
         // 拿回登录态的点赞／收藏／回应状态，原位替换操作栏、不丢阅读位置。
         NotificationCenter.default.addObserver(self, selector: #selector(handleUserChangedNotification), name: .bearyUserDidChange, object: nil)
+        // 关注关系变化（本页点按／个人页点按）后按钮态同步。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleFollowChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
         // 已到期（打开时即过期）直接按有效态落定，未到期才排单次定时。
         if !applyEphemeralExpiryIfNeeded() {
             scheduleEphemeralExpiry()
@@ -791,6 +872,7 @@ final class BearyDetailViewController: UIViewController {
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyUserDidChange, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
     }
 
@@ -818,6 +900,7 @@ final class BearyDetailViewController: UIViewController {
     @objc private func handleUserChangedNotification() {
         guard isViewLoaded, view.window != nil, !locallyHiddenByModeration else { return }
         refreshAuthorActions()
+        refreshFollowState()
         retryFetchDetail()
     }
 
@@ -881,6 +964,8 @@ final class BearyDetailViewController: UIViewController {
         guard isViewLoaded else { return }
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
             refreshActionRow()
+            // 关注钮定宽跟字号走（个人页同款）：延后一帧重算，等系统字号传播到 label 字体后再量。
+            DispatchQueue.main.async { [weak self] in self?.updateFollowButtonFixedWidth() }
         }
     }
 
@@ -980,6 +1065,9 @@ final class BearyDetailViewController: UIViewController {
         let headerTop = headerStack.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 16)
         let headerTrailing = headerStack.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: 0)
         headerStackTopConstraint = headerTop
+        // 关注钮显时头行右缘改收按钮左缘外 8pt（见 updateHeaderStackTrailing），
+        // 故把这条全宽约束存起来、两条只激活一条。
+        headerStackTrailingConstraint = headerTrailing
         // 正文栈顶（2026-11-05 日记布局统一）：取头像底与头行底较大者 + 间距。
         // 初始间距按无标题 14 取，render 时经 updateDiaryStackSpacing 按标题显隐重定；
         // 两条 required ≥ 定下限，正文顶即 max(头像底，头行底) + 间距。
@@ -1181,6 +1269,21 @@ final class BearyDetailViewController: UIViewController {
             moreButton.widthAnchor.constraint(equalToConstant: 28),
             moreButton.heightAnchor.constraint(equalToConstant: 28),
         ])
+
+        // 好友第一期：详情页作者关注钮（个人页 #2529 同款截屏 logo 容器）。
+        // 容器放内容列当作者行的兄弟视图，不进 authorRow——它是 .firstBaseline
+        // 栈，纯 UIView 的基线即底边，40 高的容器会被钉错位置。trailing 与内容
+        // 列右缘齐平（预览同款：390 屏上按钮 276–374，右缘距屏边 16），centerY
+        // 对齐名字；名字／时间在按钮前截断，见 updateHeaderStackTrailing。
+        // 容器宽锚按钮宽上（修正版，不用 #2529 旧头的 stripWidth=93 写死值）。
+        contentColumnView.addSubview(followButtonContainer)
+        NSLayoutConstraint.activate([
+            followButtonContainer.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
+            followButtonContainer.centerYAnchor.constraint(equalTo: nameButton.centerYAnchor),
+            followButtonContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+        ])
+        // 定宽先算一次：容器宽随即定下，首帧布局不再有歧义宽。
+        updateFollowButtonFixedWidth()
     }
 
     /// 第 22 轮 C2：失败横幅挂正文栈首行（作者头行正下方、标题上方）；
@@ -2525,6 +2628,293 @@ final class BearyDetailViewController: UIViewController {
         // 2026-11-12：⋯ 已在顶栏，显隐只改 moreButton，作者行不再缩进。
         let showMore = !isGuest && (isAuthor || BearyEphemeral.isEffectivelyPublic(entry))
         moreButton.isHidden = !showMore
+    }
+
+    // MARK: - 好友第一期：详情页作者关注钮（个人页同款状态机）
+
+    /// 关注关系变化广播（本页点按／个人页点按／取关确认）：只在变动的作者
+    /// 是本篇作者时重拉（无 id 的旧广播走全量重拉，见 clearDiaryCachesAndNotify）。
+    @objc private func handleFollowChangedNotification(_ note: Notification) {
+        if let changedId = note.userInfo?[BearyFriends.friendsChangedUserIdKey] as? Int,
+           let authorId = entry.authorId, changedId != authorId {
+            return
+        }
+        refreshFollowState()
+    }
+
+    /// 关注态拉取：作者 id 以 entry 为准；本人／游客／占位态／无作者／已注销
+    /// 不拉（按钮恒藏）。状态一律调 state 接口实时取；我方拉黑走
+    /// BearyBlockedStore 同步查（登录时已全量拉取）。失败时按个人页同款占位
+    /// 处理（见 applyFollowButton）。
+    private func refreshFollowState() {
+        guard !isAuthor,
+              SessionManager.shared.currentUser?.id != nil,
+              entry.placeholder != true,
+              let authorId = entry.authorId,
+              !isDeletedAuthor else {
+            followButtonContainer.isHidden = true
+            updateHeaderStackTrailing()
+            return
+        }
+        guard !followStateLoading else { return }
+        followStateLoading = true
+        followBlockedByMe = BearyBlockedStore.isBlocked(authorId)
+        let requestAuthorId = authorId
+        let requestSeq = followActionSeq
+        BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.followStateLoading = false
+                // 作者已换（另一篇）或点按已更新时，过期回包丢弃。
+                guard requestAuthorId == self.entry.authorId,
+                      requestSeq == self.followActionSeq else { return }
+                switch result {
+                case .success(let state):
+                    let newState = BearyFollowState(response: state)
+                    self.followState = newState
+                    self.confirmedFollowState = newState
+                    self.followStateFirstLoadFailed = false
+                    self.noteMutualFriend(newState == .mutual, forEntryId: self.entry.id)
+                case .failure:
+                    // 首轮失败不再直接藏按钮——立占位标记，applyFollowButton
+                    // 按未关注态显位、点按重试；已有态时刷新失败仍不清空、不隐藏。
+                    // 失败 toast 只在首次置位时弹一次，重复失败不再刷屏。
+                    if self.followState == nil {
+                        if !self.followStateFirstLoadFailed {
+                            BearyToast.show(in: self.view, message: NSLocalizedString("follow.state.loadFailed", comment: ""))
+                        }
+                        self.followStateFirstLoadFailed = true
+                    }
+                }
+                self.applyFollowButton()
+            }
+        }
+    }
+
+    private func applyFollowButton(animated: Bool = false) {
+        // 首轮失败占位——无确认态但有失败标记时按未关注态显位，标题仍是
+        // “关注”，点按走重试（见 followButtonTapped 占位分支）。
+        let isPlaceholder = followState == nil && followStateFirstLoadFailed
+        let effectiveState = followState ?? (isPlaceholder ? .none : nil)
+        // 开发者模式关注态速切（仅内存，只改渲染）：0 未关注 / 1 已关注 / 2 被关注 / 3 互关。
+        // 真实态仍在 followState / confirmedFollowState 里，点按已禁（见 followButtonTapped）。
+        let overrideState: BearyFollowState? = {
+            switch BearyDevPreviewState.followStateOverride {
+            case 0: return .none
+            case 1: return .following
+            case 2: return .followedBy
+            case 3: return .mutual
+            default: return nil
+            }
+        }()
+        let displayState = overrideState ?? effectiveState
+        guard !isAuthor, SessionManager.shared.currentUser?.id != nil,
+              entry.placeholder != true,
+              entry.authorId != nil,
+              !isDeletedAuthor,
+              !followBlockedByMe,
+              let state = displayState,
+              let config = Self.followButtonConfigs[state] else {
+            followButtonContainer.isHidden = true
+            renderedFollowState = nil
+            updateHeaderStackTrailing()
+            return
+        }
+        // 只在已可见且态真变时播切换动效：首显、复现、同态重刷一律直设终值。
+        let wasVisible = !followButtonContainer.isHidden && followButtonContainer.window != nil
+        let stateChanged = renderedFollowState != state
+        // 字号档变化时定宽跟着重算（trait 钩子的延后重算未跑到时，下次渲染先纠正）。
+        if followButtonMeasuredCategory != traitCollection.preferredContentSizeCategory {
+            updateFollowButtonFixedWidth()
+        }
+        followButtonContainer.isHidden = false
+        updateHeaderStackTrailing()
+        let shouldAnimate = animated && wasVisible && stateChanged && !UIAccessibility.isReduceMotionEnabled
+        let image = BearyIconImages.image(named: config.imageName, pointSize: 17)
+        if shouldAnimate {
+            UIView.transition(with: followButton, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .beginFromCurrentState], animations: {
+                self.followButton.setImage(image, for: .normal)
+                self.followButton.setTitle(config.title, for: .normal)
+            }, completion: nil)
+        } else {
+            followButton.setImage(image, for: .normal)
+            followButton.setTitle(config.title, for: .normal)
+        }
+        followButton.accessibilityLabel = config.accessibilityLabel
+        if isPlaceholder {
+            // 占位态读屏须讲清：这不是已确认的“关注”按钮，点按是重试。
+            followButton.accessibilityLabel = NSLocalizedString("follow.button.loadFailed.accessibility", comment: "")
+        }
+        followButton.isEnabled = true
+        followButton.alpha = 1
+        // 占位不记为已渲染态——真实态到达时按首显播切换动效，不按同态直设。
+        renderedFollowState = isPlaceholder ? nil : state
+    }
+
+    /// 关注钮四态定宽（个人页同款算法）：四态文案／图标宽度不一，内容自适应
+    /// 宽会在点按后变宽变窄。按四态里最宽一态定宽（左内边距＋图标宽＋标题间隙
+    /// ＋标题宽＋右内边距，取四态最大值再 ceil），点按后尺寸恒定；字号档
+    /// 变化时重算。容器宽锚按钮宽上（只建一次）：默认字号下两者都是约 98，
+    /// 按钮正好贴满容器；logo 内容 76.8 落在条内、右缘与按钮右缘齐。
+    private func updateFollowButtonFixedWidth() {
+        let category = traitCollection.preferredContentSizeCategory
+        guard let font = followButton.titleLabel?.font else { return }
+        var maxWidth: CGFloat = 0
+        for config in Self.followButtonConfigs.values {
+            let imageWidth = BearyIconImages.image(named: config.imageName, pointSize: 17)?.size.width ?? 0
+            let titleWidth = (config.title as NSString).size(withAttributes: [.font: font]).width
+            let width = followButton.contentEdgeInsets.left + imageWidth
+                + followButton.titleEdgeInsets.left + titleWidth
+                + followButton.contentEdgeInsets.right
+            maxWidth = max(maxWidth, width)
+        }
+        let fixedWidth = ceil(maxWidth)
+        if followButtonContainerWidthConstraint == nil {
+            let containerConstraint = followButtonContainer.widthAnchor.constraint(equalTo: followButton.widthAnchor)
+            containerConstraint.isActive = true
+            followButtonContainerWidthConstraint = containerConstraint
+        }
+        if let constraint = followButtonWidthConstraint {
+            constraint.constant = fixedWidth
+        } else {
+            let constraint = followButton.widthAnchor.constraint(equalToConstant: fixedWidth)
+            constraint.isActive = true
+            followButtonWidthConstraint = constraint
+        }
+        followButtonMeasuredCategory = category
+    }
+
+    /// 头行右缩进跟随关注钮显隐：按钮显时头行右缘收到按钮左缘外 8pt，名字／
+    /// 时间在按钮前截断；按钮藏时头行恢复到内容列右缘。两条约束只激活一条。
+    private func updateHeaderStackTrailing() {
+        let showButton = !followButtonContainer.isHidden
+        if showButton, followButtonContainer.superview != nil {
+            if headerStackTrailingToFollowButtonConstraint == nil {
+                headerStackTrailingToFollowButtonConstraint = headerStack.trailingAnchor.constraint(equalTo: followButtonContainer.leadingAnchor, constant: -8)
+            }
+            headerStackTrailingConstraint?.isActive = false
+            headerStackTrailingToFollowButtonConstraint?.isActive = true
+        } else {
+            headerStackTrailingToFollowButtonConstraint?.isActive = false
+            headerStackTrailingConstraint?.isActive = true
+        }
+    }
+
+    /// 关注钮失败拒绝动效（点赞同款：摇头＋warning 震动＋拒绝音效，toast 由调用方发；
+    /// 减动效时只跳过视觉抖动，震动与音效照常给）。
+    private func playFollowDenyShake() {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        followButton.layer.removeAnimation(forKey: "bearyFollowDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        followButton.layer.add(shake, forKey: "bearyFollowDenyShake")
+    }
+
+    @objc private func followButtonTapped() {
+        // 开发者模式预览态：只改显示，点按不发关注／取关请求。
+        if BearyDevPreviewState.followStateOverride != nil {
+            BearyToast.show(in: view, message: NSLocalizedString("follow.toast.previewDisabled", comment: ""))
+            return
+        }
+        // 占位态点按 = 重试刷新状态，不发关注请求。
+        if followState == nil && followStateFirstLoadFailed {
+            refreshFollowState()
+            return
+        }
+        guard let authorId = entry.authorId,
+              let state = followState else { return }
+        switch state {
+        case .none, .followedBy:
+            // 关注与回关同一接口（回关成功即成互关；回关不另发系统消息，
+            // 对方凭 follow 通知行知道已变互关）。
+            // 乐观更新（点赞同款）：点按瞬间即显最终态，服务端只确认；
+            // 快连点按最后一次点按的态显示，过期在途回包直接丢弃。
+            let wasFollowedBy = state == .followedBy
+            let target: BearyFollowState = wasFollowedBy ? .mutual : .following
+            followActionSeq += 1
+            let requestSeq = followActionSeq
+            followState = target
+            applyFollowButton(animated: true)
+            BearyAPI.shared.followFriend(userId: authorId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    guard requestSeq == self.followActionSeq,
+                          authorId == self.entry.authorId else { return }
+                    switch result {
+                    case .success:
+                        self.confirmedFollowState = target
+                        self.noteMutualFriend(target == .mutual, forEntryId: self.entry.id)
+                        BearyFriends.clearDiaryCachesAndNotify(userId: authorId)
+                        BearyToast.show(in: self.view, message: wasFollowedBy ? NSLocalizedString("follow.toast.mutual", comment: "") : NSLocalizedString("follow.button.following", comment: ""))
+                    case .failure(let error):
+                        // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
+                        self.followState = self.confirmedFollowState
+                        self.applyFollowButton()
+                        if case .unauthorized = error {
+                            self.onRequireLogin?()
+                        } else {
+                            self.playFollowDenyShake()
+                            BearyToast.show(in: self.view, message: wasFollowedBy ? NSLocalizedString("follow.toast.followBackFailed", comment: "") : NSLocalizedString("follow.toast.followFailed", comment: ""))
+                        }
+                    }
+                }
+            }
+        case .following, .mutual:
+            let displayName = bearyDeletedAuthorDisplayName(entry.authorName) ?? ""
+            // 取关乐观更新：确认取关的瞬间即显最终态（按钮全程在位、不消失、
+            // 直接动效切过去），服务端只确认，失败回滚＋拒绝动效。
+            // 互关取关退为对方单向关注我（按钮变“回关”）；单向取关变无关系。
+            BearyFriends.confirmUnfollowAlert(from: self, displayName: displayName, mutual: state == .mutual) { [weak self] in
+                guard let self = self else { return }
+                // 确认执行时以当前态重算目标，不沿用点按时捕获的 state；
+                // 若已不是 .following/.mutual（刷新回包已改态），放弃本次取关并刷新，
+                // 不按旧目标发 unfollow，避免瞬时错误态。
+                guard let currentState = self.followState,
+                      currentState == .following || currentState == .mutual,
+                      let authorId = self.entry.authorId else {
+                    self.refreshFollowState()
+                    return
+                }
+                let target: BearyFollowState = currentState == .mutual ? .followedBy : .none
+                self.followActionSeq += 1
+                let requestSeq = self.followActionSeq
+                self.followState = target
+                self.applyFollowButton(animated: true)
+                BearyAPI.shared.unfollowFriend(userId: authorId) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        guard requestSeq == self.followActionSeq,
+                              authorId == self.entry.authorId else { return }
+                        switch result {
+                        case .success:
+                            self.confirmedFollowState = target
+                            self.noteMutualFriend(target == .mutual, forEntryId: self.entry.id)
+                            BearyFriends.clearDiaryCachesAndNotify(userId: authorId)
+                            // 仅好友篇取关后可能不再可见：重走服务端裁决，必要时转占位。
+                            if self.entry.isFriendsOnly {
+                                self.retryFetchDetail()
+                            }
+                        case .failure(let error):
+                            // 失败回滚到最后确认态；401 走登录入口（onRequireLogin），
+                            // 登录后由用户重试取关，不弹失败 toast；其他失败仍走原
+                            // 拒绝动效＋“取关失败”toast。
+                            self.followState = self.confirmedFollowState
+                            self.applyFollowButton()
+                            if case .unauthorized = error {
+                                self.onRequireLogin?()
+                            } else {
+                                self.playFollowDenyShake()
+                                BearyToast.show(in: self.view, message: NSLocalizedString("follow.toast.unfollowFailed", comment: ""))
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// 首页图片条同款（F5）：高 216、间距 8、圆角 12、槽底色 line、横向滚动、
