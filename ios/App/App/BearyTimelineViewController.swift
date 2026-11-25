@@ -498,7 +498,7 @@ final class BearyCalendarCardView: UIView {
         weekdayRow.translatesAutoresizingMaskIntoConstraints = false
         weekdayRow.axis = .horizontal
         weekdayRow.distribution = .fillEqually
-        for weekdayName in ["一", "二", "三", "四", "五", "六", "日"] {
+        for weekdayName in BearyLocalizedDate.orderedVeryShortWeekdaySymbols { // 2026-11-21 一周起始日本地化：按首日起排，中文与改前一致
             let label = UILabel()
             label.text = weekdayName
             // 8-3 例外：星期单字属日历格装饰头，不缩放。
@@ -1576,9 +1576,10 @@ final class BearyTimelineCell: UITableViewCell {
             arranged.removeFromSuperview()
         }
         if let createdMs = entry.createdAt {
-            let date = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
-            // G8：行内时间走北京时区，与服务端日界一致（静态 formatter 同口径）。
-            timeLabel.text = Self.timelineTimeFormatter.string(from: date)
+            // 日记时间（2026-11-25 Li 定）：7 天内相对、7 天外“/”绝对日期，不带时分
+            // （时分只在详情页显示）；见 BearyVisibilityText.diaryTimeString。
+            // 时间线按日分组，meta 行以时间开头（13 号灰字）。
+            timeLabel.text = BearyVisibilityText.diaryTimeString(publishedAtMs: createdMs) ?? BearyDiaryCardCell.feedTimeString(ms: createdMs)
         } else {
             timeLabel.text = ""
         }
@@ -1950,15 +1951,6 @@ final class BearyTimelineCell: UITableViewCell {
             tableView.endUpdates()
         }
     }
-
-    /// 80 包 B4-1：行内时间与引用日期 formatter 静态复用（原每次 configure 新建）。
-    private static let timelineTimeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        f.dateFormat = "HH:mm"
-        return f
-    }()
 
     private func footItem(iconName: String, text: String?, accessibilityName: String, highlighted: Bool = false) -> UIView {
         let row = UIStackView()
@@ -4323,13 +4315,27 @@ class BearyTimelineViewController: UIViewController {
         }, completion: { [weak self] _ in self?.refreshHeaderHeight() })
     }
 
+    /// 本周首日（跟 region 走，见 BearyLocalizedDate.firstWeekday：
+    /// 中国大陆／欧洲多数地区为周一，美国等地区为周日）。与 mondayOf 同口径
+    /// （北京日界＋shifted），只是首日不写死周一；时间线周条／本周判定／
+    /// 翻周跟随共用。星图热力图仍走 mondayOf，不动。
+    private func weekStartOf(year: Int, month: Int, day: Int) -> (year: Int, month: Int, day: Int)? {
+        guard let date = BearyBeijingDay.date(year: year, month: month, day: day) else { return nil }
+        let weekday = BearyBeijingDay.calendar.component(.weekday, from: date)
+        let offset = (weekday - BearyLocalizedDate.firstWeekday + 7) % 7
+        guard let start = BearyBeijingDay.calendar.date(byAdding: .day, value: -offset, to: date) else { return nil }
+        let comps = BearyBeijingDay.calendar.dateComponents([.year, .month, .day], from: start)
+        guard let y = comps.year, let m = comps.month, let d = comps.day else { return nil }
+        return (y, m, d)
+    }
+
     /// 月视图错峰时要跳过的本周日期 key（网页 calStaggerMonthCells 口径）。
     private func currentWeekKeys() -> Set<String> {
         guard let anchor = calendarAnchor else { return [] }
-        guard let monday = BearyBeijingDay.mondayOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return [] }
+        guard let weekStart = weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return [] }
         var keys: Set<String> = []
         for offset in 0..<7 {
-            guard let day = BearyBeijingDay.shifted(year: monday.year, month: monday.month, day: monday.day, byDays: offset) else { continue }
+            guard let day = BearyBeijingDay.shifted(year: weekStart.year, month: weekStart.month, day: weekStart.day, byDays: offset) else { continue }
             keys.insert(BearyBeijingDay.dayKey(year: day.year, month: day.month, day: day.day))
         }
         return keys
@@ -5308,10 +5314,10 @@ class BearyTimelineViewController: UIViewController {
         switch calendarMode {
         case .week:
             guard let anchor = calendarAnchor else { return [] }
-            guard let monday = BearyBeijingDay.mondayOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return [] }
+            guard let weekStart = weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return [] }
             var keys: [String] = []
             for offset in 0..<7 {
-                guard let day = BearyBeijingDay.shifted(year: monday.year, month: monday.month, day: monday.day, byDays: offset) else { continue }
+                guard let day = BearyBeijingDay.shifted(year: weekStart.year, month: weekStart.month, day: weekStart.day, byDays: offset) else { continue }
                 let key = BearyBeijingDay.monthKey(year: day.year, month: day.month)
                 if !keys.contains(key) { keys.append(key) }
             }
@@ -5448,38 +5454,42 @@ class BearyTimelineViewController: UIViewController {
         switch calendarMode {
         case .week:
             guard let anchor = calendarAnchor else { return }
-            guard let monday = BearyBeijingDay.mondayOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return }
+            guard let weekStart = weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return }
             var days: [BearyCalendarDay] = []
             for offset in 0..<7 {
-                guard let day = BearyBeijingDay.shifted(year: monday.year, month: monday.month, day: monday.day, byDays: offset) else { continue }
+                guard let day = BearyBeijingDay.shifted(year: weekStart.year, month: weekStart.month, day: weekStart.day, byDays: offset) else { continue }
                 days.append(makeCalendarDay(year: day.year, month: day.month, day: day.day, isOffMonth: false))
             }
             guard let first = days.first, let last = days.last else { return }
             // 网页周标题口径：起日“[年]M月d日 – ”+ 尾日（同月只写 d日，同年写 M月d日，跨年写 Y年M月d日）。
-            // TL-6：各段之间有空格（网页 us=' '），≤340px 窄屏才去空格紧凑写。
-            let isNarrow = tableView.bounds.width <= 340
-            let us = isNarrow ? "" : " "
+            // 2026-11-21 日期完全本地化：走共享 helper（同月只写日数字，同年写月日，跨年写年月日）。
+            // 年／月／日之间无空格（此前中文宽屏在年／月／日两侧加空格、窄屏才去空格；
+            // i18n-guard 不许中文插值，统一走 helper，与绝对日期格式同款）。
             let todayYear = BearyBeijingDay.todayComponents()?.year
-            var title = ""
-            if first.year != todayYear { title += "\(first.year)\(us)年\(us)" }
-            title += "\(first.month)\(us)月\(us)\(first.day)\(us)日 – "
+            let firstDate = BearyLocalizedDate.dateFromComponents(year: first.year, month: first.month, day: first.day, timeZone: BearyLocalizedDate.gmt8) ?? Date()
+            let lastDate = BearyLocalizedDate.dateFromComponents(year: last.year, month: last.month, day: last.day, timeZone: BearyLocalizedDate.gmt8) ?? Date()
+            let firstPart = first.year != todayYear
+                ? BearyLocalizedDate.yearMonthDayString(from: firstDate, timeZone: BearyLocalizedDate.gmt8)
+                : BearyLocalizedDate.monthDayString(from: firstDate, timeZone: BearyLocalizedDate.gmt8)
+            let lastPart: String
             if first.year == last.year && first.month == last.month {
-                title += "\(last.day)\(us)日"
+                lastPart = "\(last.day)"
             } else if first.year == last.year {
-                title += "\(last.month)\(us)月\(us)\(last.day)\(us)日"
+                lastPart = BearyLocalizedDate.monthDayString(from: lastDate, timeZone: BearyLocalizedDate.gmt8)
             } else {
-                title += "\(last.year)\(us)年\(us)\(last.month)\(us)月\(us)\(last.day)\(us)日"
+                lastPart = BearyLocalizedDate.yearMonthDayString(from: lastDate, timeZone: BearyLocalizedDate.gmt8)
             }
+            let title = firstPart + " – " + lastPart
             calendarCard.setTitle(title)
             calendarCard.setToggleTitle("月视图")
-            calendarCard.setNavigation(prevEnabled: true, nextEnabled: !isCurrentWeek(monday: monday))
+            calendarCard.setNavigation(prevEnabled: true, nextEnabled: !isCurrentWeek(weekStart: weekStart))
             calendarCard.render(days: days, mode: .week)
         case .month:
             guard let displayed = calendarDisplayedMonth else { return }
             guard let dim = BearyBeijingDay.daysInMonth(year: displayed.year, month: displayed.month) else { return }
             guard let firstDate = BearyBeijingDay.date(year: displayed.year, month: displayed.month, day: 1) else { return }
             let firstWeekday = BearyBeijingDay.calendar.component(.weekday, from: firstDate)
-            let leading = (firstWeekday + 5) % 7
+            let leading = (firstWeekday - BearyLocalizedDate.firstWeekday + 7) % 7 // 2026-11-21 一周起始日本地化：首日跟 region 走
             var days: [BearyCalendarDay] = []
             if leading > 0 {
                 guard let prevMonth = BearyBeijingDay.shiftedMonth(year: displayed.year, month: displayed.month, byMonths: -1) else { return }
@@ -5512,10 +5522,10 @@ class BearyTimelineViewController: UIViewController {
         updateCalendarTodayButton()
     }
 
-    private func isCurrentWeek(monday: (year: Int, month: Int, day: Int)) -> Bool {
+    private func isCurrentWeek(weekStart: (year: Int, month: Int, day: Int)) -> Bool {
         guard let today = BearyBeijingDay.todayComponents() else { return false }
-        guard let currentMonday = BearyBeijingDay.mondayOf(year: today.year, month: today.month, day: today.day) else { return false }
-        return currentMonday.year == monday.year && currentMonday.month == monday.month && currentMonday.day == monday.day
+        guard let currentWeekStart = weekStartOf(year: today.year, month: today.month, day: today.day) else { return false }
+        return currentWeekStart.year == weekStart.year && currentWeekStart.month == weekStart.month && currentWeekStart.day == weekStart.day
     }
 
     private func isCurrentMonth(displayed: (year: Int, month: Int)) -> Bool {
@@ -5578,10 +5588,10 @@ class BearyTimelineViewController: UIViewController {
         switch calendarMode {
         case .week:
             guard let anchor = calendarAnchor else { pendingStepFollow = false; return true }
-            guard let monday = BearyBeijingDay.mondayOf(year: anchor.year, month: anchor.month, day: anchor.day) else { pendingStepFollow = false; return true }
+            guard let weekStart = weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) else { pendingStepFollow = false; return true }
             var weekDays: [(year: Int, month: Int, day: Int)] = []
             for offset in 0..<7 {
-                guard let day = BearyBeijingDay.shifted(year: monday.year, month: monday.month, day: monday.day, byDays: offset) else { continue }
+                guard let day = BearyBeijingDay.shifted(year: weekStart.year, month: weekStart.month, day: weekStart.day, byDays: offset) else { continue }
                 weekDays.append(day)
             }
             // 缓存未到齐（周跨两月时两月都要有）则挂起。
@@ -5734,8 +5744,8 @@ class BearyTimelineViewController: UIViewController {
             guard let base = base else { return }
             // 下一周不许翻进未来：已是本周时 next 按钮本身已禁用，此处再拦一道。
             if delta > 0 {
-                guard let monday = BearyBeijingDay.mondayOf(year: base.year, month: base.month, day: base.day) else { return }
-                if isCurrentWeek(monday: monday) { return }
+                guard let weekStart = weekStartOf(year: base.year, month: base.month, day: base.day) else { return }
+                if isCurrentWeek(weekStart: weekStart) { return }
             }
             guard let moved = BearyBeijingDay.shifted(year: base.year, month: base.month, day: base.day, byDays: delta * 7) else { return }
             targetAnchor = moved
@@ -5778,8 +5788,8 @@ class BearyTimelineViewController: UIViewController {
         switch calendarMode {
         case .week:
             if let anchor = calendarAnchor,
-               let monday = BearyBeijingDay.mondayOf(year: anchor.year, month: anchor.month, day: anchor.day) {
-                containsToday = isCurrentWeek(monday: monday)
+               let weekStart = weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) {
+                containsToday = isCurrentWeek(weekStart: weekStart)
             } else {
                 containsToday = false
             }
@@ -6347,7 +6357,7 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 选中日是否落在日历当前显示的视图之外：月视图比显示月，周视图比
-    /// 锚点所在周（周一至周日）。日历状态未就绪时按在视图内算（短式不变）。
+    /// 锚点所在周（首日至末日，首日跟 region 走）。日历状态未就绪时按在视图内算（短式不变）。
     private func isSelectedDayOutsideCalendarView(year: Int, month: Int, day: Int) -> Bool {
         switch calendarMode {
         case .month:
@@ -6355,10 +6365,10 @@ class BearyTimelineViewController: UIViewController {
             return displayed.year != year || displayed.month != month
         case .week:
             guard let anchor = calendarAnchor,
-                  let monday = BearyBeijingDay.mondayOf(year: anchor.year, month: anchor.month, day: anchor.day),
-                  let mondayNumber = BearyBeijingDay.dayNumber(year: monday.year, month: monday.month, day: monday.day),
+                  let weekStart = weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day),
+                  let weekStartNumber = BearyBeijingDay.dayNumber(year: weekStart.year, month: weekStart.month, day: weekStart.day),
                   let dayNumber = BearyBeijingDay.dayNumber(year: year, month: month, day: day) else { return false }
-            return dayNumber < mondayNumber || dayNumber > mondayNumber + 6
+            return dayNumber < weekStartNumber || dayNumber > weekStartNumber + 6
         }
     }
 
@@ -6480,11 +6490,12 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 追加 6①：日组标题统一格式——此前今天/昨天带“今天 · / 昨天 · ”前缀、
-    /// 更早的日期没有前缀，同页内格式不统一；统一为一律“X 月 X 日”
+    /// 更早的日期没有前缀，同页内格式不统一；统一为一律“X月X日”
     /// （当日面板表头是另一组件，口径不动）。
+    /// 2026-11-21 日期完全本地化：走共享 helper（中文 M月d日，与卡片同口径）。
     private func dayTitleForMs(_ ms: Int) -> String {
-        guard let comps = BearyBeijingDay.components(ofMs: ms) else { return "" }
-        return "\(comps.month) 月 \(comps.day) 日"
+        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        return BearyLocalizedDate.monthDayString(from: date, timeZone: BearyLocalizedDate.gmt8)
     }
 
     private func emptyView(title: String, subtitle: String, actionTitle: String?, action: (() -> Void)?, iconName: String = "icon_tray", kind: BearyStateKind = .empty) -> UIView {

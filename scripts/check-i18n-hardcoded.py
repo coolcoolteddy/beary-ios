@@ -7,7 +7,8 @@
 - 已包进 NSLocalizedString(...) / String(localized: ...) 的 key 参数不算
   （key 是语义 key，不含中文）；
 - 注释里的中文不算；DateFormatter 的 dateFormat（如 "M月d日"）不算，
-  那是格式串不是文案；
+  那是格式串不是文案；BearyLocalizedDate.formatter 的 zhFormat: 参数同款，
+  也是传给 DateFormatter 的格式串，不算；
 - 白名单文件：ios/App/BearyCoreTests/BearyI18nCatalogTests.swift——
   它以中文原文作期望值断言，中文是测试数据本身。
 
@@ -122,7 +123,9 @@ def scan_diff(diff_text: str):
             cur_line += 1
             continue
         added = raw[1:]
-        if "dateFormat" in added:
+        # 格式串不是文案：dateFormat 赋值与 formatter 的 zhFormat: 参数都跳过
+        # （zhFormat 是传给 DateFormatter 的中文格式串，如 "M月d日"）。
+        if "dateFormat" in added or "zhFormat:" in added:
             cur_line += 1
             continue
         code = strip_line_comment(added)

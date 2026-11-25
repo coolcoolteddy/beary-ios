@@ -2186,13 +2186,12 @@ class BearyDiaryCardCell: UITableViewCell {
 
     // MARK: - 文案与样式 helpers
 
-    /// F3：时间一律 M月d日 H:mm（小时不补零，网页 fmtDate 口径；今天也不只显示 H:mm）。
-    /// 80 包 B4-1：时间 formatter 静态复用（主线程 UI 路径使用，原每次调用新建）。
-    /// 共用绝对时间回落（publishedRelativeString 无效 ms 时的兜底）：
-    /// 同年「M月d日 H:mm」，跨年「yyyy年M月d日」，北京时间。
-    static func feedTimeString(ms: Int) -> String {
+    /// F3：日记时间回落（2026-11-25 Li 定）：“/”绝对日期（同年只写月日、
+    /// 跨年带年，月日顺序跟地区走），不带时分；时区默认设备时区（日记时区由 #2094 接线）。
+    /// 共用绝对时间回落（diaryTimeString 无效 ms 时的兜底）。
+    static func feedTimeString(ms: Int, timeZone: TimeZone? = nil) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        return BearyText.absoluteDateString(from: date)
+        return BearyLocalizedDate.slashDateString(from: date, timeZone: timeZone)
     }
 
     /// F2：正文 16pt（首页）、行高 1.6（段落样式实现，非默认行高）。
@@ -2591,12 +2590,13 @@ class BearyDiaryCardCell: UITableViewCell {
         nameLabel.text = authorNameValue
         setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
 
-        // F3：时间一律相对时间（与私信/通知同口径，7 天外回绝对时间；2026-11-15 改，取代绝对时间）。
-        // 广场卡有效公开且有 publishedAt 时按发布时间相对；其余按创建时间相对。
-        if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
+        // F3：日记时间（2026-11-25 Li 定）：7 天内相对、7 天外“/”绝对日期，不带时分；
+        // 见 BearyVisibilityText.diaryTimeString。广场卡有效公开且有 publishedAt 时
+        // 按发布时间，其余按创建时间。
+        if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.diaryTimeString(publishedAtMs: entry.publishedAt) {
             timeLabel.text = relative
         } else {
-            timeLabel.text = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.createdAt) ?? BearyDiaryCardCell.feedTimeString(ms: entry.createdAt ?? 0)
+            timeLabel.text = BearyVisibilityText.diaryTimeString(publishedAtMs: entry.createdAt) ?? BearyDiaryCardCell.feedTimeString(ms: entry.createdAt ?? 0)
         }
 
         // F10：天气图标 15px（icon_wx_<weatherKey>，取不到图时隐藏、不留空）。
@@ -2686,11 +2686,11 @@ class BearyDiaryCardCell: UITableViewCell {
         self.isExpanded = isExpanded
         let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? "beary 用户"
         nameLabel.text = authorNameValue
-        // 我的页时间改相对时间（与 feed 模式同口径：有效公开取发布时间，否则取创建时间；
-        // 共用 BearyVisibilityText.publishedRelativeString，不另造工具）。
-        if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
+        // 我的页时间走日记口径（与 feed 模式同款：有效公开取发布时间，否则取创建时间；
+        // 见 BearyVisibilityText.diaryTimeString）。
+        if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.diaryTimeString(publishedAtMs: entry.publishedAt) {
             timeLabel.text = relative
-        } else if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.createdAt) {
+        } else if let relative = BearyVisibilityText.diaryTimeString(publishedAtMs: entry.createdAt) {
             timeLabel.text = relative
         } else {
             timeLabel.text = nil

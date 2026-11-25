@@ -16,9 +16,10 @@ struct BearyIDCardData: Codable {
     var city: String?
 
     /// 卡上生日：只月日，如「11月3日」；未填不显示。
+    /// 2026-11-21 日期完全本地化：中文沿用既有插值，非中文走共享 helper。
     var birthdayText: String? {
         guard let month = birthdayMonth, let day = birthdayDay else { return nil }
-        return "\(month)月\(day)日"
+        return BearyLocalizedDate.monthDayString(month: month, day: day)
     }
 
     /// 卡上城市：只城市名，不带国家/地区；未填不显示。

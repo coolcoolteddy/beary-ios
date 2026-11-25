@@ -1609,41 +1609,32 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 
     /// 网页 dfTimeStr 移植：v3 updatedAt 为秒，网页 updated_at 为毫秒，此处按秒换算。
+    /// 2026-11-21 日期完全本地化：相对时间与绝对日期跟 App 语言（见 BearyLocalizedDate），
+    /// 中文输出与改前一致（昨天仍补零 HH:mm，W9 定版口径不变）；今天／昨天判定与
+    /// 显示沿用既有北京日历／GMT+8 口径（扫荡 B 定版），本支只改语言、不动时区。
+    /// 2026-11-25 Li 定去“前”：分钟／小时走日记版 helper（X 分钟／X 小时）。
     private func draftTimeText(updatedAtSeconds: TimeInterval) -> String {
         let date = Date(timeIntervalSince1970: updatedAtSeconds)
         let now = Date()
         let diff = now.timeIntervalSince(date)
         if diff < 3600 {
             let minutes = max(1, Int(floor(diff / 60)))
-            return "\(minutes) 分钟前"
+            return BearyLocalizedDate.diaryMinutesString(minutes)
         }
-        // 扫荡 B：今天/昨天判定走北京日历，与下方 formatter 的北京时区一致。
+        // 扫荡 B：今天/昨天判定走北京日历，与显示的北京时区一致。
         // 旧口径用 Calendar.current（设备时区）：设备时区非北京时，跨北京午夜
         // 前后会把“昨天”误判成“今天”（或反之），而显示的 HH:mm/M月d日又是
-        // 北京时间，两处口径打架；回收站 TrashText.deletedLabel 已用北京日历，
-        // 本处与之对齐（本地构造，不依赖时间线文件的共享 helper，避免跨分支耦合）。
-        var beijingCalendar = Calendar(identifier: .gregorian)
-        beijingCalendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600) ?? TimeZone.current
-        let calendar = beijingCalendar
+        // 北京时间，两处口径打架；本处与回收站 TrashText.deletedLabel 对齐。
+        let calendar = BearyBeijingDay.calendar
         if calendar.isDateInToday(date) {
             let hours = Int(floor(diff / 3600))
-            return "\(hours) 小时前"
+            return BearyLocalizedDate.diaryHoursString(hours)
         }
-        let beijingZone = TimeZone(secondsFromGMT: 8 * 3600)
-        let timeFormatter = DateFormatter()
-        timeFormatter.locale = Locale(identifier: "zh_CN")
-        // G8（草稿箱部分）：时间显示 formatter 统一设北京时区，与服务端日界一致。
-        timeFormatter.timeZone = beijingZone
-        // W9：原生定版统一补零（HH:mm），不再以网页昨天 H:mm 口径为准。
-        timeFormatter.dateFormat = "HH:mm"
         if calendar.isDateInYesterday(date) {
-            return "昨天 " + timeFormatter.string(from: date)
+            // W9：原生定版统一补零（HH:mm），不再以网页昨天 H:mm 口径为准。
+            return BearyLocalizedDate.yesterdayWord(timeZone: BearyLocalizedDate.gmt8) + " " + BearyLocalizedDate.timeStringPadded(from: date, timeZone: BearyLocalizedDate.gmt8)
         }
-        let dayFormatter = DateFormatter()
-        dayFormatter.locale = Locale(identifier: "zh_CN")
-        dayFormatter.timeZone = beijingZone
-        dayFormatter.dateFormat = "M月d日"
-        return dayFormatter.string(from: date)
+        return BearyLocalizedDate.monthDayString(from: date, timeZone: BearyLocalizedDate.gmt8)
     }
 
     // MARK: - 入场/退场动效

@@ -305,7 +305,7 @@ private final class WishRowView: UIView {
         detailLabel.text = newDetail
         detailLabel.isHidden = newDetail.isEmpty
         let author = item.authorName ?? "beary 用户"
-        let time = item.createdAt.map { BearyVisibilityText.publishedRelativeString(publishedAtMs: $0) ?? BearyDiaryCardCell.feedTimeString(ms: $0) } ?? ""
+        let time = item.createdAt.map { BearyVisibilityText.diaryTimeString(publishedAtMs: $0) ?? BearyDiaryCardCell.feedTimeString(ms: $0) } ?? ""
         metaLabel.text = time.isEmpty ? author : "\(author) · \(time)"
         let up = item.upCount ?? 0
         let down = item.downCount ?? 0

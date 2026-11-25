@@ -467,7 +467,7 @@ final class BearyQuoteCardView: UIView {
             return "引用自已删除的日记"
         }
         let handleText = (handle ?? "").isEmpty ? nil : "@\(handle!)"
-        let dateText = (dateMs ?? 0) > 0 ? (BearyVisibilityText.publishedRelativeString(publishedAtMs: dateMs) ?? BearyDiaryCardCell.feedTimeString(ms: dateMs!)) : nil
+        let dateText = (dateMs ?? 0) > 0 ? (BearyVisibilityText.diaryTimeString(publishedAtMs: dateMs) ?? BearyDiaryCardCell.feedTimeString(ms: dateMs!)) : nil
         if let handleText = handleText, let dateText = dateText {
             return "引用自 \(handleText) · \(dateText)"
         }
