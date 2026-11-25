@@ -3380,7 +3380,7 @@ class BearyProfileViewController: UIViewController {
         // 注意：旧“加载态先高 0 防 faint 灰块”注释（coverImageView 定义处）针对
         // 的是无图时露 faint 底——现首帧底色已是最终默认主题底色，不再适用。
         profileShowsDefaultCover = true
-        coverClipView.backgroundColor = BearyColors.bg
+        coverClipView.backgroundColor = BearyColors.profileDefaultCoverBackground
         defaultWordmarkView.isHidden = false
         coverHeightConstraint.constant = profileCoverHeight
         avatarImageView.layer.borderWidth = 3.5
@@ -4186,7 +4186,7 @@ class BearyProfileViewController: UIViewController {
             coverImageView.image = nil
         }
         coverImageView.isHidden = !hasCover
-        coverClipView.backgroundColor = profileShowsDefaultCover ? BearyColors.bg : BearyColors.surface2
+        coverClipView.backgroundColor = profileShowsDefaultCover ? BearyColors.profileDefaultCoverBackground : BearyColors.surface2
         defaultWordmarkView.isHidden = !profileShowsDefaultCover
         coverHeightConstraint.constant = profileCoverHeight
         // 下拉模糊用预模糊图：缓存命中时直接复用；异步加载的新图在首次下拉时生成；
@@ -10084,7 +10084,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     private func handleCoverLoadFailed() {
         coverLoadFailed = true
         defaultWordmarkView.isHidden = false
-        coverClipView.backgroundColor = BearyColors.bg
+        coverClipView.backgroundColor = BearyColors.profileDefaultCoverBackground
     }
 
     /// 第四轮第 1 项：封面带点按重拉（失败态专用；成功后标记清掉，下次点按回原流程）。

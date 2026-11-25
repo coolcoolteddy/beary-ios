@@ -60,6 +60,11 @@ enum BearyColors {
     /// 全 App 深色面（页面底、窗口底、容器底、玻璃 tint 基色）均走本变量，改一处即全跟走。
     /// 注意：裁剪页/灯箱的纯黑底、遮罩 scrim、阴影色是故意的黑，不走本变量，一律不动。
     static var bg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 11.0/255.0, green: 11.0/255.0, blue: 13.0/255.0, alpha: 1) : .white } }
+    /// 个人主页默认封面带底色（无封面时 180 高那条带）：浅色暖 #FFF1E0（主题氛围
+    /// warmOrange 档的浅色值，见 BearyProfileThemeTint）、深色 #0B0B0D（与 bg
+    /// 深色同值、不变）。只用于默认封面带三处赋值；wordmark（side_beary_word）
+    /// 本身已深浅动态，不动；headerView 底仍走 bg，不动。
+    static var profileDefaultCoverBackground: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 11.0/255.0, green: 11.0/255.0, blue: 13.0/255.0, alpha: 1) : UIColor(red: 1, green: 0.945, blue: 0.878, alpha: 1) } }
     /// 页面分层（2026-11-07 微明度定版：分层改走明度阶，取代旧 surface 单值＋1px 外框口径）：
     /// surface0 页面底（与 bg 同值）、surface1 页上卡片、surface2 输入框／chip、surface3 sheet／弹窗。
     /// 浅色 surface2 现为 #EAEAEA；旧 surface（深 #26262c）与 faint、timelineBorder 已废止。
