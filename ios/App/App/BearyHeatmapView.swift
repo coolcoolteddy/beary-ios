@@ -5,7 +5,10 @@ import UIKit
 /// 布局：列 = 周（最左为 26 周前的周一，最右为本周）、行 = 星期一到星期日；
 /// 今天在最右列，未来的格子不画、不可点。颜色橙色五档（0 篇为空格，
 /// 1 / 2 / 3 / 4+ 篇逐档加深）；右上角月份名、左侧星期名、右下“少 → 多”
-/// 图例、底部“点某一天，看那天的日记”提示；模块内不写篇数/天数/连续天。
+/// 图例；模块内不写篇数/天数/连续天。
+/// 格子 16pt 固定：27 周总宽 572pt，超出卡宽时格子区横向滚
+/// （月份行＋星期名跟随格子一起滚，图例固定在下方不动）；
+/// 首次露最近几周（含今天在最右列），往左滑看更早的周。
 /// 模块本身 surface1 底、无描边，与同页其他模块（写作统计等）统一。
 ///
 /// HorizonCalendar 核实结论（2026-11-06，见 PR 描述）：该库按月分块布局，
@@ -17,8 +20,11 @@ final class BearyHeatmapView: UIView {
     /// 周数（列数）与每周天数（行数），GitHub 同款 27 × 7。
     static let weeks = 27
     static let daysPerWeek = 7
-    /// 格间距（横向与纵向同值）。
-    private static let gap: CGFloat = 3
+    /// 格边长（固定，不随屏宽变）与格间距（横向与纵向同值）。
+    /// 16pt 格＋4pt 间距：27 周总宽 536pt，393pt 屏上可见约 333pt，
+    /// 超出部分在格子区内横向滑动看（月份行＋星期名跟随格子一起滚）。
+    private static let cellSize: CGFloat = 16
+    private static let gap: CGFloat = 4
     /// 星期名列宽与格区间距。
     private static let weekdayWidth: CGFloat = 28
     private static let gridLeadingGap: CGFloat = 8
@@ -34,15 +40,22 @@ final class BearyHeatmapView: UIView {
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.pageTitleFont()
+        // 模块标题与同页其他模块卡同字号：14 bold（BearyProfilePersonalModulesCard），
+        // 不用 17 bold 的 pageTitleFont（截图里比“写作统计”大）。
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         label.text = "写日记热力图"
         return label
     }()
 
-    private let gridArea = UIView()
+    /// 格子区横向滚动：月份行＋星期名＋189 格都在滚动内容里；
+    /// 图例在格子区外，固定不动。卡片外宽不变，只格子区内部滚。
+    private let gridArea = UIScrollView()
     private var gridAreaHeightConstraint: NSLayoutConstraint?
+    /// 首次布局时把滚动位置放到最右端（最近几周，含今天）；
+    /// 只设一次，之后不干预用户滚过的位置（旋转／字号变化也不拉回）。
+    private var hasSetInitialContentOffset = false
     private var monthLabels: [UILabel] = []
     private var weekdayLabels: [UILabel] = []
     private var dayButtons: [UIButton] = []
@@ -60,17 +73,6 @@ final class BearyHeatmapView: UIView {
         return stack
     }()
 
-    private let hintLabel: UILabel = {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.secondaryFont()
-        label.adjustsFontForContentSizeCategory = true
-        label.textColor = BearyColors.gray
-        label.textAlignment = .center
-        label.text = "点某一天，看那天的日记"
-        return label
-    }()
-
     override init(frame: CGRect) {
         super.init(frame: frame)
         setup()
@@ -86,9 +88,15 @@ final class BearyHeatmapView: UIView {
 
         addSubview(titleLabel)
         gridArea.translatesAutoresizingMaskIntoConstraints = false
+        // 横向滚动配置：不显示滚动条（右缘被截断的格子本身就是可滑的信号），
+        // 方向锁定防斜滑；点按立即反馈，不等滚动判定就下发触摸，
+        // 拖动起手后滚动视图照常取消按钮触摸（格子无 highlighted 样式，无闪烁）。
+        gridArea.showsHorizontalScrollIndicator = false
+        gridArea.showsVerticalScrollIndicator = false
+        gridArea.isDirectionalLockEnabled = true
+        gridArea.delaysContentTouches = false
         addSubview(gridArea)
         addSubview(legendStack)
-        addSubview(hintLabel)
 
         // 月份名（每列首日换月时一个，最多 7 个，位置在 layoutSubviews 里按列算）。
         for _ in 0..<8 {
@@ -130,8 +138,8 @@ final class BearyHeatmapView: UIView {
             buttonDayKeys.append("")
             gridArea.addSubview(button)
         }
-        // 点按按最近格子中心命中：格子只有约 8.6pt，手指点不准，落在格间
-        // 缝隙也算最近那格；手势只接网格上的轻点，按钮自身的
+        // 点按按最近格子中心命中：格子 16pt，落在格间缝隙也算最近那格；
+        // 手势只接网格上的轻点，按钮自身的
         // touchUpInside 留给 VoiceOver 激活（读屏点按不经过手势）。
         let gridTap = UITapGestureRecognizer(target: self, action: #selector(gridTapped(_:)))
         gridArea.addGestureRecognizer(gridTap)
@@ -169,7 +177,9 @@ final class BearyHeatmapView: UIView {
         let gridHeight = gridArea.heightAnchor.constraint(equalToConstant: 0)
         gridAreaHeightConstraint = gridHeight
         NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            // 卡片上下留白 12，与同页其他模块卡（contentStack top/bottom 12）一致；
+            // 原 14 是纵向段里最大的两段纯间距，截图里格子外空得最多。
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             gridArea.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
@@ -178,10 +188,8 @@ final class BearyHeatmapView: UIView {
             gridHeight,
             legendStack.topAnchor.constraint(equalTo: gridArea.bottomAnchor, constant: 8),
             legendStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            hintLabel.topAnchor.constraint(equalTo: legendStack.bottomAnchor, constant: 6),
-            hintLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            hintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            hintLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            // 提示行已删（Li 20:17 决定）：图例下方直接收底，卡底留白 12 不变。
+            legendStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
         ])
     }
 
@@ -262,13 +270,23 @@ final class BearyHeatmapView: UIView {
         super.layoutSubviews()
         let areaWidth = bounds.width - 28
         guard areaWidth > 0 else { return }
-        let gridWidth = areaWidth - Self.weekdayWidth - Self.gridLeadingGap
-        let cell = (gridWidth - CGFloat(Self.weeks - 1) * Self.gap) / CGFloat(Self.weeks)
-        guard cell > 0 else { return }
+        // 格子固定 16pt，不随屏宽算；内容总宽 572pt
+        // （星期名列 28＋间隔 8＋27 周 536），393pt 屏上可见约 333pt，超出部分横向滚。
+        let cell = Self.cellSize
         gridCellSize = cell
+        let contentWidth = Self.weekdayWidth + Self.gridLeadingGap + CGFloat(Self.weeks) * cell + CGFloat(Self.weeks - 1) * Self.gap
         let gridHeight = Self.monthRowHeight + Self.monthGridGap + CGFloat(Self.daysPerWeek) * cell + CGFloat(Self.daysPerWeek - 1) * Self.gap
         if gridAreaHeightConstraint?.constant != gridHeight {
             gridAreaHeightConstraint?.constant = gridHeight
+        }
+        let contentSize = CGSize(width: contentWidth, height: gridHeight)
+        if gridArea.contentSize != contentSize {
+            gridArea.contentSize = contentSize
+        }
+        if !hasSetInitialContentOffset {
+            hasSetInitialContentOffset = true
+            // 首次只露最近几周（含今天在最右列），往左滑看更早的周。
+            gridArea.contentOffset = CGPoint(x: max(0, contentWidth - areaWidth), y: 0)
         }
         let gridX = Self.weekdayWidth + Self.gridLeadingGap
         let gridTop = Self.monthRowHeight + Self.monthGridGap
@@ -283,7 +301,7 @@ final class BearyHeatmapView: UIView {
             if previousMonth == cellDate.1 { continue }
             previousMonth = cellDate.1
             let x = gridX + CGFloat(col) * (cell + Self.gap)
-            if x + 30 > areaWidth { continue }
+            if x + 30 > contentWidth { continue }
             guard monthLabelIndex < monthLabels.count else { continue }
             let label = monthLabels[monthLabelIndex]
             monthLabelIndex += 1
@@ -313,7 +331,8 @@ final class BearyHeatmapView: UIView {
     /// 网格轻点：取离触点最近的可见格中心。阈值 0.75 个 pitch：网格内任意点
     /// 到最近中心的距离上限是半条对角线（≈0.71 pitch），阈值刚好盖住整个
     /// 网格、再带一点点 fat-finger 余量；点到星期名／月份名区的按压离各格
-    /// 中心都超过阈值，不触发。
+    /// 中心都超过阈值，不触发。触点按滚动内容坐标算（location(in:) 已含
+    /// contentOffset），与格子 frame 同一坐标系。
     @objc private func gridTapped(_ gesture: UITapGestureRecognizer) {
         let point = gesture.location(in: gridArea)
         let pitch = gridCellSize + Self.gap
