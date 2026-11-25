@@ -1642,7 +1642,7 @@ private enum TrashText {
         // 直接 early-return 会吞掉下方的跨年分支；只在 7 天内用它做相对显示，
         // 7 天及以外落回下方的跨年分支（同年 M/d、跨年 yyyy/M/d，设备时区）。
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
-        if diff < 7 * 86400, let relative = BearyVisibilityText.diaryTimeString(publishedAtMs: ms) {
+        if diff < 7 * 24 * 3600, let relative = BearyVisibilityText.diaryTimeString(publishedAtMs: ms) {
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)

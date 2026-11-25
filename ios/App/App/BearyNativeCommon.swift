@@ -2296,7 +2296,7 @@ enum BearyLocalizedDate {
     /// X 天前：中文沿用既有词，非中文如 3 days ago（1 天为 yesterday）。
     static func daysAgoString(_ value: Int) -> String {
         if isChinese { return "\(value) 天前" }
-        let ref = Date().addingTimeInterval(TimeInterval(-value * 86400))
+        let ref = Date().addingTimeInterval(TimeInterval(-value * 24 * 3600))
         return relativeFormatter().localizedString(for: ref, relativeTo: Date())
     }
 
@@ -4023,11 +4023,11 @@ enum BearyVisibilityText {
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
         if diff < 60 { return BearyLocalizedDate.justNowString(date: date) }
         if diff < 3600 { return BearyLocalizedDate.minutesAgoString(Int(diff / 60)) }
-        if diff < 86400 { return BearyLocalizedDate.hoursAgoString(Int(diff / 3600)) }
+        if diff < 24 * 3600 { return BearyLocalizedDate.hoursAgoString(Int(diff / 3600)) }
         // 7 天口径（2026-11-15 Li 定，全站日记时间统一）：7 天内用相对时间，
         // 7 天外回落绝对时间：同年 M月d日 H:mm、跨年 yyyy年M月d日（规范 §12），
         // 北京时间。
-        if diff < 7 * 86400 { return BearyLocalizedDate.daysAgoString(Int(diff / 86400)) }
+        if diff < 7 * 24 * 3600 { return BearyLocalizedDate.daysAgoString(Int(diff / (24 * 3600))) }
         return BearyText.absoluteDateString(from: date)
     }
 
@@ -4043,8 +4043,8 @@ enum BearyVisibilityText {
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
         if diff < 60 { return BearyLocalizedDate.justNowString(date: date) }
         if diff < 3600 { return BearyLocalizedDate.minutesAgoString(Int(diff / 60)) }
-        if diff < 86400 { return BearyLocalizedDate.hoursAgoString(Int(diff / 3600)) }
-        if diff < 7 * 86400 { return BearyLocalizedDate.daysAgoString(Int(diff / 86400)) }
+        if diff < 24 * 3600 { return BearyLocalizedDate.hoursAgoString(Int(diff / 3600)) }
+        if diff < 7 * 24 * 3600 { return BearyLocalizedDate.daysAgoString(Int(diff / (24 * 3600))) }
         return BearyLocalizedDate.slashDateString(from: date, timeZone: timeZone)
     }
 }
