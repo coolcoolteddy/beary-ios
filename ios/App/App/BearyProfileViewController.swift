@@ -2095,7 +2095,7 @@ class BearyProfileViewController: UIViewController {
     /// v22 封面自然高（2026-10-30）：代码现行封面高恒 180（applyProfile／resetCoverStretch／
     /// updateCoverStretch 同值），滚动回调取此常量、不取拉伸中的 live 约束（下拉复位动画
     /// 0.28s 内 live 值会抖）；改封面高时此处与三处同改，另 stickyWordmark 的 144 也要同步。
-    private let profileCoverHeight: CGFloat = 180
+    private let profileCoverHeight: CGFloat = BearyProfileCover.height
     /// 吸顶跟踪图高度（2026-11-15 景深重影修法）：静态封面款 234——静态图
     /// 234 高、顶伸出带子 54；景深款与节日墙纸款的活视图钉在 coverClipView
     /// 四边上、只有 180 高，跟踪图须同为 180，否则海报特征比活封面高约

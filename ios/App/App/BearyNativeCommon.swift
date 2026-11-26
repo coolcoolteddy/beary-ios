@@ -26,6 +26,14 @@ enum BearySpace {
     static let xxxl: CGFloat = 32
 }
 
+/// 个人页封面高（第二十四批第 4 项）：个人页（ProfileVC）与编辑资料页
+/// 共用同一值，改一处两处同步；编辑资料页裁剪窗比例按同一高算。
+/// 注意：CoverView :710 的 [180, 480, 760] 是 overlay 元素 x 坐标、
+/// Timeline estimatedRowHeight 与 DraftBox chip 宽上限 180 语义不同，不走本值。
+enum BearyProfileCover {
+    static let height: CGFloat = 180
+}
+
 /// 圆角唯一档 BearyCorners 见 BearyColors.swift（#790 修红：本文件不在
 /// BearyCoreTests target 内，BearyPastSelf.swift 单测编不过；token 须放双 target
 /// 共用文件，与 #555 把 BearyColors 抽出同款处理）。
