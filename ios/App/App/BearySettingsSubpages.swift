@@ -876,7 +876,7 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
             BearyConfirmSheet.Action(title: "清除全部", style: .destructive) { [weak self] in
                 guard let self = self else { return }
                 let cleared = BearyOfflineSaveManager.shared.removeAll()
-                BearyToast.show(in: self.view, message: cleared ? "已清除全部离线保存" : "清除失败，请重试")
+                if !cleared { BearyToast.show(in: self.view, message: NSLocalizedString("offline_save.clear_all_failed", comment: "")) }
                 self.render()
             },
             BearyConfirmSheet.Action(title: "取消", style: .cancel),
