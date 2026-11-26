@@ -6133,7 +6133,6 @@ class BearyProfileViewController: UIViewController {
                             // r25-49：同上，补发撤回也须等服务端确认才报“已撤回”。
                             strongSelf.pastSelfPushRevoke(serverRow.id) { [weak self] in
                                 guard let strongSelf = self, strongSelf.isOwnProfile else { return }
-                                BearyToast.show(in: strongSelf.view, message: "已撤回")
                             }
                             if awaitingConfirmation, strongSelf.isOwnProfile {
                                 BearyToast.show(in: strongSelf.view, message: "已在本机撤回，等待同步")
