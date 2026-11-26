@@ -1681,15 +1681,11 @@ class BearyFeedViewController: UIViewController {
                     // 关注流二次过滤（仅 following 段）。
                     let scopeFiltered = strongSelf.feedFollowingSegment ? rawFresh : rawFresh.filter { BearyEphemeral.isEffectivelyPublic($0) }
                     let fresh = strongSelf.feedFollowingSegment ? strongSelf.filteredFollowingEntries(scopeFiltered) : scopeFiltered
-                    var known = Set<String>()
-                    for entry in strongSelf.plazaRaw {
-                        if let entryIdValue = entry.id { known.insert(entryIdValue) }
-                    }
-                    for entry in fresh {
-                        guard let entryIdValue = entry.id, !known.contains(entryIdValue) else { continue }
-                        strongSelf.plazaRaw.append(entry)
-                        known.insert(entryIdValue)
-                    }
+                    var known = Set(strongSelf.plazaRaw.compactMap { $0.id })
+                    // 可复用资源第十八批第 7 项：分页去重追加走第十六批第 8 条的共享 helper；
+                    // 游标推导、段过滤、代际守卫、缺口游标、脚部刷新各留自己的。
+                    let deduped = BearyCursorPageLoad.fresh(fresh, id: { $0.id }, seen: &known)
+                    strongSelf.plazaRaw.append(contentsOf: deduped)
                     // 审计 14-1：每页回包都存原始页末条作下次游标（哪怕整页被滤掉）。
                     if let rawLast = rawFresh.last, let rawLastId = rawLast.id, let rawLastKey = strongSelf.feedSortKey(rawLast) {
                         strongSelf.plazaNextPageBefore = rawLastKey
