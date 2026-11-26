@@ -1,3 +1,5 @@
+import Foundation
+
 /// 服务端业务码→用户文案共享码表：发布与编辑共用的三个分支。
 /// BearyPublishCenter.message(forPublishError:) 与
 /// BearyComposerViewController.message(forUpdateError:) 先查这里，
