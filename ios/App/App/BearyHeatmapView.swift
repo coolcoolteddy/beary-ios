@@ -110,17 +110,17 @@ final class BearyHeatmapView: UIView {
         // 12 regular scaled（captionFont），框高取整行 pitch 使文字在行内居中；
         // 大字号下星期名（28pt 宽框）可能溢出：允许缩到 0.8 倍兜底（与月份名
         // 同款写法），星期列 28pt 宽不放宽。
-        let weekdayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
-        let firstWeekday = Self.regionFirstWeekday()
+        // 星期名取系统本地化短名（已按地区首日排好行序，中文 ["周日"…"周六"]
+        // 与改前一致，英文为 Sun…Sat；不写死数组，i18n-guard 不拦系统符号）。
+        let weekdayNames = BearyLocalizedDate.orderedShortWeekdaySymbols
         for row in 0..<Self.daysPerWeek {
-            let weekday = (firstWeekday - 1 + row) % Self.daysPerWeek + 1
             let label = UILabel()
             label.font = BearyDynamicType.captionFont()
             label.adjustsFontForContentSizeCategory = true
             label.adjustsFontSizeToFitWidth = true
             label.minimumScaleFactor = 0.8
             label.textColor = BearyColors.gray
-            label.text = weekdayNames[weekday - 1]
+            label.text = weekdayNames[row]
             gridArea.addSubview(label)
             weekdayLabels.append(label)
         }
