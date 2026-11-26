@@ -855,7 +855,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             return
         }
-        showAlert(message: "账号已变化，这篇编辑属于原账号，修改已保留在原账号。请回到原账号后再继续编辑。")
+        showAlert(message: NSLocalizedString("account.changed_edit", comment: ""))
     }
     /// 账号失配提示：只提示、不删不改任何草稿与已公开态。
     /// “重新开始”不由本弹框自动执行：用户走现有草稿箱“丢弃并新建”，
@@ -863,7 +863,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 部分成功态（原日记已公开）的账号失配文案在发布中心
     /// （accountMismatchMessage），编辑器侧不再区分。
     private func showPublishAccountMismatchAlert() {
-        showAlert(message: "账号已变化，本篇未发布。请回到原账号后再发布，或丢弃本篇重新开始。")
+        showAlert(message: NSLocalizedString("account.changed_publish", comment: ""))
     }
     /// 新建发布快照（quote-freeze）：在 didTapPublish 校验通过后、门禁弹出
     /// 前调用。clientReq 在此创建，调用方随后等
@@ -9558,7 +9558,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         case .corrupt:
             message = "修改已损坏，无法在这里恢复（原始副本仍在手机里，可在反馈时附上）。"
         case .identityMismatch:
-            message = "修改属于另一个账号，请回到原账号继续。"
+            message = NSLocalizedString("account.changed_checkpoint", comment: "")
         }
         BearyConfirmSheet.show(from: self, title: "上次的修改无法恢复", message: message, actions: [
             BearyConfirmSheet.Action(title: "放弃并清除", style: .destructive, handler: { [weak self] in

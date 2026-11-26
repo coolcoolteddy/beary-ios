@@ -968,9 +968,9 @@ final class BearyPublishCenter {
     /// 部分成功态（原日记已公开）另加一句。
     private func accountMismatchMessage(sourceAlreadyPublished: Bool) -> String {
         if sourceAlreadyPublished {
-            return "原日记已公开，新篇未发布。账号已变化，请回到原账号后再发布，或丢弃本篇重新开始。"
+            return NSLocalizedString("account.changed_publish_source_published", comment: "")
         }
-        return "账号已变化，本篇未发布。请回到原账号后再发布，或丢弃本篇重新开始。"
+        return NSLocalizedString("account.changed_publish", comment: "")
     }
 
     /// 部分成功失败文案：第 25 轮 13（收窄）：原日记已公开时，按 #2464 口径
