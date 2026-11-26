@@ -10750,7 +10750,7 @@ enum BearyProfileCache {
     }
 
     private static func fileURL(bucket: String) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(filePrefix)\(bucket).json")
     }
 
@@ -10860,7 +10860,7 @@ enum BearyProfileStatsCache {
     }
 
     private static func fileURL(bucket: String) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(filePrefix)\(bucket).json")
     }
 

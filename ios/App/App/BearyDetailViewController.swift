@@ -4195,14 +4195,14 @@ enum BearyDetailCache {
     }
 
     private static func fileURL(bucket: String, entryId: String) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(filePrefix)\(bucket)_\(safeEntryId(entryId)).json")
     }
 
     /// 浏览时间索引：每桶一份，键为 entryKey、值为 lastViewedAt。
     /// 判限只读它，不再逐文件解码快照。
     private static func indexURL(bucket: String) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(filePrefix)\(bucket).index.json")
     }
 
@@ -4336,7 +4336,7 @@ enum BearyDetailCache {
     /// 不存在文件的键从索引里清掉并写回。删除失败不扣账：字节与条数只按
     /// 实际删掉的算（㉗）。
     private static func enforceLimits(bucket: String) {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        guard let base = FileManager.appSupportDirectory else { return }
         let prefix = "\(filePrefix)\(bucket)_"
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: base.path) else { return }
         var index = loadIndex(bucket: bucket)
@@ -4392,7 +4392,7 @@ enum BearyDetailCache {
     static func purge(bucket: String) {
         bumpGeneration(for: bucket)
         ioQueue.async {
-            guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+            guard let base = FileManager.appSupportDirectory else { return }
             let prefix = "\(filePrefix)\(bucket)_"
             guard let names = try? FileManager.default.contentsOfDirectory(atPath: base.path) else { return }
             for name in names where name.hasPrefix(prefix) {

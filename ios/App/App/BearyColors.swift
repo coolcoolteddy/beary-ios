@@ -130,3 +130,15 @@ enum BearyColors {
 enum BearyCorners {
     static let single: CGFloat = 12
 }
+
+/// Application Support 目录共享入口（可复用扫查第七遍第 7 条）：
+/// 21 处原先各写 `FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first`，
+/// 目录一旦换位置（如迁 group container）只改这里。取不到目录时返回 nil，
+/// 各调用点保留自己的 else 分支（return nil／return），不一刀切。
+/// 放本文件不放 BearyNativeCommon.swift：后者不在 BearyCoreTests target 内，
+/// EntrySyncStore／DraftFiles／OfflineSaveStore 三处在测试 target 里编不过（#790 同款处理）。
+extension FileManager {
+    static var appSupportDirectory: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    }
+}
