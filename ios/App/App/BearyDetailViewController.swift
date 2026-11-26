@@ -1620,14 +1620,6 @@ final class BearyDetailViewController: UIViewController {
         case keepContent
     }
 
-    /// B1：拉黑作者判定（作者本人永不命中；游客不承接拉黑表；与 SceneDelegate 同口径）。
-    static func isBlockedAuthor(_ entry: Entry) -> Bool {
-        if SessionManager.shared.isGuestMode { return false }
-        guard let authorId = entry.authorId else { return false }
-        if let viewerId = SessionManager.shared.currentUser?.id, viewerId == authorId { return false }
-        return BearyBlockedStore.isBlocked(authorId)
-    }
-
     /// B1：取数失败分流——明确无权限/找不到即已不可见（撤下全文）；
     /// 其余（弱网/服务端错/解码失败）沿用旧内容（见 showFetchFailed）。
     /// 401 不在此列：会话失效走全局未登录处理，旧内容先保留。
@@ -1655,7 +1647,7 @@ final class BearyDetailViewController: UIViewController {
             completion(.show(fetched, isMutualFriend: false))
             return
         }
-        if isBlockedAuthor(fetched) {
+        if BearyBlockedStore.isBlockedAuthor(fetched) {
             var placeholderEntry = fetched
             placeholderEntry.placeholder = true
             completion(.showPlaceholder(placeholderEntry))
