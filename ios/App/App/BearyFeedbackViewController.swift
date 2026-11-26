@@ -275,9 +275,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private var pendingMailKind: PendingMailKind = .submit
 
     private static let recipient = "hi@teddyhn.com"
-    /// 审计 r2 D4：原页底 footnote 全文，移入帮助入口展示（不是删除）。
-    /// 第十轮审计 dsh II-3：71 字长句按句拆三行短句，措辞不变，只加换行。
-    private static let sendHelpText = "反馈发送走邮件到 hi@teddyhn.com。\n未配置邮箱时，仅复制反馈文字，附件不随复制发出。\n分享或仅发送日志时只发日志包，不含描述与附件。"
+    /// GAP G-M2：一句讲一件事，措辞按 GAP 报告改写（原长句拆三行短句）。
+    private static let sendHelpText = NSLocalizedString("feedback.send_help", comment: "")
     private static let descriptionPlaceholder = "请描述遇到的问题：在哪个页面、做了什么操作、看到了什么…"
 
     /// 116 数据填入动效：状态文案变化时只淡入该 label 本身、徽标由
