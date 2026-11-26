@@ -3286,8 +3286,7 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
         if hasMore && !isLoadingMore && !isLoadingFirstPage && !loadMoreFailed {
             // C-G6：网页哨兵用 IntersectionObserver rootMargin 900px 预取，
             // App 原 120 触发太晚，改 900 与网页一致。
-            let nearBottom = scrollView.contentOffset.y + scrollView.bounds.height >= scrollView.contentSize.height - 900
-            if nearBottom && scrollView.contentSize.height > 0 {
+            if BearyLoadMorePrefetch.isNearBottom(scrollView) {
                 loadMore()
             }
         }

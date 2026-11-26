@@ -1174,8 +1174,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
         // 近底预取（子页原口径：距底 900px；contentSize 0 时不触发）。
         let snap = notifChild.mergeSnapshot
         if snap.hasMore && !snap.isLoadingMore && !snap.loadMoreFailed {
-            let contentHeight = scrollView.contentSize.height
-            if contentHeight > 0 && scrollView.contentOffset.y + scrollView.bounds.height >= contentHeight - 900 {
+            if BearyLoadMorePrefetch.isNearBottom(scrollView) {
                 notifChild.loadMoreForMerge()
             }
         }
