@@ -9521,7 +9521,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         editCheckpointPromptShown = true
         pendingEditCheckpoint = nil
-        let message = "上次编辑这篇日记时还没保存，找到了当时的修改，要恢复吗？"
+        let message = NSLocalizedString("composer.edit_checkpoint.restore_message", comment: "")
         // 底部弹窗口径（#932）：新弹窗一律走通用确认底 sheet，不再新写居中 Alert。
         BearyConfirmSheet.show(from: self, title: "恢复未提交的修改？", message: message, actions: [
             BearyConfirmSheet.Action(title: "恢复", style: .default, handler: { [weak self] in
