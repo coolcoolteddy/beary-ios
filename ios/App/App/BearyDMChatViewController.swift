@@ -1300,14 +1300,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 仅失败态暴露为可激活的重试按钮；加载中／平时读屏跳过，
         // 与可见文案同步（“加载失败，点按重试”）。
         olderLoadingView.isAccessibilityElement = failed
-        olderLoadingView.accessibilityLabel = failed ? "加载失败，点按重试" : nil
+        olderLoadingView.accessibilityLabel = failed ? NSLocalizedString("common.load_failed", comment: "") : nil
         if loading {
             olderLoadingLabel.text = "正在加载更早消息…"
             olderLoadingSpinner.startAnimating()
         } else {
             olderLoadingSpinner.stopAnimating()
             if failed {
-                olderLoadingLabel.text = "加载失败，点按重试"
+                olderLoadingLabel.text = NSLocalizedString("common.load_failed", comment: "")
             }
         }
     }

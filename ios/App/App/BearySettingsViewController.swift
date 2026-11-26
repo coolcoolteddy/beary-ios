@@ -5025,7 +5025,7 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
                     // “重新加载”动作，旧 toast 口径同步保留一次提示）。
                     self.blockedStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重新加载", onAction: { [weak self] in self?.blockedRetryTapped() })
                     self.blockedStateView.isHidden = false
-                    BearyToast.show(in: self.view, message: "加载失败，请重试")
+                    BearyToast.show(in: self.view, message: NSLocalizedString("common.load_failed", comment: ""))
                 }
             }
         }

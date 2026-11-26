@@ -163,7 +163,7 @@ final class BearyHistoryTodayViewController: UIViewController {
                 self.showContent()
             } else {
                 self.loadState = .failed
-                self.showState(text: NSLocalizedString("historyToday.load_failed_retry", comment: ""))
+                self.showState(text: NSLocalizedString("common.load_failed", comment: ""))
             }
         }
     }

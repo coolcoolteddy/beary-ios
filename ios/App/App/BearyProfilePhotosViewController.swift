@@ -1643,7 +1643,7 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
         labelValue.numberOfLines = 2
-        labelValue.text = "加载失败，点按重试"
+        labelValue.text = NSLocalizedString("common.load_failed", comment: "")
         labelValue.isHidden = true
         return labelValue
     }()

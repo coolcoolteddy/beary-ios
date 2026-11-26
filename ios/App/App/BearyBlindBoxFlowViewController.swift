@@ -1783,7 +1783,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         case .http(let code, _):
             if code == 404 { return BearyRepeatedCopy.blindBoxLoadFailed }
             if code == 409 { return BearyRepeatedCopy.blindBoxAlreadySwappedToday }
-            return "加载失败，请重试"
+            return NSLocalizedString("common.load_failed", comment: "")
         default:
             return "网络不稳定，请稍后再试"
         }

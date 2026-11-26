@@ -505,7 +505,7 @@ class BearyEditProfileViewController: UIViewController {
                 case .failure:
                     strongSelf.meFetchFailed = true
                     if thenCopy {
-                        strongSelf.presentSimpleAlert(message: "加载失败，请重试")
+                        strongSelf.presentSimpleAlert(message: NSLocalizedString("common.load_failed", comment: ""))
                     }
                 }
             }

@@ -639,7 +639,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
                         strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
                         strongSelf.pendingBindMessage = nil
                     } else {
-                        strongSelf.showMessage("加载失败，请重试")
+                        strongSelf.showMessage(NSLocalizedString("common.load_failed", comment: ""))
                     }
                     strongSelf.retryButton.isHidden = false
                 }
