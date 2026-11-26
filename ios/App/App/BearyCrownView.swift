@@ -93,7 +93,7 @@ public final class BearyCrownView: UIView {
             ])
             animationView = view
             hasCrown = true
-        } else if let image = UIImage(named: "crown") {
+        } else if let image = UIImage(named: BearyAssets.crown) {
             let view = UIImageView(image: image)
             view.translatesAutoresizingMaskIntoConstraints = false
             view.contentMode = .scaleAspectFit
@@ -124,7 +124,7 @@ public final class BearyCrownView: UIView {
 
     private func currentAnimation() -> LottieAnimation? {
         let dark = traitCollection.userInterfaceStyle == .dark
-        let name = dark ? "crown_dark" : "crown"
+        let name = dark ? BearyAssets.crownDark : BearyAssets.crown
         guard let path = Bundle.main.path(forResource: name, ofType: "json") else { return nil }
         return LottieAnimation.filepath(path)
     }

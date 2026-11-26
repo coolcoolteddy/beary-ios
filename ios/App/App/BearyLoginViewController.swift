@@ -316,7 +316,7 @@ final class BearyLoginViewController: UIViewController {
         // 深色自动切换，不手动判断）；预览同款居中。
         logoRow.translatesAutoresizingMaskIntoConstraints = false
         logoImageView.translatesAutoresizingMaskIntoConstraints = false
-        logoImageView.image = UIImage(named: "LogoHorizontal")
+        logoImageView.image = UIImage(named: BearyAssets.logoHorizontal)
         logoImageView.contentMode = .scaleAspectFit
         logoRow.addSubview(logoImageView)
 

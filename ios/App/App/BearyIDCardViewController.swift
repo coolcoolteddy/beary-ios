@@ -987,7 +987,7 @@ final class BearyIDCardView: UIView {
         topRow.axis = .horizontal
         topRow.alignment = .center
         topRow.spacing = 6
-        let logoImage = UIImageView(image: UIImage(named: "LogoHorizontal"))
+        let logoImage = UIImageView(image: UIImage(named: BearyAssets.logoHorizontal))
         logoImage.contentMode = .scaleAspectFit
         logoImage.translatesAutoresizingMaskIntoConstraints = false
         logoImage.heightAnchor.constraint(equalToConstant: 19).isActive = true
@@ -1071,7 +1071,7 @@ final class BearyIDCardView: UIView {
         bandRow.alignment = .center
         bandRow.spacing = 6
         let darkTraits = UITraitCollection(userInterfaceStyle: .dark)
-        let whiteLogo = UIImage(named: "LogoHorizontal", in: nil, compatibleWith: darkTraits)
+        let whiteLogo = UIImage(named: BearyAssets.logoHorizontal, in: nil, compatibleWith: darkTraits)
         let bandLogo = UIImageView(image: whiteLogo)
         bandLogo.contentMode = .scaleAspectFit
         bandLogo.translatesAutoresizingMaskIntoConstraints = false
