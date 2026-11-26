@@ -657,7 +657,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
                       let raw = resp.precision,
                       let server = BearyLocationPrecision(rawValue: raw),
                       server != BearyLocationPrecision.current else { return }
-                UserDefaults.standard.set(server.rawValue, forKey: "beary_location_precision")
+                UserDefaults.standard.set(server.rawValue, forKey: BearyLocationPrecision.key)
                 self.render()
             }
         }

@@ -33,7 +33,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
 
         window = UIWindow(windowScene: windowScene)
         // 外观手动切换（审计 N3）：建窗时读存档主题应用一次（未存档按 system 跟随系统）。
-        window?.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system")
+        window?.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: UserDefaults.standard.string(forKey: BearyTheme.defaultsKey) ?? "system")
         // 顶栏玻璃底色兜底：窗口底色与容器 view 同为 BearyColors.bg（动态色，深浅自动跟随），
         // 避免顶栏玻璃透出未设底色的空窗口（见 viewDidLoad 注释，此为本轮灰顶栏的根因）。
         window?.backgroundColor = BearyColors.bg
@@ -1333,7 +1333,7 @@ final class BearyChromeViewController: UIViewController {
         // 外观存档兜底：建窗时 SceneDelegate 已应用过一次；此处再对已有 window 应用一次
         //（window 已就绪的路径），window 为 nil 时无操作。
         if let window = view.window {
-            window.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system")
+            window.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: UserDefaults.standard.string(forKey: BearyTheme.defaultsKey) ?? "system")
         }
         buildChrome()
         // 开发者模式变化：横幅显隐＋位置＋各页内边距同步（见 handleDevModeChanged）。
