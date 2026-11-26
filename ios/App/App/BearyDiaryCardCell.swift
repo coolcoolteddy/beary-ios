@@ -3977,9 +3977,8 @@ class BearyDiaryCardCell: UITableViewCell {
         let originalCount = currentEntry?.likeCount ?? 0
         // 审计动效组：按下已改为纯视觉预态，故确认时恒播震动（不再以
         // hadPressPreview 跳过）；hadPressPreview 只用于上方守卫失败时复位视觉。
-        // 第 1 轮 24：点赞音按最终结果只播一次——点按只留视觉＋触觉，
-        // 成功回包按最终态播 likePop／unlikeSoft，失败走拒绝音；
-        // 否则失败时点按音与拒绝音先后两声。
+        // 点赞音随点按立即播（不等回包，网络往返是此前延迟的根因）；
+        // 回包成功不再重播，失败只回滚、不补播。
         if currentlyLiked == false {
             BearyHaptics.likeTap()
         } else {
@@ -4004,6 +4003,7 @@ class BearyDiaryCardCell: UITableViewCell {
             updateLikeButton()
             clearLikeBurst()
         }
+        BearySoundPlayer.play(targetLiked ? .likePop : .unlikeSoft)
         let reqSeq = likeState.beginRequest()
         BearyAPI.shared.toggleLike(id: entryIdValue, liked: targetLiked) { [weak self] result in
             DispatchQueue.main.async {
@@ -4022,9 +4022,6 @@ class BearyDiaryCardCell: UITableViewCell {
                     }
                     strongSelf.likeState.confirm(reqSeq, value: BearyLikeState(liked: newLiked, count: strongSelf.currentEntry?.likeCount ?? 0))
                     strongSelf.updateLikeButton()
-                    // 第 1 轮 24：音效只按最终结果播一次（成功按最终态播
-                    // likePop／unlikeSoft，失败分支走拒绝音 refuse_bonk）。
-                    BearySoundPlayer.play(newLiked ? .likePop : .unlikeSoft)
                     // 炸开已在点按时播过，成功回包不再重播（否则已填好的爱心
                     // 会再炸一次）；取消点赞不炸。
                     strongSelf.onInteractionChanged?(entryIdValue, strongSelf.currentEntry?.likeCount, newLiked, nil)
@@ -4072,10 +4069,9 @@ class BearyDiaryCardCell: UITableViewCell {
         updateBookmarkButton()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
         if flipped { playBookmarkBurst() }
-        // 收藏音按最终结果只播一次（点赞支同款口径）：点按只留视觉＋触觉，
-        // 成功回包按最终态播 bookmarkTick／deleteSwoosh，失败走拒绝音；
-        // 否则失败时点按音与拒绝音先后两声。
+        // 收藏音随点按立即播（不等回包）；回包成功不再重播，失败只回滚、不补播。
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
+        BearySoundPlayer.play(flipped ? .bookmarkTick : .deleteSwoosh)
         let reqSeq = bookmarkState.beginRequest()
         BearyAPI.shared.toggleBookmark(id: entryIdValue) { [weak self] result in
             DispatchQueue.main.async {
@@ -4090,9 +4086,6 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.bookmarkState.confirm(reqSeq, value: newBookmarked)
                     strongSelf.updateBookmarkButton()
                     strongSelf.updateActionInteractivity()
-                    // 收藏音按最终结果只播一次（成功按最终态播 bookmarkTick／
-                    // deleteSwoosh，失败分支走拒绝音 refuse_bonk）。
-                    BearySoundPlayer.play(newBookmarked ? .bookmarkTick : .deleteSwoosh)
                     strongSelf.onInteractionChanged?(entryIdValue, nil, nil, newBookmarked)
                 case .failure(let err):
                     // 失败回滚到最后服务端确认态，再走既有失败路径。
