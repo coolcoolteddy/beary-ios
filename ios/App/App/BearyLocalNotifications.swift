@@ -357,7 +357,7 @@ final class BearyLocalNotifications: NSObject {
             if isToday && hasEntryToday {
                 nextEvening = calendar.date(byAdding: .day, value: 1, to: nextEvening) ?? nextEvening
             }
-            desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没写日记", kind: .dailyReminder, userInfo: ["kind": Kind.dailyReminder.rawValue, "accountId": accountId]))
+            desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: NSLocalizedString("local_notifications.daily_reminder.body", comment: ""), kind: .dailyReminder, userInfo: ["kind": Kind.dailyReminder.rawValue, "accountId": accountId]))
         }
 
         // 2. 那年今日：往后 30 天内每个 9:00（北京），那天往年有日记才排一条；
