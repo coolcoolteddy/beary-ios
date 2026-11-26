@@ -59,6 +59,7 @@ final class BearySnapshotPreviewViewController: UIViewController, BearySystemShe
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "快照预览"
         titleLabel.font = BearyDynamicType.pageTitleFont()
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         view.addSubview(titleLabel)
 
@@ -71,6 +72,7 @@ final class BearySnapshotPreviewViewController: UIViewController, BearySystemShe
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.font = BearyDynamicType.captionFont()
+        subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.text = snapshot.displayDateString.isEmpty ? "保存成功" : "\(snapshot.displayDateString) · 保存成功"
         view.addSubview(subtitleLabel)
@@ -81,17 +83,12 @@ final class BearySnapshotPreviewViewController: UIViewController, BearySystemShe
         contentTextView.backgroundColor = .clear
         contentTextView.textContainerInset = .zero
         contentTextView.textContainer.lineFragmentPadding = 0
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.6
-        paragraph.lineBreakMode = .byCharWrapping
-        // 快照正文里的 [mood:] 记号走卡片同款渲染（原先纯文本直显，
-        // 记号原文会露出来）；行高/断行口径与原来一致。快照不存图片，
-        // [gif:] 记号按既有兜底留原文。
-        contentTextView.attributedText = BearyText.inlineAttributedText(from: Self.displayText(title: snapshot.title, content: snapshot.content ?? ""), font: BearyDynamicType.smallBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: nil)
+        applyContentText()
         view.addSubview(contentTextView)
 
         noteLabel.translatesAutoresizingMaskIntoConstraints = false
         noteLabel.font = BearyDynamicType.captionFont()
+        noteLabel.adjustsFontForContentSizeCategory = true
         noteLabel.textColor = BearyColors.gray
         noteLabel.numberOfLines = 0
         noteLabel.text = "请先核对快照内容。恢复前会备份当前非空文字，恢复后需手动保存。"
@@ -147,6 +144,9 @@ final class BearySnapshotPreviewViewController: UIViewController, BearySystemShe
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
             lastTextMeasuredWidth = -1
             lastMeasuredWidth = -1
+            // 大字号实时变化：正文富文本按当前字号重算重赋
+            // （标题／副行／提示走 adjustsFontForContentSizeCategory 自动跟随）。
+            applyContentText()
         }
     }
 
@@ -198,6 +198,17 @@ final class BearySnapshotPreviewViewController: UIViewController, BearySystemShe
     private static func displayText(title: String?, content: String) -> String {
         guard let title = title, !title.isEmpty else { return content }
         return content.isEmpty ? title : "\(title)\n\(content)"
+    }
+
+    /// 正文富文本按当前字号生成（smallBodyFont 走 scaledFont，字号档变了须重算重赋）。
+    private func applyContentText() {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.6
+        paragraph.lineBreakMode = .byCharWrapping
+        // 快照正文里的 [mood:] 记号走卡片同款渲染（原先纯文本直显，
+        // 记号原文会露出来）；行高/断行口径与原来一致。快照不存图片，
+        // [gif:] 记号按既有兜底留原文。
+        contentTextView.attributedText = BearyText.inlineAttributedText(from: Self.displayText(title: snapshot.title, content: snapshot.content ?? ""), font: BearyDynamicType.smallBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: nil)
     }
 
     private func refreshStarButton() {

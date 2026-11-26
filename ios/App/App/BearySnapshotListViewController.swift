@@ -21,6 +21,7 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
     private let clearButton = UIButton(type: .system)
     private let descriptionLabel = UILabel()
     private let tableView = UITableView(frame: .zero, style: .plain)
+    private let retryButton = BearyButton.retryPage()
     private let emptyLabel = UILabel()
     private var tableHeightConstraint: NSLayoutConstraint?
 
@@ -57,6 +58,7 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "云端快照"
         titleLabel.font = BearyDynamicType.pageTitleFont()
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         view.addSubview(titleLabel)
 
@@ -73,6 +75,7 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
 
         descriptionLabel.translatesAutoresizingMaskIntoConstraints = false
         descriptionLabel.font = BearyDynamicType.captionFont()
+        descriptionLabel.adjustsFontForContentSizeCategory = true
         descriptionLabel.textColor = BearyColors.gray
         descriptionLabel.numberOfLines = 0
         descriptionLabel.text = "日记内容丢失或异常时，可尝试通过快照找回。仅保留最近七天的文字版本，保存在云端，断网时无法查看，不含图片和附件。"
@@ -91,10 +94,19 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
 
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         emptyLabel.font = BearyDynamicType.secondaryFont()
+        emptyLabel.adjustsFontForContentSizeCategory = true
         emptyLabel.textColor = BearyColors.gray
         emptyLabel.textAlignment = .center
         emptyLabel.numberOfLines = 0
         view.addSubview(emptyLabel)
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.setTitle(NSLocalizedString("common.retry", comment: ""), for: .normal)
+        retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpace.xl, bottom: 0, right: BearySpace.xl)
+        retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButton.retryPageStyle.height).isActive = true
+        retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        retryButton.bearyAddPressFeedback()
+        retryButton.isHidden = true
+        view.addSubview(retryButton)
 
         let tableHeight = tableView.heightAnchor.constraint(equalToConstant: Self.emptyTableHeight)
         tableHeightConstraint = tableHeight
@@ -120,7 +132,14 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
             emptyLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
+            retryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            retryButton.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 16),
         ])
+        loadSnapshots()
+    }
+
+    @objc private func retryTapped() {
+        retryButton.isHidden = true
         loadSnapshots()
     }
 
@@ -134,6 +153,9 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
         super.traitCollectionDidChange(previousTraitCollection)
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
             lastMeasuredWidth = -1
+            // 大字号实时变化：行字体在 cell init 里只取一次，须重建行才跟上
+            // （空态文案走 adjustsFontForContentSizeCategory 自动跟随）。
+            tableView.reloadData()
         }
     }
 
@@ -190,19 +212,31 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
 
     private func refreshEmptyState() {
         if loadFailed {
-            emptyLabel.text = "加载失败，请关闭后重试"
+            emptyLabel.text = NSLocalizedString("snapshot.load_failed", comment: "")
             emptyLabel.isHidden = false
+            retryButton.isHidden = false
         } else if snapshots.isEmpty {
             emptyLabel.text = "暂无快照"
             emptyLabel.isHidden = false
+            retryButton.isHidden = true
         } else {
             emptyLabel.isHidden = true
+            retryButton.isHidden = true
         }
     }
 
     private func updateTableHeight() {
         // 空态留 76pt 给居中的空提示；有行时按行数算、最多露 6 行。
-        let height = snapshots.isEmpty ? Self.emptyTableHeight : min(CGFloat(snapshots.count) * Self.rowHeight, Self.maxTableHeight)
+        // 失败态另加重试钮的高度（空提示下方 16 间距＋钮高 44），
+        // 否则钮底会超出面板底边被裁掉（view 开了 masksToBounds）。
+        let height: CGFloat
+        if loadFailed {
+            height = Self.emptyTableHeight + 16 + BearyButton.retryPageStyle.height
+        } else if snapshots.isEmpty {
+            height = Self.emptyTableHeight
+        } else {
+            height = min(CGFloat(snapshots.count) * Self.rowHeight, Self.maxTableHeight)
+        }
         if tableHeightConstraint?.constant != height {
             tableHeightConstraint?.constant = height
         }
@@ -260,9 +294,11 @@ private final class BearySnapshotRowCell: UITableViewCell {
         accessoryType = .disclosureIndicator
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
         timeLabel.font = BearyDynamicType.tabularDigitsFont(ofSize: 17, weight: .semibold)
+        timeLabel.adjustsFontForContentSizeCategory = true
         timeLabel.textColor = BearyColors.ink
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.font = BearyDynamicType.captionFont()
+        subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
         contentView.addSubview(timeLabel)
         contentView.addSubview(subtitleLabel)
