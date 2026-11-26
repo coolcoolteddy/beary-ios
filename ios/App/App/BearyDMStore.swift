@@ -39,6 +39,12 @@ enum BearyDMStore {
         // 认领在 persistMessages 合并后的行上跑，不经本字段透传就会在入库时丢掉；
         // 旧文件无此键，默认值 nil 解码不受影响，无 ID 的旧行走原窗口回退。
         var clientMessageId: String? = nil
+        // 左滑回复（2026-11-26 Li 定）：被回复消息的 id 与 history JOIN 下发的引用
+        // （是否本人／发送人展示名／正文摘要）。旧文件无此键，默认值 nil 解码不受影响。
+        var replyTo: Int? = nil
+        var replyFromMe: Bool? = nil
+        var replySenderName: String? = nil
+        var replyBody: String? = nil
     }
 
     struct StoredConversation: Codable, Equatable {
@@ -319,7 +325,7 @@ enum BearyDMStore {
     private static func dmMessages(from stored: [StoredMessage]) -> [BearyAPI.DMMessage] {
         stored.compactMap { m -> BearyAPI.DMMessage? in
             guard let id = m.id, let senderId = m.senderId else { return nil }
-            return BearyAPI.DMMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt, clientMessageId: m.clientMessageId)
+            return BearyAPI.DMMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt, clientMessageId: m.clientMessageId, replyTo: m.replyTo, replyFromMe: m.replyFromMe, replySenderName: m.replySenderName, replyBody: m.replyBody)
         }.sorted { ($0.id ?? 0) < ($1.id ?? 0) }
     }
 
@@ -343,7 +349,7 @@ enum BearyDMStore {
             }
             let (base, corrupt) = cachedAll(accountId: accountId)
             let fresh = dmMessages(from: messages.map {
-                StoredMessage(id: $0.id, senderId: $0.senderId, body: $0.body, createdAt: $0.createdAt, clientMessageId: $0.clientMessageId)
+                StoredMessage(id: $0.id, senderId: $0.senderId, body: $0.body, createdAt: $0.createdAt, clientMessageId: $0.clientMessageId, replyTo: $0.replyTo, replyFromMe: $0.replyFromMe, replySenderName: $0.replySenderName, replyBody: $0.replyBody)
             })
             if corrupt {
                 DispatchQueue.main.async { completion?(.corrupt(fresh)) }
@@ -480,6 +486,13 @@ enum BearyDMStore {
         var body: String
         var createdAt: Int
         var status: Status
+        // 左滑回复（2026-11-26 Li 定）：被回复消息的 id 与引用展示字段。
+        // 失败重发沿用同一 replyTo（否则引用会丢）；重启恢复的待发行凭此
+        // 四字段照常显示引用。旧待发文件无此键，默认值 nil 解码不受影响。
+        var replyTo: Int? = nil
+        var replyFromMe: Bool? = nil
+        var replySenderName: String? = nil
+        var replyBody: String? = nil
     }
 
     private static func pendingFileURL(forAccount accountId: Int?) -> URL? {
@@ -562,7 +575,7 @@ enum BearyDMStore {
             switch loadPendingList(accountId: accountId) {
             case .loaded(let pendings):
                 for p in pendings where p.peerId == peerId {
-                    candidates.append(BearyAPI.DMMessage(id: nil, senderId: accountId, fromMe: true, body: p.body, createdAt: p.createdAt, localKey: p.localKey))
+                    candidates.append(BearyAPI.DMMessage(id: nil, senderId: accountId, fromMe: true, body: p.body, createdAt: p.createdAt, localKey: p.localKey, replyTo: p.replyTo, replyFromMe: p.replyFromMe, replySenderName: p.replySenderName, replyBody: p.replyBody))
                 }
             case .missing, .corrupt:
                 break
@@ -710,7 +723,7 @@ enum BearyDMStoreCore {
         for m in conv.messages { if let id = m.id { byId[id] = m } }
         for m in messages {
             guard let id = m.id, let senderId = m.senderId else { continue }
-            byId[id] = BearyDMStore.StoredMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt, clientMessageId: m.clientMessageId)
+            byId[id] = BearyDMStore.StoredMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt, clientMessageId: m.clientMessageId, replyTo: m.replyTo, replyFromMe: m.replyFromMe, replySenderName: m.replySenderName, replyBody: m.replyBody)
         }
         conv.messages = byId.values.sorted { ($0.id ?? 0) < ($1.id ?? 0) }
         store["\(peerId)"] = conv

@@ -117,6 +117,17 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private let loadFailedStateView = BearyStateView()
     private let placeholderLabel = UILabel()
     private let countLabel = UILabel()
+    // 左滑回复（2026-11-26 Li 定）：回复态的目标消息（有值即正在回复），
+    // 输入框上方引用条（名字＋原文第一行＋× 取消）；平时高 0 不占位。
+    private var replyingTo: BearyAPI.DMMessage?
+    private let replyBar = UIView()
+    private let replyBarTopLine = UIView()
+    private let replyBarAccent = UIView()
+    private let replyBarNameLabel = UILabel()
+    private let replyBarBodyLabel = UILabel()
+    private let replyBarCloseButton = UIButton(type: .system)
+    private var replyBarHeight: NSLayoutConstraint?
+    private var replyBarMinHeight: NSLayoutConstraint?
     /// 2026-11-04 乐观发送：失败待发行的本地键集合（行侧边出红叹号、点按重发）。
     private var failedSendKeys = Set<String>()
     /// 审计四轮增量 03：重发在途集合——同一条消息在请求结束前只允许一次重发，
@@ -331,6 +342,77 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         sendButton.isEnabled = false
         sendButton.alpha = 0.6
         inputBar.addSubview(sendButton)
+        // 左滑回复引用条（2026-11-26 Li 定）：平时高 0 不占位，回复态展开；
+        // 名字＋原文第一行＋× 取消，点 × 只关条、不动键盘。高度走内容
+        // （名字 13 semibold＋正文 13＋上下各 8），最低 52（见 replyBarMinHeight）。
+        replyBar.translatesAutoresizingMaskIntoConstraints = false
+        replyBar.backgroundColor = BearyColors.bg
+        replyBar.isHidden = true
+        view.addSubview(replyBar)
+        replyBarTopLine.translatesAutoresizingMaskIntoConstraints = false
+        replyBarTopLine.backgroundColor = BearyColors.line
+        replyBar.addSubview(replyBarTopLine)
+        replyBarAccent.translatesAutoresizingMaskIntoConstraints = false
+        replyBarAccent.backgroundColor = BearyColors.gray
+        replyBar.addSubview(replyBarAccent)
+        replyBarNameLabel.translatesAutoresizingMaskIntoConstraints = false
+        replyBarNameLabel.font = BearyDynamicType.buttonSmallFont()
+        replyBarNameLabel.adjustsFontForContentSizeCategory = true
+        replyBarNameLabel.textColor = BearyColors.ink
+        replyBar.addSubview(replyBarNameLabel)
+        replyBarBodyLabel.translatesAutoresizingMaskIntoConstraints = false
+        replyBarBodyLabel.font = BearyDynamicType.secondaryFont()
+        replyBarBodyLabel.adjustsFontForContentSizeCategory = true
+        replyBarBodyLabel.textColor = BearyColors.gray
+        replyBarBodyLabel.numberOfLines = 1
+        replyBarBodyLabel.lineBreakMode = .byTruncatingTail
+        replyBar.addSubview(replyBarBodyLabel)
+        replyBarCloseButton.translatesAutoresizingMaskIntoConstraints = false
+        replyBarCloseButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 16), for: .normal)
+        replyBarCloseButton.tintColor = BearyColors.gray
+        replyBarCloseButton.accessibilityLabel = NSLocalizedString("dm.reply.cancel_reply", comment: "")
+        replyBarCloseButton.addTarget(self, action: #selector(replyBarCloseTapped), for: .touchUpInside)
+        replyBarCloseButton.bearyAddPressFeedback()
+        replyBar.addSubview(replyBarCloseButton)
+        replyBarHeight = replyBar.heightAnchor.constraint(equalToConstant: 0)
+        replyBarHeight?.isActive = true
+        replyBarMinHeight = replyBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52)
+        replyBarMinHeight?.isActive = false
+        // 名字／正文／竖条的上下内边距用 defaultHigh：收起时 0 高约束优先、
+        // 它静默让位，不报约束冲突；展开时无竞争的定高约束，条高由内容＋
+        // 上下各 8 撑起，不低于 52（与权限横幅同款收起口径）。
+        let replyBarNameTop = replyBarNameLabel.topAnchor.constraint(equalTo: replyBar.topAnchor, constant: 8)
+        replyBarNameTop.priority = .defaultHigh
+        let replyBarBodyBottom = replyBarBodyLabel.bottomAnchor.constraint(equalTo: replyBar.bottomAnchor, constant: -8)
+        replyBarBodyBottom.priority = .defaultHigh
+        let replyBarAccentTop = replyBarAccent.topAnchor.constraint(equalTo: replyBar.topAnchor, constant: 8)
+        replyBarAccentTop.priority = .defaultHigh
+        let replyBarAccentBottom = replyBarAccent.bottomAnchor.constraint(equalTo: replyBar.bottomAnchor, constant: -8)
+        replyBarAccentBottom.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            replyBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            replyBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            replyBar.bottomAnchor.constraint(equalTo: inputBar.topAnchor),
+            replyBarTopLine.topAnchor.constraint(equalTo: replyBar.topAnchor),
+            replyBarTopLine.leadingAnchor.constraint(equalTo: replyBar.leadingAnchor),
+            replyBarTopLine.trailingAnchor.constraint(equalTo: replyBar.trailingAnchor),
+            replyBarTopLine.heightAnchor.constraint(equalToConstant: 0.5),
+            replyBarAccent.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            replyBarAccentTop,
+            replyBarAccentBottom,
+            replyBarAccent.widthAnchor.constraint(equalToConstant: 3),
+            replyBarNameTop,
+            replyBarNameLabel.leadingAnchor.constraint(equalTo: replyBarAccent.trailingAnchor, constant: 8),
+            replyBarNameLabel.trailingAnchor.constraint(equalTo: replyBarCloseButton.leadingAnchor, constant: -8),
+            replyBarBodyLabel.topAnchor.constraint(equalTo: replyBarNameLabel.bottomAnchor, constant: 2),
+            replyBarBodyLabel.leadingAnchor.constraint(equalTo: replyBarNameLabel.leadingAnchor),
+            replyBarBodyLabel.trailingAnchor.constraint(equalTo: replyBarNameLabel.trailingAnchor),
+            replyBarBodyBottom,
+            replyBarCloseButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8),
+            replyBarCloseButton.centerYAnchor.constraint(equalTo: replyBar.centerYAnchor),
+            replyBarCloseButton.widthAnchor.constraint(equalToConstant: 44),
+            replyBarCloseButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
         // 审计：接近 2000 字实时计数（仅 ≥1800 字出现）与“新消息”pill。
         countLabel.translatesAutoresizingMaskIntoConstraints = false
         countLabel.font = BearyDynamicType.numberFont()
@@ -351,12 +433,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         newMessagePill.bearyAddPressFeedback()
         view.addSubview(newMessagePill)
         NSLayoutConstraint.activate([
-            countLabel.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -4),
+            // 计数与 pill 锚在引用条顶（条收起时高 0、顶即输入条顶，位置不变；
+            // 条展开时两者随之上移，不盖住引用条）。
+            countLabel.bottomAnchor.constraint(equalTo: replyBar.topAnchor, constant: -4),
             countLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             newMessagePill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             newMessagePill.heightAnchor.constraint(equalToConstant: 32),
         ])
-        newMessagePillBottomConstraint = newMessagePill.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -8)
+        newMessagePillBottomConstraint = newMessagePill.bottomAnchor.constraint(equalTo: replyBar.topAnchor, constant: -8)
         newMessagePillBottomConstraint?.isActive = true
         // 翻旧加载态浮标（见声明处注释）：悬在列表顶部，不占表高。
         olderLoadingView.translatesAutoresizingMaskIntoConstraints = false
@@ -497,7 +581,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             tableView.topAnchor.constraint(equalTo: permBannerView.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: inputBar.topAnchor),
+            tableView.bottomAnchor.constraint(equalTo: replyBar.topAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
@@ -695,7 +779,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 let existingKeys = Set(self.messages.compactMap { $0.localKey })
                 var restored: [BearyAPI.DMMessage] = []
                 for p in pendings where !existingKeys.contains(p.localKey) {
-                    restored.append(BearyAPI.DMMessage(id: nil, senderId: self.storeAccountId, fromMe: true, body: p.body, createdAt: p.createdAt, localKey: p.localKey))
+                    restored.append(BearyAPI.DMMessage(id: nil, senderId: self.storeAccountId, fromMe: true, body: p.body, createdAt: p.createdAt, localKey: p.localKey, replyTo: p.replyTo, replyFromMe: p.replyFromMe, replySenderName: p.replySenderName, replyBody: p.replyBody))
                     // 第 17 轮：失败态如实恢复——明确失败的回失败集（保留红叹号重试入口），
                     // 发送中（结果未知）的降为未确认，未确认的保持未确认。
                     switch p.status {
@@ -776,6 +860,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     }
 
     private func setSearchVisible(_ visible: Bool) {
+        if visible {
+            // 搜记录时引用条让位：搜索结果表盖在聊天列表上方，输入条不动；
+            // 回复态一并取消，免得引用条与搜索表叠在一起。
+            setReplying(to: nil)
+        }
         searchContainer.isHidden = !visible
         // 展开时 0 高约束停用、高度由搜索框＋提示行内容定；收起时 0 高约束生效。
         searchContainerHeight?.isActive = !visible
@@ -1371,7 +1460,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let requestEpoch = BearyAPI.shared.authEpoch
         // 审计第 26 轮第 5 项：重发沿用首次发送的 localKey 作客户端消息 ID，
         // 不生成新 ID——服务端认同一条消息。
-        BearyAPI.shared.sendDM(userId: userId, body: body, clientMessageId: key) { [weak self] result in
+        // 左滑回复：重发沿用首次发送的 replyTo（待发行自带引用字段），否则引用会丢。
+        BearyAPI.shared.sendDM(userId: userId, body: body, clientMessageId: key, replyTo: temp.replyTo) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.retryingKeys.remove(key)
@@ -2021,12 +2111,23 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         updateSendButton()
         let key = UUID().uuidString
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        let temp = BearyAPI.DMMessage(id: nil, senderId: myId, fromMe: true, body: body, createdAt: nowMs, localKey: key)
+        // 左滑回复：被回复的消息（仅服务端行可回复，待发行无 id 不进回复态，
+        // 见 beginReply）；引用字段随待发行一起乐观展示，重发沿用同一 replyTo。
+        let quoted = replyingTo
+        let quotedIsMine = quoted?.senderId == myId
+        let temp = BearyAPI.DMMessage(id: nil, senderId: myId, fromMe: true, body: body, createdAt: nowMs, localKey: key,
+                                      replyTo: quoted?.id, replyFromMe: quoted == nil ? nil : quotedIsMine,
+                                      replySenderName: quoted == nil || quotedIsMine ? nil : peer.displayName,
+                                      replyBody: quoted?.body)
         // 审计四轮增量 12：待发先落盘（独立待发文件，与主库损坏保护互不干扰）——
         // 发送中/失败态被系统终止，重启后仍能恢复查看、长按复制，不自动重发。
         // 审计新一轮 #3：确认落盘后再清空输入框并发网请求——写盘失败时正文
         // 留在输入框，不把这次输入当作可恢复的待发消息。
-        BearyDMStore.savePending(.init(localKey: key, peerId: userId, body: body, createdAt: nowMs, status: .sending), accountId: storeAccountId) { [weak self] saved in
+        // 左滑回复：待发里同步记引用字段，重启恢复的待发行照常显示引用。
+        let pending = BearyDMStore.PendingSend(localKey: key, peerId: userId, body: body, createdAt: nowMs, status: .sending,
+                                               replyTo: temp.replyTo, replyFromMe: temp.replyFromMe,
+                                               replySenderName: temp.replySenderName, replyBody: temp.replyBody)
+        BearyDMStore.savePending(pending, accountId: storeAccountId) { [weak self] saved in
             guard let self = self else { return }
             // 第七轮①：落盘已确认（成功与否都有结论），释放提交锁。
             self.isPersistingSend = false
@@ -2053,6 +2154,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                self.inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines) == body {
                 self.inputTextView.text = ""
             }
+            // 左滑回复：回复已随待发行乐观上表，引用条即撤（重发沿用待发行的
+            // replyTo，见 retrySend；落盘失败时引用条保留，用户可再发）。
+            self.setReplying(to: nil)
             self.updateSendButton()
             self.updateInputChrome()
             self.updateInputTextViewHeight()
@@ -2066,7 +2170,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             let requestEpoch = submitEpoch
             // 审计第 26 轮第 5 项：把本地待发的 localKey（UUID）随请求带给服务端
             // 作客户端消息 ID，历史回包按此 ID 精确认领。
-            BearyAPI.shared.sendDM(userId: userId, body: body, clientMessageId: key) { [weak self] result in
+            // 左滑回复：reply_to 随请求带给服务端（旧服务端忽略本字段，只丢引用）。
+            BearyAPI.shared.sendDM(userId: userId, body: body, clientMessageId: key, replyTo: quoted?.id) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     // 切号夹在发送与回包之间时旧回包直接丢弃：不撤行、不 toast、
@@ -2124,6 +2229,53 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
+    /// 左滑回复：引用展示名——被回复消息是自己发的显“你”，否则显对方名；
+    /// 无引用（replyTo 为空或正文摘要为空）回 nil，cell 藏起引用块。
+    private func quoteDisplayName(for message: BearyAPI.DMMessage) -> String? {
+        guard message.replyTo != nil, message.replyBody != nil else { return nil }
+        if message.replyFromMe == true { return NSLocalizedString("dm.reply.you", comment: "") }
+        if let name = message.replySenderName, !name.isEmpty { return name }
+        if let name = peer.displayName, !name.isEmpty { return name }
+        return NSLocalizedString("dm.reply.peer_fallback", comment: "")
+    }
+
+    /// 左滑回复入口：cell 手势过阈值时调——只认服务端行（有 id），待发行
+    /// 无 id 不进回复态；进回复态后输入框聚焦、键盘保持弹出。
+    private func beginReply(to message: BearyAPI.DMMessage) {
+        guard message.id != nil, !sessionClosed, !dmNotAllowed else { return }
+        setReplying(to: message)
+        inputTextView.becomeFirstResponder()
+    }
+
+    /// 回复态开关：有目标即显引用条（名字＋原文第一行＋×），无目标即收起；
+    /// × 只关条、不动键盘（见 replyBarCloseTapped）。
+    private func setReplying(to message: BearyAPI.DMMessage?) {
+        replyingTo = message
+        if let message {
+            let isMine = message.senderId != nil && message.senderId == storeAccountId
+            if isMine {
+                replyBarNameLabel.text = NSLocalizedString("dm.reply.you", comment: "")
+            } else if let name = peer.displayName, !name.isEmpty {
+                replyBarNameLabel.text = name
+            } else {
+                replyBarNameLabel.text = NSLocalizedString("dm.reply.peer_fallback", comment: "")
+            }
+            replyBarBodyLabel.text = (message.body ?? "").components(separatedBy: .newlines).first ?? ""
+            replyBarHeight?.isActive = false
+            replyBarMinHeight?.isActive = true
+            replyBar.isHidden = false
+        } else {
+            replyBarHeight?.isActive = true
+            replyBarMinHeight?.isActive = false
+            replyBar.isHidden = true
+        }
+        UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.normal : 0) { self.view.layoutIfNeeded() }
+    }
+
+    @objc private func replyBarCloseTapped() {
+        setReplying(to: nil)
+    }
+
     // MARK: - Table
 
     /// 私信时间分组阈值（2026-11-18 Li 定）：同人短时间连发归一组，时间只在
@@ -2177,10 +2329,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 私信时间分组（2026-11-18 Li 定）：组内时间只在组尾出现一次，组内气泡贴紧。
         let showTime = isTimestampGroupTail(at: indexPath.row, showFail: showFail, showUnconfirmed: showUnconfirmed)
         let tightTop = continuesTimestampGroup(at: indexPath.row)
-        cell.configure(message: message, isMine: isMine, showFail: showFail, showUnconfirmed: showUnconfirmed, showTime: showTime, tightTop: tightTop, onRetry: showFail ? { [weak self] in
+        // 左滑回复：只有服务端行（有 id）能被回复；待发行无 id，不进回复态。
+        let quoteName = quoteDisplayName(for: message)
+        cell.configure(message: message, isMine: isMine, showFail: showFail, showUnconfirmed: showUnconfirmed, showTime: showTime, tightTop: tightTop, quoteName: quoteName, onRetry: showFail ? { [weak self] in
             guard let key = retryKey else { return }
             self?.retrySend(key: key)
-        } : nil)
+        } : nil, onSwipeReply: message.id == nil ? nil : { [weak self] in
+            self?.beginReply(to: message)
+        })
         return cell
     }
 
@@ -2417,6 +2573,33 @@ private final class BearyDMMessageCell: UITableViewCell {
     private let failBadge = UIView()
     private let failMark = UILabel()
     private var onRetry: (() -> Void)?
+    // 左滑回复（2026-11-26 Li 定）：气泡上方引用块（名字＋原文摘要，最多两行），
+    // 只在带回复的消息行显示；拖动时气泡右侧露出的回复图标（官方 icon_reply）。
+    private let mineQuoteView = UIView()
+    private let mineQuoteAccent = UIView()
+    private let mineQuoteNameLabel = UILabel()
+    private let mineQuoteBodyLabel = UILabel()
+    private let theirsQuoteView = UIView()
+    private let theirsQuoteAccent = UIView()
+    private let theirsQuoteNameLabel = UILabel()
+    private let theirsQuoteBodyLabel = UILabel()
+    private let replyIconView: UIImageView = {
+        let v = UIImageView()
+        v.image = BearyIconImages.image(named: "icon_reply", pointSize: 20)
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        v.frame = CGRect(x: 0, y: 0, width: 24, height: 24)
+        v.isHidden = true
+        v.isUserInteractionEnabled = false
+        return v
+    }()
+    /// 左滑回复手势：过 60pt 松手进回复态，不到弹回；跟手上限 80pt。
+    private static let swipeReplyThreshold: CGFloat = 60
+    private static let swipeMaxOffset: CGFloat = 80
+    private var onSwipeReply: (() -> Void)?
+    private var swipeBaseBubbleFrame: CGRect = .zero
+    private var swipeCrossedThreshold = false
+    private var swipeAborted = false
     /// 新一轮 01：本行消息的创建时间（毫秒），供页面分钟边界刷新时重算时间标签。
     private var lastCreatedAtMs: Int?
     /// 第三轮审计 1：本行是否待确认（仅本人行），供分钟刷新时保留「未确认」后缀。
@@ -2509,10 +2692,136 @@ private final class BearyDMMessageCell: UITableViewCell {
             failMark.centerXAnchor.constraint(equalTo: failBadge.centerXAnchor),
             failMark.centerYAnchor.constraint(equalTo: failBadge.centerYAnchor),
         ])
+        // 左滑回复引用块：气泡上方一小块（名字＋原文摘要，最多两行），只在带回复的
+        // 消息行显示；宽由内容定（栈按最宽子项撑宽），圆角 8（引用卡例外值，
+        // 见 BearyCorners）；竖条走 gray（token §3）。与气泡同栈，左滑时整行同移。
+        for (stack, quoteView, quoteAccent, nameLabel, bodyLabel, isMine) in [
+            (mineStack, mineQuoteView, mineQuoteAccent, mineQuoteNameLabel, mineQuoteBodyLabel, true),
+            (theirsStack, theirsQuoteView, theirsQuoteAccent, theirsQuoteNameLabel, theirsQuoteBodyLabel, false),
+        ] as [(UIStackView, UIView, UIView, UILabel, UILabel, Bool)] {
+            quoteView.translatesAutoresizingMaskIntoConstraints = false
+            quoteView.backgroundColor = isMine ? BearyColors.surface2 : BearyColors.surface1
+            quoteView.layer.cornerRadius = 8
+            quoteView.clipsToBounds = true
+            quoteView.isHidden = true
+            quoteAccent.translatesAutoresizingMaskIntoConstraints = false
+            quoteAccent.backgroundColor = BearyColors.gray
+            quoteView.addSubview(quoteAccent)
+            nameLabel.translatesAutoresizingMaskIntoConstraints = false
+            nameLabel.font = BearyDynamicType.buttonSmallFont()
+            nameLabel.adjustsFontForContentSizeCategory = true
+            nameLabel.textColor = BearyColors.ink
+            quoteView.addSubview(nameLabel)
+            bodyLabel.translatesAutoresizingMaskIntoConstraints = false
+            bodyLabel.font = BearyDynamicType.secondaryFont()
+            bodyLabel.adjustsFontForContentSizeCategory = true
+            bodyLabel.textColor = BearyColors.gray
+            bodyLabel.numberOfLines = 2
+            quoteView.addSubview(bodyLabel)
+            stack.insertArrangedSubview(quoteView, at: 0)
+            NSLayoutConstraint.activate([
+                quoteAccent.leadingAnchor.constraint(equalTo: quoteView.leadingAnchor),
+                quoteAccent.topAnchor.constraint(equalTo: quoteView.topAnchor),
+                quoteAccent.bottomAnchor.constraint(equalTo: quoteView.bottomAnchor),
+                quoteAccent.widthAnchor.constraint(equalToConstant: 3),
+                nameLabel.topAnchor.constraint(equalTo: quoteView.topAnchor, constant: 6),
+                nameLabel.leadingAnchor.constraint(equalTo: quoteAccent.trailingAnchor, constant: 8),
+                nameLabel.trailingAnchor.constraint(equalTo: quoteView.trailingAnchor, constant: -10),
+                bodyLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
+                bodyLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+                bodyLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
+                bodyLabel.bottomAnchor.constraint(equalTo: quoteView.bottomAnchor, constant: -6),
+            ])
+        }
+        // 左滑回复图标：平时隐藏，拖动时随气泡右缘出现（见 handleSwipePan）。
+        contentView.addSubview(replyIconView)
+        // 左滑回复手势：挂在气泡上，只认左滑（见 gestureRecognizerShouldBegin），
+        // 与列表竖滑、左边缘右滑返回方向相反，不冲突；长按菜单不受影响。
+        for bubble in [mineBubble, theirsBubble] {
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(handleSwipePan(_:)))
+            pan.delegate = self
+            bubble.addGestureRecognizer(pan)
+        }
     }
 
     @objc private func failTapped() {
         onRetry?()
+    }
+
+    // MARK: - 左滑回复手势
+
+    /// 只认左滑：横向速度占优且向左；竖滑与右滑不启动——竖滑留给列表滚动，
+    /// 右滑留给左边缘返回；两者方向相反，互不抢手势。
+    /// UITableViewCell 在新 SDK 下已自带 UIGestureRecognizerDelegate 遵循，
+    /// 故此处不重复声明协议、方法改 override（同 BearyDiaryCardCell 口径）。
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
+        let velocity = pan.velocity(in: contentView)
+        return velocity.x < 0 && abs(velocity.x) > abs(velocity.y)
+    }
+
+    @objc private func handleSwipePan(_ pan: UIPanGestureRecognizer) {
+        guard let bubble = pan.view else { return }
+        let stack = bubble === mineBubble ? mineStack : theirsStack
+        switch pan.state {
+        case .began:
+            swipeAborted = false
+            swipeCrossedThreshold = false
+            swipeBaseBubbleFrame = bubble.convert(bubble.bounds, to: contentView)
+            replyIconView.isHidden = false
+            replyIconView.alpha = 0
+            positionSwipeReplyIcon(translationX: 0)
+        case .changed:
+            guard !swipeAborted else { return }
+            let translation = pan.translation(in: contentView)
+            // 拖动中竖向占优即取消本次左滑（复位），把手势还给列表滚动。
+            if abs(translation.y) > abs(translation.x) {
+                swipeAborted = true
+                resetSwipePan()
+                return
+            }
+            let dx = min(0, max(-Self.swipeMaxOffset, translation.x))
+            stack.transform = CGAffineTransform(translationX: dx, y: 0)
+            positionSwipeReplyIcon(translationX: dx)
+            replyIconView.alpha = min(1, -dx / 40)
+            let scale = 0.8 + 0.2 * min(1, -dx / Self.swipeReplyThreshold)
+            replyIconView.transform = CGAffineTransform(scaleX: scale, y: scale)
+            if -dx >= Self.swipeReplyThreshold, !swipeCrossedThreshold {
+                swipeCrossedThreshold = true
+                BearyHaptics.press()
+            }
+        case .ended:
+            guard !swipeAborted else { return }
+            let translation = pan.translation(in: contentView)
+            let dx = min(0, max(-Self.swipeMaxOffset, translation.x))
+            let shouldReply = -dx >= Self.swipeReplyThreshold
+            resetSwipePan()
+            if shouldReply { onSwipeReply?() }
+        case .cancelled, .failed:
+            resetSwipePan()
+        default:
+            break
+        }
+    }
+
+    /// 回复图标位置：中心贴气泡可视右缘外 20pt，随气泡一起左移；纵向与气泡居中。
+    private func positionSwipeReplyIcon(translationX dx: CGFloat) {
+        let x = swipeBaseBubbleFrame.maxX + dx + 20
+        replyIconView.center = CGPoint(x: x, y: swipeBaseBubbleFrame.midY)
+    }
+
+    /// 左滑收尾：气泡弹簧弹回原位、图标淡出（动效 normal 0.26s／阻尼 0.7，
+    /// 与拖拽收尾弹簧同 token；减动效开时直切终态）。
+    private func resetSwipePan() {
+        let stack = mineStack.isHidden ? theirsStack : mineStack
+        let duration = BearyMotion.animated(true) ? BearyMotion.normal : 0
+        UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [.allowUserInteraction], animations: {
+            stack.transform = .identity
+            self.replyIconView.alpha = 0
+            self.replyIconView.transform = .identity
+        }, completion: { _ in
+            self.replyIconView.isHidden = true
+        })
     }
 
     required init?(coder: NSCoder) {
@@ -2540,6 +2849,21 @@ private final class BearyDMMessageCell: UITableViewCell {
         // 失败叹号与重发闭包不得串行（复用 cell 默认无叹号）。
         failButton.isHidden = true
         onRetry = nil
+        // 左滑回复：复用不得把滑动位移／引用块／回复图标带给下一行。
+        mineStack.transform = .identity
+        theirsStack.transform = .identity
+        replyIconView.isHidden = true
+        replyIconView.alpha = 0
+        replyIconView.transform = .identity
+        onSwipeReply = nil
+        swipeAborted = false
+        swipeCrossedThreshold = false
+        mineQuoteView.isHidden = true
+        theirsQuoteView.isHidden = true
+        mineQuoteNameLabel.text = nil
+        mineQuoteBodyLabel.text = nil
+        theirsQuoteNameLabel.text = nil
+        theirsQuoteBodyLabel.text = nil
     }
 
     /// 气泡时间口径与通知行一致（相对时间：刚刚/X 分钟前/X 小时前/X 天前；2026-11-11 定版带空格，取代 2026-11-05 无空格口径）。
@@ -2571,7 +2895,7 @@ private final class BearyDMMessageCell: UITableViewCell {
         }
     }
 
-    func configure(message: BearyAPI.DMMessage, isMine: Bool, showFail: Bool = false, showUnconfirmed: Bool = false, showTime: Bool = true, tightTop: Bool = false, onRetry: (() -> Void)? = nil) {
+    func configure(message: BearyAPI.DMMessage, isMine: Bool, showFail: Bool = false, showUnconfirmed: Bool = false, showTime: Bool = true, tightTop: Bool = false, quoteName: String? = nil, onRetry: (() -> Void)? = nil, onSwipeReply: (() -> Void)? = nil) {
         mineStack.isHidden = !isMine
         theirsStack.isHidden = isMine
         // 私信时间分组（2026-11-18 Li 定）：非组尾行藏时间、底边贴紧下一气泡；
@@ -2590,6 +2914,25 @@ private final class BearyDMMessageCell: UITableViewCell {
         // 审计四轮 11：失败态变化时同步更新无障碍说明（复用 cell 不得串行）。
         failButton.accessibilityLabel = (isMine && showFail) ? "消息发送失败，重试" : nil
         self.onRetry = onRetry
+        self.onSwipeReply = onSwipeReply
+        // 左滑回复引用块：有引用名即显（名字＋原文摘要，最多两行），无引用藏起；
+        // 复用 cell 不得把上一行的引用带给下一行（无引用时两项全藏）。
+        if let quoteName, let replyBody = message.replyBody, !replyBody.isEmpty {
+            let quoteView = isMine ? mineQuoteView : theirsQuoteView
+            let quoteNameLabel = isMine ? mineQuoteNameLabel : theirsQuoteNameLabel
+            let quoteBodyLabel = isMine ? mineQuoteBodyLabel : theirsQuoteBodyLabel
+            quoteNameLabel.text = quoteName
+            quoteBodyLabel.text = replyBody
+            quoteView.isHidden = false
+            (isMine ? theirsQuoteView : mineQuoteView).isHidden = true
+        } else {
+            mineQuoteView.isHidden = true
+            theirsQuoteView.isHidden = true
+            mineQuoteNameLabel.text = nil
+            mineQuoteBodyLabel.text = nil
+            theirsQuoteNameLabel.text = nil
+            theirsQuoteBodyLabel.text = nil
+        }
         let body = message.body ?? ""
         // 气泡时间口径与通知行一致（相对时间：刚刚/X 分钟前/X 小时前/X 天前；2026-11-11 定版带空格，取代 2026-11-05 无空格口径）。
         lastCreatedAtMs = message.createdAt
