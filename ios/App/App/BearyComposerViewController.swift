@@ -7481,7 +7481,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     @objc private func didTapPendingUploadBar() {
         guard !readyUndecidedImageItems().isEmpty else {
-            showToast(message: "照片准备中，请稍候")
+            showToast(message: NSLocalizedString("composer.photo_preparing", comment: ""))
             return
         }
         presentUploadChoiceSheet()
@@ -10006,7 +10006,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 准备未完成时不弹选择（弹窗只列已就绪项，大小才真实），先提示准备中。
         if hasUndecidedImage() {
             guard !readyUndecidedImageItems().isEmpty else {
-                showToast(message: "照片准备中，请稍候")
+                showToast(message: NSLocalizedString("composer.photo_preparing", comment: ""))
                 return
             }
             presentUploadChoiceSheet()
