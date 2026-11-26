@@ -871,7 +871,7 @@ final class BearySecuritySettingsViewController: BearySettingsSubpageViewControl
         lockTitle.font = BearyDynamicType.smallBodyFont()
         lockTitle.text = "\(BearyAppLockSettings.biometryName)解锁"
         let lockDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        lockDetail.text = lockAvailability.available ? BearyAppLockSettings.coldStartNote : (BearyAppLockSettings.isEnabled ? "已开启，当前设备未录入生物识别，重新启动 beary 时改用设备密码验证，点按开关可关闭" : (lockAvailability.reason ?? "此设备暂无法使用生物识别"))
+        lockDetail.text = lockAvailability.available ? BearyAppLockSettings.coldStartNote : (BearyAppLockSettings.isEnabled ? NSLocalizedString("app_lock.enabled_no_biometry", comment: "") : (lockAvailability.reason ?? NSLocalizedString("app_lock.no_biometry_fallback", comment: "")))
         let lockTextStack = UIStackView(arrangedSubviews: [lockTitle, lockDetail])
         lockTextStack.axis = .vertical
         lockTextStack.spacing = 2
