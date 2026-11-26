@@ -774,7 +774,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     /// C1：边缘提示——只在已加载末尾、还有后续页、且“请求在途或刚失败”
-    /// 时显（「正在加载更多照片」／失败时为「更多照片加载失败，继续滑动重试」）；
+    /// 时显（「正在加载更多照片」／失败时为「照片没加载出来，继续滑动重试」）；
     /// 其余位置隐藏。审计三轮 #27：空页回包后无请求在途时不留「正在加载
     /// 更多照片」转圈——闲置有后续页时隐藏，用户再次向前滑即重新请求。
     private func updateLoadMoreHint() {
@@ -786,7 +786,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             loadMoreSpinner.stopAnimating()
             return
         }
-        let text = loadMoreFailed ? "更多照片加载失败，继续滑动重试" : "正在加载更多照片"
+        let text = loadMoreFailed ? NSLocalizedString("photowall.load_more_failed", comment: "") : NSLocalizedString("photowall.loading_more", comment: "")
         loadMoreLabel.text = text
         loadMoreLabel.accessibilityLabel = text
         if loadMoreFailed {
