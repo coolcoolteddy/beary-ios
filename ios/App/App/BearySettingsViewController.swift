@@ -2876,17 +2876,12 @@ final class BearySettingsViewController: UIViewController {
                 self.exportRowButton.isEnabled = true
                 self.setExportProgress(nil)
                 let activity = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-                if let pop = activity.popoverPresentationController {
-                    pop.sourceView = self.exportRowButton
-                    pop.sourceRect = self.exportRowButton.bounds
-                }
                 // S3：分享结束即删本次临时文件——完成、取消、失败路径都清，
                 // 不留导出 JSON 在 tmp 里；完成回调在分享面板收起后才跑，活动方已读完文件。
-                activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                BearyShareSheet.present(activity, from: self, sourceView: self.exportRowButton, sourceRect: self.exportRowButton.bounds) { [weak self] _, completed, _, _ in
                     try? FileManager.default.removeItem(at: fileURL)
                     if completed { self?.showToast("导出完成") }
                 }
-                self.present(activity, animated: BearyMotion.animated(true))
             }
         }
     }

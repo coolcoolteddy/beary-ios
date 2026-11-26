@@ -4466,6 +4466,30 @@ enum BearyPresentGuard {
     }
 }
 
+/// 分享面板弹出接线（反馈／设置／个人页 ×2／标签页共用）：iPad popover 锚点＋
+/// present 一次写好。锚点视图与矩形由调用方给——控件锚点传控件 bounds；
+/// 无控件时传发起页 view＋中心零尺寸 rect、permittedArrowDirections = []（个人页
+/// handleCellShare 口径，不一刀切）；completion 各留各的清理动作（清 zip／删临时文件／无）。
+/// 详情／广场两处分享流程另有门控与组 items 整套，本 helper 只收锚点＋弹出，合流时锚点部分可走这里。
+enum BearyShareSheet {
+    static func present(
+        _ activity: UIActivityViewController,
+        from vc: UIViewController,
+        sourceView: UIView,
+        sourceRect: CGRect,
+        permittedArrowDirections: UIPopoverArrowDirection = .any,
+        completion: UIActivityViewController.CompletionWithItemsHandler? = nil
+    ) {
+        activity.completionWithItemsHandler = completion
+        if let popover = activity.popoverPresentationController {
+            popover.sourceView = sourceView
+            popover.sourceRect = sourceRect
+            popover.permittedArrowDirections = permittedArrowDirections
+        }
+        vc.present(activity, animated: BearyMotion.animated(true), completion: nil)
+    }
+}
+
 /// 审计 E2 第 23 项：确认后请求期的忙碌态。举报/拉黑的确认入口是 UIAlertAction，
 /// 点按后 sheet/alert 即消失、原按钮已不存在，无法在原按钮上挂 spinner；
 /// 故在发起页中央显示既有加载图标（BearyRefreshIconView，旋转）。

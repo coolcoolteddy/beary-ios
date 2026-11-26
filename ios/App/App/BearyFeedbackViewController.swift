@@ -1225,13 +1225,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             }
             // 分享内容只含日志包 zip 一个文件，不含描述与图片 / 视频。
             let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-            sheet.popoverPresentationController?.sourceView = self.shareButton
-            sheet.popoverPresentationController?.sourceRect = self.shareButton.bounds
-            sheet.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+            BearyShareSheet.present(sheet, from: self, sourceView: self.shareButton, sourceRect: self.shareButton.bounds) { [weak self] _, completed, _, _ in
                 BearyAppLog.event(completed ? "feedback share completed" : "feedback share cancelled")
                 self?.cleanupZip()
             }
-            self.present(sheet, animated: BearyMotion.animated(true))
         }
     }
 
