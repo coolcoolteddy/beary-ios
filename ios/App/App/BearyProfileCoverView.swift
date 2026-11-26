@@ -15,6 +15,7 @@ public final class ProfileCoverView: UIView {
     }
 
     private static let artSize = CGSize(width: 1230, height: 385)
+    private static let gold = UIColor(red: 1, green: 0.69, blue: 0.34, alpha: 1)
     /// art 图：init 先按原样加载（只建对象不解码，首帧不阻塞）；后台预解码完
     /// 后在主线程把解码后的图换进来（见 predecodeArt），没解完之前绘制与原来一致。
     private var art: [String: UIImage]
@@ -398,7 +399,6 @@ public final class ProfileCoverView: UIView {
         let depth = Self.softClamp(x + 0.16 * y)
         let vertical = 3 * y
         let midX = 4 * depth, nearX = 20 * depth
-        let gold = UIColor(red: 1, green: 0.69, blue: 0.34, alpha: 1)
         let padded = canvas.insetBy(dx: -32, dy: -12).offsetBy(dx: 0, dy: vertical)
         // 底图已改走图层（updateBackdropLayers），这里不再画。
         switch theme {
@@ -423,25 +423,25 @@ public final class ProfileCoverView: UIView {
             }
             let lightX = 816 + midX + 35 * x, lightY = 350 + 6 * y
             glow(ctx, center: CGPoint(x: lightX, y: lightY), rx: 23, ry: 23,
-                 color: gold, alpha: 0.22 + 0.10 * motionAmount)
+                 color: Self.gold, alpha: 0.22 + 0.10 * motionAmount)
             for i in 0..<4 {
                 let n = CGFloat(i), side: CGFloat = i % 2 == 0 ? 1 : -1
                 let cx = lightX + side * x * (5 + n * 4), yy = lightY + 5 * n
                 let width = 9 + n * 2
                 stroke(ctx, [CGPoint(x: cx - width, y: yy), CGPoint(x: cx + width, y: yy)],
-                       color: gold, width: 1.45, alpha: motionAmount * (0.33 - n * 0.05))
+                       color: Self.gold, width: 1.45, alpha: motionAmount * (0.33 - n * 0.05))
             }
             if egg > 0 {
-                glow(ctx, center: CGPoint(x: 927 + 12 * depth, y: 231 + vertical), rx: 30, ry: 27, color: gold, alpha: 0.32 * egg)
+                glow(ctx, center: CGPoint(x: 927 + 12 * depth, y: 231 + vertical), rx: 30, ry: 27, color: Self.gold, alpha: 0.32 * egg)
                 let columns: [CGFloat] = [920, 932], rows: [CGFloat] = [224, 236]
                 for column in columns {
                     for row in rows {
                         stroke(ctx, [CGPoint(x: column + 12 * depth, y: row + vertical), CGPoint(x: column + 12 * depth, y: row + 7 + vertical)],
-                               color: gold, width: 3.6, alpha: 0.87 * egg)
+                               color: Self.gold, width: 3.6, alpha: 0.87 * egg)
                     }
                 }
                 glow(ctx, center: CGPoint(x: 927 + 12 * depth + 25 * x, y: 351), rx: 17, ry: 25,
-                     color: gold, alpha: 0.27 * egg)
+                     color: Self.gold, alpha: 0.27 * egg)
             }
             bitmap("boat", in: ctx, center: CGPoint(x: boatX, y: 337 + vertical - height / 2),
                    width: width, height: height, angle: 0)
@@ -450,11 +450,11 @@ public final class ProfileCoverView: UIView {
             let height = width * 196 / 1168
             let trainX = 626 + midX + 27 * travel
             let gx = 760 + x * 43, gy = 367 + y * 5
-            glow(ctx, center: CGPoint(x: gx, y: gy), rx: 115, ry: 13, color: gold, alpha: 0.23 + 0.19 * abs(x))
+            glow(ctx, center: CGPoint(x: gx, y: gy), rx: 115, ry: 13, color: Self.gold, alpha: 0.23 + 0.19 * abs(x))
             for i in 0..<3 {
                 let n = CGFloat(i), yy = gy + n * 4
                 stroke(ctx, [CGPoint(x: gx - 47 - n * 5, y: yy), CGPoint(x: gx + 49 + n * 3, y: yy)],
-                       color: gold, width: 1.6, alpha: abs(x) * (0.28 - n * 0.06))
+                       color: Self.gold, width: 1.6, alpha: abs(x) * (0.28 - n * 0.06))
             }
             bitmap("train", in: ctx, center: CGPoint(x: trainX, y: 216.2 + vertical - height / 2),
                    width: width, height: height, angle: 0) {
@@ -717,7 +717,7 @@ public final class ProfileCoverView: UIView {
                                     y: -12 + 279 * scaleY + vertical)
         // 水面暖光晕（灯下倒影一圈暖色，随灯走）。
         glow(ctx, center: CGPoint(x: lanternCenter.x, y: lanternCenter.y + lanternHeight * 0.42),
-             rx: 52, ry: 8, color: UIColor(red: 1, green: 0.69, blue: 0.34, alpha: 1), alpha: 0.30)
+             rx: 52, ry: 8, color: Self.gold, alpha: 0.30)
         bitmap("flower-lantern", in: ctx, center: lanternCenter,
                width: lanternWidth, height: lanternHeight, angle: 0.03 * travel, alpha: 1, layered: true)
     }
@@ -800,8 +800,7 @@ public final class ProfileCoverView: UIView {
         if egg > 0.001 {
             let wreathCenter = CGPoint(x: -32 + 501 * scaleX + foregroundX,
                                        y: -12 + 95 * scaleY + vertical)
-            let gold = UIColor(red: 1, green: 0.69, blue: 0.34, alpha: 1)
-            glow(ctx, center: wreathCenter, rx: 78, ry: 78, color: gold, alpha: 0.28 * egg)
+            glow(ctx, center: wreathCenter, rx: 78, ry: 78, color: Self.gold, alpha: 0.28 * egg)
             bitmap("golden-marigold-wreath", in: ctx,
                    center: wreathCenter, width: 130, height: 130, angle: 0, alpha: egg, layered: true)
         }
