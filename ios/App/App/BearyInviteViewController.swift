@@ -237,7 +237,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
         titleLabel.textColor = BearyColors.ink
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = "好友填写邀请码绑定后，双方各得 30 天 Plus；邀请作废则不发放"
+        subtitleLabel.text = NSLocalizedString("invite.bind_reward_void_note", comment: "")
         subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
