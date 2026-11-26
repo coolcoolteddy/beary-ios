@@ -68,6 +68,7 @@
 		CC36F03F3B9948ACA0371634 /* BearyCenteredModal.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */; };
 		69DE2C19E74C327FA3626A93 /* BearyButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25DEEB6AE3A0566F76549F5F /* BearyButton.swift */; };
 		66D8B958C1FD407A7ECEA90D /* BearyInputContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6559CFA8DB2B71E75B013E4D /* BearyInputContainer.swift */; };
+		4AA0F17BFD863FDBCB6E47F5 /* BearyFormField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 776164AD82D7173F271BD4B8 /* BearyFormField.swift */; };
 		29B8437C3592AC04DEE546F4 /* BearyInputSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DE8B7BB18B944E96F0FB0B5 /* BearyInputSheet.swift */; };
 		23D88D2D590450808C9EF6BE /* BearyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */; };
 		8B953B521BC24EF1807184F7 /* BearyAvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */; };
@@ -123,6 +124,7 @@
 		84D786F265A73D6217043F36 /* BearyDeveloperModeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE05F2F25207A427D2DA0575 /* BearyDeveloperModeViewController.swift */; };
 		07DA09CFD9D0EDC00E5B975B /* BearyColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 480F2905FC850A20929C2317 /* BearyColors.swift */; };
 		B448177CB1834F02BE24580B /* BearyDynamicType.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9DC0708952A4FAAA2FC5BA4 /* BearyDynamicType.swift */; };
+		B11D916B64910434D4D41429 /* BearyFormField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 776164AD82D7173F271BD4B8 /* BearyFormField.swift */; };
 		11B6AB083B6F9CD81F675174 /* BearyBlindBoxFlowViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88BE577F3EF95C0FCAC2A3CD /* BearyBlindBoxFlowViewController.swift */; };
 		DE8D64F180D2F1B435EBC1A8 /* BearyBlindBoxEntryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709353AF36E7A13EDE025E55 /* BearyBlindBoxEntryView.swift */; };
 		8390766731A0B87B6A936AFC /* BearyBlindBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0475BEA97002D2AB77651F /* BearyBlindBox.swift */; };
@@ -806,6 +808,7 @@
 		DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCenteredModal.swift; sourceTree = "<group>"; };
 		25DEEB6AE3A0566F76549F5F /* BearyButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyButton.swift; sourceTree = "<group>"; };
 		6559CFA8DB2B71E75B013E4D /* BearyInputContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyInputContainer.swift; sourceTree = "<group>"; };
+		776164AD82D7173F271BD4B8 /* BearyFormField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFormField.swift; sourceTree = "<group>"; };
 		4DE8B7BB18B944E96F0FB0B5 /* BearyInputSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyInputSheet.swift; sourceTree = "<group>"; };
 		4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyStateView.swift; sourceTree = "<group>"; };
 		1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAvatarView.swift; sourceTree = "<group>"; };
@@ -1560,6 +1563,7 @@
 				DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */,
 				25DEEB6AE3A0566F76549F5F /* BearyButton.swift */,
 				6559CFA8DB2B71E75B013E4D /* BearyInputContainer.swift */,
+				776164AD82D7173F271BD4B8 /* BearyFormField.swift */,
 				4DE8B7BB18B944E96F0FB0B5 /* BearyInputSheet.swift */,
 				4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */,
 				1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */,
@@ -2988,6 +2992,7 @@
 				CC36F03F3B9948ACA0371634 /* BearyCenteredModal.swift in Sources */,
 				69DE2C19E74C327FA3626A93 /* BearyButton.swift in Sources */,
 				66D8B958C1FD407A7ECEA90D /* BearyInputContainer.swift in Sources */,
+				4AA0F17BFD863FDBCB6E47F5 /* BearyFormField.swift in Sources */,
 				29B8437C3592AC04DEE546F4 /* BearyInputSheet.swift in Sources */,
 				23D88D2D590450808C9EF6BE /* BearyStateView.swift in Sources */,
 				8B953B521BC24EF1807184F7 /* BearyAvatarView.swift in Sources */,
@@ -3106,6 +3111,7 @@
 				46A75137107D74DC8B449314 /* BearyPastSelf.swift in Sources */,
 				07DA09CFD9D0EDC00E5B975B /* BearyColors.swift in Sources */,
 				B448177CB1834F02BE24580B /* BearyDynamicType.swift in Sources */,
+				B11D916B64910434D4D41429 /* BearyFormField.swift in Sources */,
 				8A1420F6FBFE89D95C582248 /* BearyDynamicBorder.swift in Sources */,
 				850D32A1A4CA4E3D088DA61F /* BearyNavigator.swift in Sources */,
 				484F0ACFF27C4CA792FE2D95 /* BearyDMStore.swift in Sources */,

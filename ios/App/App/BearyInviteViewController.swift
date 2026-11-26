@@ -310,18 +310,16 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
         bindButton.bearyAddPressFeedback()
         bindRow.addSubview(bindContainer)
         bindRow.addSubview(bindButton)
-        bindField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
-        bindField.adjustsFontForContentSizeCategory = true
-        bindField.textColor = BearyColors.ink
-        bindField.attributedPlaceholder = NSAttributedString(string: "填好友的邀请码", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
-        ])
-        bindField.autocapitalizationType = .allCharacters
-        bindField.autocorrectionType = .no
-        bindField.returnKeyType = .done
-        bindField.delegate = self
-        bindField.addTarget(self, action: #selector(bindTextChanged), for: .editingChanged)
+        BearyFormField.configure(
+            bindField,
+            placeholder: "填好友的邀请码",
+            scaling: .capped,
+            autocapitalizationType: .allCharacters,
+            returnKeyType: .done,
+            delegate: self,
+            changeTarget: self,
+            changeAction: #selector(bindTextChanged)
+        )
 
         bindHintLabel.translatesAutoresizingMaskIntoConstraints = false
         bindHintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))

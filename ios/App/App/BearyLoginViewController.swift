@@ -741,29 +741,31 @@ final class BearyLoginViewController: UIViewController {
     private func configureEmailField() {
         // L1：输入字体解除 cappedFont 20 封顶（固定高容器已改最小高，
         // 大字号不再被截断；默认字号下与原值一致）。
-        emailField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
-        emailField.adjustsFontForContentSizeCategory = true
-        emailField.textColor = BearyColors.ink
-        emailField.keyboardType = .emailAddress
-        emailField.autocapitalizationType = .none
-        emailField.autocorrectionType = .no
-        emailField.textContentType = .emailAddress
-        emailField.returnKeyType = .next
-        emailField.delegate = self
-        emailField.addTarget(self, action: #selector(textChanged), for: .editingChanged)
+        BearyFormField.configure(
+            emailField,
+            placeholder: nil,
+            keyboardType: .emailAddress,
+            autocapitalizationType: .none,
+            returnKeyType: .next,
+            textContentType: .emailAddress,
+            delegate: self,
+            changeTarget: self,
+            changeAction: #selector(textChanged)
+        )
     }
 
     private func configureCodeField() {
-        codeField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
-        codeField.adjustsFontForContentSizeCategory = true
-        codeField.textColor = BearyColors.ink
-        codeField.keyboardType = .numberPad
-        codeField.autocorrectionType = .no
-        codeField.textContentType = .oneTimeCode
-        codeField.delegate = self
         // U2：numberPad 无 Return 键，配“完成” accessory 收键盘。
-        codeField.inputAccessoryView = codeAccessoryToolbar
-        codeField.addTarget(self, action: #selector(textChanged), for: .editingChanged)
+        BearyFormField.configure(
+            codeField,
+            placeholder: nil,
+            keyboardType: .numberPad,
+            textContentType: .oneTimeCode,
+            inputAccessoryView: codeAccessoryToolbar,
+            delegate: self,
+            changeTarget: self,
+            changeAction: #selector(textChanged)
+        )
     }
 
     @objc private func codeAccessoryDone() {
@@ -782,14 +784,15 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func configureInviteField() {
-        inviteField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
-        inviteField.adjustsFontForContentSizeCategory = true
-        inviteField.textColor = BearyColors.ink
-        inviteField.autocapitalizationType = .allCharacters
-        inviteField.autocorrectionType = .no
-        inviteField.returnKeyType = .done
-        inviteField.delegate = self
-        inviteField.addTarget(self, action: #selector(textChanged), for: .editingChanged)
+        BearyFormField.configure(
+            inviteField,
+            placeholder: nil,
+            autocapitalizationType: .allCharacters,
+            returnKeyType: .done,
+            delegate: self,
+            changeTarget: self,
+            changeAction: #selector(textChanged)
+        )
     }
 
     /// 密码框：与邮箱框同字号同口径（16 regular scaled，与邮箱／验证码／
