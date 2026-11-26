@@ -6354,9 +6354,9 @@ class BearyProfileViewController: UIViewController {
         yearCard.isHidden = false
         var writtenDays = Set<Date>()
         for entry in visible {
-            if let createdAt = entry.createdAt {
-                let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-                writtenDays.insert(Self.beijingCalendar.startOfDay(for: date))
+            if let createdAt = entry.createdAt,
+               let dayStart = BearyProfilePersonalLogic.startOfDay(for: createdAt, calendar: Self.beijingCalendar) {
+                writtenDays.insert(dayStart)
             }
         }
         let streak = BearyProfilePersonalLogic.currentStreak(from: Date(), writtenDays: writtenDays, calendar: Self.beijingCalendar)

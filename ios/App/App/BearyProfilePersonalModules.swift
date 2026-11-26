@@ -109,7 +109,9 @@ enum BearyProfilePersonalLogic {
             slotCounts[(hour / 2) * 2, default: 0] += 1
             if let mood = entry.mood, !mood.isEmpty { moodCounts[mood, default: 0] += 1 }
             if let weather = entry.weather, !weather.isEmpty { weatherCounts[weather, default: 0] += 1 }
-            writtenDays.insert(calendar.startOfDay(for: date))
+            if let dayStart = BearyProfilePersonalLogic.startOfDay(for: createdAt, calendar: calendar) {
+                writtenDays.insert(dayStart)
+            }
         }
         var bestSlot: Int?
         var bestSlotCount = 0
@@ -1111,9 +1113,9 @@ final class BearyYearReviewViewController: UIViewController {
         // 总篇数 / 最长连续（当年）。
         var writtenDays = Set<Date>()
         for entry in yearEntriesValue {
-            if let createdAt = entry.createdAt {
-                let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-                writtenDays.insert(calendar.startOfDay(for: date))
+            if let createdAt = entry.createdAt,
+               let dayStart = BearyProfilePersonalLogic.startOfDay(for: createdAt, calendar: calendar) {
+                writtenDays.insert(dayStart)
             }
         }
         let longest = BearyProfilePersonalLogic.longestStreak(writtenDays: writtenDays, calendar: calendar)
