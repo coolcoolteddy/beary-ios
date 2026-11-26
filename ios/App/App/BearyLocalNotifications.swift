@@ -224,9 +224,9 @@ final class BearyLocalNotifications: NSObject {
         case .limitedExpiry:
             content.body = "限时结束了，这篇日记已自动转回私密。（测试）"
         case .pastDay:
-            content.body = "往年今天，你写过日记，打开看看吧。（测试）"
+            content.body = NSLocalizedString("local_notifications.past_day.test_body", comment: "")
         case .pastSelfDelivery:
-            content.body = "一年前留给自己的话到了，打开看看吧。（测试）"
+            content.body = NSLocalizedString("local_notifications.past_self.test_body", comment: "")
         case .dmUnread:
             content.body = NSLocalizedString("local_notifications.dm_unread.test_body", comment: "")
         }
@@ -369,7 +369,7 @@ final class BearyLocalNotifications: NSObject {
                 guard let morning = calendar.date(byAdding: .day, value: offset, to: nextMorning) else { continue }
                 guard BearyProfilePersonalLogic.thisDayInHistory(entries: entries, today: morning, calendar: calendar) != nil else { continue }
                 let dayKey = BearyBeijingDay.dayKey(ofMs: Int(morning.timeIntervalSince1970 * 1000)) ?? ""
-                desired.append(DesiredRequest(identifier: Self.pastDayIdentifier + "-" + dayKey, fireDate: morning, body: "往年今天，你写过日记，打开看看吧。", kind: .pastDay, userInfo: ["kind": Kind.pastDay.rawValue, "accountId": accountId, "dayKey": dayKey]))
+                desired.append(DesiredRequest(identifier: Self.pastDayIdentifier + "-" + dayKey, fireDate: morning, body: NSLocalizedString("local_notifications.past_day.body", comment: ""), kind: .pastDay, userInfo: ["kind": Kind.pastDay.rawValue, "accountId": accountId, "dayKey": dayKey]))
             }
         }
 
@@ -388,7 +388,7 @@ final class BearyLocalNotifications: NSObject {
                 guard message.revokedAtMs == nil,
                       let fireDate = Self.dateOf(dayKey: message.deliverOn, hour: Self.morningHour, calendar: calendar),
                       fireDate > now else { continue }
-                desired.append(DesiredRequest(identifier: Self.pastSelfPrefix + message.id, fireDate: fireDate, body: "一年前留给自己的话到了，打开看看吧。", kind: .pastSelfDelivery, userInfo: ["kind": Kind.pastSelfDelivery.rawValue, "accountId": accountId, "messageId": message.id, "entryId": message.originEntryId]))
+                desired.append(DesiredRequest(identifier: Self.pastSelfPrefix + message.id, fireDate: fireDate, body: NSLocalizedString("local_notifications.past_self.body", comment: ""), kind: .pastSelfDelivery, userInfo: ["kind": Kind.pastSelfDelivery.rawValue, "accountId": accountId, "messageId": message.id, "entryId": message.originEntryId]))
             }
         }
 

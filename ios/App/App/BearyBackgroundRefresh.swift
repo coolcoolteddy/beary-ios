@@ -340,7 +340,7 @@ enum BearyBackgroundRefresh {
     /// 静默丢弃，不报错——与现有四种提醒同一口径。
     private static func postPlazaNewNotification() {
         let content = UNMutableNotificationContent()
-        content.body = "广场有新的日记，打开看看吧。"
+        content.body = NSLocalizedString("local_notifications.plaza.body", comment: "")
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: plazaNewIdentifier,
