@@ -94,6 +94,9 @@ enum BearyMotion {
     /// 局部状态动效统一时长（规格附录第 3 项已定）：开关、选中等小反馈取 micro。
     /// 拒绝摇头 0.38s 是拒绝动效、不是局部状态动效，不走本值。
     static let localStateDuration: TimeInterval = micro
+    /// 通知卡片动画共用缓动曲线（三次贝塞尔 0.32/0.72 → 0.35/1）：错峰入场、
+    /// 卡片展开、收起快照三处共用；曲线一改三处同改，防三段手感分裂。
+    static let cardCurve = UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1))
 }
 
 /// 新卡片入场统一配置（审计 r16 第 10 项，Li 定版 2026-11-06，规范 §6）：
