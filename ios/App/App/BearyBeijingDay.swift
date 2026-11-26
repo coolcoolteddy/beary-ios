@@ -109,6 +109,12 @@ enum BearyBeijingDay {
         return Int(floor((date.timeIntervalSince1970 + 8 * 3600) / 86400))
     }
 
+    /// 北京日序号（自 epoch 起的天数），毫秒时间戳版——与 dayNumber(year:month:day:) 同一口径，
+    /// 纯算术，不建 Date/Calendar。热力图窗口过滤共用此 helper，不再手写公式。
+    static func dayNumber(ofMs ms: Int) -> Int {
+        return Int(floor((TimeInterval(ms) / 1000.0 + 8 * 3600) / 86400))
+    }
+
     static func todayNumber() -> Int? {
         guard let c = todayComponents() else { return nil }
         return dayNumber(year: c.year, month: c.month, day: c.day)

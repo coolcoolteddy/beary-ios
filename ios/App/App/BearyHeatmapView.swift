@@ -199,7 +199,7 @@ final class BearyHeatmapView: UIView {
         var counts: [String: Int] = [:]
         for entry in entries {
             guard let createdAt = entry.createdAt else { continue }
-            let number = Int(floor((TimeInterval(createdAt) / 1000.0 + 8 * 3600) / 86400))
+            let number = BearyBeijingDay.dayNumber(ofMs: createdAt)
             guard number >= windowStartNumber, number <= windowEndNumber,
                   let key = BearyBeijingDay.dayKey(ofMs: createdAt) else { continue }
             counts[key, default: 0] += 1
