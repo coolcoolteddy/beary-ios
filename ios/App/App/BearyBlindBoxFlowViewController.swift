@@ -1052,7 +1052,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             text = "已放进池子，可以开盒了。"
         }
         if poolCapped {
-            text += " · 篇数较多，仅展示最近拉取的 \(poolCollected.count) 篇"
+            text += " · " + String(format: NSLocalizedString("entries.recent_capped_count", comment: ""), poolCollected.count)
         }
         if poolInterrupted {
             text += "仅展示已加载的部分，点按重试可继续加载。"

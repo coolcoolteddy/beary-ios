@@ -1037,7 +1037,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
             status += " · 他人视角：只显示公开篇"
         }
         if fetchCapped {
-            status += " · 篇数较多，仅展示最近拉取的 500 篇"
+            status += " · " + String(format: NSLocalizedString("entries.recent_capped_count", comment: ""), 500)
         }
         statusLabel.text = status
         // 审计九轮 B：状态行读屏语义与点按门控同步——只在带“未更新／部分
