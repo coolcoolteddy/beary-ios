@@ -105,6 +105,10 @@ class BearyFeedViewController: UIViewController {
     private var pullEngageTranslation: CGFloat?
     private var customPullEndScheduled = false
     private var plazaError = false
+    /// 快照展示态：当前列表来自磁盘快照、尚未经网络首拉/增量成功确认。
+    /// 冷启动先显快照、静默刷新失败时凭此亮失败条（否则用户看不出内容是旧的）；
+    /// 网络首拉/增量成功、切段后清掉。
+    private var plazaShowingSnapshot = false
     /// since 补拉缺口态：hasGap 回包后置位，游标钉在缺口前的旧表头
     /// （plazaGapCursor），重试/再刷新仍从它起拉、不越过缺口；无缺口
     /// 成功或全量首拉后清掉。随切段槽走，不跨段复用。
@@ -461,6 +465,7 @@ class BearyFeedViewController: UIViewController {
         plazaFirstPageInFlight = false
         // 切段即换段：出段的刷新失败条不带到入段，入段的拉取结果自会再定。
         setRefreshFailedBannerVisible(false)
+        plazaShowingSnapshot = false
         hideNewContentPill()
         pendingPlaza = nil
         clearPillReturnAnchor()
@@ -549,6 +554,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaFirstDone = true
                     strongSelf.isFirstLoad = false
                     strongSelf.lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                    strongSelf.plazaShowingSnapshot = true
                     // 快照落盘即算本段拉过：写回内存槽，切段回来直接显，不重读盘。
                     strongSelf.followingSegmentLoaded = true
                     strongSelf.followingSegmentCache = FeedSegmentCache(
@@ -1360,6 +1366,7 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaNextPageBeforeId = nil
                         strongSelf.plazaReachedEnd = true
                         strongSelf.plazaError = false
+                        strongSelf.plazaShowingSnapshot = false
                         strongSelf.lastFeedLoadAt = Date()
                         if !strongSelf.didShowSkeleton {
                             strongSelf.tableView.reloadData()
@@ -1393,6 +1400,7 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaNextPageBefore = nil
                         strongSelf.plazaNextPageBeforeId = nil
                         strongSelf.applyFirstPageDiff(entries, hasMoreOverride: rawEntries.count >= strongSelf.firstPageLimit)
+                        strongSelf.plazaShowingSnapshot = false
                         strongSelf.setRefreshFailedBannerVisible(false)
                         strongSelf.rebuildCarouselItems()
                         // 秒开-启动瘦身：首屏回包已终结，通知容器再发启动期 /me。
@@ -1414,6 +1422,7 @@ class BearyFeedViewController: UIViewController {
                     }
                     strongSelf.plazaReachedEnd = rawEntries.count < strongSelf.firstPageLimit
                     strongSelf.plazaError = false
+                    strongSelf.plazaShowingSnapshot = false
                     strongSelf.setRefreshFailedBannerVisible(false)
                     strongSelf.clearPlazaGapState()
                     strongSelf.lastFeedLoadAt = Date()
@@ -1450,7 +1459,9 @@ class BearyFeedViewController: UIViewController {
                         }
                         strongSelf.finishFirstLoadIfNeeded()
                         strongSelf.updateOverlayState()
-                    } else if !silent {
+                    } else if !silent || strongSelf.plazaShowingSnapshot {
+                        // 快照态静默刷新失败：当前行是磁盘旧数据，亮已有失败条
+                        //（“未能刷新 · 重试”，重试走非静默刷新），不静默。
                         strongSelf.setRefreshFailedBannerVisible(true)
                     }
                     strongSelf.maybeEndRefreshing()
@@ -1554,6 +1565,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaFirstPageInFlight = false
                     strongSelf.plazaFirstDone = true
                     strongSelf.plazaError = false
+                    strongSelf.plazaShowingSnapshot = false
                     strongSelf.setRefreshFailedBannerVisible(false)
                     strongSelf.plazaHasGap = false
                     strongSelf.plazaGapCursor = nil
@@ -1981,6 +1993,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaFirstDone = true
                     strongSelf.isFirstLoad = false
                     strongSelf.lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                    strongSelf.plazaShowingSnapshot = true
                     // 切段缓存：快照落盘即算广场段拉过（随后静默刷新会再确认），
                     // 切去关注段再回来直接显快照行，不重拉。
                     strongSelf.plazaSegmentLoaded = true
@@ -2057,6 +2070,7 @@ class BearyFeedViewController: UIViewController {
                 strongSelf.plazaFirstDone = true
                 strongSelf.isFirstLoad = false
                 strongSelf.lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                strongSelf.plazaShowingSnapshot = true
                 // 切段缓存：快照落盘即算广场段拉过（随后静默刷新会再确认）。
                 strongSelf.plazaSegmentLoaded = true
                 strongSelf.tableView.reloadData()
