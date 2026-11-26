@@ -44,6 +44,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private let inlineRetryButton = BearyHit44Button(type: .system)
     private let statusStackView = UIStackView()
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
+    /// 地图页列表 600 列上限约束（Feed 同款：宽 ≥821 才激活，开关在 viewDidLayoutSubviews）。
+    /// 只收列表，地图与状态行保持满宽；底 inset 仍走系统自动调整，不动。
+    private var mapListColCapConstraint: NSLayoutConstraint?
     // 失败态走 BearyStateView（居中承载，标题＋常规描边重试钮，动作复用 didTapRetry；
     // 不作全屏约束——StateView 以内容定高，全屏约束会让栈内标题/按钮拉伸）。
     private let failureStateView = BearyStateView()
@@ -191,6 +194,13 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         let mapMinimumHeight = mapView.heightAnchor.constraint(greaterThanOrEqualToConstant: 160)
         mapMinimumHeight.priority = UILayoutPriority(749)
         let listMinimumHeight = tableView.heightAnchor.constraint(greaterThanOrEqualToConstant: 120)
+        // 列表 600 居中（Feed 同款）：宽 == 屏宽为偏好（750），600 上限只在
+        // iPad 宽 ≥821 时激活（开关在 viewDidLayoutSubviews）；≤820 与 iPhone
+        // 横屏仍走全宽。地图与状态行保持满宽，不动。
+        let mapListColWidth = tableView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        mapListColWidth.priority = .defaultHigh
+        let mapListColCap = tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        mapListColCapConstraint = mapListColCap
         NSLayoutConstraint.activate([
             mapView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             mapView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -202,8 +212,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             statusStackView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             statusStackView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             tableView.topAnchor.constraint(equalTo: statusStackView.bottomAnchor, constant: 8),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
+            tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            mapListColWidth,
+            mapListColCap,
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             failureStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             failureStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
@@ -245,6 +258,16 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         // 开发者模式变化：强制空态 / 报错态 / 加载态（见 handleDevModeChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         fetchAllEntries()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 600 上限只在 iPad 且宽 ≥821 时激活，iPhone 横屏仍走全宽；
+        // 状态不变不开关，避免布局循环（Feed 同款）。
+        let wantColCap = BearyDesktop.isWide(view.bounds.width)
+        if mapListColCapConstraint?.isActive != wantColCap {
+            mapListColCapConstraint?.isActive = wantColCap
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
