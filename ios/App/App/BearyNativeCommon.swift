@@ -2160,6 +2160,18 @@ enum BearyLocalizedDate {
         return Array(symbols[start...] + symbols[..<start])
     }
 
+    /// 星期短名（shortWeekdaySymbols），按首日起排，供热力图星期列用：
+    /// 中文为 ["周日"…"周六"]，与改前写死值一致；非中文取系统短名（如 "Sun" "Mon" …）。
+    /// 日期类文案走系统本地化，不进 String Catalog（本地化规范 v7：日期完全本地化）。
+    static var orderedShortWeekdaySymbols: [String] {
+        var cal = Calendar(identifier: .gregorian)
+        cal.locale = locale
+        let symbols = cal.shortWeekdaySymbols // 周日开头，索引 0=周日
+        let start = firstWeekday - 1
+        guard start > 0, start < symbols.count else { return symbols }
+        return Array(symbols[start...] + symbols[..<start])
+    }
+
     private static var cachedLocaleID: String?
     private static var cachedFormatters: [String: DateFormatter] = [:]
     private static var cachedRelativeFormatter: RelativeDateTimeFormatter?
