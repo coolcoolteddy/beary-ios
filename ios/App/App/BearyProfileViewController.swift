@@ -8804,9 +8804,8 @@ class BearyProfileViewController: UIViewController {
         }
         // 审计动效组：抬起确认时补震动（与首页 feedLikeTapped 同款）；
         // 不补则个人页点赞将完全无反馈；失败回滚分支的拒绝反馈另算，不动。
-        // 第 1 轮 24：点赞音按最终结果只播一次——点按只留视觉＋触觉，
-        // 成功回包按最终态播 likePop／unlikeSoft，失败走拒绝音；
-        // 否则失败时点按音与拒绝音先后两声。
+        // 点赞音随点按立即播（不等回包）；回包成功不再重播，失败只回滚、不补播。
+        BearySoundPlayer.play(wantLiked ? .likePop : .unlikeSoft)
         if wantLiked {
             BearyHaptics.likeTap()
         } else {
@@ -8834,9 +8833,6 @@ class BearyProfileViewController: UIViewController {
                     // 卡顿批：就地同步（取消点赞不炸，已滑走则 cell 为空，跳过无害）；
                     // 炸开已在点按时播过，不再重播；不再 reload 换 cell。
                     strongSelf.syncVisibleCell(entry: updated)
-                    // 第 1 轮 24：音效只按最终结果播一次（成功按最终态播
-                    // likePop／unlikeSoft，失败分支走拒绝音 refuse_bonk）。
-                    BearySoundPlayer.play((updated.likedByMe ?? wantLiked) ? .likePop : .unlikeSoft)
                 case .failure(let err):
                     // 失败回滚到最后确认态（页签模型从未先行改动，直接取它），
                     // 按下预览与点赞先行态均由就地同步刷回；再走既有失败路径，
@@ -9324,10 +9320,9 @@ class BearyProfileViewController: UIViewController {
         let syncedBookmarkCell = syncVisibleCell(entry: optimistic, interactionDisabled: false)
         syncedBookmarkCell?.playBookmarkPop()
         if wantBookmarked { syncedBookmarkCell?.playBookmarkBurst() }
-        // 收藏音按最终结果只播一次（点赞支同款口径）：点按只留视觉＋触觉，
-        // 成功回包按最终态播 bookmarkTick／deleteSwoosh，失败走拒绝音；
-        // 否则失败时点按音与拒绝音先后两声。
+        // 收藏音随点按立即播（不等回包）；回包成功不再重播，失败只回滚、不补播。
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
+        BearySoundPlayer.play(wantBookmarked ? .bookmarkTick : .deleteSwoosh)
         let seq = bookmarkStates.beginRequest(for: entryId)
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
@@ -9358,9 +9353,6 @@ class BearyProfileViewController: UIViewController {
                         // 服务端值与先行值不一致时以服务端为准就地同步；一致时不动，避免打断 pop。
                         strongSelf.syncVisibleCell(entry: updated)
                     }
-                    // 收藏音按最终结果只播一次（成功按最终态播 bookmarkTick／
-                    // deleteSwoosh，失败分支走拒绝音 refuse_bonk）。
-                    BearySoundPlayer.play((updated.bookmarkedByMe ?? wantBookmarked) ? .bookmarkTick : .deleteSwoosh)
                 case .failure(let err):
                     // 失败回滚到最后确认态（页签模型先行时已改，需把确认态写回各页
                     // 再就地同步）；提示口径（未登录走登录页、其他弹“操作失败”）一字不动，

@@ -3915,12 +3915,10 @@ final class BearyDetailViewController: UIViewController {
         // 先行反馈（卡片口径）：点赞即填亮红＋计数 +1，取消即褪色＋计数 −1；
         // 液体炸开与填色同起——点按确认时即播，不再等服务端回包。
         // 审计动效组：确认时恒播 likeTap（touchDown 已不再发 press 轻震，
-        // 不会双震；与卡片页 feedLikeTapped 同款）。点赞音仍按最终结果
-        // 只播一次（第 1 轮 24：成功回包播 likePop／unlikeSoft，失败走拒绝音）。
+        // 不会双震；与卡片页 feedLikeTapped 同款）。
         BearyHaptics.likeTap()
-        // 第 1 轮 24：点赞音按最终结果只播一次——点按只留视觉＋触觉，
-        // 成功回包按最终态播 likePop／unlikeSoft，失败走拒绝音；
-        // 否则失败时点按音与拒绝音先后两声。
+        // 点赞音随点按立即播（不等回包）；回包成功不再重播，失败只回滚、不补播。
+        BearySoundPlayer.play(targetLiked ? .likePop : .unlikeSoft)
         entry.likedByMe = targetLiked
         entry.likeCount = max(0, originalCount + (currentlyLiked ? -1 : 1))
         refreshActionRow()
@@ -3962,9 +3960,6 @@ final class BearyDetailViewController: UIViewController {
                     }
                     self.likeState.confirm(reqSeq, value: BearyLikeState(liked: newLiked, count: self.entry.likeCount ?? 0))
                     self.refreshActionRow()
-                    // 第 1 轮 24：音效只按最终结果播一次（成功按最终态播
-                    // likePop／unlikeSoft，失败分支走拒绝音 refuse_bonk）。
-                    BearySoundPlayer.play(newLiked ? .likePop : .unlikeSoft)
                     // 炸开已在点按时播过，成功回包不再重播；取消点赞不炸。
                     self.onInteractionChanged?(entryId, self.entry.likeCount, newLiked, nil, nil)
                 case .failure(let err):
@@ -4022,10 +4017,9 @@ final class BearyDetailViewController: UIViewController {
         refreshActionRow()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
         if flipped { BearyBurstParticles.burstStar(from: bookmarkButton) }
-        // 收藏音按最终结果只播一次（点赞支同款口径）：点按只留视觉＋触觉，
-        // 成功回包按最终态播 bookmarkTick／deleteSwoosh，失败走拒绝音；
-        // 否则失败时点按音与拒绝音先后两声。
+        // 收藏音随点按立即播（不等回包）；回包成功不再重播，失败只回滚、不补播。
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
+        BearySoundPlayer.play(flipped ? .bookmarkTick : .deleteSwoosh)
         let reqSeq = bookmarkState.beginRequest()
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
@@ -4039,9 +4033,6 @@ final class BearyDetailViewController: UIViewController {
                     self.entry.bookmarkedByMe = newBookmarked
                     self.bookmarkState.confirm(reqSeq, value: newBookmarked)
                     self.refreshActionRow()
-                    // 收藏音按最终结果只播一次（成功按最终态播 bookmarkTick／
-                    // deleteSwoosh，失败分支走拒绝音 refuse_bonk）。
-                    BearySoundPlayer.play(newBookmarked ? .bookmarkTick : .deleteSwoosh)
                     self.onInteractionChanged?(entryId, nil, nil, newBookmarked, nil)
                 case .failure(let err):
                     // 失败回滚到最后服务端确认态。
