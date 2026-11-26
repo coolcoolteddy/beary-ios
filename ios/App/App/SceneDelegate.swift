@@ -1452,7 +1452,7 @@ final class BearyChromeViewController: UIViewController {
             // 同步 Bool 返回已取消，迁移 toast 改由完成回调驱动。
             BearyDraftStore.setAccount(user?.id) { [weak self] migrated in
                 if migrated {
-                    self?.showToast(message: "旧草稿已归到当前账号")
+                    self?.showToast(message: NSLocalizedString("draftbox.moved_to_current_account", comment: ""))
                 }
             }
             BearyImageLoader.shared.setAccount(user?.id)
