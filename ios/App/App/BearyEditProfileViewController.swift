@@ -1516,7 +1516,7 @@ class BearyEditProfileViewController: UIViewController {
         guard side > 0 else { return nil }
         let crop = CGRect(x: (image.size.width - side) / 2, y: (image.size.height - side) / 2, width: side, height: side)
         guard let cropped = cropImage(image: image, rect: crop) else { return nil }
-        let resized = resizeImage(image: cropped, maxDimension: 256)
+        let resized = BearyImagePrep.resized(cropped, maxSide: 256)
         for quality in [CGFloat(0.85), CGFloat(0.7), CGFloat(0.5)] {
             if let data = resized.jpegData(compressionQuality: quality) {
                 let dataURL = "data:image/jpeg;base64," + data.base64EncodedString()
@@ -1532,7 +1532,7 @@ class BearyEditProfileViewController: UIViewController {
         let image = normalizeImage(image: image)
         let tries: [(CGFloat, CGFloat)] = [(1280, 0.8), (1024, 0.72), (880, 0.62)]
         for (maxWidth, quality) in tries {
-            let resized = resizeImage(image: image, maxDimension: maxWidth)
+            let resized = BearyImagePrep.resized(image, maxSide: maxWidth)
             if let data = resized.jpegData(compressionQuality: quality) {
                 let dataURL = "data:image/jpeg;base64," + data.base64EncodedString()
                 if dataURL.count <= 400000 {
@@ -1564,18 +1564,6 @@ class BearyEditProfileViewController: UIViewController {
         return UIImage(cgImage: cropped, scale: scale, orientation: image.imageOrientation)
     }
 
-    private func resizeImage(image: UIImage, maxDimension: CGFloat) -> UIImage {
-        let longest = max(image.size.width, image.size.height)
-        guard longest > maxDimension else { return image }
-        let ratio = maxDimension / longest
-        let target = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        let renderer = UIGraphicsImageRenderer(size: target, format: format)
-        return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: target))
-        }
-    }
 }
 
 // MARK: - 图片选择
