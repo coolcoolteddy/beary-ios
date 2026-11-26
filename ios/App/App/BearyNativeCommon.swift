@@ -50,6 +50,15 @@ enum BearyDesktop {
     }
 }
 
+/// 三列网格格边长（九宫格／照片墙／个人页照片脚部共用）：主宽为 0 时回退到备用宽，
+/// 再扣掉横向总边距（左右 inset＋格间间距），除以列数向下取整。
+/// 边距按页传，不统一数值——九宫格 48（左右各 16＋两道 8），照片墙与脚部 56
+/// （脚部左右各 20；照片墙 56 与本页布局 48 对不上，疑似从脚部抄来，本支只收公式、不改数值）。
+func bearyGridSide(width: CGFloat, fallbackWidth: CGFloat, horizontalDeduction: CGFloat, columns: Int = 3) -> CGFloat {
+    let widthValue = width > 0 ? width : fallbackWidth
+    return floor((widthValue - horizontalDeduction) / CGFloat(columns))
+}
+
 /// 阴影 token（视觉清单 Grok 项 2）：hairline 用于搜索框、callout；
 /// raised 用于 FAB、新内容条、居中弹层、底 sheet。只改数值一档，
 /// 不新增阴影层；弹层本身的两档数值（#519 视觉不变前提）本支不动。

@@ -135,8 +135,7 @@ extension BearyNineGridViewController: UICollectionViewDataSource, UICollectionV
     }
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
-        let widthValue = collectionView.bounds.width > 0 ? collectionView.bounds.width : view.bounds.width
-        let side = floor((widthValue - BearySpace.lg * 2 - 8 * 2) / 3)
+        let side = bearyGridSide(width: collectionView.bounds.width, fallbackWidth: view.bounds.width, horizontalDeduction: BearySpace.lg * 2 + 8 * 2)
         return CGSize(width: side, height: side)
     }
 

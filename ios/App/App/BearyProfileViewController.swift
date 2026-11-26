@@ -7928,7 +7928,8 @@ class BearyProfileViewController: UIViewController {
         moreButton.bearyAddPressFeedback()
         container.addSubview(titleLabel)
         container.addSubview(moreButton)
-        let cellSide = floor((footerWidth - 40 - 16) / 3)
+        // 40 + 16 = 56：左右各 20 边距＋两道 8 间距；footerWidth 已回退且守卫 > 0，备用宽不触发。
+        let cellSide = bearyGridSide(width: footerWidth, fallbackWidth: tableView.bounds.width, horizontalDeduction: 40 + 16)
         var gridRows: [UIStackView] = []
         for rowIndex in 0..<2 {
             let rowStack = UIStackView()
