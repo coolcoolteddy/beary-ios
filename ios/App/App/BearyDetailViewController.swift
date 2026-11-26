@@ -3356,7 +3356,7 @@ final class BearyDetailViewController: UIViewController {
                 made.translatesAutoresizingMaskIntoConstraints = false
                 made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
                 made.tintColor = BearyColors.gray
-                made.accessibilityLabel = "贴一只小熊"
+                made.accessibilityLabel = NSLocalizedString("emote_picker.sticker_title", comment: "")
                 made.widthAnchor.constraint(equalToConstant: 34).isActive = true
                 made.heightAnchor.constraint(equalToConstant: 34).isActive = true
                 made.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
@@ -4115,7 +4115,7 @@ final class BearyDetailViewController: UIViewController {
                     if self.presentedViewController != nil { return }
                     BearyEmotePostersViewController.show(from: self, emoteKey: key, count: count, users: resp.resolvedFriends)
                 case .failure:
-                    BearyToast.show(in: self.view, message: "操作失败，请重试")
+                    BearyToast.show(in: self.view, message: NSLocalizedString("common.operation_failed_retry", comment: ""))
                 }
             }
         }
@@ -4501,7 +4501,7 @@ final class BearyEmotePostersViewController: UIViewController {
         view.addSubview(grabberView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "\(BearyText.moodNames[emoteKey] ?? emoteKey) · \(count)"
+        titleLabel.text = String(format: NSLocalizedString("emote.posters.title_format", comment: ""), BearyText.moodNames[emoteKey] ?? emoteKey, count)
         titleLabel.font = BearyDynamicType.pageTitleFont()
         titleLabel.textColor = BearyColors.ink
         view.addSubview(titleLabel)
@@ -4522,7 +4522,7 @@ final class BearyEmotePostersViewController: UIViewController {
         emptyLabel.textColor = BearyColors.gray
         emptyLabel.textAlignment = .center
         emptyLabel.numberOfLines = 0
-        emptyLabel.text = "还没有人贴这个表情"
+        emptyLabel.text = NSLocalizedString("emote.posters.empty", comment: "")
         emptyLabel.isHidden = !users.isEmpty
         view.addSubview(emptyLabel)
 
@@ -4607,7 +4607,7 @@ private final class BearyEmotePosterRowCell: UITableViewCell {
         nameLabel.font = BearyDynamicType.cardTitleFont()
         nameLabel.textColor = BearyColors.ink
         handleLabel.translatesAutoresizingMaskIntoConstraints = false
-        handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        handleLabel.font = BearyDynamicType.secondaryFont()
         handleLabel.textColor = BearyColors.gray
         contentView.addSubview(avatarView)
         contentView.addSubview(nameLabel)
@@ -4635,10 +4635,10 @@ private final class BearyEmotePosterRowCell: UITableViewCell {
     }
 
     func configure(user: BearyAPI.FriendUser) {
-        let displayName = (user.displayName?.isEmpty == false) ? user.displayName! : "beary 用户"
+        let displayName = (user.displayName?.isEmpty == false) ? user.displayName! : NSLocalizedString("emote.posters.fallback_display_name", comment: "")
         nameLabel.text = displayName
         if let handle = user.handle, !handle.isEmpty {
-            handleLabel.text = "@\(handle)"
+            handleLabel.text = String(format: NSLocalizedString("user.handle_format", comment: ""), handle)
             handleLabel.isHidden = false
         } else {
             handleLabel.text = nil
