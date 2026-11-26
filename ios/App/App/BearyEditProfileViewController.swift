@@ -1432,7 +1432,7 @@ class BearyEditProfileViewController: UIViewController {
                         strongSelf.signatureEdited = false
                         strongSelf.onSaved?()
                     } else {
-                        BearyToast.show(in: strongSelf.view, message: "签名尚未同步，请稍后再试")
+                        BearyToast.show(in: strongSelf.view, message: NSLocalizedString("edit_profile.signature_not_synced", comment: ""))
                     }
                 case .failure:
                     BearyToast.show(in: strongSelf.view, message: "资料已提交，签名同步状态未确认，请稍后查看")
