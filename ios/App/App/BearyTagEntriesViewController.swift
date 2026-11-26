@@ -30,6 +30,9 @@ final class BearyTagEntriesViewController: UIViewController {
     private let loadingIndicator = UIActivityIndicatorView(style: .large)
     private let stateLabel = UILabel()
 
+    /// iPad 600 列上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；Feed 同款）。
+    private var tagColCapConstraint: NSLayoutConstraint?
+
     /// 自有顶栏（本页只进 SceneDelegate 的标签 modal nav，系统导航栏隐藏；
     /// 与个人页 modal 顶栏同款：44pt＋返回钮＋居中标题）。
     private let topBarView: UIView = {
@@ -105,11 +108,20 @@ final class BearyTagEntriesViewController: UIViewController {
         stateLabel.isUserInteractionEnabled = true
         view.addSubview(stateLabel)
 
+        // iPad 600 列上限（Feed 同款）：宽 ≥821 时 600 居中，≤820 全宽；
+        // 上限只在 ≥821 激活，开关在 viewDidLayoutSubviews。
+        let tagColWidth = tableView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        tagColWidth.priority = .defaultHigh
+        let tagColCap = tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        tagColCapConstraint = tagColCap
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
+            tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            tagColCap,
+            tagColWidth,
 
             loadingIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             loadingIndicator.centerYAnchor.constraint(equalTo: view.centerYAnchor),
@@ -121,6 +133,16 @@ final class BearyTagEntriesViewController: UIViewController {
         ])
 
         loadFirstPage()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // iPad 600 列上限只在宽 ≥821 时激活，其余关掉、列走 750 全宽等式回满屏宽；
+        // 状态不变不开关，避免布局循环（Feed 同款）。
+        let wantColCap = BearyDesktop.isWide(view.bounds.width)
+        if tagColCapConstraint?.isActive != wantColCap {
+            tagColCapConstraint?.isActive = wantColCap
+        }
     }
 
     private func buildTopBar() {
