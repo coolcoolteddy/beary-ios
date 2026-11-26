@@ -100,12 +100,14 @@
 		E1E2599A796247176C2B5E85 /* BearyIDCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D9A8D9327B0BD209B039B8F /* BearyIDCard.swift */; };
 		1A6A3DFC295DF7B7A6538DD4 /* BearyCityData.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA32A7524D97E03846DEBC21 /* BearyCityData.swift */; };
 		81ED0F919F0246F588721104 /* BearyLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D147AEDDB951407BBDE4160B /* BearyLoginSheet.swift */; };
+		0AB2478FB89FB409A51E5805 /* BearyWelcomeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61F2C1A64681FC633E99FA3B /* BearyWelcomeViewController.swift */; };
+		F979D3EE52A27AE060332DC8 /* BearyEmailLoginViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4540A1D823AA0AFDA5B45CBB /* BearyEmailLoginViewController.swift */; };
+		D3A6D4379B49B9DF42D7E893 /* BearyProfileSetupViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DADA4003B8761BFC70B7F724 /* BearyProfileSetupViewController.swift */; };
 		5D6F18761DD3B28F41958D12 /* BearySystemSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDAE54C35FF157208366CA9B /* BearySystemSheet.swift */; };
 		0C4CF66727BD4C9EB76E5AF5 /* BearyConfirmSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C0F6F931D804131979C0AED /* BearyConfirmSheet.swift */; };
 		8C1ECC38A4D24D059CA83AF7 /* BearyAnnouncementCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA4119D2276143AC8EAC333C /* BearyAnnouncementCenter.swift */; };
 		749D3FB8B446615400722F30 /* BearyForceUpdate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3678651605B093A75AF8120 /* BearyForceUpdate.swift */; };
 		98F6D0C43F1147D5B42EED2A /* BearyAnnouncementSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25F2450D7F0A45CE8FB3B641 /* BearyAnnouncementSheet.swift */; };
-		1F6B3477892DECC058DEDB4A /* BearyLoginViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9FF8FF6169D4CB6D168FBE4 /* BearyLoginViewController.swift */; };
 		BFB44A087D425B5428173C4A /* BearyLoadingUX.swift in Sources */ = {isa = PBXBuildFile; fileRef = 422F818D96F64171D4D9A052 /* BearyLoadingUX.swift */; };
 		869B426E9AA42A1CE7EA84B1 /* BearyTrashViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8090F5EEA8A6BD0781318309 /* BearyTrashViewController.swift */; };
 		3843F17FBF0D34C698F51780 /* BearyEditProfileViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13DFF27B056E1598E555E5A2 /* BearyEditProfileViewController.swift */; };
@@ -844,12 +846,14 @@
 		8D9A8D9327B0BD209B039B8F /* BearyIDCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyIDCard.swift; sourceTree = "<group>"; };
 		EA32A7524D97E03846DEBC21 /* BearyCityData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCityData.swift; sourceTree = "<group>"; };
 		D147AEDDB951407BBDE4160B /* BearyLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLoginSheet.swift; sourceTree = "<group>"; };
+		61F2C1A64681FC633E99FA3B /* BearyWelcomeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyWelcomeViewController.swift; sourceTree = "<group>"; };
+		4540A1D823AA0AFDA5B45CBB /* BearyEmailLoginViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmailLoginViewController.swift; sourceTree = "<group>"; };
+		DADA4003B8761BFC70B7F724 /* BearyProfileSetupViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyProfileSetupViewController.swift; sourceTree = "<group>"; };
 		FDAE54C35FF157208366CA9B /* BearySystemSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySystemSheet.swift; sourceTree = "<group>"; };
 		3C0F6F931D804131979C0AED /* BearyConfirmSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyConfirmSheet.swift; sourceTree = "<group>"; };
 		AA4119D2276143AC8EAC333C /* BearyAnnouncementCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAnnouncementCenter.swift; sourceTree = "<group>"; };
 		C3678651605B093A75AF8120 /* BearyForceUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyForceUpdate.swift; sourceTree = "<group>"; };
 		25F2450D7F0A45CE8FB3B641 /* BearyAnnouncementSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAnnouncementSheet.swift; sourceTree = "<group>"; };
-		B9FF8FF6169D4CB6D168FBE4 /* BearyLoginViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLoginViewController.swift; sourceTree = "<group>"; };
 		422F818D96F64171D4D9A052 /* BearyLoadingUX.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLoadingUX.swift; sourceTree = "<group>"; };
 		8090F5EEA8A6BD0781318309 /* BearyTrashViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTrashViewController.swift; sourceTree = "<group>"; };
 		13DFF27B056E1598E555E5A2 /* BearyEditProfileViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEditProfileViewController.swift; sourceTree = "<group>"; };
@@ -1597,12 +1601,14 @@
 				8D9A8D9327B0BD209B039B8F /* BearyIDCard.swift */,
 				EA32A7524D97E03846DEBC21 /* BearyCityData.swift */,
 				D147AEDDB951407BBDE4160B /* BearyLoginSheet.swift */,
+				61F2C1A64681FC633E99FA3B /* BearyWelcomeViewController.swift */,
+				4540A1D823AA0AFDA5B45CBB /* BearyEmailLoginViewController.swift */,
+				DADA4003B8761BFC70B7F724 /* BearyProfileSetupViewController.swift */,
 				FDAE54C35FF157208366CA9B /* BearySystemSheet.swift */,
 				3C0F6F931D804131979C0AED /* BearyConfirmSheet.swift */,
 				AA4119D2276143AC8EAC333C /* BearyAnnouncementCenter.swift */,
 				C3678651605B093A75AF8120 /* BearyForceUpdate.swift */,
 				25F2450D7F0A45CE8FB3B641 /* BearyAnnouncementSheet.swift */,
-				B9FF8FF6169D4CB6D168FBE4 /* BearyLoginViewController.swift */,
 				422F818D96F64171D4D9A052 /* BearyLoadingUX.swift */,
 				8090F5EEA8A6BD0781318309 /* BearyTrashViewController.swift */,
 				13DFF27B056E1598E555E5A2 /* BearyEditProfileViewController.swift */,
@@ -3027,12 +3033,14 @@
 				E1E2599A796247176C2B5E85 /* BearyIDCard.swift in Sources */,
 				1A6A3DFC295DF7B7A6538DD4 /* BearyCityData.swift in Sources */,
 				81ED0F919F0246F588721104 /* BearyLoginSheet.swift in Sources */,
+				0AB2478FB89FB409A51E5805 /* BearyWelcomeViewController.swift in Sources */,
+				F979D3EE52A27AE060332DC8 /* BearyEmailLoginViewController.swift in Sources */,
+				D3A6D4379B49B9DF42D7E893 /* BearyProfileSetupViewController.swift in Sources */,
 				5D6F18761DD3B28F41958D12 /* BearySystemSheet.swift in Sources */,
 				0C4CF66727BD4C9EB76E5AF5 /* BearyConfirmSheet.swift in Sources */,
 				8C1ECC38A4D24D059CA83AF7 /* BearyAnnouncementCenter.swift in Sources */,
 				749D3FB8B446615400722F30 /* BearyForceUpdate.swift in Sources */,
 				98F6D0C43F1147D5B42EED2A /* BearyAnnouncementSheet.swift in Sources */,
-				1F6B3477892DECC058DEDB4A /* BearyLoginViewController.swift in Sources */,
 				BFB44A087D425B5428173C4A /* BearyLoadingUX.swift in Sources */,
 				869B426E9AA42A1CE7EA84B1 /* BearyTrashViewController.swift in Sources */,
 				3843F17FBF0D34C698F51780 /* BearyEditProfileViewController.swift in Sources */,

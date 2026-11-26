@@ -535,6 +535,27 @@ final class BearyChromeViewController: UIViewController {
         pendingReferralToast = toastText
         UserDefaults.standard.set(toastText, forKey: Self.referralToastKey(userId: userId))
     }
+    /// 资料页（登录改版 2026-11-26，取代 ID 卡引导）：新注册用户登录完只进一次。
+    /// seen／pending 按用户分键（冷启动补触发用，与 ID 卡链路的键各自独立）。
+    private static func profileSetupSeenKey(userId: Int) -> String {
+        "beary.profileSetupSeen.\(userId)"
+    }
+    private static func profileSetupPendingKey(userId: Int) -> String {
+        "beary.profileSetupPending.\(userId)"
+    }
+    private static func isProfileSetupSeen(userId: Int) -> Bool {
+        UserDefaults.standard.bool(forKey: profileSetupSeenKey(userId: userId))
+    }
+    private static func isProfileSetupPending(userId: Int) -> Bool {
+        UserDefaults.standard.bool(forKey: profileSetupPendingKey(userId: userId))
+    }
+    private static func markProfileSetupPending(userId: Int) {
+        UserDefaults.standard.set(true, forKey: profileSetupPendingKey(userId: userId))
+    }
+    private static func markProfileSetupSeen(userId: Int) {
+        UserDefaults.standard.set(true, forKey: profileSetupSeenKey(userId: userId))
+        UserDefaults.standard.removeObject(forKey: profileSetupPendingKey(userId: userId))
+    }
     /// 登录循环修：自动弹登录定时器（401 后 1.2 秒延迟弹 + .me 门延迟弹）同一时刻
     /// 只排一个——排队时已有待触发的直接跳过，触发时先清标记再走原有守卫；显式
     /// 登录路径（顶栏 pill、onRequireLogin、编辑器未登录）不受影响。
@@ -3332,7 +3353,7 @@ final class BearyChromeViewController: UIViewController {
         // 避免登录页以 alert 为 presenting 方、关闭层级错乱（关 alert 后递归重进本函数）。
         var rawTop: UIViewController = self
         while let next = rawTop.presentedViewController { rawTop = next }
-        if rawTop is BearyLoginViewController { return }
+        if rawTop is BearyWelcomeViewController || rawTop is BearyEmailLoginViewController { return }
         if rawTop is UIAlertController {
             rawTop.dismiss(animated: false) { [weak self] in self?.presentLogin() }
             return
@@ -3374,20 +3395,21 @@ final class BearyChromeViewController: UIViewController {
                             self.presentComposer()
                             return
                         }
-                        // 新注册：走注册后引导（只给新注册用户、只弹一次）。
-                        // 邀请绑定文案暂存，等引导＋ID 卡链路走完再 toast
-                        //（引导全屏盖住主页时 toast 不可读，故不立即弹）。
+                        // 新注册：走注册后资料页（登录改版 2026-11-26，取代 ID 卡引导；
+                        // 只给新注册用户、只弹一次）。
+                        // 邀请绑定文案暂存，等资料页走完再 toast
+                        //（资料页全屏盖住主页时 toast 不可读，故不立即弹）。
                         if isNewRegistration, let userId = SessionManager.shared.currentUser?.id, SessionManager.shared.isLoggedIn,
-                            !BearyIDCardStore.isOnboardingSeen(userId: userId) {
-                            // B2：先立 pending、暂存 toast，再看有没有 modal——modal 在前时
+                            !Self.isProfileSetupSeen(userId: userId) {
+                            // 先立 pending、暂存 toast，再看有没有 modal——modal 在前时
                             // 本轮不弹，pending 已立，下次冷启动／modal 清掉后凭它恢复，
-                            // 不再丢引导；toast 也不走通用路，等链路走完再弹。
+                            // 不再丢资料页；toast 也不走通用路，等资料页走完再弹。
                             if let text = referralText, !text.isEmpty {
                                 self.stashReferralToast(text, userId: userId)
                             }
-                            BearyIDCardStore.markOnboardingPending(userId: userId)
+                            Self.markProfileSetupPending(userId: userId)
                             if self.presentedViewController == nil {
-                                self.presentPostRegistrationOnboarding()
+                                self.presentProfileSetupAfterRegistration()
                             }
                             return
                         }
@@ -3796,7 +3818,7 @@ final class BearyChromeViewController: UIViewController {
     /// 的未登录守卫会把用户弹回登录页；/me 网络失败未证实登录时不开编辑器，
     /// 只落主页（onNetworkUnstable 已 toast，不伪造进度）。
     private func presentLoginOverOnboarding(_ onboarding: BearyOnboardingViewController, mode: BearyOnboardingViewController.Mode) {
-        guard !(onboarding.presentedViewController is BearyLoginViewController) else { return }
+        guard !(onboarding.presentedViewController is BearyWelcomeViewController) else { return }
         let vc = BearyLoginSheet.make()
         vc.onCancelled = { [weak vc] in
             // 添加账号会话守卫：守卫只在添加/过期重登流程 arm，此处正常
@@ -3818,19 +3840,19 @@ final class BearyChromeViewController: UIViewController {
                 guard let self = self else { return }
                 UserDefaults.standard.set(true, forKey: BearyOnboardingViewController.seenKey)
                 onboarding?.dismiss(animated: BearyMotion.animated(true))
-                // M9：这里注册的新号也走注册后引导——先等 /me 回来再定身份
+                // M9：这里注册的新号也走注册后资料页——先等 /me 回来再定身份
                 //（登录刚成功时 currentUser 还是旧号），toast 暂存不立即弹。
                 if isNewRegistration {
                     SessionManager.shared.refreshMe { [weak self] _ in
                         DispatchQueue.main.async { [weak self] in
                             guard let self = self, SessionManager.shared.isLoggedIn,
                                   let userId = SessionManager.shared.currentUser?.id,
-                                  !BearyIDCardStore.isOnboardingSeen(userId: userId) else { return }
+                                  !Self.isProfileSetupSeen(userId: userId) else { return }
                             if let text = referralText, !text.isEmpty {
                                 self.stashReferralToast(text, userId: userId)
                             }
-                            BearyIDCardStore.markOnboardingPending(userId: userId)
-                            self.maybePresentPendingPostRegistrationOnboarding()
+                            Self.markProfileSetupPending(userId: userId)
+                            self.presentProfileSetupAfterRegistration()
                         }
                     }
                     return
@@ -3872,8 +3894,18 @@ final class BearyChromeViewController: UIViewController {
         guard SessionManager.shared.isLoggedIn else { return }
         guard let userId = SessionManager.shared.currentUser?.id else { return }
         guard presentedViewController == nil else { return }
+        // 登录改版（2026-11-26）：资料页优先——登录时立了 pending、中途被杀，
+        // 下次冷启动凭它恢复资料页；只弹一次。
+        if Self.isProfileSetupPending(userId: userId) && !Self.isProfileSetupSeen(userId: userId) {
+            presentProfileSetupAfterRegistration()
+            return
+        }
+        // 旧链路迁移：改版前注册、ID 卡引导 pending 还没走完的用户，改走资料页；
+        // ID 卡引导记 seen 防重复触发，资料页 pending 立上（中途被杀仍可恢复）。
         if BearyIDCardStore.isOnboardingPending(userId: userId) && !BearyIDCardStore.isOnboardingSeen(userId: userId) {
-            presentPostRegistrationOnboarding()
+            BearyIDCardStore.markOnboardingSeen(userId: userId)
+            Self.markProfileSetupPending(userId: userId)
+            presentProfileSetupAfterRegistration()
             return
         }
         if BearyIDCardStore.isOnboardingSeen(userId: userId) && !BearyIDCardStore.isFormSeen(userId: userId) {
@@ -3896,6 +3928,26 @@ final class BearyChromeViewController: UIViewController {
             pendingReferralToast = nil
             showToast(message: text)
         }
+    }
+
+    /// 注册后资料页（登录改版 2026-11-26）：新注册登录完直接进简单资料页
+    /// （头像＋名字＋简介），取代旧的注册后引导＋ID 卡链路。
+    /// 只给新注册用户、只弹一次；存完（或未改动）后写 seen、关本页、补弹暂存的
+    /// 邀请绑定 toast。冷启动补触发走 maybePresentPendingPostRegistrationOnboarding。
+    private func presentProfileSetupAfterRegistration() {
+        guard SessionManager.shared.isLoggedIn, let userId = SessionManager.shared.currentUser?.id else { return }
+        guard !Self.isProfileSetupSeen(userId: userId) else { return }
+        guard presentedViewController == nil else { return }
+        let vc = BearyProfileSetupViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.onFinished = { [weak self, weak vc] in
+            guard let strongSelf = self else { return }
+            Self.markProfileSetupSeen(userId: userId)
+            vc?.dismiss(animated: BearyMotion.animated(true)) {
+                strongSelf.finishPostRegistrationChain()
+            }
+        }
+        topmostViewController().present(vc, animated: BearyMotion.animated(true))
     }
 
     /// 注册后引导：P0–P3 → 位置 → 通知 → 结束页（全屏）。只给新注册用户。
