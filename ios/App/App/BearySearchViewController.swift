@@ -82,7 +82,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     var onBack: (() -> Void)?
 
     /// 点用户行：传出整条 SearchUser，容器负责打开该用户主页。
-    init(onOpenUser: @escaping (SearchUser) -> Void, onOpenEntry: @escaping (String) -> Void) {
+    /// 点日记行：传出整条 Entry（不只传 id——本人日记直接走本机正文开详情，
+    /// 断网也能读；他人日记仍先联网拉取，失败分流见 SceneDelegate.gotoEntry）。
+    init(onOpenUser: @escaping (SearchUser) -> Void, onOpenEntry: @escaping (Entry) -> Void) {
         self.onOpenUserHandler = onOpenUser
         self.onOpenEntryHandler = onOpenEntry
         super.init(nibName: nil, bundle: nil)
@@ -95,7 +97,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // MARK: - 状态
 
     private let onOpenUserHandler: (SearchUser) -> Void
-    private let onOpenEntryHandler: (String) -> Void
+    private let onOpenEntryHandler: (Entry) -> Void
 
     private var searchTimer: Timer?
     /// F2：限时到期 live 复核（时间线 sweep 同款 1 秒 tick）——搜索结果内
@@ -261,6 +263,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var rowEntryIds: [String] = []
     /// 5-20：行身份 -> 视图映射（同批动画按 key 查表，不按下标配对）。
     private var entryRowById: [String: UIButton] = [:]
+    /// 行 id → 搜索已持有的 Entry（建行时登记、清行时清空；点行时整条带上，
+    /// 不只传 id——本人日记直接走本机正文开详情，断网也能读）。
+    private var entryById: [String: Entry] = [:]
+    /// 临时打不开（5xx 等）的行 id 集——行原位标“暂时打不开，重试”，点行重开；
+    /// 重开时先清标记，失败再标。服务端明确确认内容不存在时不进这里
+    /// （直接报删除文案，见 SceneDelegate.gotoEntry）。
+    private var transientFailedEntryIds: Set<String> = []
+    /// 行上的“暂时打不开，重试”提示 label（随行重建而丢弃；清行时一并清空）。
+    private var transientRetryLabels: [String: UILabel] = [:]
     private var userRowByKey: [String: UIButton] = [:]
     /// 审计三轮 06：行内容签名（与 entryRowById / userRowByKey 同步维护，
     /// clearResultRows 时一并清空）——同关键词重渲复用旧行前先比对签名。
@@ -567,6 +578,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 详情内删帖：按 id 摘行（引用缓存同清），空了走无结果态。
     func removeDeletedEntry(entryId: String) {
         guard var data = lastRenderedData, let query = lastRenderedQuery, showingResults else { return }
+        transientFailedEntryIds.remove(entryId)
+        transientRetryLabels.removeValue(forKey: entryId)?.removeFromSuperview()
         data.entries?.removeAll { $0.id == entryId }
         data.mine?.removeAll { $0.id == entryId }
         lastRenderedData = data
@@ -2453,6 +2466,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         entryButtons = []
         rowEntryIds = []
         entryRowById = [:]
+        entryById = [:]
+        transientFailedEntryIds = []
+        transientRetryLabels = [:]
         userRowByKey = [:]
         // 审计三轮 06：内容签名与行映射同步清空。
         entryRowContentSignatures = [:]
@@ -2710,6 +2726,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 // 审计三轮 06：内容未变才复用旧行；签名变了（正文/首图/状态变了）
                 // 走下面的 makeEntryRow 重建该行，旧行随 keep 集摘除。
                 reusedEntryIds.insert(entryId)
+                entryById[entryId] = entry
                 mineRows.append(row)
                 mineRowIds.append(entryId)
             } else if let entryId = entry.id, let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
@@ -2725,6 +2742,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                entryRowContentSignatures[entryId] == entryRowContentSignature(entry: entry, isMineGroup: false) {
                 // 审计三轮 06：内容未变才复用旧行；签名变了重建该行（同我的组）。
                 reusedEntryIds.insert(entryId)
+                entryById[entryId] = entry
                 publicRows.append(row)
                 publicRowIds.append(entryId)
             } else if let entryId = entry.id, let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
@@ -3450,6 +3468,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         row.addSubview(column)
         row.addSubview(separator)
+        // 临时打不开的行重建时保留重试提示（见 markEntryRowTransientFailure）；
+        // 旧行若还挂着旧 label，先摘掉，防 map 指到已丢弃的行。
+        transientRetryLabels[entryId]?.removeFromSuperview()
+        transientRetryLabels.removeValue(forKey: entryId)
+        if transientFailedEntryIds.contains(entryId) {
+            let retryLabel = makeTransientRetryLabel()
+            column.addArrangedSubview(retryLabel)
+            column.setCustomSpacing(8, after: bodyRow)
+            transientRetryLabels[entryId] = retryLabel
+        }
         var constraints: [NSLayoutConstraint] = [
             column.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
             column.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
@@ -3469,6 +3497,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         NSLayoutConstraint.activate(constraints)
 
         entryRowById[entryId] = row
+        entryById[entryId] = entry
         // 审计三轮 06：记下本行内容签名，供同关键词重渲比对复用。
         entryRowContentSignatures[entryId] = entryRowContentSignature(entry: entry, isMineGroup: isMineGroup)
         row.addTarget(self, action: #selector(entryRowTapped(_:)), for: .touchUpInside)
@@ -3503,6 +3532,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         if let imageCount = entry.images?.count, imageCount > 0 {
             entryA11yParts.append("\(imageCount) 张图片")
+        }
+        if transientFailedEntryIds.contains(entryId) {
+            entryA11yParts.append("暂时打不开，点按重试")
         }
         row.accessibilityLabel = entryA11yParts.joined(separator: "，")
         entryButtons.append(row)
@@ -4025,9 +4057,52 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 lastNavigationAt = now
                 // iCity §12：搜索结果点按记 search_click（只记 id，不记查询词；失败静默）。
                 BearyAPI.shared.sendEvent(eventType: "search_click", targetId: rowEntryIds[index])
-                onOpenEntryHandler(rowEntryIds[index])
+                let entryId = rowEntryIds[index]
+                guard let entry = entryById[entryId] else { return }
+                // 重开先清临时失败标记；失败再标（见 markEntryRowTransientFailure）。
+                clearTransientFailureMark(entryId)
+                onOpenEntryHandler(entry)
                 return
             }
+        }
+    }
+
+    /// 行内“暂时打不开，重试”提示（13 regular 橙字，跟随系统字号）。
+    private func makeTransientRetryLabel() -> UILabel {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.orange
+        label.numberOfLines = 1
+        label.text = "暂时打不开，重试"
+        label.accessibilityLabel = "暂时打不开，点按重试"
+        return label
+    }
+
+    /// 临时故障（5xx 等）在刚点的那一行标“暂时打不开，重试”——搜索结果保留，
+    /// 整行仍可点按重试；只有服务端明确确认内容不存在时才报删除文案
+    /// （见 SceneDelegate.gotoEntry）。行已不在栈上时只记 id，重建行时补标。
+    func markEntryRowTransientFailure(_ entryId: String) {
+        transientFailedEntryIds.insert(entryId)
+        guard let row = entryRowById[entryId], transientRetryLabels[entryId] == nil else { return }
+        guard let column = row.subviews.first(where: { $0 is UIStackView }) as? UIStackView else { return }
+        let previousLast = column.arrangedSubviews.last
+        let label = makeTransientRetryLabel()
+        column.addArrangedSubview(label)
+        if let previousLast = previousLast {
+            column.setCustomSpacing(8, after: previousLast)
+        }
+        transientRetryLabels[entryId] = label
+        if let current = row.accessibilityLabel, !current.contains("暂时打不开") {
+            row.accessibilityLabel = current + "，暂时打不开，点按重试"
+        }
+    }
+
+    private func clearTransientFailureMark(_ entryId: String) {
+        transientFailedEntryIds.remove(entryId)
+        if let label = transientRetryLabels.removeValue(forKey: entryId) {
+            label.removeFromSuperview()
         }
     }
 

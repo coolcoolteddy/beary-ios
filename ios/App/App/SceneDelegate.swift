@@ -3058,10 +3058,19 @@ final class BearyChromeViewController: UIViewController {
             } else if let handle = user.handle, !handle.isEmpty {
                 self?.presentUserProfile(handle: handle)
             }
-        }, onOpenEntry: { [weak self] entryId in
+        }, onOpenEntry: { [weak self] entry in
             // 搜索进详情同样记返回锚点（关键词＋行 id＋视口偏移），
             // 关闭时回原行原位，见 presentDetail / restoreDetailReturnPosition。
-            self?.gotoEntry(entryId: entryId, source: .search)
+            guard let self, let entryId = entry.id, !entryId.isEmpty else { return }
+            if self.isAuthorOfEntry(entry, viewerId: SessionManager.shared.currentUser?.id) {
+                // 本人日记：搜索已持有本机已同步的正文，先渲染再后台补拉——
+                // 断网也能读（补拉失败时详情保留本机正文＋轻提示，见 showFetchFailed）。
+                self.gotoEntryImmediately(entry: entry, source: .search)
+            } else {
+                self.gotoEntry(entryId: entryId, source: .search) { [weak self] in
+                    self?.searchVC?.markEntryRowTransientFailure(entryId)
+                }
+            }
         })
         // 收尾接线：搜索返回回首页（S4 返回行）。
         // 好友第一期（关注/回关模型）：搜索行回关直接调 follow 接口，不再经通知页。
@@ -4314,8 +4323,9 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 只有 id 时（搜索/消息/深链/引用卡）：先拉单篇，再走同一可见性门；
-    /// 拉不到（已删/无权）时 toast，不跳页。
-    private func gotoEntry(entryId: String, source: DetailReturnSource? = nil) {
+    /// 拉不到时按错分流：已删/无权 toast，不跳页；网络失败走磁盘快照回退；
+    /// 临时故障（5xx 等）走 onTransientFailure，调用方在原入口给重试。
+    private func gotoEntry(entryId: String, source: DetailReturnSource? = nil, onTransientFailure: (() -> Void)? = nil) {
         guard !entryId.isEmpty else { return }
         showToast(message: "正在打开…")
         // R22-A1：发起时固定账号、会话代次、日记 ID 与快照桶，回包逐一复核。
@@ -4343,8 +4353,14 @@ final class BearyChromeViewController: UIViewController {
                                 self.showToast(message: "网络不稳定，请稍后再试")
                             }
                         }
-                    } else {
+                    } else if BearyDetailViewController.isExplicitlyGone(apiError) {
+                        // 服务端明确确认内容不存在（404／无权限）才报删除——与
+                        // gotoEntryImmediately／retryFetchDetail 同一分流。
                         self.showToast(message: "这篇日记不存在或已被删除")
+                    } else {
+                        // 临时故障（5xx 等）：服务端未确认内容不存在，不报“不存在”；
+                        // 调用方在原入口给重试（搜索行原位标“暂时打不开，重试”）。
+                        onTransientFailure?()
                     }
                 }
             }
