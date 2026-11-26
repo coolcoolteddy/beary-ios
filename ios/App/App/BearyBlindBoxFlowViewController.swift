@@ -689,7 +689,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         mineWithdrawnLabel.textColor = BearyColors.gray
         mineWithdrawnLabel.numberOfLines = 0
         mineWithdrawnLabel.textAlignment = .center
-        mineWithdrawnLabel.text = "你已撤回交换。今日次数不返还，明天再来。"
+        mineWithdrawnLabel.text = NSLocalizedString("blindbox.withdrawn", comment: "")
         mineWithdrawnView.addSubview(mineWithdrawnLabel)
         NSLayoutConstraint.activate([
             mineWithdrawnLabel.topAnchor.constraint(equalTo: mineWithdrawnView.topAnchor, constant: 20),
