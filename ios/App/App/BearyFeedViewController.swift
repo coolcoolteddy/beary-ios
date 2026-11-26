@@ -3581,14 +3581,8 @@ class BearyFeedErrorCell: UITableViewCell {
 
     var onRetry: (() -> Void)?
 
-    private let iconView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyFeedIconCache.image(named: "icon_wifi_off", pointSize: 36)
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        return v
-    }()
+    private let iconView: UIImageView =
+        BearyIconImageView.make(image: BearyFeedIconCache.image(named: "icon_wifi_off", pointSize: 36))
 
     private let messageLabel: UILabel = {
         let lb = UILabel()

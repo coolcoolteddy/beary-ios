@@ -1833,14 +1833,8 @@ class BearyProfileViewController: UIViewController {
         return lb
     }()
 
-    private let mapEntryChevronView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        return v
-    }()
+    private let mapEntryChevronView: UIImageView =
+        BearyIconImageView.make(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 16))
 
     private lazy var mapEntryButton: UIButton = {
         let button = UIButton(type: .custom)
@@ -1884,14 +1878,8 @@ class BearyProfileViewController: UIViewController {
         return lb
     }()
 
-    private let starEntryChevronView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        return v
-    }()
+    private let starEntryChevronView: UIImageView =
+        BearyIconImageView.make(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 16))
 
     private lazy var starEntryButton: UIButton = {
         let button = UIButton(type: .custom)

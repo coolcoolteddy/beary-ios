@@ -885,14 +885,8 @@ final class BearyTimelineCell: UITableViewCell {
     /// 作者在时间线看自己带定位的日记时位置行恒不出现，与字段/脱敏无关。
     /// 本组与卡片同款：官方 icon_location 13 灰 + 13 灰文案；公开篇作者本人
     /// 也只看区级，不再另附提示行；文案与脱敏全走 BearyLocationDisplay。
-    private let timelineLocationIconView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyLocationIcon.image(pointSize: 13)
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        return v
-    }()
+    private let timelineLocationIconView: UIImageView =
+        BearyIconImageView.make(image: BearyLocationIcon.image(pointSize: 13))
     private let timelineLocationLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false

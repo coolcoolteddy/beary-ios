@@ -3350,6 +3350,22 @@ enum BearyIconImages {
     }
 }
 
+/// 图标 image view 工厂（可复用扫查第九遍第 4 条）：小图标 UIImageView 的懒构造
+/// 五件套——关 autoresizing＋配图＋灰 tint＋scaleAspectFit，10 处共用。
+/// 尺寸由各处约束定，不在构造内；配图各处自己传（无图时不传，之后再配）；
+/// 初始隐藏的 3 处（详情／卡片天气、引用失效态）传 isHidden: true。
+enum BearyIconImageView {
+    static func make(image: UIImage? = nil, isHidden: Bool = false) -> UIImageView {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = image
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        v.isHidden = isHidden
+        return v
+    }
+}
+
 /// 下拉刷新官方图标视图：icon_refresh 32pt（BearyIconImages 模板渲染＋灰 tint，
 /// 深浅随 BearyColors.gray 自动切换，无需深色变体）。
 /// 只走 transform／layer 旋转动画，不动布局、不改刷新阈值与手势语义：
