@@ -1920,7 +1920,7 @@ final class BearyDetailViewController: UIViewController {
 
     private func renderHeaderMeta() {
         // 32 注销口径：作者已注销时显“用户已注销”，头像首字母同步为“用”。
-        let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? "beary 用户"
+        let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? NSLocalizedString("emote.posters.fallback_display_name", comment: "")
         nameButton.setTitle(authorNameValue, for: .normal)
         avatarInitialLabel.text = String(authorNameValue.prefix(1)).uppercased()
         if let createdAt = entry.createdAt {
@@ -3563,7 +3563,7 @@ final class BearyDetailViewController: UIViewController {
         guard let entryId = entry.id, !entryId.isEmpty,
               let url = URL(string: "https://teddyhn.com/beary/d/" + entryId) else { return }
         let shareText = (entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        var items: [Any] = ["beary 日记"]
+        var items: [Any] = [NSLocalizedString("share.diary_title", comment: "")]
         if !shareText.isEmpty {
             items.append(String(shareText.prefix(60)))
         }

@@ -1255,7 +1255,7 @@ class BearyFeedViewController: UIViewController {
         guard let entryIdValue = entry.id, !entryIdValue.isEmpty,
               let urlValue = URL(string: "https://teddyhn.com/beary/d/" + entryIdValue) else { return }
         let shareText = (entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        var items: [Any] = ["beary 日记"]
+        var items: [Any] = [NSLocalizedString("share.diary_title", comment: "")]
         if !shareText.isEmpty {
             items.append(String(shareText.prefix(60)))
         }

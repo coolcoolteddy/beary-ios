@@ -257,7 +257,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
-        titleLabel.text = (peer.displayName?.isEmpty == false) ? peer.displayName! : "beary 用户"
+        titleLabel.text = (peer.displayName?.isEmpty == false) ? peer.displayName! : NSLocalizedString("emote.posters.fallback_display_name", comment: "")
         topBar.addSubview(titleLabel)
         // 会话内搜索入口：顶栏右侧放大镜（与返回钮同款 44 热区），点按展开搜索栏。
         searchButton.translatesAutoresizingMaskIntoConstraints = false
