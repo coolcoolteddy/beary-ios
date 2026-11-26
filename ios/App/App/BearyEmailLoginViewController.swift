@@ -32,7 +32,6 @@ final class BearyEmailLoginViewController: UIViewController {
     private let backButton = BearyHit44Button()
     private let mailIconView = UIImageView()
     private let titleLabel = UILabel()
-    private let subtitleLabel = UILabel()
 
     private let emailContainer: BearyInputContainer
     private let emailField = UITextField()
@@ -187,14 +186,6 @@ final class BearyEmailLoginViewController: UIViewController {
         titleLabel.numberOfLines = 0
         contentStack.addArrangedSubview(titleLabel)
 
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = NSLocalizedString("login.email.subtitle", comment: "")
-        subtitleLabel.font = BearyDynamicType.smallBodyFont()
-        subtitleLabel.textColor = BearyColors.gray
-        subtitleLabel.textAlignment = .center
-        subtitleLabel.numberOfLines = 0
-        contentStack.addArrangedSubview(subtitleLabel)
-
         // 邮箱框＋行内错误。
         contentStack.addArrangedSubview(emailContainer)
         emailContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
@@ -287,8 +278,7 @@ final class BearyEmailLoginViewController: UIViewController {
 
         contentStack.setCustomSpacing(BearySpace.xxl, after: backWrap)
         contentStack.setCustomSpacing(BearySpace.sm, after: mailWrap)
-        contentStack.setCustomSpacing(BearySpace.sm, after: titleLabel)
-        contentStack.setCustomSpacing(BearySpace.xxl, after: subtitleLabel)
+        contentStack.setCustomSpacing(BearySpace.xxl, after: titleLabel)
         contentStack.setCustomSpacing(BearySpace.xxl, after: emailErrorLabel)
         contentStack.setCustomSpacing(BearySpace.xxl, after: codeErrorLabel)
         contentStack.setCustomSpacing(BearySpace.xxl, after: inviteErrorLabel)
