@@ -63,7 +63,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private var trashFirstLoadFailed = false
     private var trashLoginEmpty = false
     /// 旧空缓存未确认态：本地桶为空、静默刷新失败（非 401），服务器未确认
-    /// 列表为空——此时不显示「回收站是空的」，改显「暂时无法确认回收站内容」
+    /// 列表为空——此时不显示「回收站是空的」，改显「回收站内容暂时看不了」
     /// ＋重试；服务器确认（静默刷新成功提交／网络首拉成功）后清掉。
     private var trashStaleEmpty = false
     private var trashBusyIdentifiers: Set<String> = []
@@ -657,7 +657,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     } else if self.trashItems.isEmpty {
                         // 其他失败静默：有旧条目时保留本地显示（现行口径不动）；
                         // 旧空缓存时不把「空」当成当前结果——立未确认态，
-                        // 原位显示「暂时无法确认回收站内容」＋重试，下次进页重刷。
+                        // 原位显示「回收站内容暂时看不了」＋重试，下次进页重刷。
                         // 401 不进此态（走登录门，重试只会反复 401）。
                         self.trashStaleEmpty = true
                         self.renderStateViews()
@@ -849,7 +849,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // alone gives exactly 40; non-empty state restores 4.
         contentStack.setCustomSpacing(emptyStateView.isHidden ? 4 : 0, after: noteRow)
         // 失败态复用 failureWrap：首拉失败仍是「加载失败」；旧空缓存未确认
-        // 时同一位置显示「暂时无法确认回收站内容」，重试同走 retryTapped。
+        // 时同一位置显示「回收站内容暂时看不了」，重试同走 retryTapped。
         // configure 可重调（同样式不重建按钮），此处按当前失败旗取值。
         if trashFirstLoadFailed {
             failureStateView.configure(kind: .error, title: NSLocalizedString("trash.load_failed.title", comment: ""), subtitle: nil, iconName: nil, actionTitle: NSLocalizedString("common.retry", comment: ""), onAction: { [weak self] in self?.retryTapped() })
