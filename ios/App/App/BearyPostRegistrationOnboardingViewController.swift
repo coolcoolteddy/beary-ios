@@ -926,7 +926,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         ])
         let options: [(Visibility, String, String)] = [
             (.public, "公开", "所有人都能看到这篇日记"),
-            (.friends, "仅好友", "只有互相关注的好友能看到"),
+            (.friends, NSLocalizedString("onboarding.visibility.friends_only_title", comment: ""), NSLocalizedString("onboarding.visibility.friends_only_description", comment: "")),
             (.selfOnly, "仅自己可见", "只有你自己能看到"),
         ]
         for (index, option) in options.enumerated() {
