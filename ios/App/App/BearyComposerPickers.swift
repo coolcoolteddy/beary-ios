@@ -482,9 +482,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         case .network:
             return "网络好像不太顺"
         case .decoding:
-            return "服务返回的内容不太对，请稍后再试"
+            return NSLocalizedString("search.failed_retry", comment: "")
         default:
-            return "服务暂时有问题，请稍后再试"
+            return NSLocalizedString("search.failed_retry", comment: "")
         }
     }
 
