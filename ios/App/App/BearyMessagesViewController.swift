@@ -657,12 +657,24 @@ final class BearyMessagesViewController: UIViewController {
             // 但同样按锚点保位。旧表为空时不能走 batch：表从未向 dataSource
             // 要过行数，batch 里 UIKit 读到的更新前行数已是新值，行数对不
             // 上直接 abort（消息页首开闪退即此坑）。
+            // 135 闪退：reloadData＋layoutIfNeeded 会同步走 willDisplay，
+            // 近底即触发子页 loadMore，快照变化同步调 updateMergedRows；
+            // 这里若直接走 batch，performBatchUpdates 就嵌套进正在跑的
+            // reloadData 布局里，UIKit 报行数不一致直接 abort（与 batch
+            // 路径同坑；#2555 只修了子页哨兵行、没堵容器这头）。
+            // 与 batch 路径同口径：在途期间把更新挂起，布局跑完再应用。
+            mergedBatchInFlight = true
             tableView.reloadData()
             tableView.layoutIfNeeded()
+            mergedBatchInFlight = false
             restoreAnchor(anchor, responseOffsetY: responseOffsetY)
             updateMergedVisibility()
             playStaggeredEntranceIfNeeded()
             checkNotifSeenIfVisible()
+            if let pending = pendingMergedRows {
+                pendingMergedRows = nil
+                applyMergedRows(pending)
+            }
         }
     }
 
