@@ -1154,9 +1154,9 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     /// 字段级错误行隐藏时压为 0 高（非栈容器里 hidden 仍占约束位，需显式压高才不留空隙）。
     private var fieldErrorHeight: NSLayoutConstraint?
     private static let titleLimit = 100
-    private static let detailLimit = 2000
+    private static let detailLimit = BearyCharLimit(2000)
     /// 11 轮审计第 10 项：表单级错误文案（服务端笼统 bad wish 时用，两框均不变红）。
-    private static let formErrorText = "标题需为 1–100 字，详情最多 2000 字，请检查后重试"
+    private static let formErrorText = "标题需为 1–100 字，详情最多 \(BearyWishCreateViewController.detailLimit.value) 字，请检查后重试"
     /// 11 轮审计第 10 项：错误定位拆三类——标题错只标标题框、详情错只标详情框、
     /// 表单级错误只显示错误行。旧的全局 fieldErrorShown 让任一错误都双框变红，
     /// 归因是错的，故拆掉。
@@ -1245,7 +1245,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
             label.textAlignment = .right
         }
         titleCountLabel.text = "0/100"
-        detailCountLabel.text = "0/2000"
+        detailCountLabel.text = Self.detailLimit.countText(for: 0)
         fieldErrorLabel.translatesAutoresizingMaskIntoConstraints = false
         fieldErrorLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         fieldErrorLabel.adjustsFontForContentSizeCategory = true
@@ -1439,7 +1439,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
             fieldErrorLabel.isHidden = false
             fieldErrorHeight?.isActive = false
         case .detail:
-            fieldErrorLabel.text = "详情最多 2000 字，请检查后重试"
+            fieldErrorLabel.text = "详情最多 \(Self.detailLimit.value) 字，请检查后重试"
             fieldErrorLabel.isHidden = false
             fieldErrorHeight?.isActive = false
         case .form:
@@ -1459,7 +1459,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     /// 字段才标该框，都合规时（如入库后回读失败）归表单级错误，不标任一框。
     private func fieldError(forBadWish title: String, detail: String) -> WishFieldError {
         if title.isEmpty || title.utf16.count > Self.titleLimit { return .title }
-        if detail.utf16.count > Self.detailLimit { return .detail }
+        if Self.detailLimit.isOverLimit(detail) { return .detail }
         return .form
     }
 
@@ -1519,8 +1519,8 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         } else {
             titleCountLabel.textColor = titleColor
         }
-        let detailText = "\(detailCount)/\(Self.detailLimit)"
-        let detailColor = detailCount > Self.detailLimit ? BearyColors.destructiveText : BearyColors.gray
+        let detailText = Self.detailLimit.countText(for: detailCount)
+        let detailColor = Self.detailLimit.isOverLimit(count: detailCount) ? BearyColors.destructiveText : BearyColors.gray
         if detailCountLabel.text != detailText {
             if BearyMotion.animated(true), detailCountLabel.window != nil {
                 UIView.transition(with: detailCountLabel, duration: BearyMotion.localStateDuration, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
@@ -1542,7 +1542,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         setWishFieldError(.none)
         guard !isSubmitting else { return }
         let trimmed = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let ok = !trimmed.isEmpty && trimmed.utf16.count <= Self.titleLimit && detailView.text.utf16.count <= Self.detailLimit
+        let ok = !trimmed.isEmpty && trimmed.utf16.count <= Self.titleLimit && !Self.detailLimit.isOverLimit(detailView.text)
         submitButton.isEnabled = ok
         submitButton.alpha = ok ? 1 : 0.4
     }
@@ -1586,7 +1586,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     @objc private func submitTapped() {
         guard !isSubmitting else { return }
         let title = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, title.utf16.count <= Self.titleLimit, detailView.text.utf16.count <= Self.detailLimit else { return }
+        guard !title.isEmpty, title.utf16.count <= Self.titleLimit, !Self.detailLimit.isOverLimit(detailView.text) else { return }
         let detail = detailView.text ?? ""
         isSubmitting = true
         setWishFieldError(.none)

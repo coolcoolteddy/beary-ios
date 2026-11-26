@@ -116,6 +116,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     // 与 #685 的 firstLoadStateView（仅 loading 形态）分开，不动它。
     private let loadFailedStateView = BearyStateView()
     private let placeholderLabel = UILabel()
+    /// 消息字数上限（扫查第 6 遍第 5 条收口）：与日记正文／许愿详情共用
+    /// BearyCharLimit plumbing，各留自己的上限值。
+    private static let messageLimit = BearyCharLimit(2000)
     private let countLabel = UILabel()
     /// 2026-11-04 乐观发送：失败待发行的本地键集合（行侧边出红叹号、点按重发）。
     private var failedSendKeys = Set<String>()
@@ -1130,7 +1133,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         // 服务端先 trim 再判长，显示计数同样按 trim 后算（首尾空白不占数）。
         let count = inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count
         countLabel.isHidden = count < 1800
-        countLabel.text = "\(count)/2000"
+        countLabel.text = Self.messageLimit.countText(for: count)
         // 字数提示显隐变化时 pill 位置/预留随之变（两者共存即 pill 上移）。
         updateNewMessagePillLayout()
     }
@@ -1959,8 +1962,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard let userId = peer.id, !sessionClosed, !dmNotAllowed else { return }
         let body = inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
-        guard body.utf16.count <= 2000 else {
-            BearyToast.show(in: view, message: "消息最多 2000 字")
+        guard !Self.messageLimit.isOverLimit(body) else {
+            BearyToast.show(in: view, message: "消息最多 \(Self.messageLimit.value) 字")
             return
         }
         guard SessionManager.shared.isLoggedIn else {

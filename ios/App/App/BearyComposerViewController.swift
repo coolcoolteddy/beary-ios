@@ -528,7 +528,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    private static let maxLength = 2000
+    private static let bodyLimit = BearyCharLimit(5000)
     private static let maxImages = 9
 
     // MARK: - 状态
@@ -5648,9 +5648,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         charRingView.isHidden = false
-        let ratio = min(1.0, CGFloat(count) / CGFloat(BearyComposerViewController.maxLength))
+        let ratio = min(1.0, CGFloat(count) / CGFloat(BearyComposerViewController.bodyLimit.value))
         charProgressLayer?.strokeEnd = ratio
-        if count > BearyComposerViewController.maxLength {
+        if BearyComposerViewController.bodyLimit.isOverLimit(count: count) {
             charProgressLayer?.strokeColor = BearyColors.red.cgColor
             // 审计-编辑器详情：超限时数字不再隐藏——只显红环用户算不出超了
             // 多少；未超限时仍只留圆环（原口径不动）。
@@ -10003,8 +10003,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 此处原用未 trim 长度，首尾空白会误判超长。改用已 trim 的 trimmed 计长。
         // 扫查组：c.length 是 UTF-16 码元数，Swift .count 是字素簇数，
         // 此处改 utf16.count，与服务端 400 口径一致（见 committedTextCount 注释）。
-        if trimmed.utf16.count > BearyComposerViewController.maxLength {
-            showToast(message: "最多 2000 字，现在 \(trimmed.utf16.count) 字")
+        if BearyComposerViewController.bodyLimit.isOverLimit(trimmed) {
+            showToast(message: "最多 \(BearyComposerViewController.bodyLimit.value) 字，现在 \(trimmed.utf16.count) 字")
             return
         }
         // 决议第 5 项 A：有上传失败的图片时拦截不发（网页 beary.html 编辑器发布口径，
