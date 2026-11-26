@@ -3180,7 +3180,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 下方小字副标题「24 小时后自动私密」；切回其他档或编辑模式时恢复单行
     /// 「新日记」／「编辑日记」。顶栏高 60 不变，两行塞进现有高度。
     /// 调用点：refreshVisibilityButton 末尾（一切改旗标的路径都经它：
-    /// 菜单选档、草稿恢复、清空重开、胶囊确认／清除）。
+    /// 菜单选档、草稿恢复、清空重开）。
     private func refreshTopTitle() {
         titleLabel.text = !isEditMode && isEphemeral ? "限时日记" : (isEditMode ? "编辑日记" : "新日记")
         syncLimitedSubtitle()

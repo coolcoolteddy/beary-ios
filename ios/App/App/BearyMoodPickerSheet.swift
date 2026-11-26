@@ -157,7 +157,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // 系统字号档变化时行高需重算（cellHeight 按实际文字高度计），只刷布局，
+        // 系统字号档变化时行高需重算，只刷布局，
         // 不重建 cell、不改列数与顺序；深浅切换由各 BearyEmoteView 内部跟随。
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
             emoteCollectionView?.collectionViewLayout.invalidateLayout()
