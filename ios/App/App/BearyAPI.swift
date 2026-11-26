@@ -414,6 +414,18 @@ struct MeUser: Decodable {
     var accountRegion: String?
     var handleChangeCount: Int?
     var handleChangedAt: Int?
+    /// 生日服务端同步（2026-11-20）：/me 下发生日年月日（未填为 null；decoder 用
+    /// convertFromSnakeCase，birthday_year / birthday_month / birthday_day 自动映射）。
+    /// 年份用来算周岁年龄（公开资料只回 age，不回出生日期）；只有月日没有年份时
+    /// 年龄算不出，等用户在编辑资料页补年份。
+    var birthdayYear: Int?
+    var birthdayMonth: Int?
+    var birthdayDay: Int?
+    /// 城市服务端同步（2026-11-20）：/me 下发 ID 卡三级选的国家/地区/市
+    ///（未填为 null；字段名与服务端列名相同，直接映射）。
+    var country: String?
+    var region: String?
+    var city: String?
 }
 
 struct MeResponse: Decodable {
