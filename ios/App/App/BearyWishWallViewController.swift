@@ -1367,7 +1367,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     /// internal 而非 private——挂载处 createTapped（另一类）要调它。
     func handleInteractiveDismissRejected() -> Bool {
         guard !isSubmitting else {
-            BearyToast.show(in: view, message: "正在提交，请稍候")
+            BearyToast.show(in: view, message: NSLocalizedString("wish.submit.submitting", comment: ""))
             return false
         }
         guard hasUnsavedContent else { return true }
@@ -1394,7 +1394,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         // 不直接退出——已发出的创建请求无取消路径，退出会让用户误以为已取消、
         // 实际愿望仍在服务端创建成功；等请求结束再按成功／失败结果处理。
         guard !isSubmitting else {
-            BearyToast.show(in: view, message: "正在提交，请稍候")
+            BearyToast.show(in: view, message: NSLocalizedString("wish.submit.submitting", comment: ""))
             return
         }
         guard hasUnsavedContent else {
