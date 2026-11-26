@@ -164,15 +164,9 @@ final class BearyLivePhotoLoader {
     private var diskCacheTotals: [String: Int64] = [:]
 
     private init() {
-        let config = URLSessionConfiguration.default
-        // 审计-性能：只关 URLCache，不改 ephemeral。ephemeral 会丢共享
-        // cookie 存储，私密实况视频将 401；图片加载器同款口径（default +
-        // urlCache=nil）：URLCache 按 URL 裸键、不分账号，私密字节一旦
-        // 进共享缓存，换号后仍可能被命中而不走服务端可见性判定，故关掉；
-        // 本加载器自有按账号分桶的磁盘缓存，URLCache 层纯属多余。
-        config.urlCache = nil
-        config.httpMaximumConnectionsPerHost = 6
-        self.session = URLSession(configuration: config, delegate: BearyImageRedirectGuard.shared, delegateQueue: nil)
+        // 私密图片会话走共享工厂（见 BearyPrivateImageSession）：与图片加载器
+        // 同口径；每 host 6 并发（原内联值，不变）。
+        self.session = BearyPrivateImageSession.makeSession(maxConnectionsPerHost: 6)
         // PHLivePhoto 内存条目偏大（视频），NSCache 仍会在内存压力下自动逐出；
         // countLimit 只作后备上限，不作日常淘汰依据。
         cache.countLimit = 20
