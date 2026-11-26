@@ -103,11 +103,11 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
     /// 新规矩 (b)：草稿列表入场动效只播一次（首渲），后续重渲不重播已有卡片。
     /// 审计第 12 项起由 tryPlayEntrance 统一置位（原 renderDrafts 首轮置位已移走）。
     private var draftCardsAnimatedOnce = false
-    private var deleteEntries: [(button: UIButton, draftValue: BearyDraft)] = []
-    private var lostEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    private var deleteEntries = BearyRowButtonLookup<BearyDraft>(id: \.draftId)
+    private var lostEntries = BearyRowButtonLookup<BearyDraft>(id: \.draftId)
     /// 发布失败重试钮（草稿持久标记 lastPublishFailure 非空的卡才有）：
-    /// 与 deleteEntries／lostEntries 同款（按钮＋草稿）查表。
-    private var retryEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    /// 与 deleteEntries／lostEntries 同款行操作按钮查表。
+    private var retryEntries = BearyRowButtonLookup<BearyDraft>(id: \.draftId)
     /// DF-1/DF-2：编辑器当前正在写的那篇 draftId（由容器/编辑器在呈现草稿箱后设置；
     /// 未设置时“正在写”标记不显示、删正在写回调不触发）。容器接线由总协调收尾。
     var currentDraftId: String?
@@ -700,9 +700,9 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
             arranged.removeFromSuperview()
         }
         cardEntries = []
-        deleteEntries = []
-        lostEntries = []
-        retryEntries = []
+        deleteEntries.removeAll()
+        lostEntries.removeAll()
+        retryEntries.removeAll()
         if draftsLoadFailed {
             subLabel.text = nil
             subWrap.isHidden = true
@@ -833,7 +833,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
         deleteButton.addTarget(self, action: #selector(deleteTapped(_:)), for: .touchUpInside)
         deleteButton.bearyAddPressFeedback()
         topRow.addArrangedSubview(deleteButton)
-        deleteEntries.append((button: deleteButton, draftValue: draftValue))
+        deleteEntries.append(button: deleteButton, value: draftValue)
         inner.addArrangedSubview(topRow)
 
         // 2026-11-14（132 真机）：标题独立成行（卡片标题字、粗体），不再挤进
@@ -920,7 +920,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
             lostButton.bearyAddPressFeedback()
             lostButton.translatesAutoresizingMaskIntoConstraints = false
             metaFlow.addSubview(lostButton)
-            lostEntries.append((button: lostButton, draftValue: draftValue))
+            lostEntries.append(button: lostButton, value: draftValue)
         }
         // DF-1 正在写标记：编辑器当前正在写的那篇（currentDraftId 由容器设置）。
         if let current = currentDraftId, current == draftValue.draftId {
@@ -973,7 +973,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
             retryButton.bearyAddPressFeedback()
             retryButton.translatesAutoresizingMaskIntoConstraints = false
             statusRow.addArrangedSubview(retryButton)
-            retryEntries.append((button: retryButton, draftValue: draftValue))
+            retryEntries.append(button: retryButton, value: draftValue)
         }
         // 状态行与字数/心情行之间留 8pt（与内层 spacing 的 6pt 叠加后接近网页 meta 的 8pt 上边距）。
         // metaColumn 上边距仍取原 metaRow 的 2pt，行距 6pt 与内层 spacing 一致。
@@ -1058,7 +1058,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
                 // 拖过阈值执行删除：复用删除钮路径（删盘成功后删卡 + 6 秒撤销条），
                 // 拖动 transform 不先复位——复位会让卡片先跳回原位再收起，
                 // 直接交接给 deleteTapped，删盘成功后的收起动画里一并滑回原位，视觉上连续。
-                guard let button = deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button else {
+                guard let button = deleteEntries.button(forID: draftValue.draftId) else {
                     resetDraftDragCard(card)
                     return
                 }
@@ -1220,13 +1220,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
     /// renderDrafts()，整列卡片重建两次、可见位置也无保留；现只原位替换
     /// 这一张卡，写盘成功直接结束，失败才按磁盘重读恢复该卡并 toast。
     @objc private func clearLostTapped(_ sender: UIButton) {
-        var targetDraft: BearyDraft?
-        for entry in lostEntries {
-            if entry.button === sender {
-                targetDraft = entry.draftValue
-            }
-        }
-        guard var draftValue = targetDraft else { return }
+        guard var draftValue = lostEntries.value(for: sender) else { return }
         draftValue.images = draftValue.images.filter { [weak self] item in
             guard let strongSelf = self else { return true }
             return strongSelf.isUnrecoverableImage(item) == false
@@ -1278,8 +1272,8 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
         listStack.removeArrangedSubview(oldCard)
         oldCard.removeFromSuperview()
         cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-        deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-        lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+        deleteEntries.removeAll(id: draftValue.draftId)
+        lostEntries.removeAll(id: draftValue.draftId)
         // makeCard 会把删除钮／丢失图钮登记进 deleteEntries／lostEntries（与 renderDrafts 同路），
         // 卡片登记追加在末尾，再挪回旧卡的位置，保持卡片数组与栈内顺序一致。
         let card = makeCard(for: draftValue)
@@ -1593,7 +1587,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
     /// 中心无原任务（如重启后）或草稿已改过时改走正常打开编辑器再点发布——
     /// 编辑器读草稿持久标记后仍跳过门禁与 setVisibility，只发新篇。
     @objc private func retryPublishTapped(_ sender: UIButton) {
-        guard let draftValue = retryEntries.first(where: { $0.button === sender })?.draftValue else { return }
+        guard let draftValue = retryEntries.value(for: sender) else { return }
         if BearyPublishCenter.shared.isPublishing(draftId: draftValue.draftId) {
             showDraftToast(message: "发布中…")
             return
@@ -1618,13 +1612,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
     /// 本地删卡：从列表移除并只删该篇 v3 草稿；图片文件不动（撤销期内可原样恢复，
     /// 超时后由编辑器侧的孤文件清理承接，不在此处改存储结构）。
     @objc private func deleteTapped(_ sender: UIButton) {
-        var targetDraft: BearyDraft?
-        for entry in deleteEntries {
-            if entry.button === sender {
-                targetDraft = entry.draftValue
-            }
-        }
-        guard let draftValue = targetDraft else { return }
+        guard let draftValue = deleteEntries.value(for: sender) else { return }
         // 发布后台化：发布中的草稿不许从草稿箱删——只删记录不删文件，
         // 失败后重发即丢正文。拦在动画与 pendingUndos 之前，卡片不动。
         if BearyPublishCenter.shared.isPublishing(draftId: draftValue.draftId) {
@@ -1692,7 +1680,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
                         BearyIconMotion.denyShake(on: cardView, key: "bearyDenyShake")
                     }
                 }
-                if let deleteButton = strongSelf.deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {
+                if let deleteButton = strongSelf.deleteEntries.button(forID: draftValue.draftId) {
                     deleteButton.isEnabled = true
                 }
                 strongSelf.showDraftToast(message: "删除失败，请重试")
@@ -1763,8 +1751,8 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
                 cardEntry.button.removeFromSuperview()
             }
             cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-            deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-            lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+            deleteEntries.removeAll(id: draftValue.draftId)
+            lostEntries.removeAll(id: draftValue.draftId)
             setSubLabelCountText("共 \(drafts.count) 份 · 仅保存在本设备")
         }
         // 本笔在队列里且计时未起时出条并起 6 秒计时；其余笔的计时互不干扰。
@@ -1929,8 +1917,8 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
             cardEntry.button.removeFromSuperview()
         }
         cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-        deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-        lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+        deleteEntries.removeAll(id: draftValue.draftId)
+        lostEntries.removeAll(id: draftValue.draftId)
         subLabel.text = "共 \(drafts.count) 份 · 仅保存在本设备"
     }
 

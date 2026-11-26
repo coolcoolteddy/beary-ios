@@ -71,8 +71,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// 恢复与否未知——行按钮改成「重新检查」，点按先核对服务端状态，
     /// 确认仍在回收站才可再次恢复；核对完成（在／不在）即清掉。
     private var trashRecheckIdentifiers: Set<String> = []
-    private var restoreEntries: [(button: UIButton, trashValue: TrashItem)] = []
-    private var purgeEntries: [(button: UIButton, trashValue: TrashItem)] = []
+    private var restoreEntries = BearyRowButtonLookup<TrashItem>(id: \.entryIdentifier)
+    private var purgeEntries = BearyRowButtonLookup<TrashItem>(id: \.entryIdentifier)
     private var rowViewsByIdentifier: [String: UIView] = [:]
     /// A8：meta 行标签——复用行靠它找到 metaLabel 重算日期/天数（本文件内无其他 tag 使用）。
     private static let trashMetaLabelTag = 9917
@@ -872,8 +872,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             arranged.removeFromSuperview()
         }
         // 未登记行只有无 identifier 的行：其按钮登记随行重建一并清掉，避免每刷攒一笔已离场按钮。
-        restoreEntries.removeAll(where: { $0.trashValue.entryIdentifier.isEmpty })
-        purgeEntries.removeAll(where: { $0.trashValue.entryIdentifier.isEmpty })
+        restoreEntries.removeAll { $0.entryIdentifier.isEmpty }
+        purgeEntries.removeAll { $0.entryIdentifier.isEmpty }
         let newIdentifiers = Set(trashItems.compactMap({ rowIdentifier(of: $0) }))
         for identifier in Array(rowViewsByIdentifier.keys) where newIdentifiers.contains(identifier) == false {
             if let rowView = rowViewsByIdentifier[identifier] {
@@ -881,8 +881,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 rowView.removeFromSuperview()
             }
             rowViewsByIdentifier[identifier] = nil
-            restoreEntries.removeAll(where: { $0.trashValue.entryIdentifier == identifier })
-            purgeEntries.removeAll(where: { $0.trashValue.entryIdentifier == identifier })
+            restoreEntries.removeAll(id: identifier)
+            purgeEntries.removeAll(id: identifier)
         }
         let staggerEnabled = UIAccessibility.isReduceMotionEnabled == false
         var placedIdentifiers = Set<String>()
@@ -1098,8 +1098,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             innerStack.leadingAnchor.constraint(equalTo: rowView.leadingAnchor, constant: 16),
             innerStack.trailingAnchor.constraint(equalTo: rowView.trailingAnchor, constant: -16),
         ])
-        restoreEntries.append((button: restoreButton, trashValue: trashValue))
-        purgeEntries.append((button: purgeButton, trashValue: trashValue))
+        restoreEntries.append(button: restoreButton, value: trashValue)
+        purgeEntries.append(button: purgeButton, value: trashValue)
         // 行是新建的，按钮文案回到「恢复」——若该篇曾留过未确认态标记，
         // 一并清掉，否则按钮写「恢复」、点按却走「重新检查」，文案与行为对不上。
         trashRecheckIdentifiers.remove(trashValue.entryIdentifier)
@@ -1204,12 +1204,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             actions: [
                 BearyConfirmSheet.Action(title: "恢复", style: .default) { [weak self] in
                     guard let self = self,
-                          let button = self.restoreEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button else { return }
+                          let button = self.restoreEntries.button(forID: identifier) else { return }
                     self.restoreTapped(button)
                 },
                 BearyConfirmSheet.Action(title: "彻底删除", style: .destructive) { [weak self] in
                     guard let self = self,
-                          let button = self.purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button else { return }
+                          let button = self.purgeEntries.button(forID: identifier) else { return }
                     self.purgeTapped(button)
                 },
             ]
@@ -1288,8 +1288,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     }
 
     @objc private func restoreTapped(_ sender: UIButton) {
-        guard let matched = restoreEntries.first(where: { $0.button == sender }) else { return }
-        let trashValue = matched.trashValue
+        guard let trashValue = restoreEntries.value(for: sender) else { return }
         let identifier = trashValue.entryIdentifier
         if identifier.isEmpty || trashBusyIdentifiers.contains(identifier) {
             return
@@ -1304,7 +1303,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 扫荡 B：同行另一钮（彻底删除）在途期间一并禁用，否则恢复在途时
         // 点彻底删除会弹出确认框，确认后与恢复双请求齐飞（见 purge 确认处
         // 的复验守卫）；标题不动，只禁点按，结束时与恢复钮一起恢复。
-        let purgeSibling = purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
+        let purgeSibling = purgeEntries.button(forID: identifier)
         purgeSibling?.isEnabled = false
         purgeSibling?.alpha = 0.5
         // 在途切号门：发起时捕获账号 ID 与鉴权代际（通知页 P1-21 同款口径）。
@@ -1391,7 +1390,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         setRowButtonBusy(button, busy: true, busyTitle: NSLocalizedString("trash.recheck.checking", comment: ""), idleTitle: NSLocalizedString("trash.recheck.recheck", comment: ""))
         // 扫荡 B 同款：核对期间同行彻底删除钮一并禁用，否则核对在途时
         // 点彻底删除会弹出确认框，与核对结果双请求齐飞。
-        let purgeSibling = purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
+        let purgeSibling = purgeEntries.button(forID: identifier)
         purgeSibling?.isEnabled = false
         purgeSibling?.alpha = 0.5
         let requestAccountId = SessionManager.shared.currentUser?.id
@@ -1474,8 +1473,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     }
 
     @objc private func purgeTapped(_ sender: UIButton) {
-        guard let matched = purgeEntries.first(where: { $0.button == sender }) else { return }
-        let trashValue = matched.trashValue
+        guard let trashValue = purgeEntries.value(for: sender) else { return }
         let identifier = trashValue.entryIdentifier
         if identifier.isEmpty || trashBusyIdentifiers.contains(identifier) {
             return
@@ -1501,7 +1499,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             self.setRowButtonBusy(sender, busy: true, busyTitle: "删除中…", idleTitle: "彻底删除")
             // 扫荡 B：同行恢复钮在途期间一并禁用（与 restoreTapped 对称），
             // 标题不动，只禁点按，结束时与删除钮一起恢复。
-            let restoreSibling = self.restoreEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
+            let restoreSibling = self.restoreEntries.button(forID: identifier)
             restoreSibling?.isEnabled = false
             restoreSibling?.alpha = 0.5
             // 在途切号门：确认框可能横跨一次切号，故在真正发起处（而非
@@ -1560,8 +1558,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// 成功后原地移除该行：只动该行视图，不重建列表、不滚顶；空了则出空态。
     private func removeRow(identifier: String) {
         trashItems.removeAll(where: { $0.entryIdentifier == identifier })
-        restoreEntries.removeAll(where: { $0.trashValue.entryIdentifier == identifier })
-        purgeEntries.removeAll(where: { $0.trashValue.entryIdentifier == identifier })
+        restoreEntries.removeAll(id: identifier)
+        purgeEntries.removeAll(id: identifier)
         guard let rowView = rowViewsByIdentifier[identifier] else {
             renderStateViews()
             return
