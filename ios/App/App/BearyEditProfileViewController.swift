@@ -1418,7 +1418,7 @@ class BearyEditProfileViewController: UIViewController {
     /// 不调 onSaved，可直接重试。
     private func verifySignatureAfterSave(expected: String?) {
         guard let id = fetchedUserId ?? SessionManager.shared.currentUser?.id else {
-            BearyToast.show(in: view, message: "资料已提交，签名同步状态未确认，请稍后查看")
+            BearyToast.show(in: view, message: NSLocalizedString("edit_profile.signature_sync_unconfirmed", comment: ""))
             return
         }
         BearyAPI.shared.fetchUserProfile(userIdValue: id) { [weak self] result in
@@ -1435,7 +1435,7 @@ class BearyEditProfileViewController: UIViewController {
                         BearyToast.show(in: strongSelf.view, message: "签名尚未同步，请稍后再试")
                     }
                 case .failure:
-                    BearyToast.show(in: strongSelf.view, message: "资料已提交，签名同步状态未确认，请稍后查看")
+                    BearyToast.show(in: strongSelf.view, message: NSLocalizedString("edit_profile.signature_sync_unconfirmed", comment: ""))
                 }
             }
         }
