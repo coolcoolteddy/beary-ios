@@ -1294,40 +1294,22 @@ final class BearyTimelineCell: UITableViewCell {
     /// setHighlighted（高亮时 cardView 改 surface2）已删；点按仍进详情
     /// （didSelectRowAt 不动），定位落点闪一下走 flashHighlight（不动）。
 
-    /// E3：gotoEntry 落点行天气标播 Lottie（统一卡片同款口径，见
-    /// BearyDiaryCardCell.playWeatherLottie：编辑器选择器同款
-    /// BearyEmoteView + LottieWeather 资源，night→moon；深浅切换与减动效
-    /// 静态帧由播放器内部处理）。仅落点控制器在定位落定后调用；其他行
-    /// 从不调用，天气标保持静态图。覆盖层贴在 14px 天气图标上，停播摘层
-    /// 即回到底层静态图。
+    /// E3：gotoEntry 落点行天气标播 Lottie（共享 BearyWeatherLottie，
+    /// 卡片／详情同款；映射走 BearyText.weatherLottieKey，night→moon）。
+    /// 仅落点控制器在定位落定后调用；其他行从不调用，天气标保持静态图。
+    /// 覆盖层贴在 14px 天气图标上，停播摘层即回到底层静态图。
     func playWeatherLottie() {
-        guard let weatherKey = currentEntry?.weather, !weatherKey.isEmpty,
-              let iconView = weatherIconView else { return }
-        let lottieKey = weatherKey == "night" ? "moon" : weatherKey
-        if let current = weatherEmoteView, current.emoteKey == lottieKey {
-            current.play()
+        guard let iconView = weatherIconView else {
+            stopWeatherLottie()
             return
         }
-        stopWeatherLottie()
-        let emoteView = BearyEmoteView(key: lottieKey, animated: true, fallbackImage: iconView.image)
-        emoteView.isUserInteractionEnabled = false
-        emoteView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.addSubview(emoteView)
-        NSLayoutConstraint.activate([
-            emoteView.leadingAnchor.constraint(equalTo: iconView.leadingAnchor),
-            emoteView.trailingAnchor.constraint(equalTo: iconView.trailingAnchor),
-            emoteView.topAnchor.constraint(equalTo: iconView.topAnchor),
-            emoteView.bottomAnchor.constraint(equalTo: iconView.bottomAnchor),
-        ])
-        weatherEmoteView = emoteView
+        BearyWeatherLottie.play(weatherKey: currentEntry?.weather, iconView: iconView, overlay: &weatherEmoteView)
     }
 
     /// E3：停播落点天气 Lottie 并摘掉覆盖层。复用、重配、滑出可视区
     /// （播放器离窗自停 + 复用/重配摘层）与新落点盖掉旧落点时均走此路。
     func stopWeatherLottie() {
-        weatherEmoteView?.stop()
-        weatherEmoteView?.removeFromSuperview()
-        weatherEmoteView = nil
+        BearyWeatherLottie.stop(overlay: &weatherEmoteView)
     }
 
     /// 6A 定位高亮：内容列 surface2 闪一下再回 bg（减动效下只滚动不闪）。
