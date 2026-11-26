@@ -1101,7 +1101,7 @@ final class BearyWishWallViewController: UIViewController {
                         // 回包、且确认票等于目标票时才提示，失败或愿望不在列表时不提示。
                         self?.voteTapped(wishId: pending.wishId, target: pending.target, absolute: true) { [weak self] success in
                             guard let self = self, success, self.voteStates.confirmedValue(for: pending.wishId)?.vote == pending.target else { return }
-                            BearyToast.show(in: self.view, message: "已补投刚才那一票")
+                            BearyToast.show(in: self.view, message: NSLocalizedString("wish.vote_replayed", comment: ""))
                         }
                     }
                     if !messages.isEmpty, let view = self?.view {
