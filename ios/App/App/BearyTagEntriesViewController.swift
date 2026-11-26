@@ -25,6 +25,8 @@ final class BearyTagEntriesViewController: UIViewController {
     private var loading = false
     private var hasMore = true
     private var loadFailed = false
+    private var loadMoreFailed = false
+    private let loadMoreFooterView = BearyLoadMoreFooterView()
 
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let loadingIndicator = UIActivityIndicatorView(style: .large)
@@ -132,6 +134,8 @@ final class BearyTagEntriesViewController: UIViewController {
             stateLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
         ])
 
+        loadMoreFooterView.onRetry = { [weak self] in self?.retryLoadMore() }
+
         loadFirstPage()
     }
 
@@ -194,6 +198,8 @@ final class BearyTagEntriesViewController: UIViewController {
         guard !loading else { return }
         loading = true
         loadFailed = false
+        loadMoreFailed = false
+        updateLoadMoreFooter()
         stateLabel.isHidden = true
         loadingIndicator.startAnimating()
         BearyAPI.shared.fetchEntries(scope: .tag(tag), limit: Self.pageSize) { [weak self] result in
@@ -208,9 +214,11 @@ final class BearyTagEntriesViewController: UIViewController {
                 self.hasMore = (list.entries ?? []).count >= Self.pageSize
                 self.reloadDataPreservingScrollPosition(anchor: anchor)
                 self.refreshStateLabel()
+                self.updateLoadMoreFooter()
             case .failure:
                 self.loadFailed = true
                 self.refreshStateLabel()
+                self.updateLoadMoreFooter()
             }
         }
     }
@@ -218,6 +226,8 @@ final class BearyTagEntriesViewController: UIViewController {
     private func loadMore() {
         guard !loading, hasMore, let last = entries.last else { return }
         loading = true
+        loadMoreFailed = false
+        updateLoadMoreFooter()
         BearyAPI.shared.fetchEntries(scope: .tag(tag), limit: Self.pageSize, before: last.createdAt, beforeId: last.id) { [weak self] result in
             guard let self = self else { return }
             self.loading = false
@@ -229,6 +239,7 @@ final class BearyTagEntriesViewController: UIViewController {
                 var seenIds = Set(self.entries.compactMap { $0.id })
                 let fresh = BearyCursorPageLoad.fresh(page, id: { $0.id }, seen: &seenIds)
                 self.hasMore = page.count >= Self.pageSize
+                self.updateLoadMoreFooter()
                 guard !fresh.isEmpty else { return }
                 let startIndex = self.entries.count
                 self.entries.append(contentsOf: fresh)
@@ -241,10 +252,39 @@ final class BearyTagEntriesViewController: UIViewController {
                     self.reloadDataPreservingScrollPosition(anchor: anchor)
                 })
             case .failure:
-                // 分页失败不弹失败态（已有内容可看），下一轮滑到底再试一次。
-                break
+                // 翻页失败亮脚部重试态：已有内容可看，不弹 toast；
+                // 点脚部“加载失败，重试”再拉一次，下一轮滑到底也会再试。
+                self.loadMoreFailed = true
+                self.updateLoadMoreFooter()
             }
         }
+    }
+
+    /// 翻页脚部（首页同款 BearyLoadMoreFooterView）：加载中三点、
+    /// 到底“没有更多了”、失败可点重试。首屏加载／空列表时不挂脚部。
+    /// 只改翻页失败展示，不动翻页触发逻辑（willDisplay 倒数第 3 行预取）与数据。
+    private func updateLoadMoreFooter() {
+        let state: BearyLoadMoreFooterView.State = {
+            if entries.isEmpty { return .hidden }
+            if loading { return .loading }
+            if loadMoreFailed { return .failed }
+            if !hasMore { return .end }
+            return .hidden
+        }()
+        loadMoreFooterView.setState(state)
+        guard state != .hidden else {
+            if tableView.tableFooterView != nil { tableView.tableFooterView = nil }
+            return
+        }
+        let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
+        loadMoreFooterView.frame = CGRect(x: 0, y: 0, width: width, height: BearyLoadMoreFooterView.height)
+        if tableView.tableFooterView !== loadMoreFooterView {
+            tableView.tableFooterView = loadMoreFooterView
+        }
+    }
+
+    private func retryLoadMore() {
+        loadMore()
     }
 
     /// 整表 reload 前的首个可见锚点：日记 ID + 该行顶缘到视口顶的距离。
