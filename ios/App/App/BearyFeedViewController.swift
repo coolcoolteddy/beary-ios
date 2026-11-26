@@ -1947,11 +1947,7 @@ class BearyFeedViewController: UIViewController {
     /// 偏移钳制在可滚范围内（详情返回与 pill 返回位置共用）。
     private func scrollRowTop(toViewportOffset viewportOffset: CGFloat, at path: IndexPath) {
         tableView.layoutIfNeeded()
-        let targetY = tableView.rectForRow(at: path).origin.y - viewportOffset
-        guard abs(targetY - tableView.contentOffset.y) >= 1 else { return }
-        let minY = -tableView.contentInset.top
-        let maxY = max(minY, tableView.contentSize.height - tableView.bounds.height + tableView.contentInset.bottom)
-        tableView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+        BearyScrollAnchor.restoreDetailReturn(in: tableView, rowTop: tableView.rectForRow(at: path).origin.y, viewportOffset: viewportOffset)
     }
 
     /// F8：同一篇的全部可见行。

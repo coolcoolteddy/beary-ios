@@ -140,6 +140,35 @@ enum BearyEntranceConfig {
     }
 }
 
+/// 视口锚点恢复共用数学（可复用资源第十六批第 1 项）：
+/// 详情返回五处（广场／搜索／照片墙／标签／时间线）与重渲染恢复两处
+/// （标签整表 reload、许愿墙）原先各写一套相同的钳制——行顶减视口偏移、
+/// ±1pt 守卫、钳到 [-topInset, max(…, contentSize - bounds + bottomInset)]。
+/// 锚点捕获（首可见行／首可见愿望）与已删回落各留自己的，不进本 helper。
+enum BearyScrollAnchor {
+    /// 行顶放到视口偏移处后的钳制偏移 y。
+    /// - Parameters:
+    ///   - scrollView: 要恢复滚动位置的滚动视图。
+    ///   - rowTop: 行顶在内容坐标系里的 y（tableView rectForRow origin.y／
+    ///     行视图 convert 后 frame.minY／collectionView layoutAttributes frame.minY）。
+    ///   - viewportOffset: 行顶相对视口顶的目标偏移（详情打开时记下的值）。
+    ///   - contentInset: 钳制用的内边距——详情返回传 scrollView.contentInset，
+    ///     重渲染恢复传 scrollView.adjustedContentInset（与原地行为一致）。
+    static func clampedOffsetY(in scrollView: UIScrollView, rowTop: CGFloat, viewportOffset: CGFloat, contentInset: UIEdgeInsets) -> CGFloat {
+        let targetY = rowTop - viewportOffset
+        let minY = -contentInset.top
+        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + contentInset.bottom)
+        return min(max(targetY, minY), maxY)
+    }
+
+    /// 详情关闭时把该行放回打开时的视口位置；已在原位（±1pt）时不动（x 置 0）。
+    static func restoreDetailReturn(in scrollView: UIScrollView, rowTop: CGFloat, viewportOffset: CGFloat) {
+        let targetY = rowTop - viewportOffset
+        guard abs(targetY - scrollView.contentOffset.y) >= 1 else { return }
+        scrollView.contentOffset = CGPoint(x: 0, y: clampedOffsetY(in: scrollView, rowTop: rowTop, viewportOffset: viewportOffset, contentInset: scrollView.contentInset))
+    }
+}
+
 // MARK: - Sheet/居中模态统一口径（B 批）
 
 /// 底 sheet 与居中模态的共享 chrome：顶部圆角 20、抓手 40×4（顶距 10、圆角 2）、
