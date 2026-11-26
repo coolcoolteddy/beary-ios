@@ -5222,3 +5222,27 @@ extension UITableView {
         })
     }
 }
+
+// MARK: - 游标翻页累积去重（可复用资源第十六批第 8 项）
+
+/// 游标翻页三处（标签页 / 回收站 / 盲盒池）累积时的同款去重：返回 items 里 id 未见过的项，
+/// id 为空（nil）的项照常返回；新 id 记进 seen。调用方按自己的口径把“空 id”折成 nil
+/// （盲盒把 "" 也当空；标签只把 nil 当空；回收站 id 非空）。
+/// 游标推导与满页递归各留自己的——三处守卫刻意不同（回收站账号／鉴权代际、盲盒页数上限＋
+/// 合格数目标、标签页去重过滤），不抽通用递归驱动。
+enum BearyCursorPageLoad {
+    static func fresh<Item>(_ items: [Item], id: (Item) -> String?, seen: inout Set<String>) -> [Item] {
+        var out: [Item] = []
+        out.reserveCapacity(items.count)
+        for item in items {
+            guard let itemId = id(item) else {
+                out.append(item)
+                continue
+            }
+            guard !seen.contains(itemId) else { continue }
+            seen.insert(itemId)
+            out.append(item)
+        }
+        return out
+    }
+}

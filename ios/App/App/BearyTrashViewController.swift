@@ -665,7 +665,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         self.trashSilentRefreshing = false
                         // 去重保底（游标页理论上不交叠；重复 id 进桶会在页内渲染成两行，故先清掉）。
                         var seen: Set<String> = []
-                        let deduped = all.filter { seen.insert($0.id).inserted }
+                        let deduped = BearyCursorPageLoad.fresh(all, id: { $0.id }, seen: &seen)
                         // 代次 + 已移除双重守卫（旧快照回插修复，全量同步同款口径）：
                         // 刷新开始后发生过任何 trash.json 写盘，或本轮已恢复/删除
                         // 的 id 仍在迟到快照里——旧快照已过期，整批丢弃：

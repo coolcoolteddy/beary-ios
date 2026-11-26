@@ -1079,13 +1079,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 switch result {
                 case .success(let list):
                     let pageEntries = list.entries ?? []
-                    for entry in pageEntries {
-                        if let id = entry.id, !id.isEmpty {
-                            if self.poolSeenIds.contains(id) { continue }
-                            self.poolSeenIds.insert(id)
-                        }
-                        self.poolCollected.append(entry)
-                    }
+                    let fresh = BearyCursorPageLoad.fresh(pageEntries, id: { entry in entry.id.flatMap { $0.isEmpty ? nil : $0 } }, seen: &self.poolSeenIds)
+                    self.poolCollected.append(contentsOf: fresh)
                     let last = pageEntries.last
                     let eligibleCount = self.poolCollected.filter { BlindBoxPool.eligibility(for: $0) == .eligible }.count
                     if pageEntries.count >= 50, page < Self.poolMaxPages, eligibleCount < Self.poolEligibleTarget, let cursor = last?.createdAt, let lastId = last?.id {
