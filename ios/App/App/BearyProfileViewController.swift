@@ -3778,7 +3778,6 @@ class BearyProfileViewController: UIViewController {
                             BearyFriends.clearDiaryCachesAndNotify(userId: targetId)
                             self.reloadProfile()
                         }
-                        BearyToast.show(in: self.view, message: wasFollowedBy ? "已互关" : "已关注")
                     case .failure(let error):
                         // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
                         self.followState = self.confirmedFollowState
