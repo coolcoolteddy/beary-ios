@@ -98,9 +98,9 @@ enum BlindBoxPoolEligibility {
     var disabledReason: String? {
         switch self {
         case .eligible: return nil
-        case .privateEntry: return "私密篇不可入池"
-        case .friendsOnly: return "仅好友日记不可入池"
-        case .tooNew: return "今日公开，明日可入池"
+        case .privateEntry: return NSLocalizedString("blindbox.private_not_poolable", comment: "")
+        case .friendsOnly: return NSLocalizedString("blindbox.friends_only_not_poolable", comment: "")
+        case .tooNew: return NSLocalizedString("blindbox.too_new_poolable_tomorrow", comment: "")
         }
     }
 }
