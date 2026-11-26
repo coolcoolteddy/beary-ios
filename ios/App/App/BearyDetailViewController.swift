@@ -4460,15 +4460,11 @@ enum BearyDetailCache {
 // Li 2026-11-21 定：作者不能给自己的日记贴回应，但详情页回应行留着、只读显示，
 // 点一只表情看是谁贴的。行：头像＋昵称＋@handle；无更多钮，不进主页。
 
-final class BearyEmotePostersViewController: UIViewController {
+final class BearyEmotePostersViewController: UIViewController, BearySystemSheetSizing {
     private let emoteKey: String
     private let count: Int
     private let users: [BearyAPI.FriendUser]
 
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（快照列表同款做法）。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
-
-    private let grabberView = UIView()
     private let titleLabel = UILabel()
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let emptyLabel = UILabel()
@@ -4490,15 +4486,10 @@ final class BearyEmotePostersViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.surface3
+        view.backgroundColor = .clear
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
-
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        view.addSubview(grabberView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = String(format: NSLocalizedString("emote.posters.title_format", comment: ""), BearyText.moodNames[emoteKey] ?? emoteKey, count)
@@ -4507,7 +4498,7 @@ final class BearyEmotePostersViewController: UIViewController {
         view.addSubview(titleLabel)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
-        tableView.backgroundColor = BearyColors.surface3
+        tableView.backgroundColor = .clear
         // 列表 sheet 统一无分隔线（2026-11-18，规范 §1）。
         tableView.separatorStyle = .none
         tableView.rowHeight = Self.rowHeight
@@ -4529,12 +4520,7 @@ final class BearyEmotePostersViewController: UIViewController {
         let tableHeight = tableView.heightAnchor.constraint(equalToConstant: users.isEmpty ? Self.emptyTableHeight : min(CGFloat(users.count) * Self.rowHeight, Self.maxTableHeight))
         tableHeightConstraint = tableHeight
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding + BearySheetChrome.grabberHeight + 16),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
 
@@ -4566,6 +4552,7 @@ final class BearyEmotePostersViewController: UIViewController {
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 }
@@ -4575,18 +4562,7 @@ final class BearyEmotePostersViewController: UIViewController {
 extension BearyEmotePostersViewController {
     static func show(from presenter: UIViewController, emoteKey: String, count: Int, users: [BearyAPI.FriendUser]) {
         let sheet = BearyEmotePostersViewController(emoteKey: emoteKey, count: count, users: users)
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }
 
@@ -4600,7 +4576,7 @@ private final class BearyEmotePosterRowCell: UITableViewCell {
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         selectionStyle = .none
-        backgroundColor = BearyColors.surface3
+        backgroundColor = .clear
 
         avatarView.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
