@@ -1605,15 +1605,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     /// 盲盒回应失败的拒绝动效：0.38s 摇头＋warning 震动＋拒绝音效（与详情/卡片 playDenyShake 同口径；
     /// 减动效时只跳过视觉抖动，震动与音效照常给）。
     private func playDenyShake(on view: UIView) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled { return }
-        view.layer.removeAnimation(forKey: "bearyBlindBoxDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        view.layer.add(shake, forKey: "bearyBlindBoxDenyShake")
+        BearyIconMotion.playDenyShake(on: view, key: "bearyBlindBoxDenyShake")
     }
 
     /// 摇头目标必须是当前在树上的 chip：renderEmoteChips() 全量重建，

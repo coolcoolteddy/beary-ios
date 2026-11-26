@@ -188,6 +188,34 @@ enum BearyIconMotion {
     static func stopSpin(on view: UIView, key: String) {
         view.layer.removeAnimation(forKey: key)
     }
+
+    /// 拒绝摇头（0.38s，values [0,-8,8,-5,5,0]／keyTimes 0／0.2／0.4／0.6／0.8／1）：
+    /// 先清同 key 在途动画再播；key 作参数，各调用点原 key 不变；
+    /// 减动效时跳过视觉摇头（震动／音效由调用方另给，不在此补；三件套走 playDenyShake）。
+    static func denyShake(on view: UIView?, key: String) {
+        guard let view = view else { return }
+        guard BearyMotion.animated(true) else { return }
+        view.layer.removeAnimation(forKey: key)
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        view.layer.add(shake, forKey: key)
+    }
+
+    /// 拒绝反馈（震动＋拒绝音）：不拿减动效门控，减动效时震动与音效照常给；
+    /// 摇头不在此播（视觉部分另走 denyShake；时序分开的调用点如草稿箱／好友取关只调它）。
+    static func playDenyFeedback() {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+    }
+
+    /// 拒绝反馈三件套（震动＋拒绝音＋摇头）：震动与音效照常给，摇头只在减动效关时播；
+    /// view 为 nil 时只给震动＋音效、不摇头。
+    static func playDenyShake(on view: UIView?, key: String) {
+        playDenyFeedback()
+        denyShake(on: view, key: key)
+    }
 }
 
 extension UIButton {

@@ -256,21 +256,12 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
     /// 删除失败反馈：0.38s 摇头＋toast“删除失败，请重试”；减动效时跳过视觉摇头。
     private func playDeleteGIFfailedFeedback(forKey key: String) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled == false {
-            var target: UIView? = emoteCollectionView
-            if let index = groups.firstIndex(where: { $0.id == "mygif" }),
-               let keyIndex = groups[index].keys.firstIndex(of: key) {
-                target = emoteCollectionView?.cellForItem(at: IndexPath(item: keyIndex + 1, section: 0)) ?? target
-            }
-            target?.layer.removeAnimation(forKey: "bearyMoodPickerDeleteFailShake")
-            let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-            shake.values = [0, -8, 8, -5, 5, 0]
-            shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-            shake.duration = BearyMotion.screen
-            target?.layer.add(shake, forKey: "bearyMoodPickerDeleteFailShake")
+        var target: UIView? = emoteCollectionView
+        if let index = groups.firstIndex(where: { $0.id == "mygif" }),
+           let keyIndex = groups[index].keys.firstIndex(of: key) {
+            target = emoteCollectionView?.cellForItem(at: IndexPath(item: keyIndex + 1, section: 0)) ?? target
         }
+        BearyIconMotion.playDenyShake(on: target, key: "bearyMoodPickerDeleteFailShake")
         BearyToast.show(in: view, message: "删除失败，请重试")
     }
     // MARK: - 网格

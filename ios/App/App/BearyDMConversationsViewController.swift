@@ -977,8 +977,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                             BearyDMConversationsCache.save(bucket: "\(uid)", conversations: strongSelf.conversations)
                         }
                     }
-                    BearyHaptics.rejectionWarning()
-                    BearySoundPlayer.play(.refuseBonk)
+                    BearyIconMotion.playDenyFeedback()
                     strongSelf.showToast(message: "删除失败，请重试")
                     completion?(false)
                 }

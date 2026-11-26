@@ -3748,15 +3748,7 @@ class BearyProfileViewController: UIViewController {
     /// 减动效时只跳过视觉抖动，震动与音效照常给；音效门控同 BearySoundPlayer：
     /// 设置页音效开关＋系统静音键，见 BearySoundPlayer.play）。
     private func playFollowDenyShake() {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled { return }
-        followButton.layer.removeAnimation(forKey: "bearyFollowDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        followButton.layer.add(shake, forKey: "bearyFollowDenyShake")
+        BearyIconMotion.playDenyShake(on: followButton, key: "bearyFollowDenyShake")
     }
 
     @objc private func followButtonTapped() {
@@ -5380,12 +5372,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func pastSelfDenyShake(_ view: UIView) {
-        guard !UIAccessibility.isReduceMotionEnabled else { return }
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        view.layer.add(shake, forKey: "pastSelfDenyShake")
+        BearyIconMotion.denyShake(on: view, key: "pastSelfDenyShake")
     }
 
     private func pastSelfVisibleEntries() -> [Entry] {

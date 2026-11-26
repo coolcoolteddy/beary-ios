@@ -667,10 +667,10 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                                       requestEpoch == BearyAPI.shared.authEpoch else { return }
                                 // N5：失败行保留原位，不插回；震动＋拒绝音不依赖 cell 是否可见，
                                 // 只有摇头仍只在行可见时执行。
-                                self.playDenyFeedback()
+                                BearyIconMotion.playDenyFeedback()
                                 if let currentIndex = self.friends.firstIndex(where: { $0.id == userId }),
                                    let cell = self.tableView.cellForRow(at: IndexPath(row: currentIndex, section: 0)) {
-                                    self.denyShake(on: cell)
+                                    BearyIconMotion.denyShake(on: cell, key: "bearyDenyShake")
                                 }
                                 BearyToast.show(in: self.view, message: "取消关注失败，请重试")
                             }
@@ -679,25 +679,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                 }
             },
         ])
-    }
-
-    /// 取关失败拒绝反馈：warning 震动＋拒绝音效，与 cell 是否可见无关；
-    /// 摇头只在行可见时由调用方另调 denyShake(on:) 执行。
-    /// 减动效时只跳过视觉抖动，震动与音效照常给。
-    private func playDenyFeedback() {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-    }
-
-    /// 仅视觉摇头（0.4s）；减动效时跳过。调用方须先调 playDenyFeedback 给震动＋音效。
-    private func denyShake(on view: UIView) {
-        if UIAccessibility.isReduceMotionEnabled { return }
-        view.layer.removeAnimation(forKey: "bearyDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        view.layer.add(shake, forKey: "bearyDenyShake")
     }
 }
 

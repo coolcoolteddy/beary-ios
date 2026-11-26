@@ -710,32 +710,18 @@ enum BearyGIFAddPresenter {
                         case .alreadyAdded: BearyToast.show(in: vc.view, message: "已添加过")
                         case .full:
                             BearyToast.show(in: vc.view, message: "表情库满了，先删掉一些再添加")
-                            shakeDeny(view)
+                            BearyIconMotion.denyShake(on: view, key: "bearyGIFAddDenyShake")
                         case .notViewable:
                             BearyToast.show(in: vc.view, message: "这个图片已经加不了了")
-                            shakeDeny(view)
+                            BearyIconMotion.denyShake(on: view, key: "bearyGIFAddDenyShake")
                         case .failed:
                             BearyToast.show(in: vc.view, message: "添加失败，请重试")
-                            shakeDeny(view)
+                            BearyIconMotion.denyShake(on: view, key: "bearyGIFAddDenyShake")
                         }
                     }
                 }
             }),
         ])
-    }
-
-    /// 失败拒绝摇头：只摇实际触发视图（presentAddGIF 的 from view），不摇
-    /// vc.view，避免整页抖动；标准拒绝口径 values [0,-8,8,-5,5,0] / 0.38s，
-    /// 减动效时跳过视觉摇头（toast 照常出）。
-    private static func shakeDeny(_ view: UIView?) {
-        guard let view = view else { return }
-        if UIAccessibility.isReduceMotionEnabled { return }
-        view.layer.removeAnimation(forKey: "bearyGIFAddDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        view.layer.add(shake, forKey: "bearyGIFAddDenyShake")
     }
 
     private static func nearestViewController(from view: UIView) -> UIViewController? {
