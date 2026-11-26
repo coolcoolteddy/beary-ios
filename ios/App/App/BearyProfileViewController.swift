@@ -2644,12 +2644,7 @@ class BearyProfileViewController: UIViewController {
         let bounds = wallpaperView.bounds
         let scale = UIScreen.main.scale
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let format = UIGraphicsImageRendererFormat()
-            format.scale = scale
-            let renderer = UIGraphicsImageRenderer(bounds: bounds, format: format)
-            let snapshot = renderer.image { context in
-                wallpaperView.layer.render(in: context.cgContext)
-            }
+            let snapshot = BearyViewSnapshot.image(of: wallpaperView, scale: scale, bounds: bounds, method: .layer)
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 self.stickyHeaderFestivalSnapshotTheme = nil
@@ -10306,11 +10301,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     private func coverSnapshot() -> UIImage? {
         let target: UIView? = profileCoverView ?? festivalWallpaperView
         guard let target, target.bounds.width > 0, target.bounds.height > 0 else { return nil }
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = UIScreen.main.scale
-        return UIGraphicsImageRenderer(bounds: target.bounds, format: format).image { _ in
-            target.drawHierarchy(in: target.bounds, afterScreenUpdates: true)
-        }
+        return BearyViewSnapshot.image(of: target, scale: UIScreen.main.scale)
     }
 
     /// Plus 页入口①：皇冠显隐与点亮态。Plus 时点亮（播动＋全不透明）；
