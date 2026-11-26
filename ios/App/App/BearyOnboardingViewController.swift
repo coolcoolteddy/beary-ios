@@ -1068,9 +1068,9 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
     private func pageTitle(_ page: Int) -> String {
         switch page {
         case 0: return "在这里写日记"
-        case 1: return "写下来，也选好谁能看。"
-        case 2: return "用小熊回应日记。"
-        default: return "从今天的一小件事开始。"
+        case 1: return NSLocalizedString("onboarding.title.page1_write_visibility", comment: "")
+        case 2: return NSLocalizedString("onboarding.title.page2_bear_reply", comment: "")
+        default: return NSLocalizedString("onboarding.title.page3_start_small", comment: "")
         }
     }
 

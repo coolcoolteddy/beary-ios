@@ -738,7 +738,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
 
     private func makeP1View() -> UIView {
         let (scrollView, stack) = makeStepScrollView(centered: false)
-        stack.addArrangedSubview(makeTitleLabel("写下来，也选好谁能看。"))
+        stack.addArrangedSubview(makeTitleLabel(NSLocalizedString("onboarding.title.page1_write_visibility", comment: "")))
         stack.addArrangedSubview(spacer(12))
         stack.addArrangedSubview(makeLeadLabel("发布前，确认这篇日记的可见范围。"))
         stack.addArrangedSubview(spacer(24))
@@ -750,7 +750,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
 
     private func makeP2View() -> UIView {
         let (scrollView, stack) = makeStepScrollView(centered: false)
-        stack.addArrangedSubview(makeTitleLabel("用小熊回应日记。"))
+        stack.addArrangedSubview(makeTitleLabel(NSLocalizedString("onboarding.title.page2_bear_reply", comment: "")))
         stack.addArrangedSubview(spacer(12))
         // 预览里导语与标题是同一句，原文保留（见 PR 说明）。
         stack.addArrangedSubview(makeLeadLabel("用小熊回应这篇日记。"))
@@ -803,7 +803,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
 
     private func makeP3View() -> UIView {
         let (scrollView, stack) = makeStepScrollView(centered: false)
-        stack.addArrangedSubview(makeTitleLabel("从今天的一小件事开始。"))
+        stack.addArrangedSubview(makeTitleLabel(NSLocalizedString("onboarding.title.page3_start_small", comment: "")))
         stack.addArrangedSubview(spacer(12))
         stack.addArrangedSubview(makeLeadLabel("想写什么，就写什么。"))
         stack.addArrangedSubview(spacer(24))
