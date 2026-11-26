@@ -119,9 +119,8 @@ enum BearySystemSheet {
             guard let sheet = sheet, let containerView = gesture.view, let presentedView = sheet.view else { return }
             let point = gesture.location(in: containerView)
             guard !presentedView.frame.contains(point) else { return }
-            // 登录 sheet 等自定义关闭路径：先问 presentationController delegate；
-            // delegate 拦下（shouldDismiss=false）时由它自己走取消路径并关闭
-            //（见 BearyLoginViewController 的 UIAdaptivePresentationControllerDelegate）。
+            // 登录页等自定义关闭路径：先问 presentationController delegate；
+            // delegate 拦下（shouldDismiss=false）时由它自己走取消路径并关闭。
             // shouldDismiss 是 optional 方法：未实现时可选链回 nil、不拦下，直接 dismiss。
             if let pc = sheet.presentationController,
                let delegate = pc.delegate,

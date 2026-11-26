@@ -4054,7 +4054,7 @@ private final class BearyDataStatusViewController: UIViewController {
 /// 方案一：隐私政策 / 用户协议服务器下发文字（2026-11-01）。
 /// 缓存按 doc 分开存（privacy / terms 各一键 + 各一个 updated_at 键）；
 /// 有网每次打开都拉，拉取失败或没网就用缓存，再没有缓存才用包内 BearyLegalTexts 兜底；
-/// 登录页协议链接同走本路径（见 BearyLoginViewController.openLegalPage）。
+/// 登录页协议链接同走本路径（见 BearyWelcomeViewController.openLegalPage）。
 enum BearyLegalServerText {
     enum Doc: String {
         case privacy
