@@ -204,7 +204,7 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
         noticeLabel.textColor = BearyColors.gray
         noticeLabel.numberOfLines = 0
         noticeRow.axis = .horizontal
-        noticeRow.spacing = 8
+        noticeRow.spacing = BearySpace.sm
         noticeRow.alignment = .center
         noticeRow.translatesAutoresizingMaskIntoConstraints = false
         noticeRow.addArrangedSubview(noticeSpinner)
@@ -510,7 +510,7 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
         isConfirming = true
         confirmingKey = key
         showingNoDistrictNotice = false
-        showNotice(text: "正在确认…", spinning: true)
+        showNotice(text: NSLocalizedString("location_picker.confirming", comment: ""), spinning: true)
         return true
     }
 
@@ -530,8 +530,8 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
             isConfirming = false
             confirmingKey = nil
             showingNoDistrictNotice = true
-            showNotice(text: "未识别区级，公开后不显示地点，可再点一次重试", spinning: false)
-            UIAccessibility.post(notification: .announcement, argument: "未识别区级，公开后不显示地点")
+            showNotice(text: NSLocalizedString("location_picker.no_district_notice", comment: ""), spinning: false)
+            UIAccessibility.post(notification: .announcement, argument: NSLocalizedString("location_picker.no_district_announcement", comment: ""))
             return
         }
         select(DiaryLocation(name: name, district: district, latitude: latitude, longitude: longitude))
