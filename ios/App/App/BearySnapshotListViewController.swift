@@ -290,7 +290,7 @@ private final class BearySnapshotRowCell: UITableViewCell {
             attachment.image = starImage
             let starSize = titleFont.pointSize * 1.2
             attachment.bounds = CGRect(x: 0, y: titleFont.descender, width: starSize, height: starSize)
-            attachment.accessibilityLabel = "已加星"
+            attachment.accessibilityLabel = NSLocalizedString("snapshot_list.starred.accessibility", comment: "")
             let title = NSMutableAttributedString(string: snapshot.displayDateString + "  ", attributes: [.font: titleFont, .foregroundColor: BearyColors.ink])
             title.append(NSAttributedString(attachment: attachment))
             timeLabel.tintColor = BearyColors.ink
