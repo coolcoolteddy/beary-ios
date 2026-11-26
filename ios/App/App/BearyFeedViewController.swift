@@ -3004,6 +3004,12 @@ class BearyFeedViewController: UIViewController {
             guard let path = strongSelf.tableView.indexPath(for: targetCell) else { return }
             if strongSelf.tableView.indexPathsForVisibleRows?.contains(path) == true {
                 strongSelf.tableView.performBatchUpdates(nil)
+            } else {
+                // 离屏行：回应行高已变，batch 不刷则表里缓存的旧行高过期，
+                // 滑回时布局纠正行高、内容尺寸突变，页面异常下移。
+                // 静默重载该行刷新缓存行高（.none、无动画；行在屏外不可见；
+                // 回调不在 willDisplay/批更新内，不触 #2555 的 reloadRows 闪退）。
+                strongSelf.tableView.reloadRows(at: [path], with: .none)
             }
         }
     }
