@@ -303,9 +303,14 @@ final class BearyEmoteChipView: UIView {
         // 无障碍名（v28 §八）：表情名＋总数＋已贴／未贴，如「抱抱，12 只，已贴」。
         // 名字现行走 BearyText.moodNames（中文）；32 熊脸名尚未进 String Catalog，
         // X3 批进 Catalog 后再跟进本地化，不要在此另造翻译。
+        // 模板与已贴／未贴走 String Catalog（diary_card.emote_chip_a11y 等）。
         // 标签挂在整 chip 的点击层上（可交互元素），计数文本本身不参与读屏。
         let emoteName = BearyText.moodNames[key] ?? key
-        overlayButton.accessibilityLabel = "\(emoteName)，\(count) 只，\(mine ? "已贴" : "未贴")"
+        let postedState = NSLocalizedString(
+            mine ? "diary_card.emote_chip_posted" : "diary_card.emote_chip_not_posted", comment: "")
+        overlayButton.accessibilityLabel = String(
+            format: NSLocalizedString("diary_card.emote_chip_a11y", comment: ""),
+            emoteName, count, postedState)
         if let current = emotePlayer, current.emoteKey == key {
             if current.isPlayingNow == false {
                 current.play()
