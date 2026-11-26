@@ -252,7 +252,7 @@ final class BearyTagEntriesViewController: UIViewController {
 
     private func refreshStateLabel() {
         if loadFailed && entries.isEmpty {
-            stateLabel.text = "加载失败，点按重试"
+            stateLabel.text = NSLocalizedString("common.load_failed", comment: "")
             stateLabel.isHidden = false
         } else if entries.isEmpty {
             stateLabel.text = "这个标签下还没有日记"
@@ -284,7 +284,7 @@ final class BearyTagEntriesViewController: UIViewController {
             case .success(let entry):
                 self.onOpenEntry?(entry)
             case .failure:
-                BearyToast.show(in: self.view, message: "加载失败，请重试")
+                BearyToast.show(in: self.view, message: NSLocalizedString("common.load_failed", comment: ""))
             }
         }
     }

@@ -5229,7 +5229,7 @@ class BearyNotificationTrailingCell: UITableViewCell {
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.textAlignment = .center
-        label.text = "加载失败，点按重试"
+        label.text = NSLocalizedString("common.load_failed", comment: "")
         label.isHidden = true
         return label
     }()

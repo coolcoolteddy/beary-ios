@@ -6534,7 +6534,7 @@ class BearyTimelineViewController: UIViewController {
                 newBackgroundKind = "login"
             } else {
                 // W10：加载失败空态副标题为中性文案“加载失败，请重试”。
-                tableView.backgroundView = emptyView(title: "加载失败", subtitle: "加载失败，请重试", actionTitle: "重试", action: { [weak self] in
+                tableView.backgroundView = emptyView(title: NSLocalizedString("common.load_failed", comment: ""), subtitle: NSLocalizedString("common.load_failed", comment: ""), actionTitle: NSLocalizedString("common.retry", comment: ""), action: { [weak self] in
                     self?.reloadTimeline()
                 }, iconName: "icon_wifi_off", kind: .error)
                 newBackgroundKind = "failed"

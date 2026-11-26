@@ -3570,7 +3570,7 @@ class BearyFeedErrorCell: UITableViewCell {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
         // W3：与详情/编辑器同句式——整句“加载失败，重试”（按钮仍为“重试”动作）。
-        lb.text = "加载失败，重试"
+        lb.text = NSLocalizedString("common.load_failed", comment: "")
         lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
@@ -3628,7 +3628,7 @@ class BearyFeedErrorCell: UITableViewCell {
 
     /// 缺口/失败文案：nil 复位默认“加载失败，重试”；复用时由 errorCell 重设。
     func configure(message: String?) {
-        messageLabel.text = message ?? "加载失败，重试"
+        messageLabel.text = message ?? NSLocalizedString("common.load_failed", comment: "")
     }
 
     override func prepareForReuse() {
@@ -3636,7 +3636,7 @@ class BearyFeedErrorCell: UITableViewCell {
         // 80 包 A4：错峰改 cell.alpha/transform，对称复位。
         alpha = 1
         transform = .identity
-        messageLabel.text = "加载失败，重试"
+        messageLabel.text = NSLocalizedString("common.load_failed", comment: "")
         onRetry = nil
     }
 

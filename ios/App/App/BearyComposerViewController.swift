@@ -2865,7 +2865,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelEmptyLabel.text = "还没有可引用的日记"
         quotePanelEmptyLabel.isHidden = true
         quotePanelRetryButton.translatesAutoresizingMaskIntoConstraints = false
-        quotePanelRetryButton.setTitle("加载失败，重试", for: .normal)
+        quotePanelRetryButton.setTitle(NSLocalizedString("common.load_failed", comment: ""), for: .normal)
         quotePanelRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         // 按钮普查：裸 15pt 改 scaledFont，跟随系统字号。
         quotePanelRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))

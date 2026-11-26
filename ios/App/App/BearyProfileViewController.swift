@@ -4846,7 +4846,7 @@ class BearyProfileViewController: UIViewController {
         } else if modulesCorpus.isEmpty {
             // r17-C7：有旧结果且刷新失败时标“显示的是上次的数据”，不清空；
             // 无快照时才显加载失败。
-            modulesRetryLabel.text = showingCachedStats ? "显示的是上次的数据" : "加载失败，请重试"
+            modulesRetryLabel.text = showingCachedStats ? NSLocalizedString("common.showing_cached_data", comment: "") : NSLocalizedString("common.load_failed", comment: "")
             modulesRetryButton.isEnabled = true
         } else {
             modulesRetryLabel.text = "只加载了部分日记，请重试"
