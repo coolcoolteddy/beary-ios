@@ -148,21 +148,21 @@ private final class BlindBoxPoolRowView: UIView {
             pillLabel.text = "私密"
             pillLabel.textColor = BearyColors.blue
             pillLabel.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.12)
-            subLabel.text = (dateText.isEmpty ? "" : dateText + " · ") + "私密篇不可入池"
+            subLabel.text = (dateText.isEmpty ? "" : dateText + " · ") + NSLocalizedString("blindbox.private_not_poolable", comment: "")
             alpha = 0.55
             tapButton.isEnabled = false
         case .friendsOnly:
             pillLabel.text = "仅好友"
             pillLabel.textColor = BearyColors.ink
             pillLabel.backgroundColor = BearyColors.surface2
-            subLabel.text = (dateText.isEmpty ? "" : dateText + " · ") + "仅好友日记不可入池"
+            subLabel.text = (dateText.isEmpty ? "" : dateText + " · ") + NSLocalizedString("blindbox.friends_only_not_poolable", comment: "")
             alpha = 0.55
             tapButton.isEnabled = false
         case .tooNew:
             pillLabel.text = "公开"
             pillLabel.textColor = BearyColors.deepOrangeText
             pillLabel.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.12)
-            subLabel.text = (dateText.isEmpty ? "" : dateText + " · ") + "今日公开，明日可入池"
+            subLabel.text = (dateText.isEmpty ? "" : dateText + " · ") + NSLocalizedString("blindbox.too_new_poolable_tomorrow", comment: "")
             alpha = 0.55
             tapButton.isEnabled = false
         }
@@ -199,7 +199,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private let receivedPillWrap = UIView()
     private let introLabel = UILabel()
     private let poolStack = UIStackView()
-    private let poolButton = BearyButton.make(style: .primaryPill(.ink), title: "放进池子")
+    private let poolButton = BearyButton.make(style: .primaryPill(.ink), title: NSLocalizedString("blindbox.put_in_button", comment: ""))
     /// 选篇分页“加载更多 / 重试”入口（第八轮审计 02，地图 #944 同款口径）：
     /// 触顶时标题“加载更多”、分页中途失败时标题“重试”，平时隐藏。
     private let poolLoadMoreButton = BearyButton.make(style: .secondaryOutline(.compact), title: "加载更多")
@@ -458,7 +458,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         introLabel.adjustsFontForContentSizeCategory = true
         introLabel.textColor = BearyColors.gray
         introLabel.numberOfLines = 0
-        introLabel.text = "选一篇旧公开日记放进池子，开盒换一篇别人的旧日记，每天最多换一次。"
+        introLabel.text = NSLocalizedString("blindbox.intro", comment: "")
 
         poolStack.axis = .vertical
         poolStack.spacing = 10
@@ -933,7 +933,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             pooledEntryId = pooled
             // B1：已确认入池就立即显示开盒区，不等候选列表拉完；候选列表
             // 随后在后台补（loadPoolEntries 先读本人日记存档，缺数据再补页）。
-            openHintLabel.text = "已放进池子，可以开盒了。"
+            openHintLabel.text = NSLocalizedString("blindbox.pooled_hint", comment: "")
             setStep(.pool)
             loadPoolEntries()
             return
@@ -981,8 +981,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 self.poolEntries = self.poolCollected
                 self.renderPoolRows()
                 self.openHintLabel.text = self.pooledEntryId == nil
-                    ? "选一篇旧公开日记，放进池子后开盒。"
-                    : "已放进池子，可以开盒了。"
+                    ? NSLocalizedString("blindbox.pick_then_open", comment: "")
+                    : NSLocalizedString("blindbox.pooled_hint", comment: "")
                 self.setStep(.pool)
                 // 存档已含全量（hasMore 为假）时不再发网络请求。
                 needsNetwork = snap.hasMore
@@ -1045,11 +1045,11 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private func updatePoolHint() {
         var text: String
         if pooledEntryId == nil {
-            text = "选一篇旧公开日记，放进池子后开盒。"
+            text = NSLocalizedString("blindbox.pick_then_open", comment: "")
         } else if poolInterrupted {
             text = "已放进池子，可以开盒了。开盒后今日计数变为 1/1。"
         } else {
-            text = "已放进池子，可以开盒了。"
+            text = NSLocalizedString("blindbox.pooled_hint", comment: "")
         }
         if poolCapped {
             text += " · 篇数较多，仅展示最近拉取的 \(poolCollected.count) 篇"
@@ -1138,7 +1138,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 poolStack.removeArrangedSubview(sub)
                 sub.removeFromSuperview()
             }
-            let empty = label("还没有可入池的日记：先写一篇并公开它（当日公开的需等明日）。", size: 14, weight: .regular, color: BearyColors.gray)
+            let empty = label(NSLocalizedString("blindbox.empty_poolable", comment: ""), size: 14, weight: .regular, color: BearyColors.gray)
             empty.textAlignment = .center
             poolStack.addArrangedSubview(empty)
             return
@@ -1397,7 +1397,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             selectedEntryId = nil
             renderPoolRows()
             setStep(.pool)
-            BearyToast.show(in: self.view, message: eligibility.disabledReason ?? "该日记现在不可入池")
+            BearyToast.show(in: self.view, message: eligibility.disabledReason ?? NSLocalizedString("blindbox.entry_now_not_poolable", comment: ""))
             return
         }
         poolBusy = true
@@ -1419,7 +1419,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 switch result {
                 case .success(let resp):
                     self.pooledEntryId = resp.pooledEntryId ?? entryId
-                    self.openHintLabel.text = "已放进池子，可以开盒了。"
+                    self.openHintLabel.text = NSLocalizedString("blindbox.pooled_hint", comment: "")
                     // 第十轮审计文案 f：状态行已说明成功，不再弹同文 Toast；
                     // Toast 文案本身是 §12 定版，一字不动。
                     self.setStep(.pool)
@@ -1435,12 +1435,12 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         // 为准同步 pooledEntryId 与开盒态（多一次往返，拍板接受）。
                         // today 回包经 routeFromToday 路由：已入池→池步骤且开盒区
                         // 可见；已换过→占位；已撤回→对应态。
-                        BearyToast.show(in: self.view, message: "已在其他设备放进池子，正在同步")
+                        BearyToast.show(in: self.view, message: NSLocalizedString("blindbox.pooled_on_other_device", comment: ""))
                         self.loadInitial()
                         return
                     }
                     self.playDenyShake(on: self.poolButton)
-                    BearyToast.show(in: self.view, message: self.actionErrorText(error, fallback: "放进池子失败，请重试"))
+                    BearyToast.show(in: self.view, message: self.actionErrorText(error, fallback: NSLocalizedString("blindbox.pool_failed_retry", comment: "")))
                     self.setStep(.pool)
                 }
             }
@@ -1449,7 +1449,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     @objc private func openTapped() {
         guard openBusy == false, pooledEntryId != nil else {
-            BearyToast.show(in: view, message: "先选一篇旧公开日记放进池子")
+            BearyToast.show(in: view, message: NSLocalizedString("blindbox.pick_first", comment: ""))
             return
         }
         openBusy = true
