@@ -840,7 +840,7 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
         guard sender.tag >= 0, sender.tag < currentRecords.count else { return }
         let entryId = currentRecords[sender.tag].entryId
         let removed = BearyOfflineSaveManager.shared.remove(entryId: entryId)
-        BearyToast.show(in: view, message: removed ? "已移除离线保存" : "移除失败，请重试")
+        if !removed { BearyToast.show(in: view, message: NSLocalizedString("offline_save.remove_failed", comment: "")) }
         render()
     }
 
