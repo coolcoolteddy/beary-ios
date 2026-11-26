@@ -644,7 +644,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
             }, isSelected: precision == current)
         }
         actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
-        BearyConfirmSheet.show(from: self, title: "定位地址精度", message: "国外按当地同级对应；精度由后端截断存储与展示，不只是本机显示", actions: actions)
+        BearyConfirmSheet.show(from: self, title: NSLocalizedString("settings.location_precision.title", comment: ""), message: NSLocalizedString("settings.location_precision_overseas_note", comment: ""), actions: actions)
     }
 
     /// 进页时从服务端同步一次精度（跨设备改过时以服务端为准；失败不报错、不覆盖本地）。
