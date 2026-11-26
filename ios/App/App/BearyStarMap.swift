@@ -150,6 +150,18 @@ enum BearyStarMap {
         return true
     }
 
+    /// 引用有效公开判定：与 Entry 版同公式（isPublic 且限时未过期）。Quote 无
+    /// visibility 字段，isPublic 即服务端算好的有效公开态；nowMs 为 nil 时取
+    /// 真实时间，与 Quote 原实现逐字一致（原实现直接读 Date()）。
+    static func isEffectivelyPublic(quote: Quote, nowMs: Int? = nil) -> Bool {
+        guard quote.isPublic == true else { return false }
+        if let until = quote.ephemeralUntil {
+            let now = nowMs ?? Int(Date().timeIntervalSince1970 * 1000)
+            if until <= now { return false }
+        }
+        return true
+    }
+
     /// 单篇是否可成星。排除项（任一命中即不出星、不出线）：
     /// - id 缺失/空白：星位哈希与详情锚点都无从确定；
     /// - 私密占位（placeholder）：服务端只下发占位壳，无内容可画；
