@@ -3541,67 +3541,54 @@ final class BearyChromeViewController: UIViewController {
         // B6：退出只发一次：成功才清本地态，
         // 失败 toast“退出失败，请重试”并保留会话（401 由 BearyAPI.logout 侧映射为成功，此处不另判）。
         vc.onLogout = { [weak self] in
-            // 第七轮审计 03：登出回包账号绑定——发起时捕获账号 ID＋authEpoch，
-            // 回包先校验；已切号时只定向清发起账号，不碰当前号、不清 cookie、
-            // 不做淡出动画（登录态未翻转，无需过渡）。
-            let accountId = SessionManager.shared.currentUser?.id
-            let epoch = BearyAPI.shared.authEpoch
-            BearyAPI.shared.logout { [weak self] result in
-                DispatchQueue.main.async {
+            // 登出回包走共享骨架（SessionManager.performLogoutResponse，第十九遍扫查第 2 条）：
+            // 已切号只定向清发起账号，不碰当前号；清态动作（清 cookie＋本地退出）由
+            // 共享骨架递给成功回调，容器放进淡出动画里执行；失败 toast。
+            SessionManager.performLogoutResponse(
+                onSuccess: { [weak self] clearState in
                     guard let self = self else { return }
-                    switch result {
-                    case .success:
-                        guard SessionManager.shared.isCurrentAuthSession(accountId: accountId, epoch: epoch) else {
-                            if let accountId = accountId {
-                                SessionManager.shared.purgeLocalState(forAccountId: accountId)
+                    // A6-2：退出登录的界面过渡（淡出/淡入两段各 0.14s、合计 0.28s，
+                    // 已落在视觉清单第 8 项 0.24–0.28s 档内，故两段时长不动；
+                    // 减动效直换）：当前页内容先淡出，态翻转后的原地刷新落在淡出中，
+                    // 再淡回。登出逻辑本身不动：API 成功→清 cookie→本地退出→失败 toast 原样。
+                    let clearLogoutState = clearState
+                    if UIAccessibility.isReduceMotionEnabled || self.currentPage == .me {
+                        // 减动效直换；.me 页由 onUserChanged→showPage 的 0.26s 交叉淡入承接，不双驱动。
+                        clearLogoutState()
+                    } else {
+                        let logoutPageView: UIView? = {
+                            guard let page = self.currentPage else { return nil }
+                            switch page {
+                            case .home: return self.feedVC?.view
+                            case .timeline: return self.timelineVC?.view
+                            case .notif: return self.notifVC?.view
+                            case .me: return self.profileVC?.view
+                            case .search: return self.searchVC?.view
+                            case .user: return self.userVC?.view
+                            default: return nil
                             }
-                            return
-                        }
-                        // A6-2：退出登录的界面过渡（淡出/淡入两段各 0.14s、合计 0.28s，
-                        // 已落在视觉清单第 8 项 0.24–0.28s 档内，故两段时长不动；
-                        // 减动效直换）：当前页内容先淡出，态翻转后的原地刷新落在淡出中，
-                        // 再淡回。登出逻辑本身不动：API 成功→清 cookie→本地退出→失败 toast 原样。
-                        let clearLogoutState = {
-                            SessionManager.shared.clearLocalCookies()
-                            SessionManager.shared.signOutLocally()
-                        }
-                        if UIAccessibility.isReduceMotionEnabled || self.currentPage == .me {
-                            // 减动效直换；.me 页由 onUserChanged→showPage 的 0.26s 交叉淡入承接，不双驱动。
-                            clearLogoutState()
-                        } else {
-                            let logoutPageView: UIView? = {
-                                guard let page = self.currentPage else { return nil }
-                                switch page {
-                                case .home: return self.feedVC?.view
-                                case .timeline: return self.timelineVC?.view
-                                case .notif: return self.notifVC?.view
-                                case .me: return self.profileVC?.view
-                                case .search: return self.searchVC?.view
-                                case .user: return self.userVC?.view
-                                default: return nil
-                                }
-                            }()
-                            if let pageView = logoutPageView {
-                                UIView.animate(withDuration: 0.14, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
-                                    pageView.alpha = 0
-                                    clearLogoutState()
-                                }) { _ in
-                                    UIView.animate(withDuration: 0.14, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
-                                        pageView.alpha = 1
-                                    })
-                                }
-                            } else {
+                        }()
+                        if let pageView = logoutPageView {
+                            UIView.animate(withDuration: 0.14, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                                pageView.alpha = 0
                                 clearLogoutState()
+                            }) { _ in
+                                UIView.animate(withDuration: 0.14, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                                    pageView.alpha = 1
+                                })
                             }
+                        } else {
+                            clearLogoutState()
                         }
-                        // 退出登录后回首启登录页（可再先逛逛）：下一 runloop 弹，
-                        // 让 onUserChanged 的回首页先落位。
-                        DispatchQueue.main.async { [weak self] in self?.presentLogin() }
-                    case .failure:
-                        self.showToast(message: "退出失败，请重试")
                     }
+                    // 退出登录后回首启登录页（可再先逛逛）：下一 runloop 弹，
+                    // 让 onUserChanged 的回首页先落位。
+                    DispatchQueue.main.async { [weak self] in self?.presentLogin() }
+                },
+                onFailure: { [weak self] in
+                    self?.showToast(message: "退出失败，请重试")
                 }
-            }
+            )
         }
         vc.onEditProfile = { [weak self] in self?.presentEditProfile() }
         // 好友第一期：个人页模块区“好友”行已作废（好友列表改走底栏第四段），

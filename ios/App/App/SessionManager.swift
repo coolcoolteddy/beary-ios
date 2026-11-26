@@ -440,6 +440,45 @@ final class SessionManager {
         BlindBoxState.shared.clearAccount(accountId: id)
         BearyPlazaFeaturedPicker.clearAccount(accountId: id)
     }
+    /// 登出回包共享骨架（第十九遍扫查第 2 条；设置页 logoutButtonTapped 与容器
+    /// vc.onLogout 共用）：发起时捕获账号 ID＋authEpoch → BearyAPI.logout →
+    /// 回主线程 → isCurrentAuthSession 校验；已切号只定向清发起账号
+    /// （purgeLocalState，不碰当前号、不清 cookie、不做退出后 UI）；否则把清态
+    /// 动作（清 cookie＋本地退出）递给成功回调，由调用方决定何时执行——设置页
+    /// 立即执行，容器放进淡出动画里执行；失败跑调用方的失败动作（两处都是
+    /// toast「退出失败，请重试」）。服务端登出本身的分路（当前号 logout vs
+    /// 非当前号 logoutWithToken）是刻意分叉，不动；switchAccount／removeAccount
+    /// 各走自己的单一入口，不走本骨架。
+    /// 注意：调用方页面若已释放，成功／失败回调不跑，但清态（或定向清）仍执行——
+    /// 服务端会话已登出，本地态不应因页面消失而残留（原两处页面释放即整段丢弃）。
+    static func performLogoutResponse(
+        onSuccess: @escaping (_ clearState: @escaping () -> Void) -> Void,
+        onFailure: @escaping () -> Void
+    ) {
+        let accountId = SessionManager.shared.currentUser?.id
+        let epoch = BearyAPI.shared.authEpoch
+        BearyAPI.shared.logout { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    guard SessionManager.shared.isCurrentAuthSession(accountId: accountId, epoch: epoch) else {
+                        if let accountId = accountId {
+                            SessionManager.shared.purgeLocalState(forAccountId: accountId)
+                        }
+                        return
+                    }
+                    let clearState = {
+                        SessionManager.shared.clearLocalCookies()
+                        SessionManager.shared.signOutLocally()
+                    }
+                    onSuccess(clearState)
+                case .failure:
+                    onFailure()
+                }
+            }
+        }
+    }
+
 
     /// 账号隔离 4 号：显式退出清态时清掉该账号的图片缓存（内存全清 +
     /// 该账号磁盘目录删除）。切换账号（不退出）不走这里，旧账号磁盘保留、

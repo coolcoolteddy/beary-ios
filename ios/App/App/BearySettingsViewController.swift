@@ -2026,34 +2026,23 @@ final class BearySettingsViewController: UIViewController {
     /// F8：退出登录（网页 account.html logoutBtn 口径：直接 POST、无二次确认；
     /// App 现有退出逻辑 = BearyAPI.logout + 清本地 cookie + 本地退出）。
     @objc private func logoutButtonTapped() {
-        // 第七轮审计 03：登出回包账号绑定——发起时捕获账号 ID＋authEpoch，
-        // 回包先校验；已切号时只定向清发起账号，不碰当前号、不清 cookie、
-        // 不关页/弹登录（本次退出对当前会话无事可做）。
-        let accountId = SessionManager.shared.currentUser?.id
-        let epoch = BearyAPI.shared.authEpoch
-        BearyAPI.shared.logout { [weak self] result in
-            DispatchQueue.main.async {
+        // 登出回包走共享骨架（SessionManager.performLogoutResponse，第十九遍扫查第 2 条）：
+        // 已切号只定向清发起账号；否则清 cookie＋本地退出；失败 toast。
+        // 成功后 UI 动作只留自己的：有 onLoggedOut 调它，否则 onClose。
+        SessionManager.performLogoutResponse(
+            onSuccess: { [weak self] clearState in
                 guard let self = self else { return }
-                switch result {
-                case .success:
-                    guard SessionManager.shared.isCurrentAuthSession(accountId: accountId, epoch: epoch) else {
-                        if let accountId = accountId {
-                            SessionManager.shared.purgeLocalState(forAccountId: accountId)
-                        }
-                        return
-                    }
-                    SessionManager.shared.clearLocalCookies()
-                    SessionManager.shared.signOutLocally()
-                    if let handler = self.onLoggedOut {
-                        handler()
-                    } else {
-                        self.onClose?()
-                    }
-                case .failure:
-                    self.showToast("退出失败，请重试")
+                clearState()
+                if let handler = self.onLoggedOut {
+                    handler()
+                } else {
+                    self.onClose?()
                 }
+            },
+            onFailure: { [weak self] in
+                self?.showToast("退出失败，请重试")
             }
-        }
+        )
     }
 
     // MARK: - 加载
