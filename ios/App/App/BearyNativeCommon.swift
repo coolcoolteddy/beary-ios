@@ -4541,6 +4541,44 @@ enum BearyFlowBusy {
 /// 举报流程（卡片菜单 / 他人主页“更多”共用）：理由单选 → 提交 → 服务端确认后
 /// 才消失（失败只 toast、不消失；重复举报同样按已举报处理并消失）。
 enum BearyReportFlow {
+    /// 理由 sheet＋提交＋toast 的公共核：按日记举报与按用户举报共用。
+    /// submit 由调用方传入具体的上报调用（reportEntry／reportUser）；
+    /// onSuccess 在身份校验通过后调用，留给日记侧记账＋广播（duplicate 态亦然）。
+    private static func presentReasonSheet(
+        from vc: UIViewController,
+        title: String,
+        message: String?,
+        submit: @escaping (String, @escaping (Result<ReportResponse, APIError>) -> Void) -> Void,
+        onSuccess: ((Bool) -> Void)? = nil
+    ) {
+        var actions: [BearyConfirmSheet.Action] = BearyReportReason.all.map { reason in
+            BearyConfirmSheet.Action(title: reason, style: .default) {
+                let busy = BearyFlowBusy.show(in: vc.view)
+                // 第六轮审计 02：发起时拍身份快照，成功回包先校验——切号/退出/
+                // 重登夹在请求与回包之间时，旧回包不得写进新账号的举报缓存、
+                // 不得发广播、不得弹提示（网络层成功回包无条件透传，守门在调用点）。
+                let identity = BearyIdentityGuard.capture()
+                submit(reason) { result in
+                    DispatchQueue.main.async {
+                        BearyFlowBusy.hide(busy)
+                        switch result {
+                        case .success(let resp):
+                            guard BearyIdentityGuard.stillValid(identity) else { return }
+                            // 补缺 P3-39：重复举报（服务端 duplicate 成功态）按已举报处理，
+                            // 文案不谎称“谢谢反馈”，改“已举报”。
+                            let duplicate = resp.duplicate == true
+                            onSuccess?(duplicate)
+                            BearyToast.show(in: vc.view, message: duplicate ? "已举报" : "已举报，谢谢反馈")
+                        case .failure:
+                            BearyToast.show(in: vc.view, message: "举报失败，请重试")
+                        }
+                    }
+                }
+            }
+        }
+        BearyConfirmSheet.show(from: vc, title: title, message: message, actions: actions)
+    }
+
     static func present(from vc: UIViewController, entryId: String, entryLabel: String? = nil) {
         guard !entryId.isEmpty else { return }
         // 审计 2026-11-02 弹窗组：present 前统一守卫（无在途弹窗＋发起页在窗口内），
@@ -4554,32 +4592,18 @@ enum BearyReportFlow {
             return
         }
         let title = entryLabel == nil ? "举报这篇日记？" : "举报\(entryLabel!)？"
-        var actions: [BearyConfirmSheet.Action] = BearyReportReason.all.map { reason in
-            BearyConfirmSheet.Action(title: reason, style: .default) {
-                let busy = BearyFlowBusy.show(in: vc.view)
-                // 第六轮审计 02：发起时拍身份快照，成功回包先校验——切号/退出/
-                // 重登夹在请求与回包之间时，旧回包不得写进新账号的举报缓存、
-                // 不得发广播、不得弹提示（网络层成功回包无条件透传，守门在调用点）。
-                let identity = BearyIdentityGuard.capture()
-                BearyAPI.shared.reportEntry(entryId: entryId, reason: reason) { result in
-                    DispatchQueue.main.async {
-                        BearyFlowBusy.hide(busy)
-                        switch result {
-                        case .success(let resp):
-                            guard BearyIdentityGuard.stillValid(identity) else { return }
-                            BearyReportedStore.markReported(entryId: entryId)
-                            NotificationCenter.default.post(name: .bearyDidReportEntry, object: entryId)
-                            // 补缺 P3-39：重复举报（服务端 duplicate 成功态）按已举报处理并置灰下次菜单，
-                            // 文案不谎称“谢谢反馈”，改“已举报”。
-                            BearyToast.show(in: vc.view, message: resp.duplicate == true ? "已举报" : "已举报，谢谢反馈")
-                        case .failure:
-                            BearyToast.show(in: vc.view, message: "举报失败，请重试")
-                        }
-                    }
-                }
+        presentReasonSheet(
+            from: vc,
+            title: title,
+            message: "举报后这篇日记将从你的信息流消失，不可撤销。",
+            submit: { reason, completion in
+                BearyAPI.shared.reportEntry(entryId: entryId, reason: reason, completion: completion)
+            },
+            onSuccess: { _ in
+                BearyReportedStore.markReported(entryId: entryId)
+                NotificationCenter.default.post(name: .bearyDidReportEntry, object: entryId)
             }
-        }
-        BearyConfirmSheet.show(from: vc, title: title, message: "举报后这篇日记将从你的信息流消失，不可撤销。", actions: actions)
+        )
     }
 
     /// 按用户举报（聊天页入口；对方无公开日记时也能举报）：与按日记举报同理由、
@@ -4588,26 +4612,14 @@ enum BearyReportFlow {
         guard BearyPresentGuard.canPresent(from: vc) else { return }
         let name = (userName ?? "").isEmpty ? "这位用户" : userName!
         let title = "举报\(name)？"
-        var actions: [BearyConfirmSheet.Action] = BearyReportReason.all.map { reason in
-            BearyConfirmSheet.Action(title: reason, style: .default) {
-                let busy = BearyFlowBusy.show(in: vc.view)
-                // 第六轮审计 02：同按日记举报，发起时拍身份快照，成功回包先校验。
-                let identity = BearyIdentityGuard.capture()
-                BearyAPI.shared.reportUser(userId: userId, reason: reason) { result in
-                    DispatchQueue.main.async {
-                        BearyFlowBusy.hide(busy)
-                        switch result {
-                        case .success(let resp):
-                            guard BearyIdentityGuard.stillValid(identity) else { return }
-                            BearyToast.show(in: vc.view, message: resp.duplicate == true ? "已举报" : "已举报，谢谢反馈")
-                        case .failure:
-                            BearyToast.show(in: vc.view, message: "举报失败，请重试")
-                        }
-                    }
-                }
+        presentReasonSheet(
+            from: vc,
+            title: title,
+            message: nil,
+            submit: { reason, completion in
+                BearyAPI.shared.reportUser(userId: userId, reason: reason, completion: completion)
             }
-        }
-        BearyConfirmSheet.show(from: vc, title: title, message: nil, actions: actions)
+        )
     }
 }
 
