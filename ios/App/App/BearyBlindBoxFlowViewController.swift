@@ -509,7 +509,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         buildPlaceholderSections()
 
         loginView.translatesAutoresizingMaskIntoConstraints = false
-        let loginLabel = label("登录后可参与盲盒交换", size: 14, weight: .regular, color: BearyColors.gray)
+        let loginLabel = label(NSLocalizedString("blindbox.exchange.login_hint", comment: ""), size: 14, weight: .regular, color: BearyColors.gray)
         loginLabel.textAlignment = .center
         loginButton.translatesAutoresizingMaskIntoConstraints = false
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
