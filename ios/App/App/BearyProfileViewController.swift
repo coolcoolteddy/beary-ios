@@ -4201,7 +4201,7 @@ class BearyProfileViewController: UIViewController {
             if coverImageURL != coverURLValue || coverImageView.image == nil {
                 coverImageURL = coverURLValue
                 coverLoadFailed = false
-                coverImageView.bearySetImage(url: coverURLValue, placeholder: nil, downsampleToWidth: (headerWidthValue > 0 ? headerWidthValue : UIScreen.main.bounds.width) * UIScreen.main.scale, onFailure: { [weak self] _ in
+                coverImageView.bearySetImageWithBlurUp(url: coverURLValue, downsampleToWidth: (headerWidthValue > 0 ? headerWidthValue : UIScreen.main.bounds.width) * UIScreen.main.scale, onFailure: { [weak self] _ in
                     self?.handleCoverLoadFailed()
                 })
             }
@@ -10285,7 +10285,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
     private func reloadCoverImage() {
         guard let url = coverImageURL else { return }
         coverLoadFailed = false
-        coverImageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: (headerWidthValue > 0 ? headerWidthValue : UIScreen.main.bounds.width) * UIScreen.main.scale, onFailure: { [weak self] _ in
+        coverImageView.bearySetImageWithBlurUp(url: url, downsampleToWidth: (headerWidthValue > 0 ? headerWidthValue : UIScreen.main.bounds.width) * UIScreen.main.scale, onFailure: { [weak self] _ in
             self?.handleCoverLoadFailed()
         })
     }

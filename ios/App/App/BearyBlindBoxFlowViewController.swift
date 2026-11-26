@@ -1373,7 +1373,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 retry.widthAnchor.constraint(equalToConstant: 28),
                 retry.heightAnchor.constraint(equalToConstant: 28),
             ])
-            bearyFeedLoadImage(into: imageView, url: BearyImageURLs.imageURL(key: key, thumb: true), retryButton: retry, downsampleToWidth: nil)
+            bearyFeedLoadImage(into: imageView, url: BearyImageURLs.imageURL(key: key, thumb: true), retryButton: retry, downsampleToWidth: nil, blurUp: true)
         }
         imagesStack.isHidden = keys.isEmpty
     }

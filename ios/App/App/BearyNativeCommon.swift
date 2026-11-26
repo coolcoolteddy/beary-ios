@@ -2023,8 +2023,9 @@ extension UIImageView {
             bearyImageRequestFinished()
             return
         }
-        // 占位图未到之前挂转圈（占位图一到即摘，与 bearySetImage 同口径）。
-        bearyAttachWebRingSpinner()
+        // 不挂转圈：小图未到之前只留固定尺寸空框，小图一到即为模糊占位
+        //（2026-11-22：转圈与模糊占位同时出现，去掉转圈；头像仍走
+        // bearySetImage 的圈，不动）。
         let startedAt = Date()
         bearyImageRequestStarted()
         let tinyTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 32) { [weak self] result in
