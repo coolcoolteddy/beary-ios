@@ -2749,7 +2749,8 @@ class BearyDiaryCardCell: UITableViewCell {
         // Feed 的 configure(with:) 不走本分支，行为不动。
         let guestExpanded = SessionManager.shared.isGuestMode && isExpanded
         actionStack.isHidden = guestExpanded
-        emoteFlowView.isHidden = guestExpanded
+        // 自己的日记不显示回应行（renderEmotes 已藏，此处与游客门并列，防本行把它放回）。
+        emoteFlowView.isHidden = guestExpanded || (currentEntry.map(isEntryAuthor) ?? false)
         guestLoginPromptButton.isHidden = !guestExpanded
         refreshEphemeralState(entry: entry)
         updateDiaryStackSpacing()
@@ -4248,6 +4249,11 @@ class BearyDiaryCardCell: UITableViewCell {
     /// animatedLayout：用户动作（先行贴/摘、回滚）时 + 钮与已存 chip 随新布局平滑移位
     /// （flow 帧动画，只动位置，不重播已有 chip）；服务端对齐与初始渲染走瞬时。
     private func renderEmotes(animatedLayout: Bool = false) {
+        // 自己的日记不显示回应行（所有可见性、所有 cardMode）：回应只能贴给别人的日记。
+        if let entry = currentEntry, isEntryAuthor(entry) {
+            emoteFlowView.isHidden = true
+            return
+        }
         let list = (currentEntry?.emotes ?? []).sorted(by: { ($0.count ?? 0) > ($1.count ?? 0) })
         let newSignature = BearyEmoteOrder.signature(list.filter { ($0.emote ?? "").isEmpty == false })
         if cellEmoteSignatureValid && newSignature == cellEmoteSignature {

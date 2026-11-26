@@ -3215,6 +3215,9 @@ final class BearyDetailViewController: UIViewController {
             emoteFlowView.isHidden = true
             return
         }
+        // 作者本人只读：回应只能贴给别人的日记，但作者可以看到谁贴了哪个表情。
+        // 卡片仍不显示回应行；详情页显示各表情＋数量，点 chip 看贴出人，没有 + 钮。
+        let readOnlyEmotes = isAuthor
         // 批 B：只显示熊脸（小熊回应墙同款 BearyEmoteKeys.bearFaceKeys 过滤，
         // 仅显示层过滤、服务端模型不动）；空 key 不建 chip；同 key 只留首个
         // （模型侧 merged／emoteDelta 已按 key 去重，防重复 key 建出双 chip）。
@@ -3225,6 +3228,11 @@ final class BearyDetailViewController: UIViewController {
                   BearyEmoteKeys.bearFaceKeys.contains(key) else { continue }
             seenKeys.insert(key)
             list.append(item)
+        }
+        // 只读模式没有 + 钮兜底：一个回应都没有时整行藏起，不留空条。
+        if readOnlyEmotes && list.isEmpty {
+            emoteFlowView.isHidden = true
+            return
         }
         let newSignature = BearyEmoteOrder.signature(list)
         if newSignature == renderedEmoteSignature {
@@ -3273,14 +3281,15 @@ final class BearyDetailViewController: UIViewController {
                         }
                     }
                 }
-                chip.render(key: key, count: item.count ?? 0, mine: item.mine ?? false)
+                chip.render(key: key, count: item.count ?? 0, mine: readOnlyEmotes ? false : (item.mine ?? false))
                 chip.overlayButton.tag = index
                 placed.append(chip)
             } else {
                 let chip = BearyEmoteChipView()
-                chip.render(key: key, count: item.count ?? 0, mine: item.mine ?? false)
+                chip.render(key: key, count: item.count ?? 0, mine: readOnlyEmotes ? false : (item.mine ?? false))
                 chip.overlayButton.tag = index
-                chip.overlayButton.addTarget(self, action: #selector(emoteChipTapped(_:)), for: .touchUpInside)
+                // 只读模式点 chip 看贴出人，不走贴／撤回应；互动模式沿用点按贴／撤。
+                chip.overlayButton.addTarget(self, action: readOnlyEmotes ? #selector(emotePostersTapped(_:)) : #selector(emoteChipTapped(_:)), for: .touchUpInside)
                 chip.overlayButton.bearyAddPressFeedback()
                 if isFirstRender || reduceMotion {
                     chip.transform = .identity
@@ -3333,30 +3342,33 @@ final class BearyDetailViewController: UIViewController {
         for chip in placed {
             emoteFlowView.bringSubviewToFront(chip)
         }
-        // 行末 + 钮：首页 feedAddButton 同款（34 虚线圆、16 + 号、灰色），
-        // 复用一个实例；必须在 chip 置顶后再置顶一次——flow 按 subviews 顺序
-        // 换行布局，chip 置顶会把先挂的 + 钮挤到行首，不补这一步 + 钮就跑到
-        // chip 前面去了（本批实测逻辑点，见 PR 说明）。
-        let addButton: BearyDiaryCardDashedAddButton
-        if let reused = emoteAddButton {
-            addButton = reused
-        } else {
-            let made = BearyDiaryCardDashedAddButton(frame: .zero)
-            made.translatesAutoresizingMaskIntoConstraints = false
-            made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
-            made.tintColor = BearyColors.gray
-            made.accessibilityLabel = "贴一只小熊"
-            made.widthAnchor.constraint(equalToConstant: 34).isActive = true
-            made.heightAnchor.constraint(equalToConstant: 34).isActive = true
-            made.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
-            made.bearyAddPressFeedback()
-            emoteAddButton = made
-            addButton = made
+        // 行末 + 钮：只读模式没有 + 钮（作者不能贴回应），整块跳过。
+        if !readOnlyEmotes {
+            // 行末 + 钮：首页 feedAddButton 同款（34 虚线圆、16 + 号、灰色），
+            // 复用一个实例；必须在 chip 置顶后再置顶一次——flow 按 subviews 顺序
+            // 换行布局，chip 置顶会把先挂的 + 钮挤到行首，不补这一步 + 钮就跑到
+            // chip 前面去了（本批实测逻辑点，见 PR 说明）。
+            let addButton: BearyDiaryCardDashedAddButton
+            if let reused = emoteAddButton {
+                addButton = reused
+            } else {
+                let made = BearyDiaryCardDashedAddButton(frame: .zero)
+                made.translatesAutoresizingMaskIntoConstraints = false
+                made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
+                made.tintColor = BearyColors.gray
+                made.accessibilityLabel = NSLocalizedString("emote_picker.sticker_title", comment: "")
+                made.widthAnchor.constraint(equalToConstant: 34).isActive = true
+                made.heightAnchor.constraint(equalToConstant: 34).isActive = true
+                made.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
+                made.bearyAddPressFeedback()
+                emoteAddButton = made
+                addButton = made
+            }
+            if addButton.superview == nil {
+                emoteFlowView.addSubview(addButton)
+            }
+            emoteFlowView.bringSubviewToFront(addButton)
         }
-        if addButton.superview == nil {
-            emoteFlowView.addSubview(addButton)
-        }
-        emoteFlowView.bringSubviewToFront(addButton)
         // 重排位移：新顺序已定（chip 与 + 钮均已置顶），先把 flow 按新顺序
         // 落位（行高变化先结算，防动画中途布局重算把 chip 帧位重置），再把
         // 位移的在场 chip／+ 钮用 transform 平移回旧位、0.26s 滑到新位。
@@ -3403,6 +3415,7 @@ final class BearyDetailViewController: UIViewController {
         // 移出时若该 key 已复活（chipKeys 又含它）则不动。减动效直删。
         // 批 B：flow 非游客恒显（含 + 钮），chip 全空时也不藏行（旧实现
         // list 为空即藏行，+ 钮入口随之消失；现由 + 钮兜底回应入口）。
+        // 例外：只读模式没有 + 钮，list 为空时已在前面提前藏行返回，不到这里。
         let departing = allChips.filter { chip in
             !placed.contains(where: { $0 === chip })
         }
@@ -3467,6 +3480,8 @@ final class BearyDetailViewController: UIViewController {
     /// 失败回滚＋拒绝动效；未登录走登录提示（先行态复原），非公开弹“公开后才能回应”。
     /// 点赞串行同款：写请求一次只发一个，在途点按只记最新意图，回包后按最新意图补发。
     private func chooseEmote(key: String) {
+        // 只读模式（作者本人）：点按绝不能走到贴回应的路径。
+        if isAuthor { return }
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         if !canPostEmote {
             BearyToast.show(in: view, message: "公开后才能回应")
@@ -4056,6 +4071,8 @@ final class BearyDetailViewController: UIViewController {
     /// 批 B：回应入口只剩行末 + 钮（首页 feedAddButton 同款）；旧“写回应…”
     /// 实心钮与操作行回应钮已删，本函数即 + 钮动作。
     @objc private func emoteAddTapped() {
+        // 只读模式（作者本人）没有 + 钮；防御：万一走到这里也不开选择器。
+        if isAuthor { return }
         if isGuest {
             onRequireLogin?()
             return
@@ -4075,6 +4092,33 @@ final class BearyDetailViewController: UIViewController {
         let index = sender.tag
         guard index >= 0, index < chipKeys.count else { return }
         chooseEmote(key: chipKeys[index])
+    }
+
+    @objc private func emotePostersTapped(_ sender: UIButton) {
+        let index = sender.tag
+        guard index >= 0, index < chipKeys.count else { return }
+        showEmotePosters(key: chipKeys[index])
+    }
+
+    /// 只读模式：点 chip 看是谁贴了这只回应。客户端没有每表情的贴出人数据，
+    /// 走最小只读接口取（GET /entries/:id/emotes/:emote/users，服务端 diff
+    /// 在 ~/workspace/no-self-emote-server-diff/，随本 PR 合入后部署；未部署
+    /// 前接口回 404，按失败态 toast）。不走 chooseEmote，绝不发 POST /emote。
+    private func showEmotePosters(key: String) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        let count = entry.emotes?.first(where: { $0.emote == key })?.count ?? 0
+        BearyAPI.shared.fetchEmotePosters(entryId: entryId, emote: key) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let resp):
+                    if self.presentedViewController != nil { return }
+                    BearyEmotePostersViewController.show(from: self, emoteKey: key, count: count, users: resp.resolvedFriends)
+                case .failure:
+                    BearyToast.show(in: self.view, message: NSLocalizedString("common.operation_failed_retry", comment: ""))
+                }
+            }
+        }
     }
 
     /// 审计 P2-14：图片重试（广场同款 bearyFeedPerformRetry）。
@@ -4409,5 +4453,187 @@ enum BearyDetailCache {
             index.removeValue(forKey: safeEntryId(entryId))
             saveIndex(index, bucket: bucket)
         }
+    }
+}
+
+// MARK: - 回应贴出人（只读，作者本人看自己的日记用）
+// Li 2026-11-21 定：作者不能给自己的日记贴回应，但详情页回应行留着、只读显示，
+// 点一只表情看是谁贴的。行：头像＋昵称＋@handle；无更多钮，不进主页。
+
+final class BearyEmotePostersViewController: UIViewController, BearySystemSheetSizing {
+    private let emoteKey: String
+    private let count: Int
+    private let users: [BearyAPI.FriendUser]
+
+    private let titleLabel = UILabel()
+    private let tableView = UITableView(frame: .zero, style: .plain)
+    private let emptyLabel = UILabel()
+    private var tableHeightConstraint: NSLayoutConstraint?
+
+    /// 行高 64：头像 44＋上下留白；表最多露 6 行，超出滚动（快照列表同款）。
+    private static let rowHeight: CGFloat = 64
+    private static let maxTableHeight: CGFloat = 384
+    private static let emptyTableHeight: CGFloat = 76
+
+    init(emoteKey: String, count: Int, users: [BearyAPI.FriendUser]) {
+        self.emoteKey = emoteKey
+        self.count = count
+        self.users = users
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.layer.masksToBounds = true
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = String(format: NSLocalizedString("emote.posters.title_format", comment: ""), BearyText.moodNames[emoteKey] ?? emoteKey, count)
+        titleLabel.font = BearyDynamicType.pageTitleFont()
+        titleLabel.textColor = BearyColors.ink
+        view.addSubview(titleLabel)
+
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.backgroundColor = .clear
+        // 列表 sheet 统一无分隔线（2026-11-18，规范 §1）。
+        tableView.separatorStyle = .none
+        tableView.rowHeight = Self.rowHeight
+        tableView.estimatedRowHeight = Self.rowHeight
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.register(BearyEmotePosterRowCell.self, forCellReuseIdentifier: "BearyEmotePosterRowCell")
+        view.addSubview(tableView)
+
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyLabel.font = BearyDynamicType.secondaryFont()
+        emptyLabel.textColor = BearyColors.gray
+        emptyLabel.textAlignment = .center
+        emptyLabel.numberOfLines = 0
+        emptyLabel.text = NSLocalizedString("emote.posters.empty", comment: "")
+        emptyLabel.isHidden = !users.isEmpty
+        view.addSubview(emptyLabel)
+
+        let tableHeight = tableView.heightAnchor.constraint(equalToConstant: users.isEmpty ? Self.emptyTableHeight : min(CGFloat(users.count) * Self.rowHeight, Self.maxTableHeight))
+        tableHeightConstraint = tableHeight
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding + BearySheetChrome.grabberHeight + 16),
+            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+
+            tableView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableHeight,
+            tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -BearySheetChrome.listBottomPadding),
+
+            emptyLabel.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
+            emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
+            emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
+        ])
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePreferredContentSize()
+    }
+
+    /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
+    /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
+        let width = view.bounds.width > 0 ? view.bounds.width : 375
+        let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
+        let size = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        let height = ceil(size.height) + extraBottomInset
+        let preferred = CGSize(width: width, height: height)
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
+        }
+    }
+}
+
+// MARK: - 弹出（快照列表底 sheet 同款容器口径）
+
+extension BearyEmotePostersViewController {
+    static func show(from presenter: UIViewController, emoteKey: String, count: Int, users: [BearyAPI.FriendUser]) {
+        let sheet = BearyEmotePostersViewController(emoteKey: emoteKey, count: count, users: users)
+        BearySystemSheet.present(sheet, from: presenter)
+    }
+}
+
+// MARK: - 行（好友列表同款：头像＋昵称＋@handle，无更多钮）
+
+private final class BearyEmotePosterRowCell: UITableViewCell {
+    private let avatarView = BearyAvatarView()
+    private let nameLabel = UILabel()
+    private let handleLabel = UILabel()
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        selectionStyle = .none
+        backgroundColor = .clear
+
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = BearyDynamicType.cardTitleFont()
+        nameLabel.textColor = BearyColors.ink
+        handleLabel.translatesAutoresizingMaskIntoConstraints = false
+        handleLabel.font = BearyDynamicType.secondaryFont()
+        handleLabel.textColor = BearyColors.gray
+        contentView.addSubview(avatarView)
+        contentView.addSubview(nameLabel)
+        contentView.addSubview(handleLabel)
+        NSLayoutConstraint.activate([
+            avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            avatarView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            avatarView.widthAnchor.constraint(equalToConstant: 44),
+            avatarView.heightAnchor.constraint(equalToConstant: 44),
+            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 11),
+            nameLabel.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 12),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
+            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 3),
+            handleLabel.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 12),
+            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        avatarView.reset()
+        handleLabel.text = nil
+    }
+
+    func configure(user: BearyAPI.FriendUser) {
+        let displayName = (user.displayName?.isEmpty == false) ? user.displayName! : NSLocalizedString("emote.posters.fallback_display_name", comment: "")
+        nameLabel.text = displayName
+        if let handle = user.handle, !handle.isEmpty {
+            handleLabel.text = String(format: NSLocalizedString("user.handle_format", comment: ""), handle)
+            handleLabel.isHidden = false
+        } else {
+            handleLabel.text = nil
+            handleLabel.isHidden = true
+        }
+        avatarView.configure(displayName: displayName, avatarURL: user.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) }, ownerID: user.id)
+    }
+}
+
+// MARK: - UITableViewDataSource / UITableViewDelegate
+
+extension BearyEmotePostersViewController: UITableViewDataSource, UITableViewDelegate {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        users.count
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "BearyEmotePosterRowCell", for: indexPath) as! BearyEmotePosterRowCell
+        cell.configure(user: users[indexPath.row])
+        return cell
     }
 }
