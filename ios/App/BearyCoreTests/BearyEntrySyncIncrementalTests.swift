@@ -17,29 +17,13 @@ import XCTest
 final class BearyEntrySyncIncrementalTests: XCTestCase {
     private let testAccountId = 987654321
 
-    private func makeEntry(id: String, createdAtMs: Int) -> Entry {
-        let json = """
-        {"id": "\(id)", "created_at": \(createdAtMs), "content": "test \(id)"}
-        """
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try! decoder.decode(Entry.self, from: Data(json.utf8))
-    }
-
-    private func makeTrashItem(id: String, deletedAtMs: Int) -> TrashItem {
-        TrashItem(id: id, content: "trash \(id)", createdAt: nil, publishAt: nil,
-                  deletedAt: deletedAtMs, daysLeft: 30)
-    }
-
     override func setUp() {
         super.setUp()
-        BearyEntrySyncStore.purgeAccount(accountId: testAccountId)
-        BearyTrashSyncStore.purgeAccount(accountId: testAccountId)
+        BearySyncTestHelpers.purgeSyncStores(accountId: testAccountId)
     }
 
     override func tearDown() {
-        BearyEntrySyncStore.purgeAccount(accountId: testAccountId)
-        BearyTrashSyncStore.purgeAccount(accountId: testAccountId)
+        BearySyncTestHelpers.purgeSyncStores(accountId: testAccountId)
         super.tearDown()
     }
 
@@ -52,7 +36,7 @@ final class BearyEntrySyncIncrementalTests: XCTestCase {
         let noDate = try! decoder.decode(Entry.self, from: Data("{\"id\": \"no-date\", \"content\": \"x\"}".utf8))
         let noId = try! decoder.decode(Entry.self, from: Data("{\"created_at\": 1735689600000, \"content\": \"x\"}".utf8))
         let result = BearyEntrySyncStore.groupByDay([
-            makeEntry(id: "e1", createdAtMs: 1735689600000),
+            BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000),
             noDate,
             noId,
         ])
@@ -67,10 +51,10 @@ final class BearyEntrySyncIncrementalTests: XCTestCase {
         // 北京 2025-01-02 00:00 = 1735747200000；北京 2025-01-01 00:00 = 1735660800000。
         let day2Base = 1735747200000
         let day1Base = 1735660800000
-        let page1 = (0..<50).map { makeEntry(id: "p1-e\($0)", createdAtMs: day2Base + $0 * 60000) }
-        let page2 = (0..<25).map { makeEntry(id: "p2-a\($0)", createdAtMs: day2Base + 3600000 + $0 * 60000) }
-            + (0..<25).map { makeEntry(id: "p2-b\($0)", createdAtMs: day1Base + $0 * 60000) }
-        let page3 = (0..<50).map { makeEntry(id: "p3-e\($0)", createdAtMs: day1Base + 3600000 + $0 * 60000) }
+        let page1 = (0..<50).map { BearySyncTestHelpers.makeEntry(id: "p1-e\($0)", createdAtMs: day2Base + $0 * 60000) }
+        let page2 = (0..<25).map { BearySyncTestHelpers.makeEntry(id: "p2-a\($0)", createdAtMs: day2Base + 3600000 + $0 * 60000) }
+            + (0..<25).map { BearySyncTestHelpers.makeEntry(id: "p2-b\($0)", createdAtMs: day1Base + $0 * 60000) }
+        let page3 = (0..<50).map { BearySyncTestHelpers.makeEntry(id: "p3-e\($0)", createdAtMs: day1Base + 3600000 + $0 * 60000) }
         for page in [page1, page2, page3] {
             let grouped = BearyEntrySyncStore.groupByDay(page)
             XCTAssertEqual(grouped.skippedCount, 0)
@@ -94,10 +78,10 @@ final class BearyEntrySyncIncrementalTests: XCTestCase {
         // 合并是 additive 的：旧日文件、旧条目在合并后仍在——删旧只在收尾做。
         // 若某页有条目无法归日（跳过），编排层不调收尾，旧缓存就靠这一条保住。
         XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2024-12-31",
-                                                 entries: [makeEntry(id: "stale-day", createdAtMs: 1735657200000)]))
+                                                 entries: [BearySyncTestHelpers.makeEntry(id: "stale-day", createdAtMs: 1735657200000)]))
         XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2025-01-01",
-                                                 entries: [makeEntry(id: "stale-entry", createdAtMs: 1735689600000)]))
-        let grouped = BearyEntrySyncStore.groupByDay([makeEntry(id: "fresh", createdAtMs: 1735689660000)])
+                                                 entries: [BearySyncTestHelpers.makeEntry(id: "stale-entry", createdAtMs: 1735689600000)]))
+        let grouped = BearyEntrySyncStore.groupByDay([BearySyncTestHelpers.makeEntry(id: "fresh", createdAtMs: 1735689660000)])
         XCTAssertTrue(BearyEntrySyncStore.mergeDayPage(accountId: testAccountId, grouped: grouped.grouped))
         XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2024-12-31")?.first?.id, "stale-day")
         XCTAssertEqual(Set(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2025-01-01")?.compactMap({ $0.id }) ?? []),
@@ -106,9 +90,9 @@ final class BearyEntrySyncIncrementalTests: XCTestCase {
 
     func testFinalizeDayDropsUnfetchedEntries() {
         XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2025-01-01", entries: [
-            makeEntry(id: "e1", createdAtMs: 1735689600000),
-            makeEntry(id: "e2", createdAtMs: 1735689660000),
-            makeEntry(id: "e3", createdAtMs: 1735689720000),
+            BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000),
+            BearySyncTestHelpers.makeEntry(id: "e2", createdAtMs: 1735689660000),
+            BearySyncTestHelpers.makeEntry(id: "e3", createdAtMs: 1735689720000),
         ]))
         XCTAssertTrue(BearyEntrySyncStore.finalizeDay(accountId: testAccountId, dayKey: "2025-01-01", entryIds: ["e1", "e3"]))
         XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2025-01-01")?.compactMap({ $0.id }), ["e1", "e3"])
@@ -119,9 +103,9 @@ final class BearyEntrySyncIncrementalTests: XCTestCase {
 
     func testCleanupDaysNotInKeepsSeenDaysAndProgressFile() {
         XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2025-01-01",
-                                                 entries: [makeEntry(id: "e1", createdAtMs: 1735689600000)]))
+                                                 entries: [BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)]))
         XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2024-12-31",
-                                                 entries: [makeEntry(id: "old", createdAtMs: 1735657200000)]))
+                                                 entries: [BearySyncTestHelpers.makeEntry(id: "old", createdAtMs: 1735657200000)]))
         let progress = DiarySyncProgress(epoch: 7, writeSequence: 3, before: nil, beforeId: nil,
                                          pageCount: 1, totalFetched: 1,
                                          seenDayKeys: ["2025-01-01"], entryIdsByDay: ["2025-01-01": ["e1"]])
@@ -175,9 +159,9 @@ final class BearyEntrySyncIncrementalTests: XCTestCase {
     // MARK: - 01 回收站分批持久化
 
     func testMergeTrashPageAcrossPages() {
-        let page1 = [makeTrashItem(id: "t1", deletedAtMs: 1735689600000),
-                     makeTrashItem(id: "t2", deletedAtMs: 1735689500000)]
-        let page2 = [makeTrashItem(id: "t3", deletedAtMs: 1735689400000)]
+        let page1 = [BearySyncTestHelpers.makeTrashItem(id: "t1", deletedAtMs: 1735689600000),
+                     BearySyncTestHelpers.makeTrashItem(id: "t2", deletedAtMs: 1735689500000)]
+        let page2 = [BearySyncTestHelpers.makeTrashItem(id: "t3", deletedAtMs: 1735689400000)]
         XCTAssertTrue(BearyTrashSyncStore.mergeTrashPage(accountId: testAccountId, items: page1))
         XCTAssertTrue(BearyTrashSyncStore.mergeTrashPage(accountId: testAccountId, items: page2))
         XCTAssertEqual(BearyTrashSyncStore.loadAll(accountId: testAccountId)?.map({ $0.id }), ["t1", "t2", "t3"])
@@ -187,16 +171,16 @@ final class BearyEntrySyncIncrementalTests: XCTestCase {
     }
 
     func testMergeTrashPageNeverDeletesStaleItems() {
-        XCTAssertTrue(BearyTrashSyncStore.saveAll(accountId: testAccountId, items: [makeTrashItem(id: "stale", deletedAtMs: 1735689600000)]))
-        XCTAssertTrue(BearyTrashSyncStore.mergeTrashPage(accountId: testAccountId, items: [makeTrashItem(id: "fresh", deletedAtMs: 1735689700000)]))
+        XCTAssertTrue(BearyTrashSyncStore.saveAll(accountId: testAccountId, items: [BearySyncTestHelpers.makeTrashItem(id: "stale", deletedAtMs: 1735689600000)]))
+        XCTAssertTrue(BearyTrashSyncStore.mergeTrashPage(accountId: testAccountId, items: [BearySyncTestHelpers.makeTrashItem(id: "fresh", deletedAtMs: 1735689700000)]))
         XCTAssertEqual(Set(BearyTrashSyncStore.loadAll(accountId: testAccountId)?.map({ $0.id }) ?? []), ["stale", "fresh"])
     }
 
     func testFinalizeTrashDropsUnseenItems() {
         XCTAssertTrue(BearyTrashSyncStore.saveAll(accountId: testAccountId, items: [
-            makeTrashItem(id: "t1", deletedAtMs: 1735689600000),
-            makeTrashItem(id: "t2", deletedAtMs: 1735689500000),
-            makeTrashItem(id: "t3", deletedAtMs: 1735689400000),
+            BearySyncTestHelpers.makeTrashItem(id: "t1", deletedAtMs: 1735689600000),
+            BearySyncTestHelpers.makeTrashItem(id: "t2", deletedAtMs: 1735689500000),
+            BearySyncTestHelpers.makeTrashItem(id: "t3", deletedAtMs: 1735689400000),
         ]))
         XCTAssertTrue(BearyTrashSyncStore.finalizeTrash(accountId: testAccountId, seenIds: ["t1", "t3"]))
         XCTAssertEqual(BearyTrashSyncStore.loadAll(accountId: testAccountId)?.map({ $0.id }), ["t1", "t3"])

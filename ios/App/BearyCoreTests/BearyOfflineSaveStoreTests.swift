@@ -17,32 +17,20 @@ final class BearyOfflineSaveStoreTests: XCTestCase {
     private let testAccountId = 987654322
     private let otherAccountId = 987654323
 
-    private func makeEntry(id: String, createdAtMs: Int, images: [String]? = nil) -> Entry {
-        let imagesJSON = images.map { "\"" + $0.joined(separator: "\", \"") + "\"" } ?? ""
-        let json = """
-        {"id": "\(id)", "created_at": \(createdAtMs), "content": "test \(id)", "images": [\(imagesJSON)]}
-        """
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try! decoder.decode(Entry.self, from: Data(json.utf8))
-    }
-
     override func setUp() {
         super.setUp()
-        BearyOfflineSaveStore.purgeAccount(accountId: testAccountId)
-        BearyOfflineSaveStore.purgeAccount(accountId: otherAccountId)
+        BearySyncTestHelpers.purgeOfflineSaveStore(accountIds: [testAccountId, otherAccountId])
     }
 
     override func tearDown() {
-        BearyOfflineSaveStore.purgeAccount(accountId: testAccountId)
-        BearyOfflineSaveStore.purgeAccount(accountId: otherAccountId)
+        BearySyncTestHelpers.purgeOfflineSaveStore(accountIds: [testAccountId, otherAccountId])
         super.tearDown()
     }
 
     // MARK: - 文字 JSON
 
     func testSaveEntryJSONRoundTrip() {
-        let entry = makeEntry(id: "e1", createdAtMs: 1735689600000, images: ["a/b.jpg"])
+        let entry = BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000, images: ["a/b.jpg"])
         XCTAssertTrue(BearyOfflineSaveStore.saveEntryJSON(accountId: testAccountId, entry: entry))
         let loaded = BearyOfflineSaveStore.loadEntry(accountId: testAccountId, entryId: "e1")
         XCTAssertEqual(loaded?.id, "e1")
@@ -51,7 +39,7 @@ final class BearyOfflineSaveStoreTests: XCTestCase {
     }
 
     func testSaveEntryJSONFailsWithoutId() {
-        var entry = makeEntry(id: "e1", createdAtMs: 1735689600000)
+        var entry = BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)
         entry.id = nil
         XCTAssertFalse(BearyOfflineSaveStore.saveEntryJSON(accountId: testAccountId, entry: entry))
     }
@@ -60,7 +48,7 @@ final class BearyOfflineSaveStoreTests: XCTestCase {
         // 账号目录位置被一个普通文件占住：建目录与写盘都失败，须报 false。
         let dir = BearyOfflineSaveStore.accountDir(accountId: testAccountId)!
         XCTAssertTrue(FileManager.default.createFile(atPath: dir.path, contents: Data("x".utf8)))
-        XCTAssertFalse(BearyOfflineSaveStore.saveEntryJSON(accountId: testAccountId, entry: makeEntry(id: "e1", createdAtMs: 1735689600000)))
+        XCTAssertFalse(BearyOfflineSaveStore.saveEntryJSON(accountId: testAccountId, entry: BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)))
         XCTAssertNil(BearyOfflineSaveStore.loadEntry(accountId: testAccountId, entryId: "e1"))
     }
 
@@ -93,7 +81,7 @@ final class BearyOfflineSaveStoreTests: XCTestCase {
     }
 
     func testUsageCountsBytesAndEntries() {
-        let entry = makeEntry(id: "e1", createdAtMs: 1735689600000)
+        let entry = BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)
         XCTAssertTrue(BearyOfflineSaveStore.saveEntryJSON(accountId: testAccountId, entry: entry))
         let imageBytes = Data(repeating: 7, count: 1024)
         XCTAssertTrue(BearyOfflineSaveStore.saveImageData(accountId: testAccountId, entryId: "e1", key: "a/b.jpg", data: imageBytes))
@@ -114,7 +102,7 @@ final class BearyOfflineSaveStoreTests: XCTestCase {
     // MARK: - 删除与账号隔离
 
     func testRemoveEntryDeletesFilesAndRecord() {
-        let entry = makeEntry(id: "e1", createdAtMs: 1735689600000)
+        let entry = BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)
         XCTAssertTrue(BearyOfflineSaveStore.saveEntryJSON(accountId: testAccountId, entry: entry))
         XCTAssertTrue(BearyOfflineSaveStore.saveImageData(accountId: testAccountId, entryId: "e1", key: "a/b.jpg", data: Data("x".utf8)))
         let record = BearyOfflineSaveRecord(entryId: "e1", title: "t", createdAtMs: 1735689600000, savedAt: 1735689600, imageCount: 1, downloadedCount: 1, failedKeys: [], totalBytes: 1, status: "complete")
@@ -127,14 +115,14 @@ final class BearyOfflineSaveStoreTests: XCTestCase {
     }
 
     func testRemoveAllClearsWholeBucket() {
-        XCTAssertTrue(BearyOfflineSaveStore.saveEntryJSON(accountId: testAccountId, entry: makeEntry(id: "e1", createdAtMs: 1735689600000)))
+        XCTAssertTrue(BearyOfflineSaveStore.saveEntryJSON(accountId: testAccountId, entry: BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)))
         XCTAssertTrue(BearyOfflineSaveStore.removeAll(accountId: testAccountId))
         XCTAssertEqual(BearyOfflineSaveStore.usage(accountId: testAccountId).bytes, 0)
         XCTAssertEqual(BearyOfflineSaveStore.usage(accountId: testAccountId).entryCount, 0)
     }
 
     func testAccountIsolation() {
-        XCTAssertTrue(BearyOfflineSaveStore.saveEntryJSON(accountId: testAccountId, entry: makeEntry(id: "e1", createdAtMs: 1735689600000)))
+        XCTAssertTrue(BearyOfflineSaveStore.saveEntryJSON(accountId: testAccountId, entry: BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)))
         XCTAssertTrue(BearyOfflineSaveStore.saveImageData(accountId: testAccountId, entryId: "e1", key: "a/b.jpg", data: Data("x".utf8)))
         let record = BearyOfflineSaveRecord(entryId: "e1", title: "t", createdAtMs: 1735689600000, savedAt: 1735689600, imageCount: 1, downloadedCount: 1, failedKeys: [], totalBytes: 1, status: "complete")
         XCTAssertTrue(BearyOfflineSaveStore.upsertRecord(accountId: testAccountId, record: record))
