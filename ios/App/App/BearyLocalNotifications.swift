@@ -184,7 +184,7 @@ final class BearyLocalNotifications: NSObject {
                     BearyConfirmSheet.Action(title: "好", style: .default) { [weak self, weak presenter] in
                         guard let self = self, let presenter = presenter else { return }
                         self.requestAuthorizationIfNeeded {
-                            BearyToast.show(in: presenter.view, message: "通知权限未开启，去系统设置里打开才生效", actionTitle: "去设置") { [weak self] in
+                            BearyToast.show(in: presenter.view, message: NSLocalizedString("local_notifications.permission_denied_toast", comment: ""), actionTitle: NSLocalizedString("local_notifications.go_to_settings", comment: "")) { [weak self] in
                                 self?.openSystemSettings()
                             }
                         }

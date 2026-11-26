@@ -993,13 +993,13 @@ final class BearyNotificationSettingsViewController: BearySettingsSubpageViewCon
                     DispatchQueue.main.async { [weak self] in
                         guard let self = self else { return }
                         BearyLocalNotifications.shared.requestAuthorizationIfNeeded(force: true) {
-                            BearyToast.show(in: self.view, message: "通知权限未开启，去系统设置里打开才生效")
+                            BearyToast.show(in: self.view, message: NSLocalizedString("local_notifications.permission_denied_toast", comment: ""))
                         }
                     }
                 case .denied:
                     DispatchQueue.main.async { [weak self] in
                         guard let self = self else { return }
-                        BearyToast.show(in: self.view, message: "通知权限未开启，去系统设置里打开才生效")
+                        BearyToast.show(in: self.view, message: NSLocalizedString("local_notifications.permission_denied_toast", comment: ""))
                     }
                 default:
                     break
