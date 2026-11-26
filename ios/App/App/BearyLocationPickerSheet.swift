@@ -62,6 +62,12 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
     private var nearbyGeneration = 0
     /// 附近兜底是否已试过（POI 空结果时只试一次区名搜索，不反复刷）。
     private var nearbyFallbackAttempted = false
+    /// 第 25 轮 31 项：点建议／手输确认在途标志——显示“正在确认…”并防重复提交；
+    /// confirmingKey 区分不同确认：同建议／同文本重复点按直接忽略，换建议／改词可 supersede 在途确认。
+    private var isConfirming = false
+    private var confirmingKey: String?
+    /// 第 25 轮 30 项：无区级提示是否正在显示——输入变化时恢复默认（提示行隐藏）。
+    private var showingNoDistrictNotice = false
 
     private let completer = MKLocalSearchCompleter()
 
@@ -77,6 +83,11 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
     private let listTableView = UITableView(frame: .zero, style: .plain)
     private let emptyLabel = UILabel()
     private var listAreaHeightConstraint: NSLayoutConstraint?
+    /// 第 25 轮 30／31 项：提示行（确认中“正在确认…”＋转圈、无区级提示）——
+    /// 默认隐藏、不占位，只在确认在途或无区级回包时显示；输入变化时隐藏。
+    private let noticeSpinner = UIActivityIndicatorView(style: .medium)
+    private let noticeLabel = UILabel()
+    private let noticeRow = UIStackView()
     /// 地名行右端到卡片右端的约束（卡上有 × 时改贴 × 左侧，无 × 时贴卡片右端）。
     private var currentNameTrailingToCard: NSLayoutConstraint?
     private var currentNameTrailingToClear: NSLayoutConstraint?
@@ -184,11 +195,28 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
         emptyLabel.numberOfLines = 0
         listAreaView.addSubview(emptyLabel)
 
+        // 第 25 轮 30／31 项：提示行——转圈＋一行小字，默认隐藏、不占位。
+        noticeSpinner.translatesAutoresizingMaskIntoConstraints = false
+        noticeSpinner.color = BearyColors.gray
+        noticeSpinner.hidesWhenStopped = true
+        noticeLabel.translatesAutoresizingMaskIntoConstraints = false
+        noticeLabel.font = BearyDynamicType.smallBodyFont()
+        noticeLabel.textColor = BearyColors.gray
+        noticeLabel.numberOfLines = 0
+        noticeRow.axis = .horizontal
+        noticeRow.spacing = BearySpace.sm
+        noticeRow.alignment = .center
+        noticeRow.translatesAutoresizingMaskIntoConstraints = false
+        noticeRow.addArrangedSubview(noticeSpinner)
+        noticeRow.addArrangedSubview(noticeLabel)
+        noticeRow.isHidden = true
+
         let contentStack = UIStackView()
         contentStack.axis = .vertical
         contentStack.spacing = 12
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(fieldContainer)
+        contentStack.addArrangedSubview(noticeRow)
         contentStack.addArrangedSubview(currentCard)
         contentStack.addArrangedSubview(listAreaView)
         scrollContentView.addSubview(contentStack)
@@ -473,6 +501,61 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
         updatePreferredContentSize()
     }
 
+    // MARK: - 确认态与提示（第 25 轮 27／30／31 项）
+
+    /// 第 25 轮 31 项：进入“正在确认…”——提示行＋转圈示意已收到；
+    /// 同 key 重复点按返回 false（调用方直接忽略），不同 key 允许 supersede 在途确认。
+    private func beginConfirming(key: String) -> Bool {
+        if isConfirming, confirmingKey == key { return false }
+        isConfirming = true
+        confirmingKey = key
+        showingNoDistrictNotice = false
+        showNotice(text: NSLocalizedString("location_picker.confirming", comment: ""), spinning: true)
+        return true
+    }
+
+    /// 第 25 轮 31 项：确认回包落定／作废时退出确认态（转圈停、标志清零、提示行隐藏）。
+    private func endConfirming() {
+        isConfirming = false
+        confirmingKey = nil
+        hideNotice()
+    }
+
+    /// 第 25 轮 30 项：有区级直接落定；无区级不落定——提示行给“未识别区级，
+    /// 公开后不显示地点，可再点一次重试”并播报，sheet 不收起、可再点一次重试；
+    /// district 仍为 nil，不拿地名冒充区级，现有隐私规则不变。
+    private func finishConfirmedLocation(name: String, district: String?, latitude: Double?, longitude: Double?) {
+        guard !resolved else { return }
+        guard let district = district else {
+            isConfirming = false
+            confirmingKey = nil
+            showingNoDistrictNotice = true
+            showNotice(text: NSLocalizedString("location_picker.no_district_notice", comment: ""), spinning: false)
+            UIAccessibility.post(notification: .announcement, argument: NSLocalizedString("location_picker.no_district_announcement", comment: ""))
+            return
+        }
+        select(DiaryLocation(name: name, district: district, latitude: latitude, longitude: longitude))
+    }
+
+    /// 提示行显示（确认中转圈、无区级只给文字）；显示后重算 sheet 高。
+    private func showNotice(text: String, spinning: Bool) {
+        noticeLabel.text = text
+        if spinning {
+            noticeSpinner.startAnimating()
+        } else {
+            noticeSpinner.stopAnimating()
+        }
+        noticeRow.isHidden = false
+        updatePreferredContentSize()
+    }
+
+    /// 提示行隐藏（转圈停）；隐藏后重算 sheet 高。
+    private func hideNotice() {
+        noticeSpinner.stopAnimating()
+        noticeRow.isHidden = true
+        updatePreferredContentSize()
+    }
+
     // MARK: - 选定与清除
 
     /// 点行选定：先关 sheet、关完再回调（与标签选择器同款顺序）。
@@ -500,8 +583,10 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
     }
 
     /// 建议解析：点建议即按该建议的地点落定（名与区级取 placemark，
-    /// 坐标随地点一起存）；解析失败时仍按建议标题落定，不丢选择。
+    /// 坐标随地点一起存）；第 25 轮 30 项：无区级不落定，提示后可再点一次重试。
     private func resolveCompletion(_ completion: MKLocalSearchCompletion) {
+        // 第 25 轮 31 项：同一建议重复点按直接忽略（防重复提交）；点另一建议可 supersede 在途确认。
+        guard beginConfirming(key: "suggestion:\(completion.title)|\(completion.subtitle)") else { return }
         searchGeneration += 1
         let generation = searchGeneration
         let request = MKLocalSearch.Request(completion: completion)
@@ -521,20 +606,25 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
                     district = nil
                     coordinate = nil
                 }
-                let location = DiaryLocation(
+                self.endConfirming()
+                // 第 25 轮 30 项：无区级不直接落定，提示并允许重试；
+                // 有区级时点建议即直接定位：不等头部确认钮，调用方直接落定该地点。
+                self.finishConfirmedLocation(
                     name: name ?? BearyLocationDisplay.dedupedAddressName(completion.title),
                     district: district,
                     latitude: coordinate?.latitude,
                     longitude: coordinate?.longitude
                 )
-                self.select(location)
             }
         }
     }
 
     /// 手输确认：搜索框回车即按手输地名选定（旧气泡的手动输入口径）——
-    /// 先按关键字解一处地点取区级与坐标，解不到仍按纯文本落定，不丢选择。
+    /// 先按关键字解一处地点取区级与坐标；第 25 轮 30 项：解不到区级不落定，
+    /// 提示后可再点一次重试。
     private func confirmManual(_ query: String) {
+        // 第 25 轮 31 项：同文本重复确认直接忽略（防重复提交）；改词后是新确认。
+        guard beginConfirming(key: "manual:\(query)") else { return }
         searchGeneration += 1
         let generation = searchGeneration
         let request = MKLocalSearch.Request()
@@ -549,16 +639,28 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
                 // district(from:) 本就回 String?：map 会包成 String??，须用 flatMap 拍平。
                 let district = item.flatMap { BearyLocationDisplay.district(from: $0.placemark) }
                 let coordinate = item?.placemark.coordinate
-                let location = DiaryLocation(name: query, district: district, latitude: coordinate?.latitude, longitude: coordinate?.longitude)
-                self.select(location)
+                self.endConfirming()
+                // 第 25 轮 30 项：无区级不直接落定，提示并允许重试（见 finishConfirmedLocation）。
+                self.finishConfirmedLocation(name: query, district: district, latitude: coordinate?.latitude, longitude: coordinate?.longitude)
             }
         }
     }
 
     @objc private func searchTextChanged() {
         let query = (searchField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        // 第 25 轮 27 项：改词即新操作——在途确认／解析一律过期作废（代次 +1），
+        // 旧无区级提示与确认态不再显示；清空时一并清空 completer 查询片段，
+        // 旧建议回包不再到达。
+        searchGeneration += 1
+        if isConfirming || showingNoDistrictNotice {
+            isConfirming = false
+            confirmingKey = nil
+            showingNoDistrictNotice = false
+            hideNotice()
+        }
         if query.isEmpty {
             searchCompletions = []
+            completer.queryFragment = ""
             refreshList()
             return
         }
