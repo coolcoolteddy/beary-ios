@@ -3050,14 +3050,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// .presentLetterPage 同口径；edgeDismiss 由本页持有
     /// （transitioningDelegate 弱引用，不持有则手势与动画代理失效）。
     private func presentLetterPageDirectly(_ letterVC: BearyLetterViewController) {
-        let nav = UINavigationController(rootViewController: letterVC)
-        nav.isNavigationBarHidden = true
-        nav.modalPresentationStyle = .fullScreen
-        let edgeDismiss = BearyEdgeDismissController()
-        edgeDismiss.attach(to: nav)
-        nav.transitioningDelegate = edgeDismiss
-        letterEdgeDismiss = edgeDismiss
-        present(nav, animated: BearyMotion.animated(true))
+        letterEdgeDismiss = presentFullscreenNav(root: letterVC, from: self).edgeDismiss
     }
 
     /// 就地 present 兜底的 EdgeDismiss 持有（见 presentLetterPageDirectly）。

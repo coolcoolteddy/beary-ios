@@ -4169,22 +4169,17 @@ final class BearyChromeViewController: UIViewController {
         page.onRequireLogin = { [weak self] in
             self?.presentLoginGate()
         }
-        let nav = UINavigationController(rootViewController: page)
-        nav.isNavigationBarHidden = true
-        nav.modalPresentationStyle = .fullScreen
+        // G1：边缘返回——根页右滑关整个标签 modal；嵌套标签页（栈内第 2 层起）
+        // 不走这里（shouldAllow 拦下），由系统导航 pop 手势＋自有顶栏返回钮回上一级。
+        let (nav, tagEdgeDismiss) = presentFullscreenNav(root: page, from: topmostViewController()) { edgeDismiss, nav in
+            edgeDismiss.shouldAllowInteractiveDismiss = { [weak nav] in
+                nav?.viewControllers.count == 1
+            }
+        }
         page.onBack = { [weak nav] in
             nav?.dismiss(animated: BearyMotion.animated(true))
         }
-        // G1：边缘返回——根页右滑关整个标签 modal；嵌套标签页（栈内第 2 层起）
-        // 不走这里（shouldAllow 拦下），由系统导航 pop 手势＋自有顶栏返回钮回上一级。
-        let tagEdgeDismiss = BearyEdgeDismissController()
-        tagEdgeDismiss.shouldAllowInteractiveDismiss = { [weak nav] in
-            nav?.viewControllers.count == 1
-        }
-        tagEdgeDismiss.attach(to: nav)
-        nav.transitioningDelegate = tagEdgeDismiss
         self.tagPageEdgeDismiss = tagEdgeDismiss
-        topmostViewController().present(nav, animated: BearyMotion.animated(true))
     }
 
     /// 标签页内点卡片进详情：先把本页记为详情返回锚点的来源（嵌套标签页
@@ -4216,19 +4211,12 @@ final class BearyChromeViewController: UIViewController {
         wireProfileVC(vc, modal: true)
         // P2-2：系统导航栏在 modal 态真实可见（全仓无 setNavigationBarHidden），与个人主页自有 44pt 顶栏成双顶栏。
         // 按网页单顶栏口径隐藏系统导航栏、保留自有顶栏；自有返回钮经 onBack dismiss，关闭路径不受影响。
-        let nav = UINavigationController(rootViewController: vc)
-        nav.isNavigationBarHidden = true
-        nav.modalPresentationStyle = .fullScreen
         // G1：边缘返回（Li 批准的原生返回口径）：进出动画由 fadeRise 淡入上移
         // 换成 EdgeDismiss 自带的 slide 右滑入；代理与手势均挂 nav 容器上（详情同款）。
-        let userProfileEdgeDismiss = BearyEdgeDismissController()
-        userProfileEdgeDismiss.attach(to: nav)
-        nav.transitioningDelegate = userProfileEdgeDismiss
-        self.userProfileEdgeDismiss = userProfileEdgeDismiss
         // 第七轮审计 01：从最上层 present——标签页内点作者头像时标签 modal
         // 已在前，自 present 会因已在 presenting 而失败；无 modal 时
         // topmost 即自身，行为与旧口径一致。
-        topmostViewController().present(nav, animated: BearyMotion.animated(true))
+        self.userProfileEdgeDismiss = presentFullscreenNav(root: vc, from: topmostViewController()).edgeDismiss
     }
 
     /// 通知详情页（真交错支）：合并列表卡面点按推的新页，呈现口径与
@@ -4236,28 +4224,14 @@ final class BearyChromeViewController: UIViewController {
     /// EdgeDismiss 边缘右滑 dismiss；transitioningDelegate 须强持有，
     /// 见 notificationDetailEdgeDismiss 属性）。
     private func presentNotificationDetail(_ vc: BearyNotificationDetailViewController) {
-        let nav = UINavigationController(rootViewController: vc)
-        nav.isNavigationBarHidden = true
-        nav.modalPresentationStyle = .fullScreen
-        let edgeDismiss = BearyEdgeDismissController()
-        edgeDismiss.attach(to: nav)
-        nav.transitioningDelegate = edgeDismiss
-        self.notificationDetailEdgeDismiss = edgeDismiss
+        self.notificationDetailEdgeDismiss = presentFullscreenNav(root: vc, from: topmostViewController()).edgeDismiss
         self.activeNotificationDetailVC = vc
-        topmostViewController().present(nav, animated: BearyMotion.animated(true))
     }
 
     /// 系统通知／信件整页阅读：与 presentNotificationDetail 同口径
     /// （全屏 nav＋EdgeDismiss，正常推入，不用展开过渡）。
     private func presentLetterPage(_ vc: BearyLetterViewController) {
-        let nav = UINavigationController(rootViewController: vc)
-        nav.isNavigationBarHidden = true
-        nav.modalPresentationStyle = .fullScreen
-        let edgeDismiss = BearyEdgeDismissController()
-        edgeDismiss.attach(to: nav)
-        nav.transitioningDelegate = edgeDismiss
-        self.letterEdgeDismiss = edgeDismiss
-        topmostViewController().present(nav, animated: BearyMotion.animated(true))
+        self.letterEdgeDismiss = presentFullscreenNav(root: vc, from: topmostViewController()).edgeDismiss
     }
 
     @objc private func didTapUserProfileClose() {
