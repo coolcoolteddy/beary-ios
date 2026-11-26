@@ -3043,7 +3043,7 @@ enum BearyRepeatedCopy {
     /// 盲盒加载失败：两处错误文案映射的默认分支＋404 分支共 4 处。
     static let blindBoxLoadFailed = "盲盒暂时无法加载，请稍后重试"
     /// 公开失败且原日记恢复失败：详情／广场／个人页／时间线四处 Toast 共 4 处。
-    static let publishFailedRestoreFailed = "公开失败，原日记恢复失败，请检查"
+    static let publishFailedRestoreFailed = NSLocalizedString("publish.restore_failed_retry", comment: "")
 }
 
 // MARK: - 写接口响应模型（BearyAPI 用 convertFromSnakeCase 解码）
