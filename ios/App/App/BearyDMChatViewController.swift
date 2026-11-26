@@ -1531,7 +1531,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 updateInputChrome()
                 updateInputTextViewHeight()
             } else {
-                BearyToast.show(in: view, message: "上一条未确认，内容已留在会话里，可长按复制")
+                BearyToast.show(in: view, message: NSLocalizedString("dm.sync.unconfirmed", comment: ""))
             }
         }
         updateEmptyState()
