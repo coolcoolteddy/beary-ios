@@ -13,18 +13,9 @@ import UIKit
 /// 按卡片布局占位（左右 16、头像 40、图片块圆角 12）。
 final class BearySkeletonCardView: UIView {
 
-    /// 扫光周期：光带每 1.5 秒从左扫过一次。
-    static let shimmerDuration: TimeInterval = 1.5
-
     private static func skeletonBaseColor() -> UIColor {
         UIColor { t in
             t.userInterfaceStyle == .dark ? UIColor(white: 0.22, alpha: 1) : UIColor(white: 0.92, alpha: 1)
-        }
-    }
-
-    private static func shimmerBandColor() -> UIColor {
-        UIColor { t in
-            t.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.16) : UIColor(white: 1, alpha: 0.65)
         }
     }
 
@@ -41,11 +32,11 @@ final class BearySkeletonCardView: UIView {
             imageHeightConstraint?.constant = showsImage ? 216 : 0
         }
     }
-    private let shimmerContainer = UIView()
-    private let gradientLayer = CAGradientLayer()
-    private let maskLayer = CAShapeLayer()
-    private var shimmering = false
-    private var lastShimmerSize: CGSize = .zero
+
+    /// 微光引擎与行骨架共用 BearySkeletonShimmerView（渐变光带／周期／角度／
+    /// 起停／尺寸变化重开只此一份实现）；本类只留 blocks 自建。块是本视图的
+    /// 子视图，ShimmerView 内 convert(b.bounds, from: b) 换算结果与旧 b.frame 一致。
+    private lazy var shimmerView = BearySkeletonShimmerView(blocks: blocks)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -69,17 +60,10 @@ final class BearySkeletonCardView: UIView {
             b.translatesAutoresizingMaskIntoConstraints = false
             addSubview(b)
         }
-        shimmerContainer.translatesAutoresizingMaskIntoConstraints = false
-        shimmerContainer.isUserInteractionEnabled = false
-        addSubview(shimmerContainer)
-        shimmerContainer.layer.mask = maskLayer
-        gradientLayer.colors = [UIColor.clear.cgColor, Self.shimmerBandColor().cgColor, UIColor.clear.cgColor]
-        gradientLayer.locations = [0.42, 0.5, 0.58]
-        gradientLayer.startPoint = CGPoint(x: 0, y: 0.5)
-        gradientLayer.endPoint = CGPoint(x: 1, y: 0.5)
-        // 斜向光带：图层自身转 -20°，光带沿 x 扫过（只走 transform.translation.x，不动 position）。
-        gradientLayer.transform = CATransform3DMakeRotation(-0.35, 0, 0, 1)
-        shimmerContainer.layer.addSublayer(gradientLayer)
+        // 微光层盖在块之上（与旧 shimmerContainer 同 z 序）；起停／遮罩／
+        // 深浅切换由 BearySkeletonShimmerView 自理。
+        shimmerView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(shimmerView)
         // 审计 ③-6：实时响应减动效切换——运行中开启减动效时，已加上的无限
         // 扫光动画无任何路径会被移除；关时若骨架仍在显示需恢复扫光
         //（与 BearyWebRingSpinnerView 同口径）。
@@ -116,10 +100,10 @@ final class BearySkeletonCardView: UIView {
             imageBlock.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             imageHeight,
             imageBlock.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
-            shimmerContainer.topAnchor.constraint(equalTo: topAnchor),
-            shimmerContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
-            shimmerContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
-            shimmerContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
+            shimmerView.topAnchor.constraint(equalTo: topAnchor),
+            shimmerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            shimmerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            shimmerView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
@@ -140,79 +124,16 @@ final class BearySkeletonCardView: UIView {
         return v
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        // 遮罩只露骨架块本身：光带只在块上扫，不照亮整片底色。
-        let path = UIBezierPath()
-        for b in blocks {
-            path.append(UIBezierPath(roundedRect: b.frame, cornerRadius: b.layer.cornerRadius))
-        }
-        maskLayer.path = path.cgPath
-        maskLayer.frame = bounds
-        // 图层放大两倍、绕中心转 -20° 后仍盖住全幅；光带在图层中央，
-        // translation.x 从 -0.7W 扫到 +0.7W（中心 x 从 -0.2W 到 1.2W）即完整扫过一次。
-        let w = max(bounds.width, 1)
-        let h = max(bounds.height, 1)
-        gradientLayer.bounds = CGRect(x: 0, y: 0, width: w * 2, height: h * 2)
-        gradientLayer.position = CGPoint(x: bounds.width * 0.5, y: bounds.height * 0.5)
-        // 尺寸变了才重开扫光（旋转/分屏）；普通布局不重启，光带不跳。
-        if shimmering, lastShimmerSize != bounds.size {
-            lastShimmerSize = bounds.size
-            restartShimmerAnimation()
-        }
-        // 首次布局完成（bounds 落定）时起扫：didMoveToWindow 时 bounds
-        // 可能还是 0，startShimmer 会直接返回，靠这里补上。
-        if window != nil, bounds.width > 0 { startShimmer() }
-    }
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        if window != nil { startShimmer() } else { stopShimmer() }
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
-            gradientLayer.colors = [UIColor.clear.cgColor, Self.shimmerBandColor().cgColor, UIColor.clear.cgColor]
-        }
-    }
-
-    func startShimmer() {
-        guard BearyMotion.animated(true) else { return }
-        guard !shimmering, window != nil, bounds.width > 0 else { return }
-        shimmering = true
-        restartShimmerAnimation()
-    }
-
-    func stopShimmer() {
-        shimmering = false
-        gradientLayer.removeAnimation(forKey: "beary-shimmer-sweep")
-    }
-
     /// 减动效开关变化（审计 ③-6，与 BearyWebRingSpinnerView 同口径）：
     /// 开→停掉在扫的动画；关→仅仍在窗口内显示时恢复扫光
-    ///（未进窗口时由 didMoveToWindow／layoutSubviews 补起）。
+    ///（未进窗口时由 ShimmerView 的 didMoveToWindow／layoutSubviews 补起）。
     @objc private func reduceMotionChanged() {
         if UIAccessibility.isReduceMotionEnabled {
-            stopShimmer()
+            shimmerView.stopShimmer()
         } else {
             guard window != nil else { return }
-            startShimmer()
+            shimmerView.startShimmer()
         }
-    }
-
-    private func restartShimmerAnimation() {
-        gradientLayer.removeAnimation(forKey: "beary-shimmer-sweep")
-        let w = max(bounds.width, 1)
-        // 只走 transform（规范 §6）：图层中心固定在 0.5W，translation.x 从
-        // -0.7W 扫到 +0.7W，中心 x 轨迹与原来 position.x 的 -0.2W→1.2W 完全一致。
-        let anim = CABasicAnimation(keyPath: "transform.translation.x")
-        anim.fromValue = -0.7 * w
-        anim.toValue = 0.7 * w
-        anim.duration = Self.shimmerDuration
-        anim.repeatCount = .infinity
-        anim.isRemovedOnCompletion = false
-        gradientLayer.add(anim, forKey: "beary-shimmer-sweep")
     }
 }
 
@@ -263,8 +184,8 @@ final class BearySkeletonCell: UITableViewCell {
 
 /// 骨架扫光覆盖层：盖在骨架块之上，光带只在块上扫（遮罩取各块外框），
 /// 1.5s 一次斜向扫过、只走 transform；减动效时不起扫光。
-/// 与 BearySkeletonCardView 同款扫光口径（周期／角度／遮罩），抽出来
-/// 供行骨架复用——卡片骨架本体不动，不碰已有扫光行为。
+/// 骨架扫光唯一实现：卡片骨架（BearySkeletonCardView）与行骨架共用本视图；
+/// 渐变光带／周期／角度／起停／尺寸变化重开只此一份。
 /// 调用方把骨架块数组交给它；块是同级视图时按 convert 取框，布局
 /// 变化时遮罩随块重算。
 final class BearySkeletonShimmerView: UIView {
