@@ -1652,18 +1652,12 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var fetchCollected: [Entry] = []
 
     private func fetchAllEntries() {
-        loadGeneration += 1
         // P1-4：加载开始同时作废已发出的后台重算——此前只递增 loadGeneration
         // 不递增 modelGeneration，已发出的重算回主线程时 generation 仍对得上，
         // 即调 applyModelToSky() 把空态顶回加载态上。递增后立即 recompute()
         // 一次：调用方已加载的日记仍即时成图（不丢首帧），只是换新 generation。
         modelGeneration += 1
         isFetching = true
-        fetchCollected = []
-        fetchResumeBefore = nil
-        fetchResumeBeforeId = nil
-        fetchResumePage = 1
-        fetchInterrupted = false
         // 审计登录杂项：无已有数据时先出加载态（此前首帧直接走空态“这里还没有星星”，
         // 回包后星星突然出现）；有数据时不遮旧星图。
         if allEntries.isEmpty {
@@ -1672,13 +1666,19 @@ final class BearyDiaryStarMapViewController: UIViewController {
         recompute()
         // C3：全量取数走共用入口（内存 → 完整存档 → 网络，在途共用）；
         // 本页只消费结果（成图/部分成图/失败态），分页与截断口径归加载器。
-        let generation = loadGeneration
-        BearySharedEntryLoader.shared.load(scope: entriesScope) { [weak self] load in
-            DispatchQueue.main.async {
-                guard let self = self, generation == self.loadGeneration else { return }
-                self.applySharedLoad(load)
-            }
-        }
+        // 起步（代次＋游标复位＋共用加载＋代次守卫分发）与地图共用
+        // BearySharedEntryLoader.startFreshLoad。
+        BearySharedEntryLoader.startFreshLoad(
+            scope: entriesScope,
+            generation: &loadGeneration,
+            collected: &fetchCollected,
+            resumeBefore: &fetchResumeBefore,
+            resumeBeforeId: &fetchResumeBeforeId,
+            resumePage: &fetchResumePage,
+            interrupted: &fetchInterrupted,
+            isCurrentGeneration: { [weak self] generation in self?.loadGeneration == generation },
+            apply: { [weak self] load in self?.applySharedLoad(load) }
+        )
     }
 
     /// 共用取数回包应用（与旧 fetchEntriesPage 的终态分支一一对应）：
