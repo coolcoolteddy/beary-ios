@@ -873,7 +873,7 @@ final class BearyProfilePhotosViewController: UIViewController {
                     strongSelf.updatePhotosStatusLabel()
                     strongSelf.fetchMoreWhileEmptyIfNeeded()
                 case .failure:
-                    BearyToast.show(in: strongSelf.view, message: "照片加载失败，请稍后重试")
+                    BearyToast.show(in: strongSelf.view, message: NSLocalizedString("photowall.load_failed", comment: ""))
                     // 合入时改：首拉失败时照片为空，尾部重试节插进隐藏的网格里
                     // 看不见，改走 03 同款空态重试按钮（photosEmptyLoadFailed）；
                     // 分支原样无条件插节，在现行主线下会“加载中…”卡死且无重试入口。
@@ -1351,7 +1351,7 @@ final class BearyProfilePhotosViewController: UIViewController {
                     // 与滚动位置）；末格留屏时用户点尾部按钮即可重试。空相册时网格
                     // 整个隐藏、节插进去也看不见，改由空态重试按钮承载（见 03），
                     // 不插节。
-                    BearyToast.show(in: strongSelf.view, message: "照片加载失败，请稍后重试")
+                    BearyToast.show(in: strongSelf.view, message: NSLocalizedString("photowall.load_failed", comment: ""))
                     // C1：灯箱正等着这页时，把失败态同步给灯箱（边缘提示切失败文案）。
                     if let viewer = strongSelf.presentedViewController as? BearyEntryImageViewerViewController {
                         viewer.notifyMorePagesFailed()
@@ -1823,7 +1823,7 @@ final class BearyProfilePhotosLoadMoreFooterCell: UICollectionViewCell {
     private lazy var retryButton: UIButton = {
         let buttonValue = UIButton(type: .custom)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setTitle("更多照片加载失败 · 重试", for: .normal)
+        buttonValue.setTitle(NSLocalizedString("photowall.load_more_failed_retry", comment: ""), for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
