@@ -140,7 +140,7 @@ final class BearyTrashItemTests: XCTestCase {
         XCTAssertEqual(decoded.title, "带猫的一天")
         XCTAssertEqual(decoded.imageKeys, ["1/abc.jpg", "1/def.jpg"])
 
-        // 与 BearyTrashSyncStore.makeEncoder 同口径：convertToSnakeCase
+        // 与 BearyJSON.encoder 同口径：convertToSnakeCase
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         let data = try encoder.encode(decoded)
@@ -182,7 +182,7 @@ final class BearyTrashItemTests: XCTestCase {
         XCTAssertEqual(item.visibility, "public")
         XCTAssertEqual(item.published, 1)
 
-        // 与 BearyTrashSyncStore.makeEncoder 同口径：convertToSnakeCase
+        // 与 BearyJSON.encoder 同口径：convertToSnakeCase
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         let data = try encoder.encode(item)

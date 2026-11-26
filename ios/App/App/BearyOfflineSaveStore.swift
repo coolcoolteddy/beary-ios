@@ -52,18 +52,6 @@ struct BearyOfflineSaveManifest: Codable {
 enum BearyOfflineSaveStore {
     static let directoryPrefix = "beary_offline_save"
 
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        return encoder
-    }
-
-    private static func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return decoder
-    }
-
     /// 展示用标题：标题非空即用标题，否则取正文首行（≤24 字），再无即“无标题日记”。
     /// 只做列表行标识，不改卡片/详情“空标题不占位”的口径。
     static func displayTitle(for entry: Entry) -> String {
@@ -117,7 +105,7 @@ enum BearyOfflineSaveStore {
     static func saveEntryJSON(accountId: Int, entry: Entry) -> Bool {
         guard let id = entry.id, !id.isEmpty,
               let url = entryFileURL(accountId: accountId, entryId: id),
-              let data = try? makeEncoder().encode(entry) else { return false }
+              let data = try? BearyJSON.encoder.encode(entry) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
@@ -130,7 +118,7 @@ enum BearyOfflineSaveStore {
     static func loadEntry(accountId: Int, entryId: String) -> Entry? {
         guard let url = entryFileURL(accountId: accountId, entryId: entryId),
               let data = try? Data(contentsOf: url) else { return nil }
-        return try? makeDecoder().decode(Entry.self, from: data)
+        return try? BearyJSON.decoder.decode(Entry.self, from: data)
     }
 
     /// 写完回读的字节数（0 = 写盘失败或文件不可读）；供调用方累计本篇占用。
