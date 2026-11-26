@@ -1365,17 +1365,18 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
                 if settings.authorizationStatus == .notDetermined {
                     strongSelf.isRequestingNotification = true
                     strongSelf.refreshNotificationStepIfVisible()
-                    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-                        DispatchQueue.main.async {
+                    BearyLocalNotifications.shared.requestAuthorizationIfNeeded(
+                        options: [.alert, .sound, .badge],
+                        completion: { _ in
                             strongSelf.isRequestingNotification = false
-                            // M2：被拒时提醒开关同步关掉——否则设置页读到开、系统却不发通知，两边不一致。
-                            if !granted {
-                                strongSelf.reminderOn = false
-                            }
                             strongSelf.notificationChoiceMade = true
                             strongSelf.refreshNotificationStepIfVisible()
+                        },
+                        onDenied: {
+                            // M2：被拒时提醒开关同步关掉——否则设置页读到开、系统却不发通知，两边不一致。
+                            strongSelf.reminderOn = false
                         }
-                    }
+                    )
                 } else {
                     strongSelf.notificationChoiceMade = true
                     strongSelf.refreshNotificationStepIfVisible()
