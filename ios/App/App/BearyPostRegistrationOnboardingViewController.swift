@@ -1121,7 +1121,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         let locateButton = UIButton(type: .system)
         locateButton.translatesAutoresizingMaskIntoConstraints = false
         locateButton.setImage(UIImage(systemName: "mappin"), for: .normal)
-        locateButton.setTitle("点击自动定位", for: .normal)
+        locateButton.setTitle(NSLocalizedString("onboarding.location.auto_locate_button", comment: ""), for: .normal)
         locateButton.setTitleColor(BearyOnboardingPalette.linkBlue, for: .normal)
         locateButton.tintColor = BearyOnboardingPalette.linkBlue
         locateButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
