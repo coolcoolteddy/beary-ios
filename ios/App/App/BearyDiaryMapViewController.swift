@@ -1345,9 +1345,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         // 2026-11-14 存经纬度：有坐标的组按当前语言重取过展示名时用它，否则用组键（存量文本）。
         config.text = groupDisplayNames[group.id] ?? group.key
         if transientFailedGroups.contains(where: { $0.id == group.id }) {
-            config.secondaryText = "\(group.count) 篇 · 定位失败，点此重试"
+            config.secondaryText = String(format: NSLocalizedString("map.group_row.locate_failed_format", comment: ""), group.count)
         } else if unlocatedGroups.contains(where: { $0.id == group.id }) {
-            config.secondaryText = "\(group.count) 篇 · 未能在地图上定位"
+            config.secondaryText = String(format: NSLocalizedString("map.group_row.unlocated_format", comment: ""), group.count)
         } else {
             config.secondaryText = "\(group.count) 篇"
         }
