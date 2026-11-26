@@ -525,8 +525,8 @@ final class BearyNotificationsViewController: UIViewController {
         button.translatesAutoresizingMaskIntoConstraints = false
         button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         button.titleLabel?.adjustsFontForContentSizeCategory = true
-        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.pillHorizontalInset, bottom: 0, right: BearySpacing.pillHorizontalInset)
+        button.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         button.addTarget(self, action: #selector(stateButtonTapped), for: .touchUpInside)
         button.bearyAddPressFeedback()
         return button

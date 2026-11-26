@@ -986,7 +986,7 @@ final class BearyProfilePhotosViewController: UIViewController {
             chip.titleLabel?.adjustsFontForContentSizeCategory = true
             chip.backgroundColor = BearyColors.surface2
             chip.layer.cornerRadius = 14
-            chip.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+            chip.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.pillHorizontalInset, bottom: 0, right: BearySpacing.pillHorizontalInset)
             chip.heightAnchor.constraint(equalToConstant: 28).isActive = true
             chip.tag = index
             chip.accessibilityLabel = "跳转到\(section.title)"

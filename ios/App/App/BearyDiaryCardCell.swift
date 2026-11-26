@@ -1166,7 +1166,7 @@ class BearyDiaryCardCell: UITableViewCell {
         btn.backgroundColor = BearyColors.surface2
         btn.layer.cornerRadius = 12
         btn.clipsToBounds = true
-        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.pillHorizontalInset, bottom: 0, right: BearySpacing.pillHorizontalInset)
         btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
         return btn
     }()
@@ -1215,7 +1215,7 @@ class BearyDiaryCardCell: UITableViewCell {
         btn.titleLabel?.font = BearyDynamicType.tabularDigitsFont(ofSize: 14)
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.contentEdgeInsets = UIEdgeInsets.zero
-        btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         btn.addTarget(self, action: #selector(likeButtonTapped), for: .touchUpInside)
         btn.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
         btn.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])

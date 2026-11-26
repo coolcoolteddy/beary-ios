@@ -1000,8 +1000,8 @@ class BearyProfileViewController: UIViewController {
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.setImage(BearyIconImages.image(named: "icon_edit", pointSize: 14), for: .normal)
         buttonValue.tintColor = BearyColors.ink
-        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.pillHorizontalInset, bottom: 0, right: BearySpacing.pillHorizontalInset)
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         buttonValue.layer.borderWidth = 1
         buttonValue.layer.cornerRadius = BearyCorners.single
         buttonValue.addTarget(self, action: #selector(editButtonTapped), for: .touchUpInside)
@@ -1030,8 +1030,8 @@ class BearyProfileViewController: UIViewController {
         buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17))
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.tintColor = BearyColors.bg
-        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.pillHorizontalInset, bottom: 0, right: BearySpacing.pillHorizontalInset)
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         buttonValue.layer.borderWidth = 0
         buttonValue.backgroundColor = BearyColors.ink
         buttonValue.clipsToBounds = true
@@ -1463,7 +1463,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.setTitleColor(BearyColors.gray, for: .normal)
         buttonValue.tintColor = BearyColors.gray
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 13)
-        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         buttonValue.contentHorizontalAlignment = .leading
         buttonValue.addTarget(self, action: #selector(thisDayExpandTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
@@ -1705,7 +1705,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.setImage(BearyIconImages.image(named: "icon_shuffle", pointSize: 14), for: .normal)
         buttonValue.tintColor = BearyColors.bg
-        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         buttonValue.backgroundColor = BearyColors.ink
         buttonValue.layer.cornerRadius = BearyCorners.single
         buttonValue.clipsToBounds = true
@@ -2216,7 +2216,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.setTitleColor(BearyColors.gray, for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .selected)
         buttonValue.tintColor = BearyColors.gray
-        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 9, left: 10, bottom: 9, right: 10)
         buttonValue.addTarget(self, action: action, for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
@@ -8244,8 +8244,8 @@ class BearyProfileViewController: UIViewController {
         retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         retryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 15), for: .normal)
         retryButton.tintColor = BearyColors.ink
-        retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        retryButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.pillHorizontalInset, bottom: 0, right: BearySpacing.pillHorizontalInset)
+        retryButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         retryButton.layer.borderWidth = 1
         retryButton.layer.bearyDynamicBorderColor = BearyColors.line
         retryButton.layer.cornerRadius = BearyCorners.single

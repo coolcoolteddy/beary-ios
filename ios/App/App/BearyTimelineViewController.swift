@@ -420,7 +420,7 @@ final class BearyCalendarCardView: UIView {
         // 第 7 轮属实项 1：切换钮按内容撑宽、不被相邻钮挤压（宽度下限见约束处）。
         toggleButton.setContentHuggingPriority(.required, for: .horizontal)
         toggleButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        toggleButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        toggleButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.pillHorizontalInset, bottom: 0, right: BearySpacing.pillHorizontalInset)
         toggleButton.addTarget(self, action: #selector(didTapToggle), for: .touchUpInside)
         toggleButton.bearyAddPressFeedback()
 
@@ -931,7 +931,7 @@ final class BearyTimelineCell: UITableViewCell {
         btn.backgroundColor = BearyColors.surface2
         btn.layer.cornerRadius = 12
         btn.clipsToBounds = true
-        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.pillHorizontalInset, bottom: 0, right: BearySpacing.pillHorizontalInset)
         btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
         return btn
     }()
@@ -4121,7 +4121,7 @@ class BearyTimelineViewController: UIViewController {
         trashButton.imageView?.contentMode = .scaleAspectFit
         trashButton.tintColor = BearyColors.ink
         trashButton.imageEdgeInsets = UIEdgeInsets.zero
-        trashButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        trashButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         // pill 宽度不得被 stack 压缩（否则图标被 aspectFit 缩小、标题中部截断）。
         trashButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         // R8：回收站按钮标题走 scaledFont（见 updateTrashTitle 各段属性）+ adjusts。
@@ -4200,7 +4200,7 @@ class BearyTimelineViewController: UIViewController {
         visFilterButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         visFilterButton.titleLabel?.adjustsFontForContentSizeCategory = true
         visFilterButton.setTitleColor(BearyColors.ink, for: .normal)
-        visFilterButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        visFilterButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         // 横向 hugging 降一档：宽度现由 updateVisFilterButton 的显式约束钉死，
         // 若 hugging 仍为 required，会与显式宽度（比固有宽大 6pt）形成
         // required 对 required 的冲突；压缩仍为 required，防栈内挤压。
@@ -4607,7 +4607,7 @@ class BearyTimelineViewController: UIViewController {
         statsButton.setImage(BearyIconImages.image(named: "icon_fire", pointSize: 16), for: .normal)
         statsButton.tintColor = BearyColors.orange
         statsButton.imageEdgeInsets = UIEdgeInsets.zero
-        statsButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        statsButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         // R8：统计行富文本各段走 scaledFont（按钮 adjusts 开关见 buildHeader）。
         let baseAttributes: [NSAttributedString.Key: Any] = [
             .font: BearyDynamicType.secondaryFont(),

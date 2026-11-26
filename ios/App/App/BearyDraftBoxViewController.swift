@@ -396,7 +396,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
         if let editImage = BearyIconImages.image(named: "icon_edit", pointSize: 13) {
             newButton.setImage(editImage, for: .normal)
         }
-        newButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        newButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         newButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
         // 弹窗审计 E1-10：新建钮原视觉高约 37（13pt 字 + 上下各 10 内边距），
         // 未达 44。最小 44 高约束补足热区；

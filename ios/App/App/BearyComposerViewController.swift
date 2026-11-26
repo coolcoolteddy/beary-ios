@@ -1821,7 +1821,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 顶栏右上角三钮收紧（2026-10-31 真机报间距偏大）：发布 pill 左右内边距 12 → 10，
         // 宽度重算读 live 边距（refreshPublishButtonWidth），spinner 前沿同步 12 → 10，见下。
         publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
-        publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         // v6-4：发布钮高 44 → 36、pill 圆角随高取半 18；顶栏高 60 居中后底部到分界线净留白 12。其余样式与行为不动。
         publishButton.layer.cornerRadius = BearyCorners.single
         publishButton.layer.masksToBounds = true
@@ -2321,7 +2321,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         mentionTopPill.layer.cornerRadius = 999
         mentionTopPill.layer.masksToBounds = true
         mentionTopPill.contentHorizontalAlignment = .left
-        mentionTopPill.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+        mentionTopPill.contentEdgeInsets = BearySpacing.chipInsets
         mentionTopPill.addTarget(self, action: #selector(didTapMentionTopRow), for: .touchUpInside)
         mentionTopPill.bearyAddPressFeedback()
         mentionTopRow.addSubview(mentionTopPill)
@@ -4271,7 +4271,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             chip.backgroundColor = BearyColors.surface2
             chip.layer.cornerRadius = 999
             chip.layer.masksToBounds = true
-            chip.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+            chip.contentEdgeInsets = BearySpacing.chipInsets
             chip.tag = index
             chip.addTarget(self, action: #selector(didTapTagChip(_:)), for: .touchUpInside)
             chip.bearyAddPressFeedback()
@@ -4451,7 +4451,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationMetaButton.setTitleColor(BearyColors.gray, for: .normal)
         locationMetaButton.titleLabel?.numberOfLines = 1
         locationMetaButton.titleLabel?.lineBreakMode = .byTruncatingTail
-        locationMetaButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        locationMetaButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         locationMetaButton.addTarget(self, action: #selector(didTapMetaLocationRow), for: .touchUpInside)
         locationMetaButton.bearyAddPressFeedback()
         locationMetaButton.setContentHuggingPriority(.required, for: .horizontal)
@@ -4467,7 +4467,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         weatherChipButton.backgroundColor = BearyColors.surface2
         weatherChipButton.layer.cornerRadius = 999
         weatherChipButton.layer.masksToBounds = true
-        weatherChipButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+        weatherChipButton.contentEdgeInsets = BearySpacing.chipInsets
         weatherChipButton.isHidden = true
         weatherChipButton.isUserInteractionEnabled = false
         weatherChipButton.translatesAutoresizingMaskIntoConstraints = false
@@ -4820,7 +4820,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             chip.button.backgroundColor = BearyColors.surface2
             chip.button.layer.cornerRadius = 999
             chip.button.layer.masksToBounds = true
-            chip.button.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+            chip.button.contentEdgeInsets = BearySpacing.chipInsets
             chip.button.addTarget(self, action: chip.action, for: .touchUpInside)
             chip.button.bearyAddPressFeedback()
             chip.button.isHidden = true
@@ -4958,7 +4958,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             chip.backgroundColor = UIColor.clear
             chip.layer.cornerRadius = 999
             chip.layer.masksToBounds = true
-            chip.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+            chip.contentEdgeInsets = BearySpacing.chipInsets
             chip.accessibilityLabel = "可见性：" + tier.title
             chip.addTarget(self, action: #selector(didTapPublishVisibilityChip(_:)), for: .touchUpInside)
             chip.bearyAddPressFeedback()
@@ -5778,7 +5778,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
             publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 24), for: .normal)
-            publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+            publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
             publishRingView.isHidden = true
             BearyIconMotion.stopSpin(on: publishRingView, key: "bearyPublishSpin")
         }

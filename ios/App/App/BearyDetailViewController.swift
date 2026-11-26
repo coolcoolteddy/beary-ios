@@ -561,7 +561,7 @@ final class BearyDetailViewController: UIViewController {
         btn.backgroundColor = BearyColors.surface2
         btn.layer.cornerRadius = 12
         btn.clipsToBounds = true
-        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.pillHorizontalInset, bottom: 0, right: BearySpacing.pillHorizontalInset)
         btn.addTarget(self, action: #selector(nineGridButtonTapped), for: .touchUpInside)
         return btn
     }()
@@ -1387,7 +1387,7 @@ final class BearyDetailViewController: UIViewController {
         // 扫查组：此前 scaledFont 却缺 adjusts，档位变化时赞数字号不跟、
         // 显式宽也不重算；补 adjusts，宽重算见 traitCollectionDidChange。
         likeButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         likeButton.adjustsImageWhenHighlighted = false
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
         likeButton.addTarget(self, action: #selector(likePressDown), for: .touchDown)
@@ -3161,7 +3161,7 @@ final class BearyDetailViewController: UIViewController {
             let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
             setLikeTitle(titleText, width: imageWidth + 6 + titleWidth)
         }
-        likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         likeButton.tintColor = liked ? BearyColors.likeRed : BearyColors.gray
         likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .normal)
         likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .highlighted)

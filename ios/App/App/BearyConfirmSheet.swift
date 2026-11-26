@@ -191,7 +191,7 @@ final class BearyConfirmSheetViewController: UIViewController, BearySystemSheetS
                 if let check = BearyIconImages.image(named: "icon_check", pointSize: 15) {
                     button.setImage(check, for: .normal)
                     button.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
-                    button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+                    button.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
                 }
             }
             // BearyButton 是 .custom 类型、只配了 .normal 态底色/字色，isEnabled=false

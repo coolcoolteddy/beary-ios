@@ -1963,7 +1963,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         button.layer.cornerRadius = BearyCorners.single
         button.layer.masksToBounds = true
         button.contentHorizontalAlignment = .left
-        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.wideHorizontalInset, bottom: 0, right: BearySpacing.wideHorizontalInset)
         button.heightAnchor.constraint(equalToConstant: 44).isActive = true
         button.accessibilityLabel = "搜索" + term
         button.addTarget(self, action: #selector(recentSearchTapped(_:)), for: .touchUpInside)
@@ -1983,7 +1983,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         expandButton.layer.cornerRadius = BearyCorners.single
         expandButton.layer.masksToBounds = true
         expandButton.contentHorizontalAlignment = .left
-        expandButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        expandButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.wideHorizontalInset, bottom: 0, right: BearySpacing.wideHorizontalInset)
         expandButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         expandButton.accessibilityLabel = isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索"
         expandButton.addTarget(self, action: #selector(toggleRecentSearchesExpanded), for: .touchUpInside)

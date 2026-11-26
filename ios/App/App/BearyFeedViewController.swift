@@ -3583,8 +3583,8 @@ class BearyFeedErrorCell: UITableViewCell {
         btn.setTitle("重试", for: .normal)
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
-        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.pillHorizontalInset, bottom: 0, right: BearySpacing.pillHorizontalInset)
+        btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: BearySpacing.iconTextGap, bottom: 0, right: 0)
         btn.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         btn.bearyAddPressFeedback()
         // P2-4：照抄点赞钮修法——按钮固有宽不含标题边距，显式给足实测字宽，
