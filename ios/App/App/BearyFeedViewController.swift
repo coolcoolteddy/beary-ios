@@ -1600,7 +1600,7 @@ class BearyFeedViewController: UIViewController {
         finishFirstLoadIfNeeded()
         updateOverlayState()
         maybeEndRefreshing()
-        BearyToast.show(in: view, message: "中间还有内容未补齐")
+        BearyToast.show(in: view, message: NSLocalizedString("feed.gap_message", comment: ""))
     }
 
     /// 全量首拉成功即清缺口态：模型已整表换新，缺口不再是 since 缺口，
@@ -3394,7 +3394,7 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate, U
         if indexPath.row >= 0, indexPath.row < entries.count {
             return feedCell(for: tableView, entry: entries[indexPath.row], indexPath: indexPath)
         }
-        return errorCell(for: tableView, message: plazaHasGap ? "中间还有内容未补齐" : nil) { [weak self] in
+        return errorCell(for: tableView, message: plazaHasGap ? NSLocalizedString("feed.gap_message", comment: "") : nil) { [weak self] in
             self?.retryPlazaAfterError()
         }
     }
