@@ -51,6 +51,9 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     private var firstLoadPending = true
     // 新行首次出现透明度过渡的已播记账（按好友 id/handle 键，已有行更新不重播）。
     private var fadedRowKeys = Set<String>()
+    // 取关在途去重：同一好友的取关请求在途时再次确认直接丢弃（私信删除
+    // deletingConversationPeerIds 同款口径）；请求结束（成功或失败）后移除。
+    private var unfollowingUserIds: Set<Int> = []
     private let titleLabel = UILabel()
     private var topBarTopConstraint: NSLayoutConstraint?
     private var backButton: UIButton?
@@ -644,6 +647,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                 BearyFriends.confirmUnfollowAlert(from: self, displayName: user.displayName ?? "", mutual: true) { [weak self] in
                     guard let self = self else { return }
                     guard self.friends.contains(where: { $0.id == userId }) else { return }
+                    guard !self.unfollowingUserIds.contains(userId) else { return }
+                    self.unfollowingUserIds.insert(userId)
                     // r28-4：取关失败回滚只认发起账号。发起时同拍账号 id＋代次
                     //（通知页／引用面板同款口径），切号后到达的旧号失败回包整单丢弃。
                     let requestAccountId = BearyAPI.shared.authAccountId
@@ -651,6 +656,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                     BearyAPI.shared.unfollowFriend(userId: userId) { [weak self] result in
                         DispatchQueue.main.async {
                             guard let self = self else { return }
+                            self.unfollowingUserIds.remove(userId)
                             switch result {
                             case .success:
                                 // N5(a)：等成功再删行。请求期间列表可能已重拉，人已不在时不删行。
