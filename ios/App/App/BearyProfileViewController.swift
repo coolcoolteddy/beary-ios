@@ -5524,7 +5524,6 @@ class BearyProfileViewController: UIViewController {
                 BearyToast.show(in: view, message: "留话暂时读不出来，旧的还留着，等恢复后再写")
                 return
             }
-            BearyToast.show(in: view, message: "这篇已留过话，明年见")
             pastSelfComposingThisDay = false
             renderPastSelf(visible: pastSelfVisibleEntries())
             return
