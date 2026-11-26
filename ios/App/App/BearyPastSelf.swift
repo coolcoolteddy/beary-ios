@@ -645,22 +645,11 @@ final class PastSelfIconView: UIView {
             ])
             accessibilityLabel = imagesetName
         } else {
-            // 占位标注：资产未注册前明确标出缺失项，不伪装成正式图标。
+            // 占位：资产未注册前只留虚线边框占位框，不挂文字、不伪装成正式图标。
             layer.borderWidth = 1
             layer.cornerRadius = BearyCorners.single
             layer.bearyDynamicBorderColor = BearyColors.line
-            let label = UILabel()
-            label.translatesAutoresizingMaskIntoConstraints = false
-            label.font = UIFont.systemFont(ofSize: 10)
-            label.textColor = BearyColors.gray
-            label.text = imagesetName + " 待注册"
-            label.textAlignment = .center
-            addSubview(label)
             NSLayoutConstraint.activate([
-                label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-                label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-                label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-                label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
                 heightAnchor.constraint(equalToConstant: 20),
             ])
             accessibilityLabel = imagesetName + " 图标待官方注册"
