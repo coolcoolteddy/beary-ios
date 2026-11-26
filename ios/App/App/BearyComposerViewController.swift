@@ -9610,7 +9610,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshImageStripVisibility()
         updateTextViewHeight()
         updatePublishState()
-        showToast(message: "已恢复上次没保存的修改")
         // 检查点无已存天气时自动取当地天气（见 autoFillWeatherIfNeeded；有已存天气不重取）。
         autoFillWeatherIfNeeded()
     }
