@@ -3041,7 +3041,7 @@ enum BearyRepeatedCopy {
     /// 盲盒今日已换过：占位＋Toast＋两处错误文案映射共 4 处。
     static let blindBoxAlreadySwappedToday = "今日已换过 1 次，明天再来"
     /// 盲盒加载失败：两处错误文案映射的默认分支＋404 分支共 4 处。
-    static let blindBoxLoadFailed = "盲盒暂时无法加载，请稍后重试"
+    static let blindBoxLoadFailed = NSLocalizedString("blindbox.load_failed", comment: "")
     /// 公开失败且原日记恢复失败：详情／广场／个人页／时间线四处 Toast 共 4 处。
     static let publishFailedRestoreFailed = "公开失败，原日记恢复失败，请检查"
 }
