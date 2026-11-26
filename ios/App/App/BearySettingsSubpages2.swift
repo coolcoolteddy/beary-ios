@@ -498,7 +498,7 @@ final class BearyDataUsageSettingsViewController: BearySettingsSubpageViewContro
         hiresButton.addTarget(self, action: #selector(hiresRowTapped), for: .touchUpInside)
         let hiresRow = bearySettingsTappableRow(content: bearySettingsNavContent(title: "高画质图片", detail: hiresDetail), button: hiresButton)
         let autoplayOn = BearyLivePhotoAutoplay.isEnabled
-        let autoplayDetail = saverOn ? "流量节省程序开启时不自动播放" : "时间线和详情里的实况照片就绪后自动播放"
+        let autoplayDetail = saverOn ? NSLocalizedString("settings.livephoto_autoplay_disabled_by_saver", comment: "") : NSLocalizedString("settings.livephoto_autoplay_detail", comment: "")
         let (autoplayRow, autoplaySwitch) = bearySettingsSwitchContent(title: "自动播放实况", detail: autoplayDetail, isOn: autoplayOn, target: self, action: #selector(autoplaySwitchChanged(_:)))
         autoplaySwitch.isEnabled = !saverOn
         contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: [saverRow, hiresRow, autoplayRow]))
