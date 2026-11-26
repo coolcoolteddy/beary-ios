@@ -1432,47 +1432,45 @@ final class BearyProfilePhotosViewController: UIViewController {
                 wallLiveVideos[photo.imageKey] = liveKey
             }
         }
-let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex, entryIds: photosValue.map { $0.entry.id })
-        presentedViewer = viewer
-        viewer.initialThumbnail = thumbnail
-        viewer.originFrameInWindow = originFrame
-        // C1：网格和灯箱订阅同一个分页结果——网格续拉的新页追加进灯箱；
-        // 灯箱翻到末尾要下一页时由这里触发网格续拉。
-        viewer.hasMorePages = photosHasMore
-        viewer.onRequestMorePages = { [weak self] in self?.requestNextPageFromLightbox() }
-        // 审计 8 第 1 项：关场回当前照片——凭 (entryId, imageKey) 在实时
-        // 网格里定位，不用灯箱下标（后台回包重排后下标会串到别篇）；
-        // 在视口内才给矩形与焦点视图，格不在视口内时返回 nil、走淡出兜底。
-        // 月份分节后 photoIndex 回的是扁平下标，须经 indexPath(forFlatIndex:)
-        // 换算成（节，项），不能直接当 section 0 的 item。
-        viewer.dismissOriginKeyProvider = { [weak self] entryId, imageKey in
-            guard let self = self, let index = self.photoIndex(forEntryId: entryId, imageKey: imageKey),
-                  let path = self.indexPath(forFlatIndex: index) else { return nil }
-            guard let cell = self.collectionView.cellForItem(at: path) else { return nil }
-            let frame = cell.convert(cell.bounds, to: nil)
-            return (frame: frame, element: cell)
+        presentImageViewer(imageKeys: keys, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex, entryIds: photosValue.map { $0.entry.id }, thumbnail: thumbnail, originFrame: originFrame) { [weak self] viewer in
+            guard let self = self else { return }
+            self.presentedViewer = viewer
+            // C1：网格和灯箱订阅同一个分页结果——网格续拉的新页追加进灯箱；
+            // 灯箱翻到末尾要下一页时由这里触发网格续拉。
+            viewer.hasMorePages = self.photosHasMore
+            viewer.onRequestMorePages = { [weak self] in self?.requestNextPageFromLightbox() }
+            // 审计 8 第 1 项：关场回当前照片——凭 (entryId, imageKey) 在实时
+            // 网格里定位，不用灯箱下标（后台回包重排后下标会串到别篇）；
+            // 在视口内才给矩形与焦点视图，格不在视口内时返回 nil、走淡出兜底。
+            // 月份分节后 photoIndex 回的是扁平下标，须经 indexPath(forFlatIndex:)
+            // 换算成（节，项），不能直接当 section 0 的 item。
+            viewer.dismissOriginKeyProvider = { [weak self] entryId, imageKey in
+                guard let self = self, let index = self.photoIndex(forEntryId: entryId, imageKey: imageKey),
+                      let path = self.indexPath(forFlatIndex: index) else { return nil }
+                guard let cell = self.collectionView.cellForItem(at: path) else { return nil }
+                let frame = cell.convert(cell.bounds, to: nil)
+                return (frame: frame, element: cell)
+            }
+            viewer.onViewEntryAtKey = { [weak self, weak viewer] entryId, imageKey in
+                guard let strongSelf = self, let viewerValue = viewer else { return }
+                // r24-#2：灯箱打开期间身份变了（返回后 viewWillAppear 会重拉），
+                // 此处不再按旧快照开旧账号的日记详情，只关灯箱。
+                guard SessionManager.shared.currentUser?.id == strongSelf.viewerIdAtOpen else {
+                    viewerValue.dismiss(animated: BearyMotion.animated(true), completion: nil)
+                    return
+                }
+                // 审计 8 第 1 项：凭 (entryId, imageKey) 在实时网格里定位目标
+                // 日记；找不到（该图已被重滤撤下）时只关灯箱，不开错篇。
+                guard let index = strongSelf.photoIndex(forEntryId: entryId, imageKey: imageKey) else {
+                    viewerValue.dismiss(animated: BearyMotion.animated(true), completion: nil)
+                    return
+                }
+                let targetEntry = strongSelf.photosValue[index].entry
+                viewerValue.dismiss(animated: BearyMotion.animated(true)) {
+                    strongSelf.onOpenEntry?(targetEntry)
+                }
+            }
         }
-        viewer.modalPresentationStyle = .fullScreen
-        viewer.onViewEntryAtKey = { [weak self, weak viewer] entryId, imageKey in
-            guard let strongSelf = self, let viewerValue = viewer else { return }
-            // r24-#2：灯箱打开期间身份变了（返回后 viewWillAppear 会重拉），
-            // 此处不再按旧快照开旧账号的日记详情，只关灯箱。
-            guard SessionManager.shared.currentUser?.id == strongSelf.viewerIdAtOpen else {
-                viewerValue.dismiss(animated: BearyMotion.animated(true), completion: nil)
-                return
-            }
-            // 审计 8 第 1 项：凭 (entryId, imageKey) 在实时网格里定位目标
-            // 日记；找不到（该图已被重滤撤下）时只关灯箱，不开错篇。
-            guard let index = strongSelf.photoIndex(forEntryId: entryId, imageKey: imageKey) else {
-                viewerValue.dismiss(animated: BearyMotion.animated(true), completion: nil)
-                return
-            }
-            let targetEntry = strongSelf.photosValue[index].entry
-            viewerValue.dismiss(animated: BearyMotion.animated(true)) {
-                strongSelf.onOpenEntry?(targetEntry)
-            }
-        }
-        present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
 
     @objc private func backButtonTapped() {

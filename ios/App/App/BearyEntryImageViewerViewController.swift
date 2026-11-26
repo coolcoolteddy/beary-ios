@@ -3,6 +3,7 @@
 // 私有淡入淡出动画类同步改名，行为一字未动）。
 import UIKit
 import Photos
+import ObjectiveC
 
 class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizerDelegate, UIViewControllerTransitioningDelegate {
 
@@ -1957,5 +1958,46 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
             clipView.removeFromSuperview()
             transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
         })
+    }
+}
+
+// MARK: - 灯箱打开共享入口（第十一批第 1 项：详情／广场／时间线／照片墙／列表／头像／封面／九宫格／照片页十处共用）
+
+/// 0.8s 节流时钟：经 associated object 挂各 presenting VC 身上，每 VC 独立
+///（与进详情等动作的时钟分开；个人页五处原先共用同一个 lastImageViewerAt，合流后仍同一时钟）。
+private var bearyImageViewerLastOpenAtKey: UInt8 = 0
+
+extension UIViewController {
+
+    /// 灯箱打开共享入口：空入参守卫＋已弹出守卫＋0.8s 节流＋构造＋.fullScreen＋BearyMotion.animated(true)。
+    /// 各站变体经 configure 闭包（present 前执行）补：focusReturnElement、dismissOriginProvider、
+    /// hasMorePages／onRequestMorePages、dismissOriginKeyProvider、onViewEntryAtKey／onViewEntryAtIndex、presentedViewer。
+    func presentImageViewer(
+        imageKeys: [String] = [],
+        liveVideos: [String: String]? = nil,
+        startIndex: Int,
+        entryIds: [String?]? = nil,
+        localImages: [UIImage] = [],
+        thumbnail: UIImage? = nil,
+        originFrame: CGRect? = nil,
+        configure: ((BearyEntryImageViewerViewController) -> Void)? = nil
+    ) {
+        guard !imageKeys.isEmpty || !localImages.isEmpty else { return }
+        guard presentedViewController == nil else { return }
+        let now = Date()
+        if let last = objc_getAssociatedObject(self, &bearyImageViewerLastOpenAtKey) as? Date,
+           now.timeIntervalSince(last) < 0.8 { return }
+        objc_setAssociatedObject(self, &bearyImageViewerLastOpenAtKey, now, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        let viewer: BearyEntryImageViewerViewController
+        if !localImages.isEmpty {
+            viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, localImages: localImages, startIndex: startIndex)
+        } else {
+            viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: liveVideos, startIndex: startIndex, entryIds: entryIds)
+        }
+        viewer.initialThumbnail = thumbnail
+        viewer.originFrameInWindow = originFrame
+        viewer.modalPresentationStyle = .fullScreen
+        configure?(viewer)
+        present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
 }

@@ -172,7 +172,6 @@ final class BearyDetailViewController: UIViewController {
     private var likeInFlight = false
     private var pendingLikeTarget: Bool?
     private var lastNavigationAt: Date?
-    private var lastImageViewerAt: Date?
     /// 回应快连点代次（2026-11-21 Li 定，点赞串行同款）：写请求一次只发一个，
     /// 在途点按只记最新意图，回包后按最新意图补发；失败回滚到最后确认态。
     private var emoteSeq = 0
@@ -4092,16 +4091,10 @@ final class BearyDetailViewController: UIViewController {
         }
         guard !imageKeys.isEmpty, index >= 0, index < imageKeys.count else { return }
         if presentedViewController != nil { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
-let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: entry.liveVideos, startIndex: index)
-        viewer.initialThumbnail = (sender.view as? UIImageView)?.image
-        viewer.originFrameInWindow = sender.view.map { $0.convert($0.bounds, to: nil) }
         // 无障碍：关闭后焦点回被点的缩略图。
-        viewer.focusReturnElement = sender.view
-        viewer.modalPresentationStyle = .fullScreen
-        present(viewer, animated: BearyMotion.animated(true), completion: nil)
+        presentImageViewer(imageKeys: imageKeys, liveVideos: entry.liveVideos, startIndex: index, thumbnail: (sender.view as? UIImageView)?.image, originFrame: sender.view.map { $0.convert($0.bounds, to: nil) }) { viewer in
+            viewer.focusReturnElement = sender.view
+        }
     }
 
     @objc private func quoteTapped() {
