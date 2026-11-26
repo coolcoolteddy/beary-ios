@@ -1430,7 +1430,8 @@ class BearyDiaryCardCell: UITableViewCell {
     private let limitedPillView = BearyLimitedPillView()
 
     /// 限时倒计时 1 秒 tick：仅存活期限时篇在窗时跑；复用／离窗／到期即停。
-    private var limitedCountdownTimer: Timer?
+    /// 起停走共享 BearyCountdownTimer，tick 留本卡自己的 limitedCountdownTick。
+    private var limitedCountdownTimer = BearyCountdownTimer()
     /// 上次应用的倒计时档位：tick 只在档位跃迁时整组重算，其余只刷文字。
     private var limitedCountdownState: BearyEphemeral.CountdownState?
 
@@ -3769,17 +3770,11 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 倒计时 1 秒 tick：只在档位跃迁时整组重算（颜色／边框／pill／底线），
     /// 其余只刷倒计时文字；到期跃迁由整组重算落定（定时器随之停）。
     private func startLimitedCountdownTimer() {
-        guard limitedCountdownTimer == nil, window != nil else { return }
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            self?.limitedCountdownTick()
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        limitedCountdownTimer = timer
+        limitedCountdownTimer.start(canStart: window != nil) { [weak self] in self?.limitedCountdownTick() }
     }
 
     private func stopLimitedCountdownTimer() {
-        limitedCountdownTimer?.invalidate()
-        limitedCountdownTimer = nil
+        limitedCountdownTimer.stop()
     }
 
     private func limitedCountdownTick() {

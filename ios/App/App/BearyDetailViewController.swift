@@ -806,7 +806,8 @@ final class BearyDetailViewController: UIViewController {
     private let limitedPillView = BearyLimitedPillView()
 
     /// 限时倒计时 1 秒 tick：仅存活期限时篇在页时跑；离页／到期即停。
-    private var limitedCountdownTimer: Timer?
+    /// 起停走共享 BearyCountdownTimer，tick 留本页自己的 limitedCountdownTick。
+    private var limitedCountdownTimer = BearyCountdownTimer()
     /// 上次应用的倒计时档位：tick 只在档位跃迁时整组重算，其余只刷文字。
     private var limitedCountdownState: BearyEphemeral.CountdownState?
     private var imageKeys: [String] = []
@@ -2571,17 +2572,11 @@ final class BearyDetailViewController: UIViewController {
     /// 到期跃迁走既有 applyEphemeralExpiryIfNeeded 落定（非作者转占位），
     /// 不在此处自行渲染到期态。
     private func startLimitedCountdownTimer() {
-        guard limitedCountdownTimer == nil else { return }
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            self?.limitedCountdownTick()
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        limitedCountdownTimer = timer
+        limitedCountdownTimer.start { [weak self] in self?.limitedCountdownTick() }
     }
 
     private func stopLimitedCountdownTimer() {
-        limitedCountdownTimer?.invalidate()
-        limitedCountdownTimer = nil
+        limitedCountdownTimer.stop()
     }
 
     private func limitedCountdownTick() {
