@@ -8886,7 +8886,7 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.onRequireLogin?()
                     } else {
                         cell?.playLikeDenyShake()
-                        strongSelf.presentSimpleAlert(message: "操作失败")
+                        strongSelf.presentSimpleAlert(message: NSLocalizedString("profile.like.failed", comment: ""))
                     }
                 }
             }
@@ -9406,7 +9406,7 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.onRequireLogin?()
                     } else {
                         cell?.playBookmarkDenyShake()
-                        strongSelf.presentSimpleAlert(message: "操作失败")
+                        strongSelf.presentSimpleAlert(message: NSLocalizedString("profile.bookmark.failed", comment: ""))
                     }
                 }
             }
