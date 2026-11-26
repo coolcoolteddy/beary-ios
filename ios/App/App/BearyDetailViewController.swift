@@ -2988,45 +2988,19 @@ final class BearyDetailViewController: UIViewController {
     /// 可见性翻转时位置行随 isPublic 变化同步变（作者本人：公开→区级、私密→精确；
     /// 他人视角恒为区级）。
     private func renderLocation() {
-        guard let line = BearyLocationDisplay.display(entry: entry) else {
-            detailLocationLabel.text = nil
-            updateDetailBottomRowVisibility()
-            return
-        }
-        detailLocationLabel.text = line
-        updateDetailBottomRowVisibility()
-        // 跳动审计第 12 条：缓存命中时首帧直接用解析后的行文，不等异步回包，
-        // 天气组首帧即在终位；缓存未命中才走异步回包。
-        if let cached = BearyLocationDisplayNames.cachedDisplayLine(for: entry) {
-            detailLocationLabel.text = cached
-            updateDetailBottomRowVisibility()
-            return
-        }
+        guard BearyBottomRow.refreshLocationRow(entry: entry, locationLabel: detailLocationLabel, updateVisibility: { self.updateDetailBottomRowVisibility() }) else { return }
         // 2026-11-14 存经纬度：有坐标时按当前语言重取地名；失败／无坐标时保留原存文本行。
         let entryId = entry.id
         BearyLocationDisplayNames.displayLine(for: entry) { [weak self] resolved in
             guard let self = self, let resolved = resolved, self.entry.id == entryId else { return }
-            // 文案没变不碰布局；变了用 0.18s 局部过渡推天气组，不瞬间横移
-            // （卡片 refreshLocationRow 同款口径；减动效／未进窗口时直设终值）。
-            guard resolved != self.detailLocationLabel.text else { return }
-            self.detailLocationLabel.text = resolved
-            self.updateDetailBottomRowVisibility()
-            guard !UIAccessibility.isReduceMotionEnabled, self.detailLocationLineRow.window != nil else { return }
-            UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
-                self.detailLocationLineRow.layoutIfNeeded()
-            })
+            BearyBottomRow.applyResolvedLine(resolved, locationLabel: self.detailLocationLabel, locationLineRow: self.detailLocationLineRow, updateVisibility: { self.updateDetailBottomRowVisibility() })
         }
     }
 
     /// 底行（地址＋天气）显隐：地址与天气任一有内容即显，全无即整行隐藏、
     /// 不占位；无地址时地址组与间隔同藏，天气顶到左边缘。
     private func updateDetailBottomRowVisibility() {
-        let hasLocation = !(detailLocationLabel.text ?? "").isEmpty
-        let hasWeather = !weatherWrapLabel.isHidden || !weatherNameLabel.isHidden || !weatherTempLabel.isHidden
-        detailLocationIconView.isHidden = !hasLocation
-        detailLocationLabel.isHidden = !hasLocation
-        detailLocationWeatherSpacer.isHidden = !hasLocation
-        detailLocationStack.isHidden = !hasLocation && !hasWeather
+        BearyBottomRow.updateVisibility(locationLabel: detailLocationLabel, locationIconView: detailLocationIconView, weatherSpacer: detailLocationWeatherSpacer, locationStack: detailLocationStack, weatherWrapLabel: weatherWrapLabel, weatherNameLabel: weatherNameLabel, weatherTempLabel: weatherTempLabel)
     }
 
     /// 引用渲染代次：每次 renderQuote 即 +1。仅好友异步补全回调到达时须与
