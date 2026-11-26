@@ -8,9 +8,10 @@ import StoreKit
 // POST /api/account/plus-verify 服务端校验（验 JWS 签名＋发权益）→
 // 校验通过才 finish 交易。校验失败／网络异常时不 finish，交易留在
 // 未完成队列里，下次启动由 Transaction.updates 重投递再验，不丢单。
-// TF 本地 Plus（2026-11-26 Li 定）：测试版上不调 plus-verify，购买／
-// 恢复／续订成功后只写本地标记（BearyPlusGate.isLocalTestFlightPlus），
-// 权益只在本地生效；正式版仍走服务端验单。
+// TF 本地 Plus（2026-11-26 Li 定）：测试版购买／恢复／续订成功后只写
+// 本地标记（BearyPlusGate.isLocalTestFlightPlus），权益只在本地生效；
+// 购买完成时仍发一次 plus-verify 只记账（服务端先记账、沙盒非白名单
+// 不发权益），记账成败不影响本地 Plus；正式版仍走服务端验单。
 // 服务端验单实现见 ~/workspace/plus-iap-server-diff/（只备 diff，不部署）。
 // 本文件只负责购买与验单接线，不动 BearyPlusGate 统一门的总闸
 // （isOpenForAll=true 免费期行为不变），不碰其他 Plus 逻辑。
@@ -155,10 +156,14 @@ final class BearyPlusStore {
             return
         }
         // TF 本地 Plus（2026-11-26 Li 定）：测试版买 Plus 只写本地标记、
-        // 不发服务端（plus-verify 不调），权益只在本地生效；正式版才走
-        // 下面服务端验单。本地标记只在 TF 构建生效（见 BearyPlusGate）。
+        // 权益只在本地生效；正式版才走下面服务端验单。本地标记只在
+        // TF 构建生效（见 BearyPlusGate）。购买完成仍发一次 plus-verify
+        // 只记账（服务端先记账、沙盒非白名单回 sandbox_not_allowed 也不
+        // 发权益）：记账 fire-and-forget，结果直接丢弃，成败都不影响
+        // 本地 Plus 与 finish。
         if BearyPlusGate.isTestFlight {
             BearyPlusGate.setLocalTestFlightPlus(true)
+            recordTestFlightPurchase(jws: jws)
             await transaction.finish()
             let response = BearyPlusVerifyResponse(
                 ok: true, plus: true, plusUntil: nil,
@@ -210,7 +215,7 @@ final class BearyPlusStore {
                     await transaction.finish()
                     continue
                 }
-                // TF 本地 Plus：恢复只写本地标记，不发服务端（与购买同款口径）。
+                // TF 本地 Plus：恢复只写本地标记，不发服务端（只记购买完成那一笔）。
                 if BearyPlusGate.isTestFlight {
                     BearyPlusGate.setLocalTestFlightPlus(true)
                     restored += 1
@@ -280,6 +285,15 @@ final class BearyPlusStore {
         case rejected
         case notLoggedIn
         case retryable(APIError)
+    }
+
+    /// TF 只记账（2026-11-26）：购买完成后把 JWS 发给 plus-verify，服务端
+    /// 只记账（含 purchase_date 等字段），沙盒非白名单不发权益。
+    /// fire-and-forget：结果直接丢弃，不重试（记账失败就丢了，不堵购买
+    /// 流程）；401 也只返回、不触发全局 onUnauthorized（见
+    /// BearyAPI.recordTestFlightPlusPurchase），记账调用绝不能把用户踢下线。
+    private func recordTestFlightPurchase(jws: String) {
+        BearyAPI.shared.recordTestFlightPlusPurchase(jws: jws) { _ in }
     }
 
     /// 调 POST /api/account/plus-verify（body {jws}）。

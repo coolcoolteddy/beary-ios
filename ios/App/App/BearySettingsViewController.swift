@@ -155,6 +155,16 @@ extension BearyAPI {
         request("/api/account/plus-verify", method: "POST", jsonBody: ["jws": jws], completion: completion)
     }
 
+    /// POST /api/account/plus-verify（TF 只记账，2026-11-26）：
+    /// 与 verifyPlusPurchase 同接口同 body，唯一区别是 401 只返回
+    /// .unauthorized、绝不触发全局 onUnauthorized（suppressUnauthorized）——
+    /// 记账是 fire-and-forget 的后台调用，会话过期也不能因此把用户踢下线。
+    /// 调用方直接丢弃结果：ok:true（白名单发了权益也不认，只认本地标记）、
+    /// ok:false sandbox_not_allowed、网络失败，一律不影响购买流程。
+    func recordTestFlightPlusPurchase(jws: String, completion: @escaping (Result<BearyPlusVerifyResponse, APIError>) -> Void) {
+        request("/api/account/plus-verify", method: "POST", jsonBody: ["jws": jws], suppressUnauthorized: true, completion: completion)
+    }
+
     /// DELETE /api/account/sessions/others（退出当前设备之外的全部会话；当前会话服务端必保留）。
     func revokeOtherSessions(completion: @escaping (Result<BearyAccountOkResponse, APIError>) -> Void) {
         request("/api/account/sessions/others", method: "DELETE", completion: completion)
