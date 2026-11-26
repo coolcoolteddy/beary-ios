@@ -4,7 +4,7 @@ import UIKit
 // 原「快照对比」页替换为本页：不再并排对比新旧版，只展示快照文字内容）。
 // 标题「快照预览」，副行「时间 · 保存成功」；正文为快照文字（标题有则占首行，
 // 与恢复写回的 title＋content 同款——服务端恢复同时写回两者）；
-// 提示「请先核对快照内容。恢复前会备份当前非空文字，恢复后需手动保存。」；
+// 提示「请先核对快照内容。恢复前会先备份现在的文字，恢复后需手动保存。」；
 // 底部橙色满宽钮「恢复到编辑器」。
 // 恢复语义（与截图注文一致）：点按钮不直接写库，只把快照文字载入编辑器、
 // 手动保存才落盘；保存时服务端 PUT 先把恢复前版本存为快照（既有口径），
@@ -91,7 +91,7 @@ final class BearySnapshotPreviewViewController: UIViewController, BearySystemShe
         noteLabel.adjustsFontForContentSizeCategory = true
         noteLabel.textColor = BearyColors.gray
         noteLabel.numberOfLines = 0
-        noteLabel.text = "请先核对快照内容。恢复前会备份当前非空文字，恢复后需手动保存。"
+        noteLabel.text = NSLocalizedString("snapshot.restore_note", comment: "")
         view.addSubview(noteLabel)
 
         restoreButton.translatesAutoresizingMaskIntoConstraints = false
