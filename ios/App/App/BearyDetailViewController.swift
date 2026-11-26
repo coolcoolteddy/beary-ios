@@ -165,17 +165,14 @@ final class BearyDetailViewController: UIViewController {
     /// 时直接丢弃，不得覆盖更新的点按态；失败回滚到最后确认态。
     /// 串行提交（第 18 轮审计）：写请求一次只发一个，在途点按只记最新意图，
     /// 回包后按最新意图补发，先前成功的回包不再被并行请求丢弃。
-    private var likeSeq = 0
-    private var likeConfirmedSeq = 0
-    private var bookmarkSeq = 0
-    private var bookmarkConfirmedSeq = 0
-    private var confirmedLiked = false
-    private var confirmedLikeCount = 0
+    /// 确认态快照＋代次（共享协议，见 BearyNativeCommon.BearyConfirmedState）：
+    /// 点赞 liked＋count、收藏单布尔；失败回滚到这里，不滚到中间态。
+    private var likeState = BearyConfirmedState(confirmed: BearyLikeState(liked: false, count: 0))
+    private var bookmarkState = BearyConfirmedState(confirmed: false)
     private var likeInFlight = false
     private var pendingLikeTarget: Bool?
     private var lastNavigationAt: Date?
     private var lastImageViewerAt: Date?
-    private var confirmedBookmarked = false
     /// 回应快连点代次（2026-11-21 Li 定，点赞串行同款）：写请求一次只发一个，
     /// 在途点按只记最新意图，回包后按最新意图补发；失败回滚到最后确认态。
     private var emoteSeq = 0
@@ -802,9 +799,8 @@ final class BearyDetailViewController: UIViewController {
     init(entry: Entry) {
         self.entry = entry
         // 传入的 entry 来自服务端数据，即初始确认态。
-        self.confirmedLiked = entry.likedByMe ?? false
-        self.confirmedLikeCount = entry.likeCount ?? 0
-        self.confirmedBookmarked = entry.bookmarkedByMe ?? false
+        self.likeState = BearyConfirmedState(confirmed: BearyLikeState(liked: entry.likedByMe ?? false, count: entry.likeCount ?? 0))
+        self.bookmarkState = BearyConfirmedState(confirmed: entry.bookmarkedByMe ?? false)
         self.confirmedEmotes = entry.emotes ?? []
         // R22-A1：落盘桶按进页时账号钉住（let 属性须在 super.init 前初始化）。
         self.snapshotBucket = BearyDetailCache.bucket()
@@ -2233,19 +2229,18 @@ final class BearyDetailViewController: UIViewController {
         // 补拉期间变化过（当前值 ≠ 发出时值）即视为已确认的新态，不取回包
         // 旧值——操作先成功、旧回包后到时，确认值不再被覆盖。
         let likeChangedDuringFetch = baseline.map { $0.likedByMe != old.likedByMe || $0.likeCount != old.likeCount } ?? false
-        if likeSeq != likeConfirmedSeq || likeChangedDuringFetch {
+        if likeState.hasUnconfirmedRequest(changedDuringFetch: likeChangedDuringFetch) {
             merged.likedByMe = old.likedByMe
             merged.likeCount = old.likeCount
         } else {
-            confirmedLiked = merged.likedByMe ?? false
-            confirmedLikeCount = merged.likeCount ?? 0
+            likeState.adopt(BearyLikeState(liked: merged.likedByMe ?? false, count: merged.likeCount ?? 0))
         }
         let bookmarkChangedDuringFetch = baseline.map { $0.bookmarkedByMe != old.bookmarkedByMe } ?? false
-        if bookmarkSeq != bookmarkConfirmedSeq || bookmarkChangedDuringFetch {
+        if bookmarkState.hasUnconfirmedRequest(changedDuringFetch: bookmarkChangedDuringFetch) {
             merged.bookmarkedByMe = old.bookmarkedByMe
             merged.bookmarkCount = old.bookmarkCount
         } else {
-            confirmedBookmarked = merged.bookmarkedByMe ?? false
+            bookmarkState.adopt(merged.bookmarkedByMe ?? false)
         }
         let emotesChangedDuringFetch = baseline.map { $0.emotesSignature != BearyEmoteOrder.signature(old.emotes) } ?? false
         if emoteSeq != emoteConfirmedSeq || emotesChangedDuringFetch {
@@ -3983,15 +3978,14 @@ final class BearyDetailViewController: UIViewController {
     /// 更新的点按意图，按最新意图再发一次；意图与已确认态相同（两次点按
     /// 互相抵消）时不发，只把界面刷回已确认态。
     private func submitLike(entryId: String, targetLiked: Bool) {
-        likeSeq += 1
-        let reqSeq = likeSeq
+        let reqSeq = likeState.beginRequest()
         likeInFlight = true
         BearyAPI.shared.toggleLike(id: entryId, liked: targetLiked) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // 代次守卫：已有更新点按时，过期回包直接丢弃。
-                guard reqSeq == self.likeSeq else { return }
-                self.likeConfirmedSeq = reqSeq
+                guard self.likeState.isCurrent(reqSeq) else { return }
+                self.likeState.markConfirmed(reqSeq)
                 BearyIconMotion.animateIconScale(on: self.likeButton, to: 1)
                 switch result {
                 case .success(let resp):
@@ -4000,8 +3994,7 @@ final class BearyDetailViewController: UIViewController {
                     if let count = resp.count {
                         self.entry.likeCount = count
                     }
-                    self.confirmedLiked = newLiked
-                    self.confirmedLikeCount = self.entry.likeCount ?? 0
+                    self.likeState.confirm(reqSeq, value: BearyLikeState(liked: newLiked, count: self.entry.likeCount ?? 0))
                     self.refreshActionRow()
                     // 第 1 轮 24：音效只按最终结果播一次（成功按最终态播
                     // likePop／unlikeSoft，失败分支走拒绝音 refuse_bonk）。
@@ -4010,8 +4003,8 @@ final class BearyDetailViewController: UIViewController {
                     self.onInteractionChanged?(entryId, self.entry.likeCount, newLiked, nil, nil)
                 case .failure(let err):
                     // 失败回滚到最后服务端确认态（不是本次点按前的中间态）。
-                    self.entry.likedByMe = self.confirmedLiked
-                    self.entry.likeCount = self.confirmedLikeCount
+                    self.entry.likedByMe = self.likeState.confirmed.liked
+                    self.entry.likeCount = self.likeState.confirmed.count
                     self.refreshActionRow()
                     // 回滚到未填色：在飞的点赞微粒一并清掉。
                     BearyIconMotion.clearLikeBurst(on: self.likeButton)
@@ -4026,16 +4019,16 @@ final class BearyDetailViewController: UIViewController {
                 self.likeInFlight = false
                 if let pending = self.pendingLikeTarget {
                     self.pendingLikeTarget = nil
-                    if pending != self.confirmedLiked {
+                    if pending != self.likeState.confirmed.liked {
                         // 按最新意图补发：先行反馈已在点按时给过，这里只同步
                         // 字段与计数，不重播动效与音效。
                         self.entry.likedByMe = pending
-                        self.entry.likeCount = max(0, self.confirmedLikeCount + (pending ? 1 : -1))
+                        self.entry.likeCount = max(0, self.likeState.confirmed.count + (pending ? 1 : -1))
                         self.refreshActionRow()
                         self.submitLike(entryId: entryId, targetLiked: pending)
                     } else {
-                        self.entry.likedByMe = self.confirmedLiked
-                        self.entry.likeCount = self.confirmedLikeCount
+                        self.entry.likedByMe = self.likeState.confirmed.liked
+                        self.entry.likeCount = self.likeState.confirmed.count
                         self.refreshActionRow()
                     }
                 }
@@ -4067,19 +4060,18 @@ final class BearyDetailViewController: UIViewController {
         // 成功回包按最终态播 bookmarkTick／deleteSwoosh，失败走拒绝音；
         // 否则失败时点按音与拒绝音先后两声。
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
-        bookmarkSeq += 1
-        let reqSeq = bookmarkSeq
+        let reqSeq = bookmarkState.beginRequest()
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // 代次守卫：已有更新点按时，过期回包直接丢弃。
-                guard reqSeq == self.bookmarkSeq else { return }
-                self.bookmarkConfirmedSeq = reqSeq
+                guard self.bookmarkState.isCurrent(reqSeq) else { return }
+                self.bookmarkState.markConfirmed(reqSeq)
                 switch result {
                 case .success(let resp):
                     let newBookmarked = resp.bookmarked ?? flipped
                     self.entry.bookmarkedByMe = newBookmarked
-                    self.confirmedBookmarked = newBookmarked
+                    self.bookmarkState.confirm(reqSeq, value: newBookmarked)
                     self.refreshActionRow()
                     // 收藏音按最终结果只播一次（成功按最终态播 bookmarkTick／
                     // deleteSwoosh，失败分支走拒绝音 refuse_bonk）。
@@ -4087,7 +4079,7 @@ final class BearyDetailViewController: UIViewController {
                     self.onInteractionChanged?(entryId, nil, nil, newBookmarked, nil)
                 case .failure(let err):
                     // 失败回滚到最后服务端确认态。
-                    self.entry.bookmarkedByMe = self.confirmedBookmarked
+                    self.entry.bookmarkedByMe = self.bookmarkState.confirmed
                     self.refreshActionRow()
                     // 回滚到未填色：在飞的收藏微粒一并清掉。
                     BearyBurstParticles.clear(from: self.bookmarkButton)

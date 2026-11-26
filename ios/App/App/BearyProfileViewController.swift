@@ -345,12 +345,12 @@ class BearyProfileViewController: UIViewController {
     /// 快连点代次（2026-10-29 及时性口径）：按 entryId 计代次，每次点按 +1 并
     /// 立即按本次点按态渲染；在途回包代次落后时直接丢弃；失败回滚到确认态。
     /// 点赞从不先行改页签模型，故页签模型即确认态来源；收藏先行改页签模型，
-    /// 故另记 confirmedBookmarkedById（落定时取页签模型、成功时取服务端值）。
+    /// 故另记 bookmarkStates（落定时取页签模型、成功时取服务端值）。
     private var likeSeqById: [String: Int] = [:]
     private var likeConfirmedSeqById: [String: Int] = [:]
-    private var bookmarkSeqById: [String: Int] = [:]
-    private var bookmarkConfirmedSeqById: [String: Int] = [:]
-    private var confirmedBookmarkedById: [String: Bool] = [:]
+    /// 收藏确认态表（共享协议，见 BearyNativeCommon.BearyConfirmedStatesById）：
+    /// 落定时取页签模型、成功时取服务端值，失败回滚到这里。
+    private var bookmarkStates = BearyConfirmedStatesById<String, Bool>()
     /// 个人页回应快连点代次（2026-11-21 Li 定，详情页串行同款）：写请求一次只发
     /// 一个，在途点按只记最新意图（按 key 去重、FIFO 排队），回包后逐条补发；
     /// 过期回包直接丢弃，不覆盖更新的点按态；失败回滚到页签模型确认态。
@@ -9324,12 +9324,12 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         }
         // 确认态：落定时页签模型即确认态；有在途请求时沿用上次确认态
         // （首次在途时回落到本次传入 entry——它就是首请求发出前的页签值）。
-        if bookmarkSeqById[entryId] == bookmarkConfirmedSeqById[entryId] {
+        if bookmarkStates.isSettled(for: entryId) {
             if let tabEntry = currentEntries.first(where: { $0.id == entryId }) {
-                confirmedBookmarkedById[entryId] = tabEntry.bookmarkedByMe ?? false
+                bookmarkStates.setConfirmed(for: entryId, value: tabEntry.bookmarkedByMe ?? false)
             }
         }
-        let confirmedBookmarked = confirmedBookmarkedById[entryId] ?? (entry.bookmarkedByMe ?? false)
+        let confirmedBookmarked = bookmarkStates.confirmedValue(for: entryId) ?? (entry.bookmarkedByMe ?? false)
         // 跟手批：先行翻转 + 就地同步（图标切换不等服务端，Feed 同款口径）；
         // pop 直接补在同 cell 上；已滑走则 cell 为空，跳过无害。
         let wantBookmarked = !currentBookmarked
@@ -9344,19 +9344,18 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         // 成功回包按最终态播 bookmarkTick／deleteSwoosh，失败走拒绝音；
         // 否则失败时点按音与拒绝音先后两声。
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
-        let seq = (bookmarkSeqById[entryId] ?? 0) + 1
-        bookmarkSeqById[entryId] = seq
+        let seq = bookmarkStates.beginRequest(for: entryId)
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // 代次守卫：已有更新点按时，过期回包直接丢弃。
-                guard seq == strongSelf.bookmarkSeqById[entryId] else { return }
-                strongSelf.bookmarkConfirmedSeqById[entryId] = seq
+                guard strongSelf.bookmarkStates.isCurrent(seq, for: entryId) else { return }
+                strongSelf.bookmarkStates.markConfirmed(seq, for: entryId)
                 switch result {
                 case .success(let resp):
                     var updated = strongSelf.currentEntries.first(where: { $0.id == entryId }) ?? entry
                     updated.bookmarkedByMe = resp.bookmarked ?? wantBookmarked
-                    strongSelf.confirmedBookmarkedById[entryId] = updated.bookmarkedByMe ?? false
+                    strongSelf.bookmarkStates.confirm(seq, for: entryId, value: updated.bookmarkedByMe ?? false)
                     strongSelf.updateEntryInAllTabs(entry: updated)
                     strongSelf.notifyInteraction(entry: updated)
                     // 收藏页签取消收藏时摘卡（与网页 toggleBookmark 同口径）。

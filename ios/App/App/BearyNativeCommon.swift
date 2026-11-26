@@ -2940,6 +2940,130 @@ struct BookmarkResponse: Decodable {
     var bookmarked: Bool?
 }
 
+/// 乐观计数共享协议（第十五遍第 7 条）：确认态快照＋代次校验＋失败回滚。
+/// 详情／卡片／个人页／许愿墙此前各写一套，现共用同一小 helper；
+/// 各页的合并时机（详情整 Entry 合并 vs 卡片逐字段同步）各留自己的。
+/// 点赞计数的确认态用 `BearyLikeState`（liked＋count），投票用
+/// `BearyVoteState`（vote＋up＋down），单布尔（收藏）直接用 `Bool`。
+struct BearyLikeState: Equatable {
+    var liked: Bool
+    var count: Int
+}
+
+struct BearyVoteState: Equatable {
+    /// 当前票：1 赞成／-1 反对／nil 无票。
+    var vote: Int?
+    var up: Int
+    var down: Int
+}
+
+/// 单条目的确认态：确认值＋代次。点按时 `beginRequest()` 取代次并立即
+/// 乐观渲染；回包先过 `isCurrent(_:)`（过期直接丢弃），成功
+/// `confirm(_:value:)` 写新确认态，失败读 `confirmed` 滚回；
+/// 取数合并时 `hasUnconfirmedRequest(changedDuringFetch:)` 为真则护乐观值，
+/// 否则回包即新确认态（`adopt(_:)` 接纳）。
+struct BearyConfirmedState<Value> {
+    var confirmed: Value
+    private(set) var seq = 0
+    private(set) var confirmedSeq = 0
+
+    init(confirmed: Value) {
+        self.confirmed = confirmed
+    }
+
+    mutating func reset(to value: Value) {
+        confirmed = value
+        seq = 0
+        confirmedSeq = 0
+    }
+
+    mutating func beginRequest() -> Int {
+        seq += 1
+        return seq
+    }
+
+    func isCurrent(_ reqSeq: Int) -> Bool {
+        reqSeq == seq
+    }
+
+    func hasUnconfirmedRequest(changedDuringFetch: Bool = false) -> Bool {
+        seq != confirmedSeq || changedDuringFetch
+    }
+
+    mutating func confirm(_ reqSeq: Int, value: Value) {
+        guard reqSeq == seq else { return }
+        confirmedSeq = reqSeq
+        confirmed = value
+    }
+
+    /// 回包已是最新一代：先记代次已确认，再按成功／失败分流
+    ///（旧代码在守卫后即记 confirmedSeq，失败也不例外——否则取数合并
+    /// 会一直把已回滚的旧值当在途乐观值护着）。
+    mutating func markConfirmed(_ reqSeq: Int) {
+        guard reqSeq == seq else { return }
+        confirmedSeq = reqSeq
+    }
+
+    mutating func adopt(_ value: Value) {
+        confirmedSeq = seq
+        confirmed = value
+    }
+}
+
+/// 按 id 键的确认态表（个人页收藏按 entryId、许愿墙投票按 wishId）：
+/// 代次与确认值各记一本，与单条目 `BearyConfirmedState` 同口径；
+/// 字典里有 key 即已播种（许愿墙 nil 票与“未播种”以此区分）。
+struct BearyConfirmedStatesById<Key: Hashable, Value> {
+    private var confirmed: [Key: Value] = [:]
+    private var seq: [Key: Int] = [:]
+    private var confirmedSeq: [Key: Int] = [:]
+
+    func confirmedValue(for id: Key) -> Value? {
+        confirmed[id]
+    }
+
+    func isSettled(for id: Key) -> Bool {
+        (seq[id] ?? 0) == (confirmedSeq[id] ?? 0)
+    }
+
+    func isCurrent(_ reqSeq: Int, for id: Key) -> Bool {
+        reqSeq == (seq[id] ?? 0)
+    }
+
+    mutating func seedIfAbsent(for id: Key, value: Value) {
+        if confirmed[id] == nil {
+            confirmed[id] = value
+        }
+    }
+
+    mutating func setConfirmed(for id: Key, value: Value) {
+        confirmed[id] = value
+    }
+
+    mutating func adopt(for id: Key, value: Value) {
+        confirmed[id] = value
+        confirmedSeq[id] = seq[id] ?? 0
+    }
+
+    mutating func beginRequest(for id: Key) -> Int {
+        let next = (seq[id] ?? 0) + 1
+        seq[id] = next
+        return next
+    }
+
+    mutating func confirm(_ reqSeq: Int, for id: Key, value: Value) {
+        guard reqSeq == (seq[id] ?? 0) else { return }
+        confirmedSeq[id] = reqSeq
+        confirmed[id] = value
+    }
+
+    /// 回包已是最新一代：先记代次已确认，再按成功／失败分流（同上）。
+    mutating func markConfirmed(_ reqSeq: Int, for id: Key) {
+        guard reqSeq == (seq[id] ?? 0) else { return }
+        confirmedSeq[id] = reqSeq
+    }
+}
+
 struct EmoteResponse: Decodable {
     var ok: Bool?
     var emotes: [EmoteCount]?
