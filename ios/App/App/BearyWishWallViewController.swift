@@ -1329,13 +1329,13 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         for cap in colCapConstraints where cap.isActive != wantCap {
             cap.isActive = wantCap
         }
-        subpageLayoutGuard.applyIfNeeded(page: "新建许愿", view: view, topView: topBarView)
+        subpageLayoutGuard.applyIfNeeded(page: NSLocalizedString("wish.create.page_name", comment: ""), view: view, topView: topBarView)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 117 终态偏离兜底：动画结束后的最终帧再校一次。
-        subpageLayoutGuard.applyAfterAppearance(page: "新建许愿", view: view, topView: topBarView)
+        subpageLayoutGuard.applyAfterAppearance(page: NSLocalizedString("wish.create.page_name", comment: ""), view: view, topView: topBarView)
     }
 
     /// 13：表单字段居中列约束——宽 == 滚动容器 frame 宽-32（defaultHigh，≤820 全宽-32）
