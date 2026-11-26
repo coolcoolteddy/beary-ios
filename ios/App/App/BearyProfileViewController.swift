@@ -1436,7 +1436,7 @@ class BearyProfileViewController: UIViewController {
         labelValue.translatesAutoresizingMaskIntoConstraints = false
         labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         labelValue.textColor = BearyColors.ink
-        labelValue.text = "进入年度回顾"
+        labelValue.text = NSLocalizedString("profile.annual_review.view_entry", comment: "")
         let chevronView = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 14))
         chevronView.translatesAutoresizingMaskIntoConstraints = false
         chevronView.contentMode = .scaleAspectFit
@@ -4986,7 +4986,7 @@ class BearyProfileViewController: UIViewController {
 
     /// 05：整卡是单个 VoiceOver 按钮，子视图不再逐个读出，统计内容收进
     /// 卡片的 accessibilityLabel——数值与心情／天气行与可见文案逐字一致，
-    /// 末尾点明操作（进入年度回顾）。每次填数后同步更新。
+    /// 末尾点明操作（查看年度回顾）。每次填数后同步更新。
     private func updateStatsCardAccessibilityLabel(
         stats: BearyProfilePersonalLogic.WritingStats,
         charsText: String,
@@ -5002,7 +5002,7 @@ class BearyProfileViewController: UIViewController {
         }
         readParts.append("当前连续写作 \(stats.currentStreakDays) 天")
         readParts.append(contentsOf: moodWeatherParts)
-        readParts.append("进入年度回顾")
+        readParts.append(NSLocalizedString("profile.annual_review.view_entry", comment: ""))
         statsCard.accessibilityLabel = readParts.joined(separator: "，")
     }
 
