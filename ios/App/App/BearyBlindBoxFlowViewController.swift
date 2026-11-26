@@ -1040,14 +1040,14 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     /// 选篇提示文案（第八轮审计 02）：基础文案不变；触顶时追加星图同款明示
     /// “篇数较多，仅展示最近拉取的 N 篇”（续拉后总数会变，用实际已加载数，
-    /// 不写死 500）；中断时追加部分数据提醒。失败分支的“开盒后今日计数变为
-    /// 1/1”后缀保留（只在中断态出现）。
+    /// 不写死 500）；中断时追加部分数据提醒。中断态的基础文案为
+    /// “已放进盲盒，可以开盒了。开盒后今天的盲盒就开完了。”（只在中断态出现）。
     private func updatePoolHint() {
         var text: String
         if pooledEntryId == nil {
             text = "选一篇旧公开日记，放进池子后开盒。"
         } else if poolInterrupted {
-            text = "已放进池子，可以开盒了。开盒后今日计数变为 1/1。"
+            text = NSLocalizedString("blindbox.pool_hint.interrupted", comment: "")
         } else {
             text = "已放进池子，可以开盒了。"
         }
