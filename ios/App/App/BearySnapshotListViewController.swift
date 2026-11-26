@@ -100,8 +100,8 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
         emptyLabel.numberOfLines = 0
         view.addSubview(emptyLabel)
         retryButton.translatesAutoresizingMaskIntoConstraints = false
-        retryButton.setTitle("重试", for: .normal)
-        retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
+        retryButton.setTitle(NSLocalizedString("common.retry", comment: ""), for: .normal)
+        retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpace.xl, bottom: 0, right: BearySpace.xl)
         retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButton.retryPageStyle.height).isActive = true
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()
@@ -212,7 +212,7 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
 
     private func refreshEmptyState() {
         if loadFailed {
-            emptyLabel.text = "快照加载失败"
+            emptyLabel.text = NSLocalizedString("snapshot.load_failed", comment: "")
             emptyLabel.isHidden = false
             retryButton.isHidden = false
         } else if snapshots.isEmpty {
