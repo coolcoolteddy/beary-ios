@@ -652,7 +652,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             // 骨架态不写空态文案（取数中“还没有日记”是假空态），状态行留空。
             if !isLoadingEntries {
                 statusLabel.text = (allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记")
-                    + (fetchCapped ? " · 篇数较多，仅展示最近拉取的 \(allEntries.count) 篇" : "")
+                    + (fetchCapped ? " · " + String(format: NSLocalizedString("entries.recent_capped_count", comment: ""), allEntries.count) : "")
             }
             // 只撤地点组标记。
             for annotation in locatedAnnotations.values {
@@ -673,7 +673,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             // 触顶明示（审计新一轮 03，星图同款口径）：“篇数较多，仅展示最近拉取的
             // 500 篇”——续拉后总数会变，故用实际已加载数，不写死 500；500 篇时与
             // 星图文案一字相同。
-            status += " · 篇数较多，仅展示最近拉取的 \(allEntries.count) 篇"
+            status += " · " + String(format: NSLocalizedString("entries.recent_capped_count", comment: ""), allEntries.count)
         }
         statusLabel.text = status
         // 先展示已有列表与已命中的坐标缓存：按组 ID 增量 diff（只摘新分组
