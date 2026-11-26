@@ -1578,14 +1578,14 @@ class BearyFeedViewController: UIViewController {
                     // B1：段守卫写盘（同首拉守卫），仅好友篇不落盘。
                     strongSelf.saveCurrentFeedHead(entries: strongSelf.plazaRaw, hasMore: strongSelf.plazaHasMore)
                     strongSelf.rebuildCarouselItems()
-                    if strongSelf.tableView.numberOfRows(inSection: 0) == oldCount {
+                    BearyLoadingUX.appendRowsIfConsistent(tableView: strongSelf.tableView, oldCount: oldCount, insert: {
                         let indexPaths = (0..<newItems.count).map { IndexPath(row: $0, section: 0) }
                         strongSelf.tableView.performBatchUpdates({
                             strongSelf.tableView.insertRows(at: indexPaths, with: .none)
                         })
-                    } else {
+                    }, fallback: {
                         strongSelf.tableView.reloadData()
-                    }
+                    })
                     strongSelf.finishFirstLoadIfNeeded()
                     strongSelf.updateOverlayState()
                     strongSelf.maybeEndRefreshing()

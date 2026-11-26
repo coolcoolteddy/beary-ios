@@ -686,4 +686,21 @@ enum BearyLoadingUX {
         guard !entries.isEmpty else { return }
         BearyImagePrefetcher.shared.prefetch(entries: entries, lastVisibleIndex: -1, viewerId: viewerId)
     }
+
+    /// 追加插行守卫（首页 since 前插、标签页／个人页分页追加三处共用）：
+    /// 表行数与追加前模型行数对得上才插新行，对不上走各页自己的回落动作
+    /// （首页裸 reloadData、标签页保滚动重载、个人页骨架淡出）。
+    /// 各页追加前置守卫（个人页的 appending／skeleton 分支）仍留在调用方。
+    static func appendRowsIfConsistent(
+        tableView: UITableView,
+        oldCount: Int,
+        insert: () -> Void,
+        fallback: () -> Void
+    ) {
+        if tableView.numberOfRows(inSection: 0) == oldCount {
+            insert()
+        } else {
+            fallback()
+        }
+    }
 }

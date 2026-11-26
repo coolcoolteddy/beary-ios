@@ -219,14 +219,14 @@ final class BearyTagEntriesViewController: UIViewController {
                 guard !fresh.isEmpty else { return }
                 let startIndex = self.entries.count
                 self.entries.append(contentsOf: fresh)
-                if self.tableView.numberOfRows(inSection: 0) == startIndex {
+                BearyLoadingUX.appendRowsIfConsistent(tableView: self.tableView, oldCount: startIndex, insert: {
                     // 纯追加只插新行：旧 cell 不重建，头像/图片不闪。
                     let indexPaths = (startIndex..<(startIndex + fresh.count)).map { IndexPath(row: $0, section: 0) }
                     self.tableView.insertRows(at: indexPaths, with: .none)
-                } else {
+                }, fallback: {
                     // 表行数与模型对不上时才整表重载，并按首个可见日记恢复滚动。
                     self.reloadDataPreservingScrollPosition(anchor: anchor)
-                }
+                })
             case .failure:
                 // 分页失败不弹失败态（已有内容可看），下一轮滑到底再试一次。
                 break

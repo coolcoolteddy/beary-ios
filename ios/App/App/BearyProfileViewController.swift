@@ -6861,6 +6861,27 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// 追加回落（与首屏路径同款）：骨架在时只做一次 0.26s 交叉溶解，
+    /// 否则裸 reloadData。追加插行守卫的 fallback 与非追加路径共用。
+    private func reloadAfterAppendFallback() {
+        if didShowProfileSkeleton, BearyMotion.animated(true) {
+            // 加载三件套·骨架淡出：只做一次 0.26s 交叉溶解，真实行直接落
+            // 最终位置，不再在淡变完成后又把刚淡出的行藏起来重播一次。
+            didShowProfileSkeleton = false
+            UIView.transition(with: tableView, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+                self.tableView.reloadData()
+            }, completion: { [weak self] _ in
+                // 首屏入场走 animateNewRows（与 staggerIn 同款 60ms 步进、8px 上移），
+                // 顺带把已播日记 ID 记进 animatedRowIds；切回旧标签/分页时
+                // animateNewRows 只播未播过的新行，已有行不重播。
+                self?.animateNewRows(delayStep: 0.06, yOffset: 8)
+            })
+        } else {
+            didShowProfileSkeleton = false
+            tableView.reloadData()
+        }
+    }
+
     private func handleTabResult(result: Result<EntryList, APIError>, appending: Bool, requestTab: ProfileTab, viewerGeneration: Int) {
         tabLoading = false
         tabLoadMore = false
@@ -6938,28 +6959,18 @@ class BearyProfileViewController: UIViewController {
                 BearyProfileCache.save(bucket: bucket, tab: requestTab, entries: freshEntries, hasMore: currentHasMore)
             }
             // 80 包 A6-2：分页追加走 insertRows（与首页/时间线同口径），表行数对不上
-            // 回落 reloadData；首屏/失败仍 reloadData（见下）。
-            if appending, appendedRowCount > 0, tableView.numberOfSections > 0,
-               tableView.numberOfRows(inSection: 0) == oldRowCount {
-                let inserted = (oldRowCount..<oldRowCount + appendedRowCount).map { IndexPath(row: $0, section: 0) }
-                tableView.performBatchUpdates({
-                    self.tableView.insertRows(at: inserted, with: .none)
-                }, completion: { [weak self] _ in self?.animateNewRows(delayStep: 0.05, yOffset: 24) })
-            } else if didShowProfileSkeleton, BearyMotion.animated(true) {
-                // 加载三件套·骨架淡出：只做一次 0.26s 交叉溶解，真实行直接落
-                // 最终位置，不再在淡变完成后又把刚淡出的行藏起来重播一次。
-                didShowProfileSkeleton = false
-                UIView.transition(with: tableView, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
-                    self.tableView.reloadData()
-                }, completion: { [weak self] _ in
-                    // 首屏入场走 animateNewRows（与 staggerIn 同款 60ms 步进、8px 上移），
-                    // 顺带把已播日记 ID 记进 animatedRowIds；切回旧标签/分页时
-                    // animateNewRows 只播未播过的新行，已有行不重播。
-                    self?.animateNewRows(delayStep: 0.06, yOffset: 8)
+            // 回落骨架淡出／reloadData（见 reloadAfterAppendFallback）；首屏仍走同款回落。
+            if appending, appendedRowCount > 0, tableView.numberOfSections > 0 {
+                BearyLoadingUX.appendRowsIfConsistent(tableView: tableView, oldCount: oldRowCount, insert: {
+                    let inserted = (oldRowCount..<oldRowCount + appendedRowCount).map { IndexPath(row: $0, section: 0) }
+                    tableView.performBatchUpdates({
+                        self.tableView.insertRows(at: inserted, with: .none)
+                    }, completion: { [weak self] _ in self?.animateNewRows(delayStep: 0.05, yOffset: 24) })
+                }, fallback: { [weak self] in
+                    self?.reloadAfterAppendFallback()
                 })
             } else {
-                didShowProfileSkeleton = false
-                tableView.reloadData()
+                reloadAfterAppendFallback()
             }
         case .failure:
             tabError = true
