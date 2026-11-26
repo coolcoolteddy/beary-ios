@@ -10408,13 +10408,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func message(forUpdateError error: APIError) -> String {
         if case .server(let code, _) = error {
+            if let shared = BearyServerErrorMessages.sharedMessage(forServerCode: code) {
+                return shared
+            }
             switch code {
-            case "content too long":
-                return "正文最多 2000 字"
-            case "title too long":
-                return "标题最多 30 字"
-            case "image unavailable":
-                return "图片已失效，请重新添加"
             case "invalid image ownership":
                 return "图片归属异常，请重新添加"
             case "edit_expired":
