@@ -3123,7 +3123,13 @@ extension BearyAPI {
     /// 回包 {temp, code, city}：temp 为摄氏度整数，code 为 WMO 天气代码。code 映射见
     /// weatherKey(forWMOCode:)；未覆盖的代码只回气温、不改天气类型，绝不编一个类型填上。
     /// 取不到（网络错、非 200、字段缺失）即走 failure，调用方如实提示、不填假数据。
+    /// 失败只重试一次（与全站 GET 网络错重试 1 次同口径，见 BearyAPI.request；
+    /// 天气走 URLSession.shared 直连、无 request 的重试，之前失败即静默留空）。
     func fetchLocalWeather(latitude: Double? = nil, longitude: Double? = nil, completion: @escaping (Result<(weatherKey: String?, temperature: Int, city: String?), Error>) -> Void) {
+        fetchLocalWeather(latitude: latitude, longitude: longitude, retried: false, completion: completion)
+    }
+
+    private func fetchLocalWeather(latitude: Double?, longitude: Double?, retried: Bool, completion: @escaping (Result<(weatherKey: String?, temperature: Int, city: String?), Error>) -> Void) {
         var urlString = "https://api.teddyhn.com/api/weather"
         if let lat = latitude, let lon = longitude, lat.isFinite, lon.isFinite {
             urlString += "?lat=\(lat)&lon=\(lon)"
@@ -3136,14 +3142,21 @@ extension BearyAPI {
         req.httpMethod = "GET"
         req.timeoutInterval = 10
         URLSession.shared.dataTask(with: req) { data, response, error in
+            func fail(_ err: Error) {
+                if !retried {
+                    self.fetchLocalWeather(latitude: latitude, longitude: longitude, retried: true, completion: completion)
+                } else {
+                    completion(.failure(err))
+                }
+            }
             if let error = error {
-                completion(.failure(error))
+                fail(error)
                 return
             }
             guard let http = response as? HTTPURLResponse, http.statusCode == 200,
                   let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                completion(.failure(NSError(domain: "BearyWeather", code: -2, userInfo: nil)))
+                fail(NSError(domain: "BearyWeather", code: -2, userInfo: nil))
                 return
             }
             let temp: Int?
@@ -3155,7 +3168,7 @@ extension BearyAPI {
                 temp = nil
             }
             guard let temp = temp else {
-                completion(.failure(NSError(domain: "BearyWeather", code: -3, userInfo: nil)))
+                fail(NSError(domain: "BearyWeather", code: -3, userInfo: nil))
                 return
             }
             let code = json["code"] as? Int

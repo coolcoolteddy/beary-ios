@@ -60,6 +60,8 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
     private var searchGeneration = 0
     /// 附近拉取代次：旧拉取回包过期作废。
     private var nearbyGeneration = 0
+    /// 附近兜底是否已试过（POI 空结果时只试一次区名搜索，不反复刷）。
+    private var nearbyFallbackAttempted = false
 
     private let completer = MKLocalSearchCompleter()
 
@@ -325,12 +327,16 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
                 guard !place.isEmpty else { return }
                 self.gpsPlace = place
                 self.refreshCurrentCard()
+                // POI 可能已先回空：区名到了就补试一次兜底（见 tryNearbyFallback）。
+                self.tryNearbyFallback()
             }
         }
     }
 
     /// 附近地点：MapKit 兴趣点请求（3 公里内），按距离排序取前 10；
     /// 失败即空列表，空态提示输入搜索，不弹失败态。
+    /// POI 在住宅区常回空（国内兴趣点覆盖薄），搜索却能出附近地址：
+    /// 空结果时按区名再搜一次本地搜索兜底（见 tryNearbyFallback），仍空才留空态。
     private func fetchNearbyPlaces() {
         guard let coordinate = userCoordinate else { return }
         nearbyGeneration += 1
@@ -341,11 +347,39 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
             DispatchQueue.main.async {
                 guard let self = self, self.nearbyGeneration == generation else { return }
                 self.nearbyLoading = false
-                guard let items = response?.mapItems else {
-                    self.nearbyItems = []
-                    self.refreshList()
-                    return
+                let items = response?.mapItems ?? []
+                let userLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                let sorted = items.filter { $0.name != nil }.sorted { a, b in
+                    let da = userLocation.distance(from: CLLocation(latitude: a.placemark.coordinate.latitude, longitude: a.placemark.coordinate.longitude))
+                    let db = userLocation.distance(from: CLLocation(latitude: b.placemark.coordinate.latitude, longitude: b.placemark.coordinate.longitude))
+                    return da < db
                 }
+                self.nearbyItems = Array(sorted.prefix(10))
+                self.refreshList()
+                if self.nearbyItems.isEmpty {
+                    self.tryNearbyFallback()
+                }
+            }
+        }
+    }
+
+    /// 附近兜底：POI 空结果时按逆地理编码出的区名跑一次本地搜索（5 公里内、
+    /// 按距离排序取前 10）。只试一次；逆地理编码还没回时等它回了再试（见
+    /// reverseGeocodeCurrentPlace），区名也没有时不试、不编假数据。
+    private func tryNearbyFallback() {
+        guard !nearbyLoading, nearbyItems.isEmpty, !nearbyFallbackAttempted,
+              let coordinate = userCoordinate,
+              let district = gpsPlace?.district, !district.isEmpty else { return }
+        nearbyFallbackAttempted = true
+        nearbyGeneration += 1
+        let generation = nearbyGeneration
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = district
+        request.region = MKCoordinateRegion(center: coordinate, latitudinalMeters: 5000, longitudinalMeters: 5000)
+        MKLocalSearch(request: request).start { [weak self] response, _ in
+            DispatchQueue.main.async {
+                guard let self = self, self.nearbyGeneration == generation else { return }
+                let items = response?.mapItems ?? []
                 let userLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
                 let sorted = items.filter { $0.name != nil }.sorted { a, b in
                     let da = userLocation.distance(from: CLLocation(latitude: a.placemark.coordinate.latitude, longitude: a.placemark.coordinate.longitude))
