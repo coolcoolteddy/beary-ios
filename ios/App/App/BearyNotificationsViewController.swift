@@ -880,12 +880,14 @@ final class BearyNotificationsViewController: UIViewController {
         refreshVisibleTimeLabels()
     }
 
-    /// P1-21：在途请求代次校验——各请求发起时捕获 BearyAPI.authEpoch，
+    /// P1-21：在途请求代次校验——各请求发起时捕获 BearyAPI.authEpoch 与 authAccountId，
     /// 回包先比对，代次已变（切账号/401 清态后 bump）说明回包属于旧登录态，
     /// 直接丢弃，不写 items/未读数/角标、不弹登录、不回滚已读。BearyAPI 侧
     /// authEpoch 现只门控 401 回调，不丢弃过期回包数据，本方法是补缺口。
-    private func isStaleRequestEpoch(_ capturedEpoch: Int) -> Bool {
-        return capturedEpoch != BearyAPI.shared.authEpoch
+    private func isStaleRequestEpoch(_ capturedEpoch: Int, requestAccountId: Int?) -> Bool {
+        return BearyAPI.isStaleAccountLoad(
+            requestAccountId: requestAccountId, requestEpoch: capturedEpoch,
+            currentAccountId: BearyAPI.shared.authAccountId, currentEpoch: BearyAPI.shared.authEpoch)
     }
 
     /// 轻量刷新 + D3-App 门控（60 秒轮询、回前台、viewWillAppear 的统一入口）：
@@ -912,6 +914,7 @@ final class BearyNotificationsViewController: UIViewController {
             return
         }
         let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         // 第 17 轮 11：拍下发起时的已读操作代次——全部已读成功后代次 +1，
         // 此前在途的回包随后一律过期，不把已清零的未读数加回来（与单条
         // 标已读失败回滚同口径，见 markSingleRead）。
@@ -920,7 +923,7 @@ final class BearyNotificationsViewController: UIViewController {
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // P1-21：代次已变 → 旧账号回包丢弃，不写未读数与角标。
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     return
                 }
                 // 第 17 轮 11：全部已读已成功（操作代次已变）→ 旧回包丢弃，
@@ -1214,6 +1217,7 @@ final class BearyNotificationsViewController: UIViewController {
         let requestedLimit = items.isEmpty ? pageLimit : min(max(pageLimit, items.count), maxRefreshLimit)
         refreshVisibleState()
         let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         // 第 17 轮 11：拍下发起时的已读操作代次（同轻量刷新）。
         let operationGen = readOperationGeneration
         BearyAPI.shared.fetchNotifications(limit: requestedLimit) { [weak self] result in
@@ -1222,7 +1226,7 @@ final class BearyNotificationsViewController: UIViewController {
                 strongSelf.isLoadingFirstPage = false
                 // P1-21：代次已变 → 旧账号回包丢弃；下拉刷新仍走 completion 收尾，
                 // 避免转圈悬停（见 beginCustomPullRefresh）。
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     completion?()
                     return
                 }
@@ -1947,6 +1951,7 @@ final class BearyNotificationsViewController: UIViewController {
         let oldDisplayRows = displayRows
         let oldSentinelRow = showsSentinelRow
         let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         // 第 17 轮 11：拍下发起时的已读操作代次（同首屏）。
         let operationGen = readOperationGeneration
         BearyAPI.shared.fetchNotifications(limit: pageLimit, before: cursor) { [weak self] result in
@@ -1954,7 +1959,7 @@ final class BearyNotificationsViewController: UIViewController {
                 guard let strongSelf = self else { return }
                 strongSelf.isLoadingMore = false
                 // P1-21：代次已变 → 旧账号回包丢弃；哨兵重绘回闲置态，不弹失败 toast。
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     strongSelf.cancelCardAnimation()
                     // 第七轮 12：只翻哨兵态，只刷新哨兵行。
                     strongSelf.refreshSentinelRow()
@@ -2188,6 +2193,7 @@ final class BearyNotificationsViewController: UIViewController {
         applyReadAppearanceToVisibleRows()
         // 请求已发出：落定前按钮保持“处理中…”转圈（见回调内复位）。
         let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         BearyAPI.shared.markNotificationRead(id: nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -2195,7 +2201,7 @@ final class BearyNotificationsViewController: UIViewController {
                 // R10-#5：完成态经同一刷新方法恢复，对勾 14pt（此前误写 24pt）。
                 strongSelf.refreshReadAllButtonAppearance(for: .done)
                 // P1-21：代次已变 → 旧账号回包丢弃，不整批置已读、不重拉。
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     return
                 }
                 switch result {
@@ -2642,6 +2648,7 @@ final class BearyNotificationsViewController: UIViewController {
         }
         markingReadIds.insert(notificationId)
         let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         // 第三轮审计 01：拍下发起时的已读操作代次，供失败回滚校验。
         let operationGen = readOperationGeneration
         BearyAPI.shared.markNotificationRead(id: notificationId) { [weak self] result in
@@ -2649,7 +2656,7 @@ final class BearyNotificationsViewController: UIViewController {
                 guard let strongSelf = self else { return }
                 strongSelf.markingReadIds.remove(notificationId)
                 // P1-21：代次已变 → 旧账号回包丢弃，不回滚新账号的行与未读数。
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     return
                 }
                 if case .failure = result {
@@ -2718,11 +2725,12 @@ final class BearyNotificationsViewController: UIViewController {
         notifyMergeSnapshotChanged()
         saveNotificationCache()
         let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         BearyAPI.shared.deleteNotification(id: id) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.deletingNotificationIds.remove(id)
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     completion?(false)
                     return
                 }

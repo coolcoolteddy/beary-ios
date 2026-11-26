@@ -293,9 +293,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     private func isStaleBlindBoxSnapshot(_ snapshot: BlindBoxRequestSnapshot) -> Bool {
-        return snapshot.epoch != BearyAPI.shared.authEpoch
-            || snapshot.accountId != BearyAPI.shared.authAccountId
-            || snapshot.dateKey != BlindBoxDate.todayKey()
+        return snapshot.dateKey != BlindBoxDate.todayKey()
+            || BearyAPI.isStaleAccountLoad(
+                requestAccountId: snapshot.accountId, requestEpoch: snapshot.epoch,
+                currentAccountId: BearyAPI.shared.authAccountId, currentEpoch: BearyAPI.shared.authEpoch)
     }
 
     override func viewDidLoad() {
