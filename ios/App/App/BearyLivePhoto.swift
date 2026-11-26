@@ -659,7 +659,7 @@ final class BearyLivePhotoView: UIView {
         badgeView.clipsToBounds = true
         badgeView.isHidden = true
         badgeLabel.translatesAutoresizingMaskIntoConstraints = false
-        badgeLabel.text = "实况"
+        badgeLabel.text = NSLocalizedString("live_photo.badge", comment: "")
         // 2026-11-08 实况角标单列 11 bold 语义档（Li 定，T3-D2）：尺寸不变，跟系统字号。
         badgeLabel.font = BearyDynamicType.liveBadgeFont()
         badgeLabel.adjustsFontForContentSizeCategory = true
@@ -697,7 +697,7 @@ final class BearyLivePhotoView: UIView {
     /// 失败时角标文字与读屏标签都说明加载失败，加载中不挂操作。
     private func updateAccessibility() {
         if loadFailed {
-            badgeLabel.text = "实况加载失败"
+            badgeLabel.text = NSLocalizedString("live_photo.badge_load_failed", comment: "")
             badgeLabel.accessibilityLabel = "实况照片，加载失败"
             badgeLabel.accessibilityHint = "实况加载失败，长按重试"
             badgeLabel.accessibilityCustomActions = [
@@ -706,7 +706,7 @@ final class BearyLivePhotoView: UIView {
                 }
             ]
         } else if liveView.livePhoto != nil {
-            badgeLabel.text = "实况"
+            badgeLabel.text = NSLocalizedString("live_photo.badge", comment: "")
             badgeLabel.accessibilityLabel = "实况照片"
             badgeLabel.accessibilityHint = nil
             badgeLabel.accessibilityCustomActions = [
@@ -715,7 +715,7 @@ final class BearyLivePhotoView: UIView {
                 }
             ]
         } else {
-            badgeLabel.text = "实况"
+            badgeLabel.text = NSLocalizedString("live_photo.badge", comment: "")
             badgeLabel.accessibilityLabel = "实况照片"
             badgeLabel.accessibilityHint = isLoading ? "正在加载实况" : nil
             badgeLabel.accessibilityCustomActions = nil

@@ -453,7 +453,7 @@ final class BearyPublishCenter {
                 if videoData == nil {
                     DispatchQueue.main.async {
                         // 实况视频已丢：与编辑器恢复态同口径，不静默降级为静态。
-                        self.fail(runningJob, message: self.partialFailureMessage("有实况视频已丢失，重新选择该图片后再发布", runningJob: runningJob))
+                        self.fail(runningJob, message: self.partialFailureMessage(NSLocalizedString("live_photo.video_missing_reselect", comment: ""), runningJob: runningJob))
                     }
                     return
                 }
@@ -491,7 +491,7 @@ final class BearyPublishCenter {
                             // 无处可点——改提示打开草稿重试，并经 fail() 的草稿入口
                             // 呈现（见 openDraftOnFailure）。
                             runningJob.openDraftOnFailure = true
-                            self.fail(runningJob, message: "实况视频上传失败，已保存为草稿，请打开草稿重试")
+                            self.fail(runningJob, message: NSLocalizedString("live_photo.upload_failed_saved_draft", comment: ""))
                             return
                         }
                         runningJob.uploadResults[index] = key
