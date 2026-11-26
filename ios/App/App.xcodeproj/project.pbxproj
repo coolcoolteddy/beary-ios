@@ -164,7 +164,9 @@
 		2E8196B98A259984EC93E07F /* BearyWordprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 995FC7BC3C031094E46BD8D6 /* BearyWordprint.swift */; };
 		2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */; };
 		7DE061FB4238F6B50BDBF0AF /* BearySearchSnippet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DC3274BD92C06DB991B1BB0 /* BearySearchSnippet.swift */; };
+		CCA23CB18E2D3906E336A60B /* BearySearchField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FFF07C4E9F4FC8129CE389E /* BearySearchField.swift */; };
 		2CBF1CE1903EE4D32504EF25 /* BearySearchSnippet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DC3274BD92C06DB991B1BB0 /* BearySearchSnippet.swift */; };
+		9F2B9A63AF072EF63676224D /* BearySearchField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FFF07C4E9F4FC8129CE389E /* BearySearchField.swift */; };
 		A23C53DAC03E8C03962E6498 /* BearyNotificationsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */; };
 		EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */; };
 		93F45F628E22C5045A1EF58F /* agree.json in Resources */ = {isa = PBXBuildFile; fileRef = DAE48A2C16A1E3B2821093EB /* agree.json */; };
@@ -900,6 +902,7 @@
 		995FC7BC3C031094E46BD8D6 /* BearyWordprint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyWordprint.swift; sourceTree = "<group>"; };
 		EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySearchViewController.swift; sourceTree = "<group>"; };
 		3DC3274BD92C06DB991B1BB0 /* BearySearchSnippet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySearchSnippet.swift; sourceTree = "<group>"; };
+		9FFF07C4E9F4FC8129CE389E /* BearySearchField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySearchField.swift; sourceTree = "<group>"; };
 		5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyNotificationsViewController.swift; sourceTree = "<group>"; };
 		B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmoteImages.swift; sourceTree = "<group>"; };
 		DAE48A2C16A1E3B2821093EB /* agree.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree.json; sourceTree = "<group>"; };
@@ -1651,6 +1654,7 @@
 				995FC7BC3C031094E46BD8D6 /* BearyWordprint.swift */,
 				EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */,
 				3DC3274BD92C06DB991B1BB0 /* BearySearchSnippet.swift */,
+				9FFF07C4E9F4FC8129CE389E /* BearySearchField.swift */,
 				5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */,
 				B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
@@ -3078,6 +3082,7 @@
 				2E8196B98A259984EC93E07F /* BearyWordprint.swift in Sources */,
 				2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */,
 				7DE061FB4238F6B50BDBF0AF /* BearySearchSnippet.swift in Sources */,
+				CCA23CB18E2D3906E336A60B /* BearySearchField.swift in Sources */,
 				43B946906C4ED44FAB9FAA64 /* BearyMineSearchIndex.swift in Sources */,
 				A23C53DAC03E8C03962E6498 /* BearyNotificationsViewController.swift in Sources */,
 				EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */,
@@ -3103,6 +3108,7 @@
 				B7A9CA4664DC4C658EC38714 /* BearyJSON.swift in Sources */,
 				A8BEBC6E5F94AF59F6C14DDC /* BearyAPI.swift in Sources */,
 				2CBF1CE1903EE4D32504EF25 /* BearySearchSnippet.swift in Sources */,
+				9F2B9A63AF072EF63676224D /* BearySearchField.swift in Sources */,
 				46A75137107D74DC8B449314 /* BearyPastSelf.swift in Sources */,
 				07DA09CFD9D0EDC00E5B975B /* BearyColors.swift in Sources */,
 				B448177CB1834F02BE24580B /* BearyDynamicType.swift in Sources */,

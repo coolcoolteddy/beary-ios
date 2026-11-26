@@ -537,19 +537,17 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         searchIconView.tintColor = BearyColors.gray
         searchIconView.contentMode = .scaleAspectFit
         searchFieldBox.addSubview(searchIconView)
-        searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
-        searchField.adjustsFontForContentSizeCategory = true
-        searchField.textColor = BearyColors.ink
-        searchField.attributedPlaceholder = NSAttributedString(string: "搜索聊天记录", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15)),
-        ])
-        searchField.returnKeyType = .search
-        searchField.autocorrectionType = .no
-        searchField.delegate = self
+        // 搜索框口径走共享工厂 BearySearchField（scaled 15、灰占位、return 键、delegate、敲键回调）。
+        BearySearchField.configure(
+            searchField,
+            placeholder: "搜索聊天记录",
+            pointSize: 15,
+            scaling: .scaled,
+            delegate: self,
+            changeTarget: self,
+            changeAction: #selector(searchFieldChanged)
+        )
         searchField.accessibilityLabel = "搜索聊天记录"
-        searchField.addTarget(self, action: #selector(searchFieldChanged), for: .editingChanged)
         searchFieldBox.addSubview(searchField)
         searchCancelButton.translatesAutoresizingMaskIntoConstraints = false
         searchCancelButton.setTitle("取消", for: .normal)

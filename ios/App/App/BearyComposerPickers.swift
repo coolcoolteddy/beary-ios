@@ -182,16 +182,16 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         searchIcon.contentMode = .scaleAspectFit
         // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径），
         // 不用系统默认占位色，避免与全站灰字不一致。
-        searchField.attributedPlaceholder = NSAttributedString(string: "搜索昵称或 @用户名", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
-        ])
-        searchField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
-        searchField.adjustsFontForContentSizeCategory = true
-        searchField.textColor = BearyColors.ink
-        searchField.contentVerticalAlignment = .center
-        searchField.delegate = self
-        searchField.returnKeyType = .search
+        // 搜索框口径走共享工厂 BearySearchField（scaled 16、灰占位、return 键、delegate、敲键回调；补 autocorrectionType = .no，与另两处一致）。
+        BearySearchField.configure(
+            searchField,
+            placeholder: "搜索昵称或 @用户名",
+            pointSize: 16,
+            scaling: .scaled,
+            delegate: self,
+            changeTarget: self,
+            changeAction: #selector(searchFieldChanged)
+        )
         // A2：面板内通知开关（默认开；外观与编辑器 @ 行复选同款：16 圆角 6、
         // 1.5 描边、开态 ink 底 + bg 色对勾）。
         notifyRow.axis = .horizontal
@@ -214,7 +214,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         notifyRow.addArrangedSubview(notifyCheckButton)
         notifyRow.addArrangedSubview(notifyLabel)
         refreshNotifyCheck()
-        searchField.addTarget(self, action: #selector(searchFieldChanged), for: .editingChanged)
         rowsStack.axis = .vertical
         rowsStack.spacing = 0
         resultsLabel.text = "搜索结果"

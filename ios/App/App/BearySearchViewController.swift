@@ -913,19 +913,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         boxRingView.isHidden = true
         searchBoxView.addSubview(boxRingView)
 
-        searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
-        searchField.adjustsFontForContentSizeCategory = true
-        searchField.textColor = BearyColors.ink
-        // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
-        searchField.attributedPlaceholder = NSAttributedString(string: "搜索日记或用户", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
-        ])
-        searchField.returnKeyType = .search
-        searchField.autocorrectionType = .no
-        searchField.delegate = self
-        searchField.addTarget(self, action: #selector(searchFieldChanged), for: .editingChanged)
+        // 搜索框口径走共享工厂 BearySearchField（capped 16、灰占位、return 键、delegate、敲键回调）。
+        BearySearchField.configure(
+            searchField,
+            placeholder: "搜索日记或用户",
+            pointSize: 16,
+            scaling: .capped,
+            delegate: self,
+            changeTarget: self,
+            changeAction: #selector(searchFieldChanged)
+        )
         searchBoxView.addSubview(searchField)
 
         clearButton.translatesAutoresizingMaskIntoConstraints = false
