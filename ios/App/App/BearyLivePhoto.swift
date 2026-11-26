@@ -131,14 +131,13 @@ final class BearyLivePhotoLoader {
     /// 磁盘读 + TTL/上限 sweep 只走这里，不占主线程（原实现在调用线程同步读盘，
     /// 调用方是主线程的卡片 configure，实况 mov 可达 10MB，首帧可卡）。
     private static let diskQueue = DispatchQueue(label: "com.beary.live-disk", qos: .userInitiated)
-    /// 磁盘缓存 TTL 24 小时：与图片桶（BearyImageLoader）同款口径。
-    /// 实况视频与静态图同一可见性口径：转私密后旧盘缓存至多再活 24 小时，
-    /// 之后强制走网络、服务端按最新可见性判定，不无限期可读。
-    private static let diskCacheMaxAge: TimeInterval = 24 * 3600
+    /// 磁盘缓存 TTL 24 小时：与图片桶（BearyImageLoader）同款口径，单源见
+    /// BearyDiskCacheBudget.maxAge。实况视频与静态图同一可见性口径：
+    /// 转私密后旧盘缓存至多再活 24 小时，之后强制走网络、服务端按最新
+    /// 可见性判定，不无限期可读。
     /// 每账号桶磁盘上限 200MB：与图片桶共用单账号总盘点
     ///（BearyDiskCacheBudget：图片桶 + 实况桶合计 200MB，不再各算各的 200MB）；
-    /// 合计超了按修改时间删最旧文件直至回落。
-    private static let diskCacheCapBytes: Int64 = BearyDiskCacheBudget.totalCapBytes
+    /// 合计超了按修改时间删最旧文件直至回落（上限见 totalCapBytes）。
 
     private let stateLock = NSLock()
     /// 第十一轮 06：写盘与清理的共享锁（图片加载器 diskWriteLock 同款）——
@@ -161,7 +160,9 @@ final class BearyLivePhotoLoader {
         var completions: [(PHLivePhoto?) -> Void] = []
     }
     private var inFlightLoads: [NSString: InFlightLiveLoad] = [:]
-    private var diskCacheTotals: [String: Int64] = [:]
+    /// 写盘累计记账见 BearyDiskCacheBudget.Tracker（与图片桶同款）；
+    /// stateLock 仍护代次与在途表，不动。
+    private let diskCacheTracker = BearyDiskCacheBudget.Tracker()
 
     private init() {
         // 私密图片会话走共享工厂（见 BearyPrivateImageSession）：与图片加载器
@@ -240,7 +241,7 @@ final class BearyLivePhotoLoader {
         }
         diskWriteLock.unlock()
         stateLock.lock()
-        diskCacheTotals[bucket] = nil
+        diskCacheTracker.reset(bucket: bucket)
         stateLock.unlock()
     }
 
@@ -248,7 +249,7 @@ final class BearyLivePhotoLoader {
         guard let file = fileURL(key: key, ext: ext, bucket: bucket) else { return nil }
         if let values = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
            let mtime = values.contentModificationDate,
-           Date().timeIntervalSince(mtime) > Self.diskCacheMaxAge {
+           Date().timeIntervalSince(mtime) > BearyDiskCacheBudget.maxAge {
             try? FileManager.default.removeItem(at: file)
             return nil
         }
@@ -262,7 +263,7 @@ final class BearyLivePhotoLoader {
         guard let file = fileURL(key: key, ext: ext, bucket: bucket) else { return false }
         if let values = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
            let mtime = values.contentModificationDate,
-           Date().timeIntervalSince(mtime) > Self.diskCacheMaxAge {
+           Date().timeIntervalSince(mtime) > BearyDiskCacheBudget.maxAge {
             try? FileManager.default.removeItem(at: file)
             return false
         }
@@ -311,37 +312,31 @@ final class BearyLivePhotoLoader {
     /// 写回本桶淘汰后的真实总量；枚举失败时累计值保持越限、下次写重试。
     private func enforceDiskCacheCap(bucket: String, writtenDelta: Int64) {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+
         let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent(bucket)
-        // 短锁：只更新累计值、判定是否需要扫盘。
-        stateLock.lock()
-        let needsScan: Bool
-        if let known = diskCacheTotals[bucket] {
-            let tracked = known + writtenDelta
-            diskCacheTotals[bucket] = tracked
-            needsScan = tracked > Self.diskCacheCapBytes
-        } else {
-            // 本进程首写、累计值未知：置为越限值，迫使本次即枚举校准一次。
-            diskCacheTotals[bucket] = Self.diskCacheCapBytes + 1
-            needsScan = true
-        }
-        stateLock.unlock()
-        guard needsScan else { return }
+
+        // 记账与越限判定已收进 BearyDiskCacheBudget.Tracker（与图片桶同款）；
+        // 扫盘仍在专用串行队列 diskQueue 上做、代次门仍在派发时校验，不动。
+        guard diskCacheTracker.noteWritten(bucket: bucket, writtenDelta: writtenDelta).needsScan else { return }
+
         // 派发时代次：purge/切桶已推进该桶代次时，本次扫盘即过期，跳过——
         // 免得把 purge 后刚重下的同名文件误删；累计值已由 purge 清零，
         // 下次写盘即重新校准。
         let scanGeneration = generation(for: bucket)
+
         Self.diskQueue.async { [weak self] in
             guard let self = self, self.isCurrentGeneration(scanGeneration, bucket: bucket) else { return }
+
             guard FileManager.default.fileExists(atPath: dir.path) else { return }
+
             let swept = BearyDiskCacheBudget.enforceCombined(bucket: bucket)
+
             guard swept.ok else {
                 // 枚举失败不静默低估：累计值仍是越限值，下次写重试枚举。
                 return
             }
-            // 短锁：只写回淘汰后的真实总量。
-            self.stateLock.lock()
-            self.diskCacheTotals[bucket] = swept.liveTotal
-            self.stateLock.unlock()
+
+            self.diskCacheTracker.recordSwept(bucket: bucket, total: swept.liveTotal)
         }
     }
 
