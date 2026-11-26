@@ -486,9 +486,9 @@ final class BearyLocationPickerViewController: UIViewController, BearySystemShee
                 if nearbyLoading {
                     emptyLabel.text = "正在查找附近地点…"
                 } else if locationDenied {
-                    emptyLabel.text = "位置权限没开，在上方输入地点搜索"
+                    emptyLabel.text = NSLocalizedString("location_picker.empty.no_permission", comment: "")
                 } else {
-                    emptyLabel.text = "附近没有找到地点，在上方输入搜索"
+                    emptyLabel.text = NSLocalizedString("location_picker.empty.no_nearby", comment: "")
                 }
             } else {
                 emptyLabel.isHidden = true

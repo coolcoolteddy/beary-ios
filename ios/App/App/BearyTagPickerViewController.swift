@@ -143,7 +143,7 @@ final class BearyTagPickerViewController: UIViewController, BearySystemSheetSizi
         tagsAreaView.addSubview(tagsTableView)
 
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        emptyLabel.text = "还没有用过的标签，在上方输入新建"
+        emptyLabel.text = NSLocalizedString("tag_picker.empty.no_used_tags", comment: "")
         emptyLabel.font = BearyDynamicType.smallBodyFont()
         emptyLabel.textColor = BearyColors.gray
         emptyLabel.textAlignment = .center
