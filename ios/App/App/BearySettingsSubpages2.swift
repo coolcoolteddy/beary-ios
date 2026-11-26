@@ -441,7 +441,7 @@ final class BearyStorageSettingsViewController: BearySettingsSubpageViewControll
 
     @objc private func clearButtonTapped() {
         guard !isClearing else { return }
-        BearyConfirmSheet.show(from: self, title: "清除所有存储", message: "将清除图片、实况与网络缓存，草稿与日记数据不受影响。确定继续？", actions: [
+        BearyConfirmSheet.show(from: self, title: NSLocalizedString("settings.storage.clear_all_title", comment: ""), message: NSLocalizedString("settings.storage.clear_all_message", comment: ""), actions: [
             BearyConfirmSheet.Action(title: "清除", style: .destructive, handler: { [weak self] in
                 self?.confirmClear()
             }),
@@ -499,7 +499,7 @@ final class BearyDataUsageSettingsViewController: BearySettingsSubpageViewContro
         let hiresRow = bearySettingsTappableRow(content: bearySettingsNavContent(title: "高画质图片", detail: hiresDetail), button: hiresButton)
         let autoplayOn = BearyLivePhotoAutoplay.isEnabled
         let autoplayDetail = saverOn ? "流量节省程序开启时不自动播放" : "时间线和详情里的实况照片就绪后自动播放"
-        let (autoplayRow, autoplaySwitch) = bearySettingsSwitchContent(title: "自动播放实况", detail: autoplayDetail, isOn: autoplayOn, target: self, action: #selector(autoplaySwitchChanged(_:)))
+        let (autoplayRow, autoplaySwitch) = bearySettingsSwitchContent(title: NSLocalizedString("settings.autoplay_live_photo", comment: ""), detail: autoplayDetail, isOn: autoplayOn, target: self, action: #selector(autoplaySwitchChanged(_:)))
         autoplaySwitch.isEnabled = !saverOn
         contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: [saverRow, hiresRow, autoplayRow]))
     }
