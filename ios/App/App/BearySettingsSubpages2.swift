@@ -527,7 +527,7 @@ final class BearyDataUsageSettingsViewController: BearySettingsSubpageViewContro
             }, isSelected: option.value == current)
         }
         actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
-        BearyConfirmSheet.show(from: self, title: "高画质图片", message: "选择在什么网络下拉取原图", actions: actions)
+        BearyConfirmSheet.show(from: self, title: NSLocalizedString("settings.hires.title", comment: ""), message: NSLocalizedString("settings.hires.load_network", comment: ""), actions: actions)
     }
 }
 
