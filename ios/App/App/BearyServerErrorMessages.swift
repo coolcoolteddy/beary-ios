@@ -7,11 +7,11 @@ enum BearyServerErrorMessages {
     static func sharedMessage(forServerCode code: String) -> String? {
         switch code {
         case "content too long":
-            return "正文最多 2000 字"
+            return NSLocalizedString("server_error.content_too_long", comment: "")
         case "title too long":
-            return "标题最多 30 字"
+            return NSLocalizedString("server_error.title_too_long", comment: "")
         case "image unavailable":
-            return "图片已失效，请重新添加"
+            return NSLocalizedString("server_error.image_unavailable", comment: "")
         default:
             return nil
         }
