@@ -1390,7 +1390,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         self.showToast(message: NSLocalizedString("trash.recheck.unconfirmed", comment: ""))
                     } else {
                         self.shakeFailedRow(identifier: identifier)
-                        self.showToast(message: "恢复失败，请刷新后重试")
+                        self.showToast(message: NSLocalizedString("trash.restore_failed", comment: ""))
                     }
                 }
             }
