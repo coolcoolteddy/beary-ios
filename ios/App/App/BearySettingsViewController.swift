@@ -2073,16 +2073,7 @@ final class BearySettingsViewController: UIViewController {
     /// 不赋值不重播；减动效或未进窗口时直设终值。容器首次出现时
     /// 只淡入容器本身，已可见时不重播。
     private func setLabelTextFaded(_ label: UILabel, _ text: String) {
-        guard label.text != text else { return }
-        label.text = text
-        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
-            label.alpha = 1
-            return
-        }
-        label.alpha = 0
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            label.alpha = 1
-        })
+        BearyLabelFade.setText(text, on: label, duration: BearyMotion.normal)
     }
 
     private func fadeView(_ view: UIView) {

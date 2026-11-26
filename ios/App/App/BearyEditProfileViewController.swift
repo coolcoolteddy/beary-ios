@@ -520,16 +520,7 @@ class BearyEditProfileViewController: UIViewController {
     /// 直设终值。签名输入框内容为可编辑文档，不做淡入（与编辑器
     /// 表单回填同口径）。
     private func setLinkLabelTextFaded(_ text: String) {
-        guard linkLabel.text != text else { return }
-        linkLabel.text = text
-        guard !UIAccessibility.isReduceMotionEnabled, linkLabel.window != nil else {
-            linkLabel.alpha = 1
-            return
-        }
-        linkLabel.alpha = 0
-        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            self.linkLabel.alpha = 1
-        })
+        BearyLabelFade.setText(text, on: linkLabel, duration: BearyMotion.localStateDuration)
     }
 
     private func updateLinkRow() {
