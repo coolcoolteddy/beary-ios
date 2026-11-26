@@ -42,7 +42,7 @@ final class BearyAvatarView: UIView {
     private var loadTask: URLSessionDataTask?
     private var currentURL: URL?
     private var generation = 0
-    private var fallbackName = "beary 用户"
+    private var fallbackName = NSLocalizedString("emote.posters.fallback_display_name", comment: "")
     /// #679 三重校验的第三重：当前行代表的用户 id（configure 记录、reset 清零）。
     /// 仅好友/会话两处传，搜索与设置页不传（沿用旧口径）。
     private var ownerID: Int?
@@ -96,10 +96,10 @@ final class BearyAvatarView: UIView {
         retryButton.isHidden = true
     }
 
-    /// displayName 为空时回落“beary 用户”（#696 全站统一口径）；
+    /// displayName 为空时回落“Beary 用户”（#696 全站统一口径）；
     /// avatarURL 为 nil 时直接显首字母占位，不建加载任务。
     func configure(displayName: String, avatarURL: URL?, ownerID: Int? = nil) {
-        let name = displayName.isEmpty ? "beary 用户" : displayName
+        let name = displayName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : displayName
         fallbackName = name
         self.ownerID = ownerID
         retryButton.isHidden = true

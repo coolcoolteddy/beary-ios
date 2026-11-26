@@ -27,10 +27,10 @@ final class BearyI18nCatalogTests: XCTestCase {
         "app_lock.biometry_not_available": "此设备不支持生物识别",
         "app_lock.passcode_not_set": "设备未设置密码，请先在系统设置中设置密码",
         "app_lock.biometry_unavailable": "此设备暂无法使用生物识别",
-        "app_lock.locked": "beary 已锁定",
+        "app_lock.locked": "Beary 已锁定",
         "app_lock.unlock_with_biometry": "使用%@解锁",
         "app_lock.unlock": "解锁",
-        "app_lock.unlock_beary_with_biometry": "使用%@解锁 beary",
+        "app_lock.unlock_beary_with_biometry": "使用%@解锁 Beary",
         "app_lock.verification_failed": "验证未通过，请再试一次，也可用设备密码解锁",
     ]
 
