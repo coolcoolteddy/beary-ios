@@ -3661,9 +3661,9 @@ final class BearyDetailViewController: UIViewController {
     private func reportDwell() {
         guard !dwellReported, let start = dwellStart, let entryId = entry.id, !entryId.isEmpty else { return }
         dwellReported = true
-        let ms = max(0, Int(Date().timeIntervalSince(start) * 1000))
-        // 上报失败不得阻塞流程、不得弹 toast；游客 401 由 suppressUnauthorized 兜底。
-        BearyAPI.shared.sendEvent(eventType: "dwell", targetId: entryId, durationMs: ms, completion: nil)
+        // 共享 plumbing（BearyDwell）：App 保持无门槛直报，minimumMs 默认 0；
+        // 网页 ≥1000ms 才报，与 App 已分叉，不统一门槛。
+        BearyDwell.report(entryId: entryId, since: start)
     }
 
     // MARK: - 动作
