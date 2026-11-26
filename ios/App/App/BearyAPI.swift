@@ -2041,6 +2041,15 @@ final class BearyAPI {
         // 无 ID 的旧消息（服务端部署前发出）走原窗口回退。仅服务端行携带，本地
         // 待发行不填本字段（认领时拿待发的 localKey 与服务端行的本字段比对）。
         var clientMessageId: String? = nil
+        // 左滑回复（2026-11-26 Li 定）：被回复消息的 id（reply_to）与 history
+        // JOIN 一并下发的引用（是否本人／发送人展示名／正文摘要前 200 字）。
+        // 无引用时四字段全 nil；被回复消息已被服务端 7 天 GC 清掉时服务端
+        // 不下发引用字段，客户端按无引用展示。旧行／旧服务端无此键，默认值
+        // nil 解码不受影响；本地待发行由聊天页在发送时填入（乐观展示用）。
+        var replyTo: Int? = nil
+        var replyFromMe: Bool? = nil
+        var replySenderName: String? = nil
+        var replyBody: String? = nil
     }
 
     struct DMHistoryResponse: Decodable {
@@ -2049,13 +2058,16 @@ final class BearyAPI {
         var resolvedMessages: [DMMessage] { messages ?? items ?? [] }
     }
 
-    /// 发私信：POST /beary/api/friends/dm/send {user_id, body, client_message_id?}。正文去空后
+    /// 发私信：POST /beary/api/friends/dm/send {user_id, body, client_message_id?, reply_to?}。正文去空后
     /// 非空且 ≤2000 字（App 先拦一道，后端再校验）；档位不允许/拉黑 403、游客 401。
     /// 审计第 26 轮第 5 项：clientMessageId 传本地待发的 localKey（UUID），服务端存下并
     /// 在 history 里透传回 client_message_id，供聊天页按 ID 精确认领；重发沿用同一 ID。
-    func sendDM(userId: Int, body: String, clientMessageId: String? = nil, completion: @escaping (Result<FriendOkResponse, APIError>) -> Void) {
+    /// 左滑回复（2026-11-26 Li 定）：replyTo 传被回复消息的服务端 id；服务端校验它
+    /// 确是这两人之间的消息（乱填回 400）；旧服务端忽略本字段（只丢引用，消息照发）。
+    func sendDM(userId: Int, body: String, clientMessageId: String? = nil, replyTo: Int? = nil, completion: @escaping (Result<FriendOkResponse, APIError>) -> Void) {
         var payload: [String: Any] = ["user_id": userId, "body": body]
         if let clientMessageId, !clientMessageId.isEmpty { payload["client_message_id"] = clientMessageId }
+        if let replyTo { payload["reply_to"] = replyTo }
         request("/beary/api/friends/dm/send", method: "POST", jsonBody: payload, completion: completion)
     }
 
