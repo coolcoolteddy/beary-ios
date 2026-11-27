@@ -2131,7 +2131,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             // 第七轮①：落盘已确认（成功与否都有结论），释放提交锁。
             self.isPersistingSend = false
             guard saved else {
-                BearyToast.show(in: self.view, message: "暂时无法安全保存")
+                BearyToast.show(in: self.view, message: NSLocalizedString("dm.presend_save_failed", comment: ""))
                 self.updateSendButton()
                 return
             }
