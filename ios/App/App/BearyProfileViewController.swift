@@ -1618,7 +1618,7 @@ class BearyProfileViewController: UIViewController {
     private lazy var pastSelfSyncRetryButton: BearyHit44Button = {
         let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setTitle("同步失败，点按重试", for: .normal)
+        buttonValue.setTitle(NSLocalizedString("profile.past_self_sync_failed", comment: ""), for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = BearyDynamicType.smallActionFont()
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true

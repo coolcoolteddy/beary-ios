@@ -287,7 +287,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         self.liveOverlay = liveOverlay
         loadingSpinner.tintColor = .white
         view.addSubview(loadingSpinner)
-        retryButton.setTitle("图片加载失败，重试", for: .normal)
+        retryButton.setTitle(NSLocalizedString("image_viewer.load_failed", comment: ""), for: .normal)
         retryButton.setTitleColor(.white, for: .normal)
         retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
