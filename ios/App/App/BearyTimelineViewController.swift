@@ -5162,7 +5162,7 @@ class BearyTimelineViewController: UIViewController {
         // 防低速网络下滑动中连续触发分页；窗口到时自动恢复）。
         if let notBefore = timelinePageRetryNotBefore, ProcessInfo.processInfo.systemUptime < notBefore {
             // 手动点按被拦时给一句提示；自动触发被拦时静默，不刷 toast。
-            if manual { showTimelineToast(message: "网络较慢，稍后再试") }
+            if manual { showTimelineToast(message: NSLocalizedString("common.network_seems_slow", comment: "")) }
             return
         }
         guard let last = timelineEntries.last else { return }

@@ -522,7 +522,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 tableView.reloadData()
             } else {
                 fetchInterrupted = fetchResumeBefore != nil
-                setStatusTextFaded("网络失败，显示已加载的日记")
+                setStatusTextFaded(NSLocalizedString("map.network_seems_slow_showing_loaded", comment: ""))
                 inlineRetryButton.isHidden = false
             }
             return
@@ -552,7 +552,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             } else {
                 // 已有数据时网络失败不清空地图：保留已加载聚合，状态行明示；
                 // 有内容时同样给状态行旁就近重试，列表与视角位置不动。
-                setStatusTextFaded("网络失败，显示已加载的日记")
+                setStatusTextFaded(NSLocalizedString("map.network_seems_slow_showing_loaded", comment: ""))
                 inlineRetryButton.isHidden = false
             }
             return
