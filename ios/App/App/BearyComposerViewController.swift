@@ -8724,10 +8724,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 流程收尾时发布态不是最后一句，恢复后发布钮仍留空态灰，直到用户
                 // 重新输入触发 textViewDidChange 才变白；放末尾保证收尾态即终态。
                 self.updatePublishState()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                    guard let self = self, self.view.window != nil else { return }
-                    self.showToast(message: "已恢复上次的草稿")
-                }
                 // 本地图后台解码：失败态不解码（重试时再读盘）；解码失败且有 key 时退回远程缩略图。
                 // B1：待传实况视频同批读回内存（见 decodeRestoredImages），
                 // 读不到的记 liveVideoMissing，续传时跳过、不静默变静态。
