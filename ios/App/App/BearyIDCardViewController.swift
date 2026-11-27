@@ -610,6 +610,11 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         }
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePreferredContentSize()
+    }
+
     // MARK: - Sizing
 
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
@@ -686,6 +691,11 @@ final class BearyIDCardSheetViewController: UIViewController, BearySystemSheetSi
             didCallDismissed = true
             onDismissed?()
         }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePreferredContentSize()
     }
 
     private func buildContent() {
