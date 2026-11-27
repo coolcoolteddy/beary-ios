@@ -863,7 +863,7 @@ class BearyEditProfileViewController: UIViewController {
     func requestExit(interactive: Bool) -> Bool {
         if isSaving {
             if presentedViewController == nil {
-                presentSimpleAlert(message: "正在保存，请稍候")
+                presentSimpleAlert(message: NSLocalizedString("editprofile.saving_in_progress", comment: ""))
             }
             return false
         }

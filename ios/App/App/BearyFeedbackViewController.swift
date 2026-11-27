@@ -1075,7 +1075,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     func guardZipInFlightForExit() -> Bool {
         if zipInFlight {
             if presentedViewController == nil {
-                BearyToast.show(in: view, message: "正在准备附件，请稍候")
+                BearyToast.show(in: view, message: NSLocalizedString("feedback.preparing_attachments", comment: ""))
             }
             return false
         }
