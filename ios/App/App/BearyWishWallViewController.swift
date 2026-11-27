@@ -637,7 +637,6 @@ final class BearyWishWallViewController: UIViewController {
             // 降序、App 不重排”冲突，直到下次重进才纠正）；创建成功后重拉，
             // 以服务端顺序为准（确认态由 loadWishes 成功分支播种）。
             self.loadWishes()
-            BearyToast.show(in: self.view, message: "许愿已发布")
             self.onCreated?(wish)
         }
         // 117 终态偏离兜底：新建页无守卫，呈现完成时帧偏离就复位（与设置页 helper 同口径）。
