@@ -206,6 +206,25 @@ final class BearyDepthBackgroundViewController: UIViewController {
         return buttonValue
     }()
 
+    /// 已应用态禁用 CTA 置灰色：照 Plus 页 v32 定版已开通 CTA（BearyPlusPageViewController
+    /// subscribedButtonBackground／subscribedButtonText）：浅 #ECECEC 底＋#9A9A9A 字／
+    /// 深 #2C2C30 底＋#8E8E93 字。.custom 按钮禁用后不自动置灰，须随 isEnabled 一起显式换色。
+    private static var disabledButtonBackground: UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .dark
+                ? UIColor(red: 44.0 / 255.0, green: 44.0 / 255.0, blue: 48.0 / 255.0, alpha: 1)
+                : UIColor(red: 236.0 / 255.0, green: 236.0 / 255.0, blue: 236.0 / 255.0, alpha: 1)
+        }
+    }
+
+    private static var disabledButtonText: UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .dark
+                ? UIColor(red: 142.0 / 255.0, green: 142.0 / 255.0, blue: 147.0 / 255.0, alpha: 1)
+                : UIColor(red: 154.0 / 255.0, green: 154.0 / 255.0, blue: 154.0 / 255.0, alpha: 1)
+        }
+    }
+
     private lazy var plusFooterLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
@@ -494,11 +513,22 @@ final class BearyDepthBackgroundViewController: UIViewController {
         stateLabel.textColor = state.color
         pageControl.currentPage = currentIndex
         if theme == currentThemeValue {
-            applyButton.setTitle(NSLocalizedString("depth_picker.applied", comment: ""), for: .normal)
+            // 已应用态：按钮只写动作、不写状态（B3），标题保持「应用这张封面」并禁用，状态只留底部状态行。
+            // .custom 禁用后不自动置灰：背景与标题色随 isEnabled 一起换成置灰值。
+            applyButton.setTitle(NSLocalizedString("depth_picker.apply_cover", comment: ""), for: .normal)
+            applyButton.isEnabled = false
+            applyButton.backgroundColor = Self.disabledButtonBackground
+            applyButton.setTitleColor(Self.disabledButtonText, for: .normal)
         } else if theme != .none && !isPlusValue {
             applyButton.setTitle(NSLocalizedString("depth_picker.plus_only", comment: ""), for: .normal)
+            applyButton.isEnabled = true
+            applyButton.backgroundColor = BearyColors.orange
+            applyButton.setTitleColor(.white, for: .normal)
         } else {
             applyButton.setTitle(NSLocalizedString("depth_picker.apply_cover", comment: ""), for: .normal)
+            applyButton.isEnabled = true
+            applyButton.backgroundColor = BearyColors.orange
+            applyButton.setTitleColor(.white, for: .normal)
         }
         updatePlusFooter()
         for (index, button) in thumbButtons.enumerated() {
@@ -520,7 +550,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
 
     @objc private func applyButtonTapped() {
         let theme = themesValue[currentIndex]
-        // 当前档点按即关闭（已应用，不重走门控；Plus 过期后仍贴着旧主题时也不弹提示）。
+        // 当前档按钮已禁用（见 updateChrome），点不到这里；留作兜底，万一点到也只关闭、不重走门控。
         if theme == currentThemeValue {
             dismiss(animated: BearyMotion.animated(true), completion: nil)
             return
