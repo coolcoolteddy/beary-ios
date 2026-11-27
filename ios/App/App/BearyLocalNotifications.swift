@@ -220,7 +220,7 @@ final class BearyLocalNotifications: NSObject {
         let content = UNMutableNotificationContent()
         switch kind {
         case .dailyReminder:
-            content.body = "今天还没有写日记，写一点，留一点。（测试）"
+            content.body = NSLocalizedString("local_notifications.daily_reminder.body", comment: "")
         case .limitedExpiry:
             content.body = "限时结束了，这篇日记已自动转回私密。（测试）"
         case .pastDay:
