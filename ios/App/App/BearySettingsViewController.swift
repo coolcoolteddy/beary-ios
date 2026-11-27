@@ -2737,7 +2737,7 @@ final class BearySettingsViewController: UIViewController {
                                     finish()
                                     return
                                 }
-                                self.setExportProgress("正在导出（4/4）赞过…")
+                                self.setExportProgress(NSLocalizedString("settings.export.step4_liked", comment: ""))
                                 self.fetchAllEntries(scope: .liked, pin: pin) { result in
                                     DispatchQueue.main.async {
                                         if self.exportPinChanged(pin) || result.reason == "账号已切换" {
