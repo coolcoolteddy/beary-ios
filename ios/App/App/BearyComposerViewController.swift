@@ -9967,7 +9967,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if !SessionManager.shared.isLoggedIn {
             // G26：登录态未知（网络失败）时不弹登录页，改给网络不稳定提示。
             if SessionManager.shared.authUnknown {
-                showToast(message: "网络不稳定，请稍后再试")
+                showToast(message: NSLocalizedString("common.network_unstable", comment: ""))
                 return
             }
             onRequireLogin?()

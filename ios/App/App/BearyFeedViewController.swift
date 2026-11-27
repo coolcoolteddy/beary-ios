@@ -2941,7 +2941,7 @@ class BearyFeedViewController: UIViewController {
             // 此处是操作点的即时反馈，不与容器回调冲突（本文件不赋值 onNetworkUnstable）。
             if SessionManager.shared.authUnknown {
                 if let strongSelf = self {
-                    BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试")
+                    BearyToast.show(in: strongSelf.view, message: NSLocalizedString("common.network_unstable", comment: ""))
                 }
                 return
             }
@@ -3124,7 +3124,7 @@ class BearyFeedViewController: UIViewController {
                     // 白走一趟理由选择；现与卡片点赞/收藏未登录口径对齐：登录态未知先给
                     // 网络不稳定 toast，未登录直接走容器登录门，登录后才进举报流程。
                     if SessionManager.shared.authUnknown {
-                        BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试")
+                        BearyToast.show(in: strongSelf.view, message: NSLocalizedString("common.network_unstable", comment: ""))
                         return
                     }
                     if !SessionManager.shared.isLoggedIn {
