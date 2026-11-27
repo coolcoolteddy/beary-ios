@@ -317,7 +317,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         switch step {
         case .p0: primaryButton.setTitle("下一步", for: .normal)
         case .p1, .p2, .p3: primaryButton.setTitle("继续", for: .normal)
-        case .done: primaryButton.setTitle("进入beary", for: .normal)
+        case .done: primaryButton.setTitle(NSLocalizedString("onboarding.done.enter_beary", comment: ""), for: .normal)
         case .location, .notification: break
         }
         secondaryButton.isHidden = (step != .done)
