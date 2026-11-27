@@ -341,7 +341,7 @@ final class BearyPublishCenter {
                                         self.fail(runningJob, message: "原日记公开失败，请重试")
                                     }
                                 case .failure:
-                                    self.fail(runningJob, message: "网络不稳定，原日记是否已公开未知，请打开草稿查看后重试")
+                                    self.fail(runningJob, message: NSLocalizedString("publish.quote_source_unknown_after_network_failure", comment: ""))
                                 }
                             }
                         }
