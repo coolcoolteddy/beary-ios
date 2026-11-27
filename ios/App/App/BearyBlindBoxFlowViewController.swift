@@ -476,7 +476,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         // 交换流程图标：icon_exchange（#229 已注册，不画在按钮标题里，只挂图标位）。
         let (exchangeIcon, exchangePlaceholder) = BlindBoxIcons.exchange(pointSize: 20)
         openButton.setImage(exchangeIcon, for: .normal)
-        openButton.tintColor = BearyColors.bg
+        // 开盒图标与标题同色 ink：按钮底是 surface2，bg 在其上仅 1.20/1.27:1、基本不可见。
+        openButton.tintColor = BearyColors.ink
         openButton.imageEdgeInsets.left = -6
         if exchangePlaceholder {
             openButton.setTitle(NSLocalizedString("blindbox.open.title", comment: ""), for: .normal)
