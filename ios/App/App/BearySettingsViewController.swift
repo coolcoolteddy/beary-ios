@@ -2652,7 +2652,7 @@ final class BearySettingsViewController: UIViewController {
                 self.isExporting = false
                 self.exportRowButton.isEnabled = true
                 self.setExportProgress(nil)
-                self.showToast("导出失败（登录设备拉取失败），未生成文件")
+                self.showToast(NSLocalizedString("settings.export.failed_retry", comment: ""))
                 return
             }
             if let failedReason = exportFailedReason {
@@ -2830,7 +2830,7 @@ final class BearySettingsViewController: UIViewController {
                     self.isExporting = false
                     self.exportRowButton.isEnabled = true
                     self.setExportProgress(nil)
-                    self.showToast("导出失败，请重试")
+                    self.showToast(NSLocalizedString("settings.export.failed_retry", comment: ""))
                 }
                 return
             }
@@ -2860,7 +2860,7 @@ final class BearySettingsViewController: UIViewController {
                     self.isExporting = false
                     self.exportRowButton.isEnabled = true
                     self.setExportProgress(nil)
-                    self.showToast("导出失败，请重试")
+                    self.showToast(NSLocalizedString("settings.export.failed_retry", comment: ""))
                 }
                 return
             }
