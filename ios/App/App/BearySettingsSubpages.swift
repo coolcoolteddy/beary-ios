@@ -864,8 +864,6 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
                 BearyToast.show(in: self.view, message: "已保存 \(result.saved) 篇，\(result.failed) 篇失败")
             } else if result.partial > 0 {
                 BearyToast.show(in: self.view, message: "已保存 \(result.saved) 篇，\(result.partial) 篇部分保存")
-            } else {
-                BearyToast.show(in: self.view, message: "已保存 \(result.saved) 篇")
             }
         })
     }
