@@ -8,7 +8,7 @@ import UIKit
 
 enum BearyColors {
     static var ink: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : .black } }
-    static var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.45, alpha: 1) } }
+    static var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.40, alpha: 1) } }
     static var orange: UIColor { UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) }
     /// 收藏选中金：浅 #B8860B／深 #FFCC00（2026-11-21 Li 定，规范 v12 选 1：收藏选中色从 orange 换暖金，
     /// 橙只留给公开档位；单值 #FFCC00 浅色对白底仅 1.51:1、不到非文本 3:1 线，故拆深浅）。
