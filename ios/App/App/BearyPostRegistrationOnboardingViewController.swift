@@ -7,29 +7,23 @@ import UserNotifications
 // 与首启 v3 引导的区别：v3 是装完未登录时的 4 页介绍（首启触发已退役，
 // 仅设置页重播保留）；本流程在注册成功后出现，含权限步与 ID 卡接线。
 // 文案一字未动（P2 标题与导语在预览里就是同一句，原文保留）。
-// 翻页只左右滑入（0.34s），不要上下渐显；横向留白统一 24。
-// 固定浅色按预览 token（页面 #f4f4f2、墨 #111、弱 #8a8a86）；
-// 衬线只走展示性大标题（withDesign(.serif)，New York＋宋体），其余系统字体。
+// 翻页只左右滑入（0.34s），不要上下渐显；横向留白统一 16（BearySpace.lg）。
+// 颜色走通用 token（BearyColors，深浅模式跟随系统）；反应圆底三色（blueSoft／loveSoft／
+// cheerSoft）暂无通用 token，先留着。
+// 衬线只走展示性大标题（BearyDynamicType.serifDesign，New York＋宋体），其余系统字体。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
+// 残留：仅 ID 卡文件在用（ink／muted／faint／line／orange，随 #2748 删）与反应圆底
+// 三色（blueSoft／loveSoft／cheerSoft，暂无通用 token）；其余成员已收进 BearyColors。
 enum BearyOnboardingPalette {
-    static let pageBackground = UIColor(red: 244.0 / 255.0, green: 244.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
-    static let cardBackground = UIColor.white
     static let ink = UIColor(red: 17.0 / 255.0, green: 17.0 / 255.0, blue: 17.0 / 255.0, alpha: 1)
-    static let ink2 = UIColor(red: 58.0 / 255.0, green: 58.0 / 255.0, blue: 58.0 / 255.0, alpha: 1)
     static let muted = UIColor(red: 138.0 / 255.0, green: 138.0 / 255.0, blue: 134.0 / 255.0, alpha: 1)
     static let faint = UIColor(red: 199.0 / 255.0, green: 199.0 / 255.0, blue: 204.0 / 255.0, alpha: 1)
     static let line = UIColor(red: 230.0 / 255.0, green: 230.0 / 255.0, blue: 230.0 / 255.0, alpha: 1)
-    static let line2 = UIColor(red: 239.0 / 255.0, green: 239.0 / 255.0, blue: 239.0 / 255.0, alpha: 1)
-    static let track = UIColor(red: 217.0 / 255.0, green: 217.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
+    static let orange = BearyColors.orange
     static let blueSoft = UIColor(red: 238.0 / 255.0, green: 245.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
     static let loveSoft = UIColor(red: 253.0 / 255.0, green: 238.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
     static let cheerSoft = UIColor(red: 255.0 / 255.0, green: 243.0 / 255.0, blue: 223.0 / 255.0, alpha: 1)
-    static let chipSelectedBackground = UIColor(red: 255.0 / 255.0, green: 250.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
-    static let orange = BearyColors.orange
-    static let linkBlue = BearyColors.blue
-    static let switchGreen = UIColor(red: 52.0 / 255.0, green: 199.0 / 255.0, blue: 89.0 / 255.0, alpha: 1)
-    static let tagBackground = UIColor(red: 242.0 / 255.0, green: 242.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
 }
 
 extension UIFont {
@@ -150,7 +144,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyOnboardingPalette.pageBackground
+        view.backgroundColor = BearyColors.bg
         buildChrome()
         containerView.addGestureRecognizer(panGesture)
         panGesture.delegate = self
@@ -186,19 +180,19 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         view.addSubview(topBarView)
         backButton.translatesAutoresizingMaskIntoConstraints = false
         backButton.setImage(UIImage(systemName: "chevron.left"), for: .normal)
-        backButton.tintColor = BearyOnboardingPalette.ink
+        backButton.tintColor = BearyColors.ink
         backButton.contentHorizontalAlignment = .left
         backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
         backButton.accessibilityLabel = "返回"
         topBarView.addSubview(backButton)
         pageLabel.translatesAutoresizingMaskIntoConstraints = false
         pageLabel.textAlignment = .center
-        pageLabel.textColor = BearyOnboardingPalette.faint
+        pageLabel.textColor = BearyColors.gray
         pageLabel.font = UIFont.systemFont(ofSize: 13)
         topBarView.addSubview(pageLabel)
         skipButton.translatesAutoresizingMaskIntoConstraints = false
         skipButton.setTitle("跳过", for: .normal)
-        skipButton.setTitleColor(BearyOnboardingPalette.ink, for: .normal)
+        skipButton.setTitleColor(BearyColors.ink, for: .normal)
         skipButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         skipButton.contentHorizontalAlignment = .right
         skipButton.addTarget(self, action: #selector(skipTapped), for: .touchUpInside)
@@ -214,7 +208,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             backButton.heightAnchor.constraint(equalToConstant: 44),
             pageLabel.centerXAnchor.constraint(equalTo: topBarView.centerXAnchor),
             pageLabel.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
-            skipButton.trailingAnchor.constraint(equalTo: topBarView.trailingAnchor, constant: -24),
+            skipButton.trailingAnchor.constraint(equalTo: topBarView.trailingAnchor, constant: -BearySpace.lg),
             skipButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
             skipButton.widthAnchor.constraint(equalToConstant: 60),
             skipButton.heightAnchor.constraint(equalToConstant: 44),
@@ -231,7 +225,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         for _ in 0..<6 {
             let bar = UIView()
             bar.translatesAutoresizingMaskIntoConstraints = false
-            bar.backgroundColor = BearyOnboardingPalette.track
+            bar.backgroundColor = BearyColors.line
             bar.layer.cornerRadius = 2
             bar.widthAnchor.constraint(equalToConstant: 24).isActive = true
             bar.heightAnchor.constraint(equalToConstant: 4).isActive = true
@@ -256,8 +250,8 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         footerView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(footerView)
         primaryButton.translatesAutoresizingMaskIntoConstraints = false
-        primaryButton.backgroundColor = BearyOnboardingPalette.ink
-        primaryButton.setTitleColor(.white, for: .normal)
+        primaryButton.backgroundColor = BearyColors.ink
+        primaryButton.setTitleColor(BearyColors.bg, for: .normal)
         primaryButton.titleLabel?.font = BearyDynamicType.buttonFont()
         primaryButton.layer.cornerRadius = 12
         primaryButton.addTarget(self, action: #selector(primaryTapped), for: .touchUpInside)
@@ -265,7 +259,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         footerView.addSubview(primaryButton)
         secondaryButton.translatesAutoresizingMaskIntoConstraints = false
         secondaryButton.setTitle("再看一遍", for: .normal)
-        secondaryButton.setTitleColor(BearyOnboardingPalette.ink, for: .normal)
+        secondaryButton.setTitleColor(BearyColors.ink, for: .normal)
         secondaryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         secondaryButton.addTarget(self, action: #selector(replayTapped), for: .touchUpInside)
         footerView.addSubview(secondaryButton)
@@ -281,12 +275,12 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             footerView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             footerHeight,
             primaryButton.topAnchor.constraint(equalTo: footerView.topAnchor),
-            primaryButton.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: 24),
-            primaryButton.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -24),
+            primaryButton.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: BearySpace.lg),
+            primaryButton.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -BearySpace.lg),
             primaryButton.heightAnchor.constraint(equalToConstant: 52),
             secondaryButton.topAnchor.constraint(equalTo: primaryButton.bottomAnchor, constant: 8),
-            secondaryButton.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: 24),
-            secondaryButton.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -24),
+            secondaryButton.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: BearySpace.lg),
+            secondaryButton.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -BearySpace.lg),
             secondaryButton.heightAnchor.constraint(equalToConstant: 44),
         ])
     }
@@ -303,7 +297,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         }
         segmentsView.isHidden = (step == .done)
         for (index, bar) in segmentBars.enumerated() {
-            bar.backgroundColor = (step != .done && index <= step.rawValue) ? BearyOnboardingPalette.ink : BearyOnboardingPalette.track
+            bar.backgroundColor = (step != .done && index <= step.rawValue) ? BearyColors.ink : BearyColors.line
         }
         let isCardStep = (step == .location || step == .notification)
         footerView.isHidden = isCardStep
@@ -599,8 +593,8 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
             contentView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.heightAnchor),
-            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: BearySpace.lg),
+            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -BearySpace.lg),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -16),
         ]
         if centered {
@@ -618,14 +612,14 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func makeTitleLabel(_ text: String) -> UILabel {
         let label = UILabel()
         label.numberOfLines = 0
-        label.attributedText = attributed(text, font: .onboardingSerif(ofSize: 30), color: BearyOnboardingPalette.ink, lineHeightMultiple: 1.35)
+        label.attributedText = attributed(text, font: BearyDynamicType.serifDesign(for: UIFont.systemFont(ofSize: 30)), color: BearyColors.ink, lineHeightMultiple: 1.35)
         return label
     }
 
     private func makeLeadLabel(_ text: String) -> UILabel {
         let label = UILabel()
         label.numberOfLines = 0
-        label.attributedText = attributed(text, font: UIFont.systemFont(ofSize: 16), color: BearyOnboardingPalette.ink2, lineHeightMultiple: 1.6)
+        label.attributedText = attributed(text, font: UIFont.systemFont(ofSize: 16), color: BearyColors.gray, lineHeightMultiple: 1.6)
         return label
     }
 
@@ -633,7 +627,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         let label = UILabel()
         label.numberOfLines = 0
         label.textAlignment = .center
-        label.attributedText = attributed(text, font: UIFont.systemFont(ofSize: 23, weight: .semibold), color: BearyOnboardingPalette.ink, lineHeightMultiple: 1.4)
+        label.attributedText = attributed(text, font: UIFont.systemFont(ofSize: 23, weight: .semibold), color: BearyColors.ink, lineHeightMultiple: 1.4)
         return label
     }
 
@@ -641,7 +635,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         let label = UILabel()
         label.numberOfLines = 0
         label.textAlignment = .center
-        label.attributedText = attributed(text, font: UIFont.systemFont(ofSize: 14), color: BearyOnboardingPalette.muted, lineHeightMultiple: 1.6)
+        label.attributedText = attributed(text, font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lineHeightMultiple: 1.6)
         return label
     }
 
@@ -679,8 +673,8 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func makeBlackButton(title: String) -> UIButton {
         let button = UIButton(type: .custom)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.backgroundColor = BearyOnboardingPalette.ink
-        button.setTitleColor(.white, for: .normal)
+        button.backgroundColor = BearyColors.ink
+        button.setTitleColor(BearyColors.bg, for: .normal)
         button.titleLabel?.font = BearyDynamicType.buttonFont()
         button.setTitle(title, for: .normal)
         button.layer.cornerRadius = 12
@@ -698,7 +692,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         circle.widthAnchor.constraint(equalToConstant: diameter).isActive = true
         circle.heightAnchor.constraint(equalToConstant: diameter).isActive = true
         let glyph = UIImageView(image: UIImage(systemName: "person.fill"))
-        glyph.tintColor = BearyOnboardingPalette.muted
+        glyph.tintColor = BearyColors.gray
         glyph.contentMode = .scaleAspectFit
         glyph.translatesAutoresizingMaskIntoConstraints = false
         circle.addSubview(glyph)
@@ -774,7 +768,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         noteLabel.numberOfLines = 0
         noteLabel.textAlignment = .center
         noteLabel.font = UIFont.systemFont(ofSize: 13)
-        noteLabel.textColor = BearyOnboardingPalette.muted
+        noteLabel.textColor = BearyColors.gray
         noteLabel.text = reactionNoteText()
         reactionNoteLabel = noteLabel
         stack.addArrangedSubview(noteLabel)
@@ -816,10 +810,10 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func makeDiaryMockCard(headerRightText: String?, body: String, bodyFontSize: CGFloat, showFooter: Bool) -> UIView {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = BearyOnboardingPalette.cardBackground
-        card.layer.borderColor = BearyOnboardingPalette.line.cgColor
+        card.backgroundColor = BearyColors.surface1
+        card.layer.borderColor = BearyColors.line.cgColor
         card.layer.borderWidth = 1
-        card.layer.cornerRadius = 16
+        card.layer.cornerRadius = BearyCorners.single
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
@@ -842,12 +836,12 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         nameTime.spacing = 2
         let nameLabel = UILabel()
         nameLabel.font = BearyDynamicType.cardTitleFont()
-        nameLabel.textColor = BearyOnboardingPalette.ink
+        nameLabel.textColor = BearyColors.ink
         nameLabel.text = "Teddy"
         nameTime.addArrangedSubview(nameLabel)
         let timeLabel = UILabel()
         timeLabel.font = BearyDynamicType.captionFont()
-        timeLabel.textColor = BearyOnboardingPalette.muted
+        timeLabel.textColor = BearyColors.gray
         timeLabel.text = "今天 21:00"
         nameTime.addArrangedSubview(timeLabel)
         headerRow.addArrangedSubview(nameTime)
@@ -857,7 +851,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         if let rightText = headerRightText {
             let rightLabel = UILabel()
             rightLabel.font = BearyDynamicType.captionFont()
-            rightLabel.textColor = BearyOnboardingPalette.muted
+            rightLabel.textColor = BearyColors.gray
             rightLabel.text = rightText
             headerRow.addArrangedSubview(rightLabel)
         }
@@ -865,7 +859,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         // 正文。
         let bodyLabel = UILabel()
         bodyLabel.numberOfLines = 0
-        bodyLabel.attributedText = attributed(body, font: UIFont.systemFont(ofSize: bodyFontSize), color: BearyOnboardingPalette.ink, lineHeightMultiple: 1.55)
+        bodyLabel.attributedText = attributed(body, font: UIFont.systemFont(ofSize: bodyFontSize), color: BearyColors.ink, lineHeightMultiple: 1.55)
         stack.addArrangedSubview(bodyLabel)
         // 脚：地址＋天气（仅 P0）。
         if showFooter {
@@ -874,14 +868,14 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             footerRow.alignment = .center
             footerRow.spacing = 4
             let pinImage = UIImageView(image: UIImage(systemName: "mappin"))
-            pinImage.tintColor = BearyOnboardingPalette.muted
+            pinImage.tintColor = BearyColors.gray
             pinImage.contentMode = .scaleAspectFit
             pinImage.widthAnchor.constraint(equalToConstant: 12).isActive = true
             pinImage.heightAnchor.constraint(equalToConstant: 12).isActive = true
             footerRow.addArrangedSubview(pinImage)
             let cityLabel = UILabel()
             cityLabel.font = BearyDynamicType.captionFont()
-            cityLabel.textColor = BearyOnboardingPalette.muted
+            cityLabel.textColor = BearyColors.gray
             cityLabel.text = "上海市"
             footerRow.addArrangedSubview(cityLabel)
             let gap = UIView()
@@ -889,14 +883,14 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             gap.widthAnchor.constraint(equalToConstant: 12).isActive = true
             footerRow.addArrangedSubview(gap)
             let sunImage = UIImageView(image: UIImage(systemName: "sun.max.fill"))
-            sunImage.tintColor = BearyOnboardingPalette.orange
+            sunImage.tintColor = BearyColors.orange
             sunImage.contentMode = .scaleAspectFit
             sunImage.widthAnchor.constraint(equalToConstant: 12).isActive = true
             sunImage.heightAnchor.constraint(equalToConstant: 12).isActive = true
             footerRow.addArrangedSubview(sunImage)
             let weatherLabel = UILabel()
             weatherLabel.font = BearyDynamicType.captionFont()
-            weatherLabel.textColor = BearyOnboardingPalette.muted
+            weatherLabel.textColor = BearyColors.gray
             weatherLabel.text = "18° 晴"
             footerRow.addArrangedSubview(weatherLabel)
             let footerSpacer = UIView()
@@ -910,10 +904,10 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func makeVisibilityCard() -> UIView {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = BearyOnboardingPalette.cardBackground
-        card.layer.borderColor = BearyOnboardingPalette.line.cgColor
+        card.backgroundColor = BearyColors.surface1
+        card.layer.borderColor = BearyColors.line.cgColor
         card.layer.borderWidth = 1
-        card.layer.cornerRadius = 16
+        card.layer.cornerRadius = BearyCorners.single
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
@@ -933,7 +927,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             if index > 0 {
                 let hairline = UIView()
                 hairline.translatesAutoresizingMaskIntoConstraints = false
-                hairline.backgroundColor = BearyOnboardingPalette.line2
+                hairline.backgroundColor = BearyColors.line
                 hairline.heightAnchor.constraint(equalToConstant: 0.5).isActive = true
                 stack.addArrangedSubview(hairline)
             }
@@ -959,10 +953,10 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func makePaperMock() -> UIView {
         let paper = UIView()
         paper.translatesAutoresizingMaskIntoConstraints = false
-        paper.backgroundColor = BearyOnboardingPalette.cardBackground
-        paper.layer.borderColor = BearyOnboardingPalette.line.cgColor
+        paper.backgroundColor = BearyColors.surface1
+        paper.layer.borderColor = BearyColors.line.cgColor
         paper.layer.borderWidth = 1
-        paper.layer.cornerRadius = 16
+        paper.layer.cornerRadius = BearyCorners.single
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
@@ -981,19 +975,19 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         lineRow.spacing = 2
         let todayLabel = UILabel()
         todayLabel.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
-        todayLabel.textColor = BearyOnboardingPalette.ink
+        todayLabel.textColor = BearyColors.ink
         todayLabel.text = "今天"
         lineRow.addArrangedSubview(todayLabel)
         let typed = UILabel()
         typed.font = UIFont.systemFont(ofSize: 16)
-        typed.textColor = BearyOnboardingPalette.ink
+        typed.textColor = BearyColors.ink
         typed.numberOfLines = 0
         typed.text = ""
         typedLabel = typed
         lineRow.addArrangedSubview(typed)
         let caret = UIView()
         caret.translatesAutoresizingMaskIntoConstraints = false
-        caret.backgroundColor = BearyOnboardingPalette.orange
+        caret.backgroundColor = BearyColors.orange
         caret.widthAnchor.constraint(equalToConstant: 2).isActive = true
         caret.heightAnchor.constraint(equalToConstant: 20).isActive = true
         lineRow.addArrangedSubview(caret)
@@ -1013,7 +1007,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
             }
             let hairline = UIView()
             hairline.translatesAutoresizingMaskIntoConstraints = false
-            hairline.backgroundColor = BearyOnboardingPalette.line
+            hairline.backgroundColor = BearyColors.line
             wrap.addSubview(hairline)
             NSLayoutConstraint.activate([
                 hairline.topAnchor.constraint(equalTo: wrap.topAnchor),
@@ -1098,15 +1092,15 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         // 城市只读框。
         let field = UIView()
         field.translatesAutoresizingMaskIntoConstraints = false
-        field.backgroundColor = BearyOnboardingPalette.cardBackground
-        field.layer.borderColor = BearyOnboardingPalette.line.cgColor
+        field.backgroundColor = BearyColors.surface1
+        field.layer.borderColor = BearyColors.line.cgColor
         field.layer.borderWidth = 1
-        field.layer.cornerRadius = 14
-        field.heightAnchor.constraint(equalToConstant: 54).isActive = true
+        field.layer.cornerRadius = BearyCorners.single
+        field.heightAnchor.constraint(equalToConstant: 48).isActive = true
         let fieldLabel = UILabel()
         fieldLabel.translatesAutoresizingMaskIntoConstraints = false
         fieldLabel.font = UIFont.systemFont(ofSize: 17)
-        fieldLabel.textColor = BearyOnboardingPalette.ink
+        fieldLabel.textColor = BearyColors.ink
         fieldLabel.textAlignment = .center
         fieldLabel.text = locationCityText
         field.addSubview(fieldLabel)
@@ -1122,8 +1116,8 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         locateButton.translatesAutoresizingMaskIntoConstraints = false
         locateButton.setImage(UIImage(systemName: "mappin"), for: .normal)
         locateButton.setTitle("点击自动定位", for: .normal)
-        locateButton.setTitleColor(BearyOnboardingPalette.linkBlue, for: .normal)
-        locateButton.tintColor = BearyOnboardingPalette.linkBlue
+        locateButton.setTitleColor(BearyColors.blue, for: .normal)
+        locateButton.tintColor = BearyColors.blue
         locateButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
         locateButton.imageView?.contentMode = .scaleAspectFit
         locateButton.addTarget(self, action: #selector(locateTapped), for: .touchUpInside)
@@ -1249,10 +1243,10 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func makeNotificationRowsCard() -> UIView {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = BearyOnboardingPalette.cardBackground
-        card.layer.borderColor = BearyOnboardingPalette.line.cgColor
+        card.backgroundColor = BearyColors.surface1
+        card.layer.borderColor = BearyColors.line.cgColor
         card.layer.borderWidth = 1
-        card.layer.cornerRadius = 16
+        card.layer.cornerRadius = BearyCorners.single
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
@@ -1272,18 +1266,18 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         texts1.spacing = 3
         let title1 = UILabel()
         title1.font = UIFont.systemFont(ofSize: 16, weight: .medium)
-        title1.textColor = BearyOnboardingPalette.ink
+        title1.textColor = BearyColors.ink
         title1.text = "每天 21:00 提醒"
         texts1.addArrangedSubview(title1)
         let sub1 = UILabel()
         sub1.font = UIFont.systemFont(ofSize: 13)
-        sub1.textColor = BearyOnboardingPalette.muted
+        sub1.textColor = BearyColors.gray
         sub1.text = "每天提醒写日记"
         texts1.addArrangedSubview(sub1)
         row1.addSubview(texts1)
         let reminderSwitch = UISwitch()
         reminderSwitch.translatesAutoresizingMaskIntoConstraints = false
-        reminderSwitch.onTintColor = BearyOnboardingPalette.switchGreen
+        reminderSwitch.onTintColor = BearyColors.green
         reminderSwitch.isOn = reminderOn
         reminderSwitch.addTarget(self, action: #selector(reminderSwitchChanged(_:)), for: .valueChanged)
         row1.addSubview(reminderSwitch)
@@ -1298,7 +1292,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         stack.addArrangedSubview(row1)
         let hairline = UIView()
         hairline.translatesAutoresizingMaskIntoConstraints = false
-        hairline.backgroundColor = BearyOnboardingPalette.line2
+        hairline.backgroundColor = BearyColors.line
         hairline.heightAnchor.constraint(equalToConstant: 0.5).isActive = true
         stack.addArrangedSubview(hairline)
         // 行 2：好友通知提醒（推送未上线，置灰、无开关）。
@@ -1311,12 +1305,12 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         texts2.spacing = 3
         let title2 = UILabel()
         title2.font = UIFont.systemFont(ofSize: 16, weight: .medium)
-        title2.textColor = BearyOnboardingPalette.ink
+        title2.textColor = BearyColors.ink
         title2.text = "好友通知提醒"
         texts2.addArrangedSubview(title2)
         let sub2 = UILabel()
         sub2.font = UIFont.systemFont(ofSize: 13)
-        sub2.textColor = BearyOnboardingPalette.muted
+        sub2.textColor = BearyColors.gray
         sub2.text = NSLocalizedString("onboarding.notifications.body", comment: "")
         texts2.addArrangedSubview(sub2)
         row2.addSubview(texts2)
@@ -1384,14 +1378,14 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         let checkWrap = UIView()
         let checkCircle = UIView()
         checkCircle.translatesAutoresizingMaskIntoConstraints = false
-        checkCircle.layer.borderColor = BearyOnboardingPalette.ink.cgColor
+        checkCircle.layer.borderColor = BearyColors.ink.cgColor
         checkCircle.layer.borderWidth = 1.5
         checkCircle.layer.cornerRadius = 42
         checkWrap.addSubview(checkCircle)
         let checkLabel = UILabel()
         checkLabel.translatesAutoresizingMaskIntoConstraints = false
         checkLabel.font = UIFont.systemFont(ofSize: 34, weight: .semibold)
-        checkLabel.textColor = BearyOnboardingPalette.ink
+        checkLabel.textColor = BearyColors.ink
         checkLabel.textAlignment = .center
         checkLabel.text = "✓"
         checkCircle.addSubview(checkLabel)
@@ -1409,13 +1403,13 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         let titleLabel = UILabel()
         titleLabel.numberOfLines = 0
         titleLabel.textAlignment = .center
-        titleLabel.attributedText = attributed("设置完成", font: .onboardingSerif(ofSize: 30), color: BearyOnboardingPalette.ink, lineHeightMultiple: 1.35)
+        titleLabel.attributedText = attributed("设置完成", font: BearyDynamicType.serifDesign(for: UIFont.systemFont(ofSize: 30)), color: BearyColors.ink, lineHeightMultiple: 1.35)
         stack.addArrangedSubview(titleLabel)
         stack.addArrangedSubview(spacer(10))
         let leadLabel = UILabel()
         leadLabel.numberOfLines = 0
         leadLabel.textAlignment = .center
-        leadLabel.attributedText = attributed("可以开始写日记了", font: UIFont.systemFont(ofSize: 16), color: BearyOnboardingPalette.ink2, lineHeightMultiple: 1.6)
+        leadLabel.attributedText = attributed("可以开始写日记了", font: UIFont.systemFont(ofSize: 16), color: BearyColors.gray, lineHeightMultiple: 1.6)
         stack.addArrangedSubview(leadLabel)
         return scrollView
     }
@@ -1433,10 +1427,10 @@ private final class ReactionChipView: UIControl {
         self.reaction = reaction
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = .white
-        layer.borderColor = BearyOnboardingPalette.line.cgColor
+        backgroundColor = BearyColors.bg
+        layer.borderColor = BearyColors.line.cgColor
         layer.borderWidth = 1
-        layer.cornerRadius = 16
+        layer.cornerRadius = BearyCorners.single
         heightAnchor.constraint(greaterThanOrEqualToConstant: 96).isActive = true
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -1464,7 +1458,7 @@ private final class ReactionChipView: UIControl {
         ])
         stack.addArrangedSubview(circleView)
         nameLabel.font = UIFont.systemFont(ofSize: 14, weight: .medium)
-        nameLabel.textColor = BearyOnboardingPalette.ink
+        nameLabel.textColor = BearyColors.ink
         nameLabel.text = reaction.displayName
         stack.addArrangedSubview(nameLabel)
         NSLayoutConstraint.activate([
@@ -1481,8 +1475,8 @@ private final class ReactionChipView: UIControl {
     }
 
     func setSelected(_ selected: Bool) {
-        layer.borderColor = selected ? BearyOnboardingPalette.orange.cgColor : BearyOnboardingPalette.line.cgColor
-        backgroundColor = selected ? BearyOnboardingPalette.chipSelectedBackground : .white
+        layer.borderColor = selected ? BearyColors.orange.cgColor : BearyColors.line.cgColor
+        backgroundColor = selected ? BearyColors.surface1 : BearyColors.bg
     }
 }
 
@@ -1515,7 +1509,7 @@ private final class VisibilityRowView: UIView {
         radioOuter.widthAnchor.constraint(equalToConstant: 24).isActive = true
         radioOuter.heightAnchor.constraint(equalToConstant: 24).isActive = true
         radioDot.translatesAutoresizingMaskIntoConstraints = false
-        radioDot.backgroundColor = BearyOnboardingPalette.orange
+        radioDot.backgroundColor = BearyColors.orange
         radioDot.layer.cornerRadius = 6
         radioOuter.addSubview(radioDot)
         NSLayoutConstraint.activate([
@@ -1530,12 +1524,12 @@ private final class VisibilityRowView: UIView {
         texts.spacing = 3
         let titleLabel = UILabel()
         titleLabel.font = UIFont.systemFont(ofSize: 17)
-        titleLabel.textColor = BearyOnboardingPalette.ink
+        titleLabel.textColor = BearyColors.ink
         titleLabel.text = title
         texts.addArrangedSubview(titleLabel)
         let subLabel = UILabel()
         subLabel.font = UIFont.systemFont(ofSize: 13)
-        subLabel.textColor = BearyOnboardingPalette.muted
+        subLabel.textColor = BearyColors.gray
         subLabel.text = subtitle
         texts.addArrangedSubview(subLabel)
         row.addArrangedSubview(texts)
@@ -1547,7 +1541,7 @@ private final class VisibilityRowView: UIView {
     }
 
     func setSelected(_ selected: Bool) {
-        radioOuter.layer.borderColor = selected ? BearyOnboardingPalette.orange.cgColor : BearyOnboardingPalette.line.cgColor
+        radioOuter.layer.borderColor = selected ? BearyColors.orange.cgColor : BearyColors.line.cgColor
         radioDot.isHidden = !selected
     }
 }
@@ -1559,8 +1553,8 @@ private final class FoldedMapView: UIView {
     override func draw(_ rect: CGRect) {
         super.draw(rect)
         guard let context = UIGraphicsGetCurrentContext() else { return }
-        let ink = BearyOnboardingPalette.ink
-        let orange = BearyOnboardingPalette.orange
+        let ink = BearyColors.ink
+        let orange = BearyColors.orange
         let w = rect.width
         let h = rect.height
         // 外框。
@@ -1602,28 +1596,28 @@ private final class NotificationBellView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         let bellImage = UIImageView(image: UIImage(systemName: "bell.fill"))
-        bellImage.tintColor = BearyOnboardingPalette.ink
+        bellImage.tintColor = BearyColors.ink
         bellImage.contentMode = .scaleAspectFit
         bellImage.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bellImage)
         // 橙点。
         let dot = UIView()
         dot.translatesAutoresizingMaskIntoConstraints = false
-        dot.backgroundColor = BearyOnboardingPalette.orange
+        dot.backgroundColor = BearyColors.orange
         dot.layer.cornerRadius = 6
         addSubview(dot)
         // 减号徽标。
         let badge = UIView()
         badge.translatesAutoresizingMaskIntoConstraints = false
-        badge.backgroundColor = BearyOnboardingPalette.tagBackground
+        badge.backgroundColor = BearyColors.surface2
         badge.layer.cornerRadius = 11
-        badge.layer.borderColor = UIColor.white.cgColor
+        badge.layer.borderColor = BearyColors.bg.cgColor
         badge.layer.borderWidth = 2
         addSubview(badge)
         let minusLabel = UILabel()
         minusLabel.translatesAutoresizingMaskIntoConstraints = false
         minusLabel.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-        minusLabel.textColor = BearyOnboardingPalette.ink
+        minusLabel.textColor = BearyColors.ink
         minusLabel.textAlignment = .center
         minusLabel.text = "−"
         badge.addSubview(minusLabel)
