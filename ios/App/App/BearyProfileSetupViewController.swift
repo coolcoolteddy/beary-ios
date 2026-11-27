@@ -20,6 +20,9 @@ final class BearyProfileSetupViewController: UIViewController {
 
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
+    /// C7（完整复查）：821 断点——仅 iPad 且宽 ≥821 时内容列 600 居中（反馈页同款）；600 上限只在宽屏激活。
+    private var contentWidthCap: NSLayoutConstraint?
+    private var profileColumnIsWide = false
     private let checkButton = BearyHit44Button()
 
     private let avatarWrap = UIView()
@@ -79,6 +82,12 @@ final class BearyProfileSetupViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // C7：821 断点——仅 iPad 且宽 ≥821 时内容列 600 居中，状态不变不开关，避免布局循环（反馈页同款）。
+        let wide = BearyDesktop.isWide(view.bounds.width)
+        if wide != profileColumnIsWide {
+            profileColumnIsWide = wide
+            contentWidthCap?.isActive = wide
+        }
         avatarImageView.layer.cornerRadius = avatarImageView.bounds.height / 2
         avatarBadge.layer.cornerRadius = avatarBadge.bounds.height / 2
         checkButton.layer.cornerRadius = checkButton.bounds.height / 2
@@ -110,7 +119,7 @@ final class BearyProfileSetupViewController: UIViewController {
         view.addSubview(checkButton)
         NSLayoutConstraint.activate([
             checkButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 60),
-            checkButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            checkButton.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor),
             checkButton.widthAnchor.constraint(equalToConstant: 54),
             checkButton.heightAnchor.constraint(equalToConstant: 54),
         ])
@@ -123,6 +132,11 @@ final class BearyProfileSetupViewController: UIViewController {
         contentStack.alignment = .fill
         contentStack.spacing = BearySpace.md
         scrollView.addSubview(contentStack)
+        // C7：iPad 600 居中（反馈页同款，含 750 宽度等式防短内容压塌；600 上限只在宽屏激活，见 viewDidLayoutSubviews）。
+        let contentWidthEquality = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
+        contentWidthEquality.priority = UILayoutPriority(750)
+        contentWidthCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        contentWidthCap?.isActive = false
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -130,9 +144,10 @@ final class BearyProfileSetupViewController: UIViewController {
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 33),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 20),
-            contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -20),
-            contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40),
+            contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 20),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -20),
+            contentWidthEquality,
         ])
 
         // 头像（可点换）：圆图＋右下＋角标（手绘包 icon_plus，白字）。
