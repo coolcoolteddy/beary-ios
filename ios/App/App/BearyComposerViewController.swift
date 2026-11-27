@@ -6198,7 +6198,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         failIcon.translatesAutoresizingMaskIntoConstraints = false
         let failLabel = UILabel()
         failLabel.translatesAutoresizingMaskIntoConstraints = false
-        failLabel.text = "上传失败，点按重试"
+        failLabel.text = NSLocalizedString("composer.upload_failed", comment: "")
         failLabel.font = BearyDynamicType.captionFont()
         failLabel.textColor = BearyColors.destructiveText
         failLabel.textAlignment = .center
