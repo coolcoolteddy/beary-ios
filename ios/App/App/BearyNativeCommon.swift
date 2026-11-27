@@ -5075,7 +5075,7 @@ enum BearyQuoteGate {
                     case .failure:
                         // r29-3：拉取失败无法确认引用来源，fail-closed 拦截公开；
                         // 调用方收到 .aborted 只清 busy、不发请求，当前权限不变。
-                        BearyToast.show(in: vc.view, message: "暂时无法确认引用来源，重试后再公开")
+                        BearyToast.show(in: vc.view, message: NSLocalizedString("publish.quote_source_unconfirmed_retry_later", comment: ""))
                         completion(.aborted)
                     }
                 }
