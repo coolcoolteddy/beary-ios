@@ -172,7 +172,14 @@ enum BearyNineGridPresenter {
             if SessionManager.shared.authUnknown {
                 BearyToast.show(in: viewController.view, message: NSLocalizedString("common.network_unstable", comment: ""))
             } else {
-                viewController.present(BearyLoginSheet.make(), animated: BearyMotion.animated(true), completion: nil)
+                let login = BearyLoginSheet.make()
+                login.onGuestMode = { [weak login] in
+                    // 游客入口：关登录页、进游客态（回日记原地，不开九宫格）。
+                    login?.dismiss(animated: BearyMotion.animated(true)) {
+                        SessionManager.shared.isGuestMode = true
+                    }
+                }
+                viewController.present(login, animated: BearyMotion.animated(true), completion: nil)
             }
             return
         }

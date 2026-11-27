@@ -1741,6 +1741,13 @@ final class BearySettingsViewController: UIViewController {
                 }
             }
         }
+        loginVC.onGuestMode = { [weak loginVC] in
+            // 添加账号流程里的“游客”＝放弃加号、回原地（与取消同效）：
+            // 本页只进已登录用户，游客态置位会与 currentUser 冲突（顶栏
+            // 按游客渲染、拉黑表被清），故只解会话守卫＋关登录页，不置游客旗。
+            SessionManager.shared.cancelAccountAddSession()
+            loginVC?.dismiss(animated: BearyMotion.animated(true))
+        }
         presentSettingsPage(loginVC)
     }
 
