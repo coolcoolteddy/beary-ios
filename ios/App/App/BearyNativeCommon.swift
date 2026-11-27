@@ -4451,7 +4451,8 @@ enum BearyVisibility {
     /// icon_check 图标＋标题加粗（r21-A13，文字勾号“✓”改官方图标）；
     /// 选同档时调用方按无变化处理（不发请求、不清限时标记）。
     /// 限时与仅好友互斥规则不动：本选择器不提供限时档，手动改档恒清限时标记。
-    /// 存活限时篇例外：当前档明确标为“限时”（置灰 ✓ 行，不可点），三档均不带 ✓；
+    /// 存活限时篇例外：当前档明确标为“限时”（置灰限时行：官方 icon_check
+    /// 图标＋标题加粗、不可点，与同 sheet 内选中行同一口径）；
     /// 点“公开”即转普通永久公开（isNoChange 例外放行，perform 清限时标记）。
     static func presentPicker(from vc: UIViewController, entry: Entry, onPick: @escaping (String) -> Void) {
         let currentValue = current(for: entry)
@@ -4460,7 +4461,7 @@ enum BearyVisibility {
             return BearyConfirmSheet.Action(title: title(for: value), style: .default, handler: { onPick(value) }, isSelected: !isLiveEphemeral && value == currentValue)
         }
         if isLiveEphemeral {
-            actions.insert(BearyConfirmSheet.Action(title: "✓ 限时", style: .default, isEnabled: false), at: 0)
+            actions.insert(BearyConfirmSheet.Action(title: NSLocalizedString("visibility.limited", comment: ""), style: .default, isEnabled: false, isSelected: true), at: 0)
         }
         // 2026-11-17 底部弹窗取消行去掉：关闭走抓手下滑／点外收起，不再垫底放“取消”。
         BearyConfirmSheet.show(from: vc, title: "修改权限", message: nil, actions: actions)
