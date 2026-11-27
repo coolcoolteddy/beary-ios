@@ -1317,7 +1317,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         let sub2 = UILabel()
         sub2.font = UIFont.systemFont(ofSize: 13)
         sub2.textColor = BearyOnboardingPalette.muted
-        sub2.text = "随时接收朋友的喜欢和评论"
+        sub2.text = NSLocalizedString("onboarding.notifications.body", comment: "")
         texts2.addArrangedSubview(sub2)
         row2.addSubview(texts2)
         let tagLabel = UILabel()
