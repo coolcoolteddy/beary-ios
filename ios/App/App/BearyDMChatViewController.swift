@@ -2203,7 +2203,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                             self.updateSendButton()
                             self.updateEmptyState()
                             // 审计：403 即已关闭态，不再给自相矛盾的“请重试”。
-                            BearyToast.show(in: self.view, message: "该会话已关闭")
                         } else if error.isTimeoutOrUnknownResult {
                             // 超时／结果未知：可能已送达，不认失败、不给重发——撤行、
                             // 草稿回填，让用户确认对方是否已收到再决定。
