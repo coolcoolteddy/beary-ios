@@ -1144,7 +1144,7 @@ final class BearyIDCardView: UIView {
         if let avatarURLValue = avatarURL {
             loadAvatar(url: avatarURLValue, diameter: avatarDiameter)
         }
-        // 名字＋皇冠＋「今天加入 beary」。
+        // 名字＋皇冠＋「今天加入 Beary」。
         let nameStack = UIStackView()
         nameStack.translatesAutoresizingMaskIntoConstraints = false
         nameStack.axis = .vertical
@@ -1176,7 +1176,7 @@ final class BearyIDCardView: UIView {
         joinedLabel.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
         joinedLabel.textColor = UIColor(red: 199.0 / 255.0, green: 116.0 / 255.0, blue: 0.0 / 255.0, alpha: 1)
         // 注册当天才说「今天加入」；冷启动补弹时可能已是几天后，改说加入日期。
-        joinedLabel.text = stats.joinDays == 1 ? "今天加入 beary" : "加入于 \(stats.sinceText)"
+        joinedLabel.text = stats.joinDays == 1 ? NSLocalizedString("idcard.joined_today", comment: "") : String(format: NSLocalizedString("idcard.joined_on_format", comment: ""), stats.sinceText)
         nameStack.addArrangedSubview(joinedLabel)
         // 明细格（生日只月日／城市只城市名／SINCE；没填的不显示）。
         let detailsContainer = UIView()
