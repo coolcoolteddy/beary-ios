@@ -1055,7 +1055,6 @@ final class BearyWishWallViewController: UIViewController {
                 case .success:
                     // 审计 26 #34：标记完成服务端确认成功，写入版本 +1（列表旧快照不得再改回未完成）。
                     self.wishWriteVersion[wishId, default: 0] += 1
-                    BearyToast.show(in: self.view, message: "已标记完成")
                 case .failure:
                     // 只滚 status：其余字段（票数等）以当前显示态为准，
                     // 请求期间重载 / 票数变化带进来的新值不得被旧快照盖掉。
