@@ -1883,7 +1883,7 @@ final class BearySettingsViewController: UIViewController {
         exportTitle.text = "导出我的数据"
         exportTitle.numberOfLines = 0 // P1-7：行正文标题多行
         let exportDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
-        exportDetail.text = "导出 JSON，包含账户资料、日记和点赞记录"
+        exportDetail.text = NSLocalizedString("settings.export_data_detail", comment: "")
         exportDetailLabel = exportDetail
         let exportStack = UIStackView(arrangedSubviews: [exportTitle, exportDetail])
         exportStack.axis = .vertical
@@ -2598,7 +2598,7 @@ final class BearySettingsViewController: UIViewController {
     /// 置“正在生成文件…”、文件写完（成功 present 前 / 失败 toast 前）才复原。
     private func setExportProgress(_ text: String?) {
         DispatchQueue.main.async { [weak self] in
-            self?.exportDetailLabel?.text = text ?? "导出 JSON，包含账户资料、日记和点赞记录"
+            self?.exportDetailLabel?.text = text ?? NSLocalizedString("settings.export_data_detail", comment: "")
         }
     }
 
