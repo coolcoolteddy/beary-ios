@@ -829,7 +829,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             parts.append("图片或视频 \(attachments.count) 个")
         }
         if zipReady {
-            parts.append("日志包 1 个")
+            parts.append(NSLocalizedString("feedback.log_bundle_one", comment: ""))
         }
         guard !parts.isEmpty else {
             submitHintLabel.text = "将发送到 hi@teddyhn.com，还需在邮件里再按一次发送。"
@@ -1183,7 +1183,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 } else {
                     // zip 缺失时发送仍可继续（不带 zip）：先 toast 明说，待 toast 可见
                     // 后再弹出邮件撰写框，避免撰写框盖住 toast 导致说明不可见。
-                    BearyToast.show(in: self.view, message: "日志包准备失败，本次反馈不含日志包")
+                    BearyToast.show(in: self.view, message: NSLocalizedString("feedback.log_prepare_failed_excluded", comment: ""))
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.1) { [weak self] in
                         // 审计登录杂项：2.1 秒延迟分支补 view.window 守卫，与
                         // shareTapped / logOnlyTapped 同口径（此前只守 presented）。
@@ -1204,7 +1204,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             // 与 submitTapped 两处守卫同口径，防多窗口叠出。
             guard self.view.window != nil, self.presentedViewController == nil else { return }
             guard ready, let url = self.zipURL else {
-                BearyToast.show(in: self.view, message: "日志包准备失败，请重试")
+                BearyToast.show(in: self.view, message: NSLocalizedString("feedback.log_prepare_failed_retry", comment: ""))
                 self.playDenyShake(on: self.shareButton)
                 return
             }
@@ -1226,7 +1226,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             // 与 submitTapped 两处守卫同口径，防多窗口叠出。
             guard self.view.window != nil, self.presentedViewController == nil else { return }
             guard ready else {
-                BearyToast.show(in: self.view, message: "日志包准备失败，请重试")
+                BearyToast.show(in: self.view, message: NSLocalizedString("feedback.log_prepare_failed_retry", comment: ""))
                 BearyHaptics.rejectionWarning()
                 return
             }
@@ -1272,7 +1272,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                     guard let self = self else { return }
                     guard self.view.window != nil, self.presentedViewController == nil else { return }
                     guard let zipData = zipData else {
-                        BearyToast.show(in: self.view, message: "日志包读取失败，请重试")
+                        BearyToast.show(in: self.view, message: NSLocalizedString("feedback.log_read_failed_retry", comment: ""))
                         BearyHaptics.rejectionWarning()
                         BearyAppLog.event("feedback mail zip read failed")
                         return
@@ -1315,7 +1315,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 guard let self = self else { return }
                 guard self.view.window != nil, self.presentedViewController == nil else { return }
                 guard let zipData = zipData else {
-                    BearyToast.show(in: self.view, message: "日志包读取失败，请重试")
+                    BearyToast.show(in: self.view, message: NSLocalizedString("feedback.log_read_failed_retry", comment: ""))
                     BearyHaptics.rejectionWarning()
                     BearyAppLog.event("feedback log mail zip read failed")
                     return
