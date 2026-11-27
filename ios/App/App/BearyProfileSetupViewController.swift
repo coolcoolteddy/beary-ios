@@ -27,17 +27,21 @@ final class BearyProfileSetupViewController: UIViewController {
     private let avatarButton = BearyHit44Button()
     private let avatarBadge = UIView()
     private let avatarBadgeIcon = UIImageView()
+    /// 头像渐变底（预览 v3：淡紫径向渐变 #EFEDF7→#DDD9EC→#CFC9E2；深浅同值）。
+    private var avatarGradientLayer: CAGradientLayer?
 
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
 
     private let nameContainer: BearyInputContainer
     private let nameField = UITextField()
+    private let nameLabel = UILabel()
     private let nameErrorLabel = UILabel()
 
     private let bioContainer: BearyInputContainer
     private let bioTextView = UITextView()
     private let bioPlaceholderLabel = UILabel()
+    private let bioLabel = UILabel()
     private let bioErrorLabel = UILabel()
 
     // MARK: - 状态
@@ -78,6 +82,9 @@ final class BearyProfileSetupViewController: UIViewController {
         avatarImageView.layer.cornerRadius = avatarImageView.bounds.height / 2
         avatarBadge.layer.cornerRadius = avatarBadge.bounds.height / 2
         checkButton.layer.cornerRadius = checkButton.bounds.height / 2
+        avatarGradientLayer?.frame = avatarWrap.bounds
+        avatarGradientLayer?.cornerRadius = avatarWrap.bounds.height / 2
+        avatarGradientLayer?.masksToBounds = true
     }
 
     // MARK: - 布局
@@ -88,7 +95,7 @@ final class BearyProfileSetupViewController: UIViewController {
         checkButton.backgroundColor = BearyColors.ink
         checkButton.bearyAddPressFeedback()
         checkButton.accessibilityLabel = NSLocalizedString("login.profile.save", comment: "")
-        let checkIcon = UIImageView(image: BearyIconImages.image(named: "icon_check", pointSize: 20))
+        let checkIcon = UIImageView(image: BearyIconImages.image(named: "icon_check", pointSize: 24))
         checkIcon.tintColor = BearyColors.bg
         checkIcon.contentMode = .scaleAspectFit
         checkIcon.isUserInteractionEnabled = false
@@ -96,16 +103,16 @@ final class BearyProfileSetupViewController: UIViewController {
         NSLayoutConstraint.activate([
             checkIcon.centerXAnchor.constraint(equalTo: checkButton.centerXAnchor),
             checkIcon.centerYAnchor.constraint(equalTo: checkButton.centerYAnchor),
-            checkIcon.widthAnchor.constraint(equalToConstant: 20),
-            checkIcon.heightAnchor.constraint(equalToConstant: 20),
+            checkIcon.widthAnchor.constraint(equalToConstant: 24),
+            checkIcon.heightAnchor.constraint(equalToConstant: 24),
         ])
         checkButton.addTarget(self, action: #selector(checkButtonTapped), for: .touchUpInside)
         view.addSubview(checkButton)
         NSLayoutConstraint.activate([
-            checkButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
-            checkButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            checkButton.widthAnchor.constraint(equalToConstant: 44),
-            checkButton.heightAnchor.constraint(equalToConstant: 44),
+            checkButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 60),
+            checkButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            checkButton.widthAnchor.constraint(equalToConstant: 54),
+            checkButton.heightAnchor.constraint(equalToConstant: 54),
         ])
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -121,7 +128,7 @@ final class BearyProfileSetupViewController: UIViewController {
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 33),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 20),
             contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -20),
@@ -134,7 +141,20 @@ final class BearyProfileSetupViewController: UIViewController {
         avatarImageView.translatesAutoresizingMaskIntoConstraints = false
         avatarImageView.contentMode = .scaleAspectFill
         avatarImageView.clipsToBounds = true
-        avatarImageView.backgroundColor = BearyColors.surface2
+        avatarImageView.backgroundColor = .clear
+        // 头像渐变底（预览 v3：淡紫径向渐变，圆心 32%/28%，半径取 CSS farthest-corner 99px）。
+        let avatarGradient = CAGradientLayer()
+        avatarGradient.type = .radial
+        avatarGradient.colors = [
+            UIColor(red: 239.0 / 255.0, green: 237.0 / 255.0, blue: 247.0 / 255.0, alpha: 1).cgColor,
+            UIColor(red: 221.0 / 255.0, green: 217.0 / 255.0, blue: 236.0 / 255.0, alpha: 1).cgColor,
+            UIColor(red: 207.0 / 255.0, green: 201.0 / 255.0, blue: 226.0 / 255.0, alpha: 1).cgColor,
+        ]
+        avatarGradient.locations = [0, 0.45, 1]
+        avatarGradient.startPoint = CGPoint(x: 0.32, y: 0.28)
+        avatarGradient.endPoint = CGPoint(x: 0.896, y: 0.89)
+        avatarWrap.layer.insertSublayer(avatarGradient, at: 0)
+        avatarGradientLayer = avatarGradient
         avatarWrap.addSubview(avatarImageView)
         avatarButton.translatesAutoresizingMaskIntoConstraints = false
         avatarButton.backgroundColor = .clear
@@ -142,11 +162,13 @@ final class BearyProfileSetupViewController: UIViewController {
         avatarButton.addTarget(self, action: #selector(avatarButtonTapped), for: .touchUpInside)
         avatarWrap.addSubview(avatarButton)
         avatarBadge.translatesAutoresizingMaskIntoConstraints = false
-        avatarBadge.backgroundColor = BearyColors.ink
+        avatarBadge.backgroundColor = .white
+        avatarBadge.layer.borderWidth = 1
+        avatarBadge.layer.borderColor = UIColor(red: 229.0 / 255.0, green: 229.0 / 255.0, blue: 229.0 / 255.0, alpha: 1).cgColor
         avatarBadge.isUserInteractionEnabled = false
         avatarBadgeIcon.translatesAutoresizingMaskIntoConstraints = false
         avatarBadgeIcon.image = BearyIconImages.image(named: "icon_plus", pointSize: 16)
-        avatarBadgeIcon.tintColor = BearyColors.bg
+        avatarBadgeIcon.tintColor = UIColor(red: 85.0 / 255.0, green: 85.0 / 255.0, blue: 85.0 / 255.0, alpha: 1)
         avatarBadgeIcon.contentMode = .scaleAspectFit
         avatarBadge.addSubview(avatarBadgeIcon)
         avatarWrap.addSubview(avatarBadge)
@@ -159,8 +181,8 @@ final class BearyProfileSetupViewController: UIViewController {
             avatarButton.bottomAnchor.constraint(equalTo: avatarWrap.bottomAnchor),
             avatarButton.leadingAnchor.constraint(equalTo: avatarWrap.leadingAnchor),
             avatarButton.trailingAnchor.constraint(equalTo: avatarWrap.trailingAnchor),
-            avatarBadge.widthAnchor.constraint(equalToConstant: 28),
-            avatarBadge.heightAnchor.constraint(equalToConstant: 28),
+            avatarBadge.widthAnchor.constraint(equalToConstant: 30),
+            avatarBadge.heightAnchor.constraint(equalToConstant: 30),
             avatarBadge.trailingAnchor.constraint(equalTo: avatarWrap.trailingAnchor),
             avatarBadge.bottomAnchor.constraint(equalTo: avatarWrap.bottomAnchor),
             avatarBadgeIcon.centerXAnchor.constraint(equalTo: avatarBadge.centerXAnchor),
@@ -176,14 +198,14 @@ final class BearyProfileSetupViewController: UIViewController {
             avatarWrap.centerXAnchor.constraint(equalTo: avatarOuter.centerXAnchor),
             avatarWrap.topAnchor.constraint(equalTo: avatarOuter.topAnchor),
             avatarWrap.bottomAnchor.constraint(equalTo: avatarOuter.bottomAnchor),
-            avatarWrap.widthAnchor.constraint(equalToConstant: 96),
-            avatarWrap.heightAnchor.constraint(equalToConstant: 96),
+            avatarWrap.widthAnchor.constraint(equalToConstant: 118),
+            avatarWrap.heightAnchor.constraint(equalToConstant: 118),
         ])
         contentStack.addArrangedSubview(avatarOuter)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = NSLocalizedString("login.profile.title", comment: "")
-        titleLabel.font = BearyDynamicType.welcomeDisplayFont()
+        titleLabel.font = BearyDynamicType.loginPageTitleFont()
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 0
@@ -197,9 +219,16 @@ final class BearyProfileSetupViewController: UIViewController {
         subtitleLabel.numberOfLines = 0
         contentStack.addArrangedSubview(subtitleLabel)
 
+        // 姓名字段标签（预览 v3：15px 灰，框上 10pt；stack 默认间距 md 12，近似）。
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.text = NSLocalizedString("login.profile.name_label", comment: "")
+        nameLabel.font = BearyDynamicType.smallBodyFont()
+        nameLabel.textColor = BearyColors.gray
+        contentStack.addArrangedSubview(nameLabel)
+
         // 姓名框＋行内错误。
         contentStack.addArrangedSubview(nameContainer)
-        nameContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+        nameContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 54).isActive = true
         nameErrorLabel.translatesAutoresizingMaskIntoConstraints = false
         nameErrorLabel.font = BearyDynamicType.captionFont()
         nameErrorLabel.textColor = BearyColors.destructiveText
@@ -210,8 +239,15 @@ final class BearyProfileSetupViewController: UIViewController {
         // 简介框（多行）＋占位文案＋行内错误。
         bioTextView.textContainerInset = UIEdgeInsets(top: BearySpace.md, left: 0, bottom: BearySpace.md, right: 0)
         bioTextView.textContainer.lineFragmentPadding = 0
+        // 简介字段标签（预览 v3：15px 灰，框上 10pt；stack 默认间距 md 12，近似）。
+        bioLabel.translatesAutoresizingMaskIntoConstraints = false
+        bioLabel.text = NSLocalizedString("login.profile.bio_label", comment: "")
+        bioLabel.font = BearyDynamicType.smallBodyFont()
+        bioLabel.textColor = BearyColors.gray
+        contentStack.addArrangedSubview(bioLabel)
+
         contentStack.addArrangedSubview(bioContainer)
-        bioContainer.heightAnchor.constraint(equalToConstant: 88).isActive = true
+        bioContainer.heightAnchor.constraint(equalToConstant: 112).isActive = true
         bioPlaceholderLabel.translatesAutoresizingMaskIntoConstraints = false
         bioPlaceholderLabel.text = NSLocalizedString("login.profile.bio_placeholder", comment: "")
         bioPlaceholderLabel.font = BearyDynamicType.fieldFont()
