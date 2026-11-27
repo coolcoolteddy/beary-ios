@@ -6047,7 +6047,6 @@ class BearyProfileViewController: UIViewController {
         if trimmed > 0 {
             BearyToast.show(in: view, message: "已保留最近 200 条，旧留话仍在服务端，换设备登录可恢复")
         } else {
-            BearyToast.show(in: view, message: "已留给明年的自己")
         }
         // 本地通知：续一年留话排一条新送达日早上 9:00 的提醒。
         BearyLocalNotifications.shared.refreshAll(force: true)
