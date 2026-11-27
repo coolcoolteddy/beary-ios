@@ -783,7 +783,7 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
 
         if records.isEmpty {
             let empty = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
-            empty.text = "在日记详情页 ⋯ 菜单里点“离线保存”，或点上方保存全部本人日记。"
+            empty.text = NSLocalizedString("settings.offline_save.empty_hint", comment: "")
             contentStack.addArrangedSubview(makeGroupCard(title: "已保存的日记", rows: [empty]))
         } else {
             contentStack.addArrangedSubview(makeGroupCard(title: "已保存的日记", rows: records.enumerated().map { recordRow($0.element, index: $0.offset) }))
