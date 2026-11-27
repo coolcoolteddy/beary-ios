@@ -1059,9 +1059,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
         var status = "共 \(filteredEntries.count) 颗星 · \(rangeText)"
         if fetchPartialNote {
-            status += " · 仅展示已加载的部分，点按重试"
+            status += " · " + NSLocalizedString("starmap.status.partial", comment: "")
         } else if fetchStaleNote {
-            status += " · 数据未更新，点按重试"
+            status += " · " + NSLocalizedString("starmap.status.not_updated", comment: "")
         }
         if !viewerIsAuthor {
             status += " · 他人视角：只显示公开篇"
