@@ -149,6 +149,13 @@ extension BearyDynamicType {
         scaledFont(for: UIFont.systemFont(ofSize: 28, weight: .bold))
     }
 
+    /// 语义：登录流程内页标题（邮箱页／资料页）。定版值：25 bold，scaled；
+    /// 预览 v3 实测 25px（欢迎页标语仍走 welcomeDisplayFont 28）。
+    /// 新增：资料页按预览 v3 修对位（2026-11-27）。
+    static func loginPageTitleFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 25, weight: .bold))
+    }
+
     /// 语义：输入框文字。定版值：16 regular，scaled。登录改版（2026-11-26）新增；
     /// 与旧登录页字段字号同值（旧代码写 ofSize: 16，lint 只认语义入口，故立新入口）。
     static func fieldFont() -> UIFont {
