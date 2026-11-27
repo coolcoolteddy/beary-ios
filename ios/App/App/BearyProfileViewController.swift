@@ -3625,7 +3625,7 @@ class BearyProfileViewController: UIViewController {
                     // 失败 toast 只在首次置位时弹一次，重复失败不再刷屏。
                     if self.followState == nil {
                         if !self.followStateFirstLoadFailed {
-                            BearyToast.show(in: self.view, message: "关注状态加载失败，点按按钮可重试")
+                            BearyToast.show(in: self.view, message: NSLocalizedString("profile.follow_state_load_failed", comment: ""))
                         }
                         self.followStateFirstLoadFailed = true
                     }
