@@ -10,7 +10,7 @@ import UIKit
 //   - （2026-10-29 第 4 项：风控提示行已删，零残留；风控逻辑本身不动。）
 //   - 统计“已邀请 N 人 · 累计获得 M 天 Plus（rewardMonths × 30）”（accounts /me 的 referral
 //     invited_count / reward_months，只数 granted/pending/granting/flagged）；
-//   - 绑定区两态：已绑定 → “已通过 X 的邀请加入 beary”（status 为 cancelled/expired
+//   - 绑定区两态：已绑定 → “已通过 X 的邀请加入 Beary”（status 为 cancelled/expired
 //     时显示“邀请已作废”）；未绑定 → 输入框 + “绑定”钮 + “随时可补绑”
 //     （邀请无时间限制，2026-11-19 Li 定）；其余 → 不显示绑定区。
 //   - 绑定结果文案与网页 ivDoBind 同款（granted/flagged/其他成功态、cancelled、
@@ -704,7 +704,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
                 // 审计 P2：作废态不写死绿勾，图标隐藏。
                 boundCheckIcon.isHidden = true
             } else if status == "granted" {
-                setLabelTextFaded(boundLabel, "已通过 \(inviterName) 的邀请加入 beary")
+                setLabelTextFaded(boundLabel, String(format: NSLocalizedString("invite.joined_via_format", comment: ""), inviterName))
                 boundCheckIcon.isHidden = false
             } else if status == "flagged" {
                 // flagged 是服务端风控拦截（同 IP / 邀请人被封），须站长在管理端放行或作废——此处“待审核”属实。

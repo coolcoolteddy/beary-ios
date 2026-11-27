@@ -1292,7 +1292,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         let composer = MFMailComposeViewController()
         composer.mailComposeDelegate = self
         composer.setToRecipients([Self.recipient])
-        composer.setSubject("\(subjectPrefix) beary 反馈")
+        composer.setSubject(String(format: NSLocalizedString("feedback.mail_subject_format", comment: ""), subjectPrefix))
         composer.setMessageBody(body, isHTML: false)
         if let zipData = zipData {
             composer.addAttachmentData(zipData, mimeType: "application/zip", fileName: "beary-feedback-logs.zip")
@@ -1330,8 +1330,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         let composer = MFMailComposeViewController()
         composer.mailComposeDelegate = self
         composer.setToRecipients([Self.recipient])
-        composer.setSubject("[日志] beary 诊断日志")
-        composer.setMessageBody("beary 诊断日志见附件。", isHTML: false)
+        composer.setSubject(NSLocalizedString("feedback.log_mail_subject", comment: ""))
+        composer.setMessageBody(NSLocalizedString("feedback.log_mail_body", comment: ""), isHTML: false)
         if let zipData = zipData {
             composer.addAttachmentData(zipData, mimeType: "application/zip", fileName: "beary-feedback-logs.zip")
         }
