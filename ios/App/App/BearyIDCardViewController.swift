@@ -156,7 +156,12 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         nicknameField.font = UIFont.systemFont(ofSize: 16)
         nicknameField.textColor = BearyOnboardingPalette.ink
         nicknameField.text = initialNickname
-        nicknameField.placeholder = "必填"
+        // ID 卡表单容器固定白色（BearyOnboardingPalette），占位色须用固定浅色值，不跟随深浅；
+        // 固定 #666666 落白底约 5.74:1，与 BearyColors.gray 改深后的浅色同值（见 #2730）。
+        nicknameField.attributedPlaceholder = NSAttributedString(string: NSLocalizedString("idcard.nickname_placeholder", comment: ""), attributes: [
+            .foregroundColor: UIColor(white: 0.4, alpha: 1),
+            .font: nicknameField.font ?? BearyDynamicType.fieldFont(),
+        ])
         nicknameField.returnKeyType = .done
         nicknameField.delegate = self
         nicknameField.clearButtonMode = .whileEditing
@@ -174,7 +179,10 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
         birthdayField.translatesAutoresizingMaskIntoConstraints = false
         birthdayField.font = UIFont.systemFont(ofSize: 16)
         birthdayField.textColor = BearyOnboardingPalette.ink
-        birthdayField.placeholder = "选填"
+        birthdayField.attributedPlaceholder = NSAttributedString(string: NSLocalizedString("idcard.birthday_placeholder", comment: ""), attributes: [
+            .foregroundColor: UIColor(white: 0.4, alpha: 1),
+            .font: birthdayField.font ?? BearyDynamicType.fieldFont(),
+        ])
         birthdayField.delegate = self
         birthdayPicker.datePickerMode = .date
         if #available(iOS 13.4, *) {

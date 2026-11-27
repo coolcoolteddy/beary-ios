@@ -290,7 +290,10 @@ final class BearyProfileSetupViewController: UIViewController {
         nameField.font = BearyDynamicType.fieldFont()
         nameField.adjustsFontForContentSizeCategory = true
         nameField.textColor = BearyColors.ink
-        nameField.placeholder = NSLocalizedString("login.profile.name_placeholder", comment: "")
+        nameField.attributedPlaceholder = NSAttributedString(string: NSLocalizedString("login.profile.name_placeholder", comment: ""), attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.fieldFont(),
+        ])
         nameField.autocapitalizationType = .none
         nameField.autocorrectionType = .no
         nameField.returnKeyType = .next

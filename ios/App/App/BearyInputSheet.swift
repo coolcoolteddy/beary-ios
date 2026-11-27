@@ -111,7 +111,10 @@ final class BearyInputSheetViewController: UIViewController, BearySystemSheetSiz
         inputField.autocorrectionType = .no
         inputField.autocapitalizationType = .none
         inputField.returnKeyType = .done
-        inputField.placeholder = fieldPlaceholder
+        inputField.attributedPlaceholder = NSAttributedString(string: fieldPlaceholder, attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.fieldFont(),
+        ])
         inputField.text = fieldInitialText
         inputField.delegate = self
         let fieldContainer = BearyInputContainer(content: inputField)

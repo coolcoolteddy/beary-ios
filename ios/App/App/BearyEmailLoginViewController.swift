@@ -365,7 +365,10 @@ final class BearyEmailLoginViewController: UIViewController {
         emailField.font = BearyDynamicType.fieldFont()
         emailField.adjustsFontForContentSizeCategory = true
         emailField.textColor = BearyColors.ink
-        emailField.placeholder = NSLocalizedString("login.email.email_placeholder", comment: "")
+        emailField.attributedPlaceholder = NSAttributedString(string: NSLocalizedString("login.email.email_placeholder", comment: ""), attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.fieldFont(),
+        ])
         emailField.keyboardType = .emailAddress
         emailField.autocapitalizationType = .none
         emailField.autocorrectionType = .no
@@ -377,7 +380,10 @@ final class BearyEmailLoginViewController: UIViewController {
         codeField.font = BearyDynamicType.fieldFont()
         codeField.adjustsFontForContentSizeCategory = true
         codeField.textColor = BearyColors.ink
-        codeField.placeholder = NSLocalizedString("login.email.code_placeholder", comment: "")
+        codeField.attributedPlaceholder = NSAttributedString(string: NSLocalizedString("login.email.code_placeholder", comment: ""), attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.fieldFont(),
+        ])
         codeField.keyboardType = .numberPad
         codeField.autocorrectionType = .no
         codeField.textContentType = .oneTimeCode
@@ -388,7 +394,10 @@ final class BearyEmailLoginViewController: UIViewController {
         inviteField.font = BearyDynamicType.fieldFont()
         inviteField.adjustsFontForContentSizeCategory = true
         inviteField.textColor = BearyColors.ink
-        inviteField.placeholder = NSLocalizedString("login.email.invite_placeholder", comment: "")
+        inviteField.attributedPlaceholder = NSAttributedString(string: NSLocalizedString("login.email.invite_placeholder", comment: ""), attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.fieldFont(),
+        ])
         inviteField.autocapitalizationType = .allCharacters
         inviteField.autocorrectionType = .no
         inviteField.returnKeyType = .done
@@ -398,7 +407,10 @@ final class BearyEmailLoginViewController: UIViewController {
         passwordField.font = BearyDynamicType.fieldFont()
         passwordField.adjustsFontForContentSizeCategory = true
         passwordField.textColor = BearyColors.ink
-        passwordField.placeholder = NSLocalizedString("login.email.password_placeholder", comment: "")
+        passwordField.attributedPlaceholder = NSAttributedString(string: NSLocalizedString("login.email.password_placeholder", comment: ""), attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.fieldFont(),
+        ])
         passwordField.isSecureTextEntry = true
         passwordField.autocapitalizationType = .none
         passwordField.autocorrectionType = .no

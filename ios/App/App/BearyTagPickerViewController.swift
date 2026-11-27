@@ -115,7 +115,10 @@ final class BearyTagPickerViewController: UIViewController, BearySystemSheetSizi
         newTagField.autocorrectionType = .no
         newTagField.autocapitalizationType = .none
         newTagField.returnKeyType = .done
-        newTagField.placeholder = "输入新标签"
+        newTagField.attributedPlaceholder = NSAttributedString(string: NSLocalizedString("tag.input_placeholder", comment: ""), attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.fieldFont(),
+        ])
         newTagField.delegate = self
         let fieldContainer = BearyInputContainer(content: newTagField)
         fieldContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
