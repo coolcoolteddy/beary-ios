@@ -1020,7 +1020,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             let ready: Bool
             if let urlValue = url {
                 self.replaceZipURL(urlValue)
-                self.setStatusTextFaded("反馈数据已准备就绪")
+                self.setStatusTextFaded(NSLocalizedString("feedback.data_ready", comment: ""))
                 self.showStatusBadgeFaded()
                 ready = true
             } else {
