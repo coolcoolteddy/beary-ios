@@ -1351,8 +1351,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
             meta += " · \(place)"
         }
         sheetStack.addArrangedSubview(sheetBodyLabel(meta))
-        // 可见性行：公开 = 地球橙，私密 = 锁蓝，仅好友 = 双人锁墨
-        // （与引用面板 pill／时间线圆点／搜索页 pill 的仅好友墨色同口径）；
+        // 可见性行：公开 = 地球橙，私密 = 锁蓝，仅好友 = 双人锁（夜景体文色）
+        // （仅好友墨色与引用面板 pill／时间线圆点／搜索页 pill 同口径，但底卡是
+        // 固定深夜底、墨色 ink 在浅色下是黑字、落在深底上仅 1.23:1 基本不可见，
+        // 故此处改用与行文案同色的夜景 bodyText（白 85%，12.09:1），两模式同值）；
         // 文案按实际档位：仅好友不再误标私密，存活限时篇补限时剩余信息。
         // （星图只对作者本人放行非公开篇，故仅好友档只在作者视角出现。）
         let visRow = UIStackView()
@@ -1363,7 +1365,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let isPublic = visValue == "public"
         let isFriendsOnly = visValue == "friends"
         visIcon.image = BearyIconImages.image(named: isPublic ? "icon_globe" : (isFriendsOnly ? "icon_friends_lock" : "icon_lock"), pointSize: 13)
-        visIcon.tintColor = isPublic ? BearyColors.orange : (isFriendsOnly ? BearyColors.ink : BearyColors.blue)
+        visIcon.tintColor = isPublic ? BearyColors.orange : (isFriendsOnly ? BearyStarMapNight.bodyText : BearyColors.blue)
         visIcon.contentMode = .scaleAspectFit
         visRow.addArrangedSubview(visIcon)
         var visText = BearyVisibility.title(for: visValue)
