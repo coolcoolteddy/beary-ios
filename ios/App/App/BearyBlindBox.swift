@@ -341,7 +341,7 @@ final class BlindBoxState {
     }
 
     func countText() -> String {
-        return usedToday ? "今日 1/1" : "今日 0/1"
+        return usedToday ? NSLocalizedString("blindbox.count.done", comment: "") : NSLocalizedString("blindbox.count.remaining", comment: "")
     }
 
     /// 服务端状态 → 本地镜像（只在成功回包时写，失败不覆写旧镜像、不谎报计数）。
