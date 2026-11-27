@@ -338,7 +338,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         loadMoreRetryWrap.axis = .vertical
         loadMoreRetryWrap.alignment = .center
         loadMoreRetryWrap.isHidden = true
-        loadMoreRetryButton.setTitle("加载失败 · 重试", for: .normal)
+        loadMoreRetryButton.setTitle(NSLocalizedString("trash.load_failed.title", comment: ""), for: .normal)
         loadMoreRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         loadMoreRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         loadMoreRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
