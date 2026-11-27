@@ -120,15 +120,14 @@ final class BearyForceUpdateCenter {
 
 enum BearyForceUpdateSheet {
 
-    // MARK: - 强制更新：全屏遮罩
+    // MARK: - 强制更新：不可关闭的底 sheet
 
-    /// 全屏遮罩：force_message 说明文案＋[去更新]按钮（打开 update_url）。
-    /// 点外面关不掉、没有跳过、没有关闭按钮；present 后除非更新否则一直在。
+    /// 不可关闭的底 sheet：force_message 说明文案＋[去更新]按钮（打开 update_url）。
+    /// 走系统 sheet（BearySystemSheet.present，dismissable: false）：禁止下滑关闭、
+    /// 禁止点外关闭、隐藏抓手、没有跳过、没有关闭按钮；present 后除非更新否则一直在。
     static func showForce(from presenter: UIViewController, message: String, updateURL: String, notes: BearyAnnouncement?) {
         let vc = BearyForceUpdateViewController(message: message, updateURL: updateURL, notes: notes)
-        vc.modalPresentationStyle = .fullScreen
-        vc.isModalInPresentation = true
-        presenter.present(vc, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(vc, from: presenter, dismissable: false)
     }
 
     // MARK: - 柔性提醒：可关底 sheet
@@ -142,9 +141,9 @@ enum BearyForceUpdateSheet {
     }
 }
 
-// MARK: - 强制更新全屏页
+// MARK: - 强制更新底 sheet（不可关闭）
 
-final class BearyForceUpdateViewController: UIViewController {
+final class BearyForceUpdateViewController: UIViewController, BearySystemSheetSizing {
 
     private let message: String
     private let updateURL: String
@@ -154,6 +153,7 @@ final class BearyForceUpdateViewController: UIViewController {
     private let bodyLabel = UILabel()
     private let notesTitleLabel = UILabel()
     private let notesBodyLabel = UILabel()
+    private let buttonStack = UIStackView()
     private let updateButton = BearyButton(style: .primaryPill(.ink))
 
     init(message: String, updateURL: String, notes: BearyAnnouncement?) {
@@ -169,7 +169,10 @@ final class BearyForceUpdateViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
+        view.backgroundColor = .clear
+        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.layer.masksToBounds = true
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = NSLocalizedString("force_update.required_title", comment: "")
@@ -187,13 +190,7 @@ final class BearyForceUpdateViewController: UIViewController {
         bodyLabel.numberOfLines = 0
         view.addSubview(bodyLabel)
 
-        updateButton.translatesAutoresizingMaskIntoConstraints = false
-        updateButton.setTitle(NSLocalizedString("force_update.go_update", comment: ""), for: .normal)
-        updateButton.addTarget(self, action: #selector(updateTapped), for: .touchUpInside)
-        updateButton.bearyAddPressFeedback()
-        view.addSubview(updateButton)
-
-        var lastAnchor: NSLayoutYAxisAnchor = bodyLabel.bottomAnchor
+        var lastView: UIView = bodyLabel
         var lastConstant: CGFloat = 24
         if let notes = notes {
             notesTitleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -214,31 +211,61 @@ final class BearyForceUpdateViewController: UIViewController {
 
             NSLayoutConstraint.activate([
                 notesTitleLabel.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 24),
-                notesTitleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-                notesTitleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
+                notesTitleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                notesTitleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
                 notesBodyLabel.topAnchor.constraint(equalTo: notesTitleLabel.bottomAnchor, constant: 8),
-                notesBodyLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-                notesBodyLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
+                notesBodyLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                notesBodyLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             ])
-            lastAnchor = notesBodyLabel.bottomAnchor
+            lastView = notesBodyLabel
             lastConstant = 24
         }
 
+        buttonStack.translatesAutoresizingMaskIntoConstraints = false
+        buttonStack.axis = .vertical
+        buttonStack.spacing = BearySpace.sm
+        updateButton.translatesAutoresizingMaskIntoConstraints = false
+        updateButton.setTitle(NSLocalizedString("force_update.go_update", comment: ""), for: .normal)
+        updateButton.addTarget(self, action: #selector(updateTapped), for: .touchUpInside)
+        updateButton.bearyAddPressFeedback()
+        buttonStack.addArrangedSubview(updateButton)
+        updateButton.heightAnchor.constraint(equalToConstant: updateButton.style.height).isActive = true
+        view.addSubview(buttonStack)
+
         NSLayoutConstraint.activate([
-            titleLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -80),
-            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
+            // 抓手已隐藏（不可关闭，不暗示能关）：标题直接顶 16，不留抓手区。
+            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 16),
+            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
             bodyLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
-            bodyLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            bodyLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
+            bodyLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            bodyLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            updateButton.topAnchor.constraint(equalTo: lastAnchor, constant: lastConstant),
-            updateButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            updateButton.widthAnchor.constraint(equalToConstant: 200),
-            updateButton.heightAnchor.constraint(equalToConstant: updateButton.style.height),
+            buttonStack.topAnchor.constraint(equalTo: lastView.bottomAnchor, constant: lastConstant),
+            buttonStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            buttonStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
         ])
-        // 宽屏（≥821）不另收窄：32 边距贴边，与窄屏同一版式，保持最小实现。
+        // 宽屏（≥821）不另收窄：sheet 宽由 BearySystemSheet.present 按 600 居中定。
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePreferredContentSize()
+    }
+
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高（柔性提醒 sheet 同款）。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
+        let width = view.bounds.width > 0 ? view.bounds.width : 375
+        let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
+        let size = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        let height = ceil(size.height) + extraBottomInset
+        let preferred = CGSize(width: width, height: height)
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
+        }
     }
 
     @objc private func updateTapped() {
