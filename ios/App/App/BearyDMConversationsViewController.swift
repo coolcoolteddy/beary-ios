@@ -173,7 +173,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         refreshFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         refreshFailedLabel.adjustsFontForContentSizeCategory = true
         refreshFailedLabel.textColor = BearyColors.ink
-        refreshFailedLabel.text = "未能刷新"
+        refreshFailedLabel.text = NSLocalizedString("common.refresh_failed", comment: "")
         refreshFailedBanner.addSubview(refreshFailedLabel)
         refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
         refreshFailedRetryButton.setTitle("重试", for: .normal)
