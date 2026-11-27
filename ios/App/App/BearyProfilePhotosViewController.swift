@@ -577,7 +577,7 @@ final class BearyProfilePhotosViewController: UIViewController {
     private func updatePhotosStatusLabel() {
         let text: String?
         if photosFromCache, photosRefreshFailed {
-            text = "显示的是上次的数据"
+            text = NSLocalizedString("common.showing_previous_content", comment: "")
         } else {
             text = nil
         }
