@@ -1,4 +1,5 @@
 import UIKit
+import PhotosUI
 
 // ===== beary 原生时间线页（含写作日历卡）=====
 // 对照源（以 worker.js 为准，网页版 beary.html 与设计稿 layout_rest.html 为形态对照）：
@@ -27,6 +28,11 @@ import UIKit
 struct BearyCalendarDayCount: Codable {
     var pub: Int?
     var priv: Int?
+    /// 四色圆点新增档（服务端新增键，旧快照缺省即 nil→0）：仅好友、限时。
+    /// 服务端 pub 仍含限时、priv 仍含仅好友（网页旧口径不动），App 侧
+    /// 橙 = pub - limited、蓝 = priv - friends（见 calendarDayCounts）。
+    var friends: Int?
+    var limited: Int?
 }
 
 struct BearyCalendarMonthResponse: Codable {
@@ -71,11 +77,15 @@ extension BearyAPI {
 enum BearyCalendarMarkColor {
     case published
     case unpublished
+    case friends
+    case limited
 
     var uiColor: UIColor {
         switch self {
         case .published: return BearyColors.orange
         case .unpublished: return BearyColors.blue
+        case .friends: return BearyColors.ink
+        case .limited: return BearyColors.limitedPurple
         }
     }
 }
@@ -94,38 +104,18 @@ struct BearyCalendarMark {
 }
 
 enum BearyCalendarMarks {
-    /// 64 包反馈修（第 4 项，Li 混色方案）：旧“全天同色多数判定”整段删除——
-    /// 每种状态各自按数量拆现有图形词汇（公开=橙、私密=蓝），一天内先画公开组、
-    /// 再画私密组拼进同一格：1→1 点、2→2 点、3→三角形、4→正方形、5→五边形、
-    /// 6→五边形+1 点、7→五边形+2 点、单状态 8+ 按 7 封顶。
-    /// 逐一核对 Li 的例子：2 篇 1 公开 = 1 橙点 + 1 蓝点；3 篇 2 公开 = 2 橙点 + 1 蓝点；
-    /// 10 篇 7 公开 3 私密 = 橙五边形 + 橙 2 点 + 蓝三角形。
-    static func marks(published: Int, unpublished: Int) -> [BearyCalendarMark] {
-        return marksForCount(published, color: .published) + marksForCount(unpublished, color: .unpublished)
-    }
-
-    private static func marksForCount(_ count: Int, color: BearyCalendarMarkColor) -> [BearyCalendarMark] {
-        let dot = BearyCalendarMark(kind: .dot, color: color, size: 6)
-        switch min(max(count, 0), 7) {
-        case 0:
-            return []
-        case 1:
-            return [dot]
-        case 2:
-            return [dot, dot]
-        case 3:
-            return [BearyCalendarMark(kind: .triangle, color: color, size: 12)]
-        case 4:
-            return [BearyCalendarMark(kind: .square, color: color, size: 11)]
-        case 5:
-            return [BearyCalendarMark(kind: .pentagon, color: color, size: 12)]
-        case 6:
-            return [BearyCalendarMark(kind: .pentagon, color: color, size: 12), dot]
-        case 7:
-            return [BearyCalendarMark(kind: .pentagon, color: color, size: 12), dot, dot]
-        default:
-            return []
-        }
+    /// 时间线改版 v14：几何编码整段删除——圆点数与每天篇数一一对应，
+    /// 四色：公开橙、私密蓝、仅好友墨、限时紫（规范四档代表色）。
+    /// 顺序：公开 → 私密 → 仅好友 → 限时；单日总共最多 5 点
+    /// （格宽约 41pt，5 点 × 6pt + 间距刚好放下；超 5 篇的日子只画前 5 点，
+    /// 篇数仍以当日面板标题为准）。
+    static func marks(published: Int, unpublished: Int, friends: Int = 0, limited: Int = 0) -> [BearyCalendarMark] {
+        var out: [BearyCalendarMark] = []
+        for _ in 0..<max(published, 0) { out.append(BearyCalendarMark(kind: .dot, color: .published, size: 6)) }
+        for _ in 0..<max(unpublished, 0) { out.append(BearyCalendarMark(kind: .dot, color: .unpublished, size: 6)) }
+        for _ in 0..<max(friends, 0) { out.append(BearyCalendarMark(kind: .dot, color: .friends, size: 6)) }
+        for _ in 0..<max(limited, 0) { out.append(BearyCalendarMark(kind: .dot, color: .limited, size: 6)) }
+        return Array(out.prefix(5))
     }
 }
 
@@ -228,6 +218,10 @@ struct BearyCalendarDay {
     var isSelected: Bool
     var published: Int
     var unpublished: Int
+    /// 四色圆点新增档（展示口径：橙 = 公开且非限时、蓝 = 私密且非仅好友；
+    /// 服务端 pub 含限时、priv 含仅好友，换算在 calendarDayCounts 里做）。
+    var friends: Int = 0
+    var limited: Int = 0
     var dataLoaded: Bool
     var dataFailed: Bool
 
@@ -240,7 +234,7 @@ struct BearyCalendarDay {
     /// renderCalendar 重渲后才启用（与网页 calPatchDots 到达后启用一致）。
     var isEnabled: Bool {
         if isOffMonth || isFuture { return false }
-        return published + unpublished > 0
+        return published + unpublished + friends + limited > 0
     }
 }
 
@@ -306,8 +300,8 @@ final class BearyCalendarDayButton: UIButton {
             accessibilityLabel = "\(day.month)月\(day.day)日，非本月"
         } else if !day.dataLoaded {
             accessibilityLabel = day.dataFailed ? "\(day.month)月\(day.day)日，日历加载失败" : "\(day.month)月\(day.day)日，加载中"
-        } else if day.published + day.unpublished > 0 {
-            accessibilityLabel = "\(day.month)月\(day.day)日，共 \(day.published + day.unpublished) 篇，其中 \(day.unpublished) 篇私密"
+        } else if day.published + day.unpublished + day.friends + day.limited > 0 {
+            accessibilityLabel = "\(day.month)月\(day.day)日，共 \(day.published + day.unpublished + day.friends + day.limited) 篇"
         } else {
             accessibilityLabel = "\(day.month)月\(day.day)日，无日记"
         }
@@ -316,7 +310,7 @@ final class BearyCalendarDayButton: UIButton {
         accessibilityTraits = dayTraits
         if day.isToday { accessibilityLabel = (accessibilityLabel ?? "") + "，今天" }
         if day.isSelected { accessibilityLabel = (accessibilityLabel ?? "") + "，已选中" }
-        markView.marks = day.isOffMonth ? [] : BearyCalendarMarks.marks(published: day.published, unpublished: day.unpublished)
+        markView.marks = day.isOffMonth ? [] : BearyCalendarMarks.marks(published: day.published, unpublished: day.unpublished, friends: day.friends, limited: day.limited)
         // 标记行背景每格都显式清透明（init 已设，此处防复用残留）。
         markView.backgroundColor = .clear
         isEnabled = day.isEnabled
@@ -336,16 +330,17 @@ final class BearyCalendarDayButton: UIButton {
             numberLabel.font = UIFont.systemFont(ofSize: 15)
             numberLabel.backgroundColor = .clear
         } else if day.isSelected {
-            // 网页 .sel 后于 .today：选中态盖过今天态（墨底白字）。
-            numberLabel.textColor = BearyColors.bg
-            numberLabel.font = UIFont.boldSystemFont(ofSize: 15)
-            numberLabel.backgroundColor = BearyColors.ink
-        } else if day.isToday {
+            // 时间线改版 v14：选中日改橙色描边圆圈（墨底白字废止）。
             numberLabel.textColor = BearyColors.deepOrangeText
             numberLabel.font = UIFont.boldSystemFont(ofSize: 15)
             numberLabel.backgroundColor = .clear
             numberLabel.layer.borderWidth = 1.5
             numberLabel.layer.bearyDynamicBorderColor = BearyColors.orange
+        } else if day.isToday {
+            // 今天（未选中）只橙字、不描边，与选中日的橙圈区分。
+            numberLabel.textColor = BearyColors.deepOrangeText
+            numberLabel.font = UIFont.boldSystemFont(ofSize: 15)
+            numberLabel.backgroundColor = .clear
         } else if !day.isEnabled {
             numberLabel.textColor = BearyCalendarDayButton.disabledTextColor
             numberLabel.font = UIFont.systemFont(ofSize: 15)
@@ -358,6 +353,31 @@ final class BearyCalendarDayButton: UIButton {
     }
 }
 
+/// 年月标题里的数字把手（时间线改版 v14）：年份数字与月份数字各一个，
+/// 点按聚焦（橙字）后按上下方向键调整（上 +1、下 -1）。长按拖动的
+/// 手势由卡片挂在 label 上，不在本类里。
+final class BearyCalendarTitleNumberLabel: UILabel {
+    var onStep: ((Int) -> Void)?
+    /// 聚焦/亮起态：橙字；平时墨字。长按 0.4 秒亮起与点按聚焦共用本态。
+    var isTitleFocused: Bool = false {
+        didSet {
+            textColor = isTitleFocused ? BearyColors.deepOrangeText : BearyColors.ink
+        }
+    }
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override var keyCommands: [UIKeyCommand]? {
+        [
+            UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(stepUp)),
+            UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(stepDown)),
+        ]
+    }
+
+    @objc private func stepUp() { onStep?(1) }
+    @objc private func stepDown() { onStep?(-1) }
+}
+
 // MARK: - 日历卡（网页 .cal-card：边框 1 line、圆角 14、padding 16、底色 bg（与页面背景同色））
 
 final class BearyCalendarCardView: UIView {
@@ -368,18 +388,27 @@ final class BearyCalendarCardView: UIView {
 
     var onSelectDay: ((BearyCalendarDay) -> Void)?
     var onToggleView: (() -> Void)?
-    var onPrevious: (() -> Void)?
-    var onNext: (() -> Void)?
+    /// 周/月内前后步进（左滑 +1、右滑 -1；周模式 ±7 天、月模式 ±1 月，VC 内换算）。
+    var onStepCalendar: ((Int) -> Void)?
     var onGoToday: (() -> Void)?
+    /// 年月数字把手步进（VC 内换算：年 ±1 年、月 ±1 月跨年）。
+    var onStepYear: ((Int) -> Void)?
+    var onStepMonth: ((Int) -> Void)?
     /// R15-L1：日历失败重试入口（卡内行，见 setLoadFailed）。旧口径在统计行
     /// 与顶部悬浮条各放一处，本支收掉两处、只留卡内一处。
     var onRetry: (() -> Void)?
 
-    private let titleLabel = UILabel()
+    private let yearNumberLabel = BearyCalendarTitleNumberLabel()
+    private let monthNumberLabel = BearyCalendarTitleNumberLabel()
+    private let titleTextStack = UIStackView()
+    private let titleRow = UIStackView()
     private let todayButton = BearyHit44Button(type: .system)
-    private let toggleButton = BearyHit44Button(type: .system)
-    private let prevButton = BearyHit44Button(type: .system)
-    private let nextButton = BearyHit44Button(type: .system)
+    private let gestureHintLabel = UILabel()
+    /// 当前视图模式（render 时更新；上下轻扫的展开/收起、提示文案按它分流）。
+    private(set) var currentMode: ViewMode = .week
+    /// 年月长按拖动的锚点 y（手势起始触点）与已消耗量（30pt 一步，步进后扣掉）。
+    private var titleDragAnchorY: CGFloat = 0
+    private var titleDragConsumedY: CGFloat = 0
     private let gridStack = UIStackView()
     /// R15-L1：日历失败行（文案 + 文字重试钮），默认隐藏；失败时由 VC 经
     /// setLoadFailed 显隐。行内重试钮是 BearyHit44Button，视觉小、热区 44。
@@ -402,105 +431,97 @@ final class BearyCalendarCardView: UIView {
         layer.cornerRadius = BearyCorners.single
         layer.masksToBounds = true
 
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        // 审计-时间线：日历卡标题跟随 Dynamic Type（格内数字仍按 8-3 例外不缩放，不动）。
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
-        titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.textColor = BearyColors.ink
-        // 第 7 轮属实项 1：标题独占一行，极端字号下换行不断字、不裁字。
-        titleLabel.numberOfLines = 0
-        titleLabel.lineBreakMode = .byCharWrapping
+        // 年月标题常驻：年份数字与月份数字是两个分开的把手（各管各的），
+        // 其间“年”“月”两字是静态文本；标题行右侧是“回到今天”小药丸。
+        yearNumberLabel.translatesAutoresizingMaskIntoConstraints = false
+        yearNumberLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        yearNumberLabel.adjustsFontForContentSizeCategory = true
+        yearNumberLabel.textColor = BearyColors.ink
+        yearNumberLabel.isUserInteractionEnabled = true
+        yearNumberLabel.accessibilityHint = "点按聚焦后按上下方向键调整，长按上下拖动调整"
+        monthNumberLabel.translatesAutoresizingMaskIntoConstraints = false
+        monthNumberLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        monthNumberLabel.adjustsFontForContentSizeCategory = true
+        monthNumberLabel.textColor = BearyColors.ink
+        monthNumberLabel.isUserInteractionEnabled = true
+        monthNumberLabel.accessibilityHint = "点按聚焦后按上下方向键调整，长按上下拖动调整"
+        let yearSuffixLabel = UILabel()
+        yearSuffixLabel.translatesAutoresizingMaskIntoConstraints = false
+        yearSuffixLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        yearSuffixLabel.adjustsFontForContentSizeCategory = true
+        yearSuffixLabel.textColor = BearyColors.ink
+        yearSuffixLabel.text = "年"
+        let monthSuffixLabel = UILabel()
+        monthSuffixLabel.translatesAutoresizingMaskIntoConstraints = false
+        monthSuffixLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        monthSuffixLabel.adjustsFontForContentSizeCategory = true
+        monthSuffixLabel.textColor = BearyColors.ink
+        monthSuffixLabel.text = "月"
+        titleTextStack.translatesAutoresizingMaskIntoConstraints = false
+        titleTextStack.axis = .horizontal
+        titleTextStack.alignment = .center
+        titleTextStack.spacing = 2
+        titleTextStack.addArrangedSubview(yearNumberLabel)
+        titleTextStack.addArrangedSubview(yearSuffixLabel)
+        titleTextStack.addArrangedSubview(monthNumberLabel)
+        titleTextStack.addArrangedSubview(monthSuffixLabel)
+        // 年月把手手势：点按聚焦（方向键调整）、长按 0.4 秒亮起后上下拖动
+        // （30pt 一步）；点按须等长按失败，免得一次长按拖动又聚焦。
+        let yearTap = UITapGestureRecognizer(target: self, action: #selector(didTapYearNumber))
+        let yearLongPress = UILongPressGestureRecognizer(target: self, action: #selector(handleYearLongPress(_:)))
+        yearLongPress.minimumPressDuration = 0.4
+        yearLongPress.allowableMovement = .greatestFiniteMagnitude
+        yearTap.require(toFail: yearLongPress)
+        yearNumberLabel.addGestureRecognizer(yearTap)
+        yearNumberLabel.addGestureRecognizer(yearLongPress)
+        yearNumberLabel.onStep = { [weak self] delta in self?.onStepYear?(delta) }
+        let monthTap = UITapGestureRecognizer(target: self, action: #selector(didTapMonthNumber))
+        let monthLongPress = UILongPressGestureRecognizer(target: self, action: #selector(handleMonthLongPress(_:)))
+        monthLongPress.minimumPressDuration = 0.4
+        monthLongPress.allowableMovement = .greatestFiniteMagnitude
+        monthTap.require(toFail: monthLongPress)
+        monthNumberLabel.addGestureRecognizer(monthTap)
+        monthNumberLabel.addGestureRecognizer(monthLongPress)
+        monthNumberLabel.onStep = { [weak self] delta in self?.onStepMonth?(delta) }
 
-        toggleButton.translatesAutoresizingMaskIntoConstraints = false
-        toggleButton.backgroundColor = BearyColors.surface2
-        toggleButton.layer.cornerRadius = BearyCorners.single
-        toggleButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
-        toggleButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        toggleButton.setTitleColor(BearyColors.ink, for: .normal)
-        // 第 7 轮属实项 1：切换钮按内容撑宽、不被相邻钮挤压（宽度下限见约束处）。
-        toggleButton.setContentHuggingPriority(.required, for: .horizontal)
-        toggleButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        toggleButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        toggleButton.addTarget(self, action: #selector(didTapToggle), for: .touchUpInside)
-        toggleButton.bearyAddPressFeedback()
-
-        // C10 回到今天：轻量 pill“今”，与翻页钮同款（surface2 底、32×32、
-        // 圆角 16、12 粗体），默认隐藏，只由 VC 的 setTodayButtonVisible
-        // 在显示月份/周不含今天或选中日不是今天时浮现；无障碍名“回到今天”。
+        // “回到今天”小药丸：surface2 底、圆角 14、高 28，默认隐藏；
+        // 显隐只由 VC 的 setTodayButtonVisible 控制（选中日非今天时浮现）。
         todayButton.translatesAutoresizingMaskIntoConstraints = false
         todayButton.backgroundColor = BearyColors.surface2
-        todayButton.layer.cornerRadius = BearyCorners.single
+        todayButton.layer.cornerRadius = 14
         todayButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
         todayButton.titleLabel?.adjustsFontForContentSizeCategory = true
         todayButton.setTitleColor(BearyColors.ink, for: .normal)
-        todayButton.setTitle("今", for: .normal)
+        todayButton.setTitle("回到今天", for: .normal)
+        todayButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         todayButton.accessibilityLabel = "回到今天"
         todayButton.addTarget(self, action: #selector(didTapToday), for: .touchUpInside)
         todayButton.bearyAddPressFeedback()
         todayButton.isHidden = true
         todayButton.alpha = 0
 
-        prevButton.translatesAutoresizingMaskIntoConstraints = false
-        prevButton.backgroundColor = BearyColors.surface2
-        prevButton.layer.cornerRadius = BearyCorners.single
-        prevButton.tintColor = BearyColors.gray
-        if let chevron = BearyIconImages.image(named: "icon_chevron_right", pointSize: 15) {
-            prevButton.setImage(chevron, for: .normal)
-            prevButton.imageView?.transform = CGAffineTransform(rotationAngle: CGFloat(Double.pi))
-        } else {
-            // I14：资产缺失时补文字回退，翻页路径不断。
-            prevButton.setTitle("‹", for: .normal)
-            prevButton.titleLabel?.font = UIFont.systemFont(ofSize: 17)
-        }
-        prevButton.addTarget(self, action: #selector(didTapPrevious), for: .touchUpInside)
-
-        nextButton.translatesAutoresizingMaskIntoConstraints = false
-        nextButton.backgroundColor = BearyColors.surface2
-        nextButton.layer.cornerRadius = BearyCorners.single
-        nextButton.tintColor = BearyColors.gray
-        if let chevron = BearyIconImages.image(named: "icon_chevron_right", pointSize: 15) {
-            nextButton.setImage(chevron, for: .normal)
-        } else {
-            // I14：资产缺失时补文字回退，翻页路径不断。
-            nextButton.setTitle("›", for: .normal)
-            nextButton.titleLabel?.font = UIFont.systemFont(ofSize: 17)
-        }
-        nextButton.addTarget(self, action: #selector(didTapNext), for: .touchUpInside)
-        nextButton.bearyAddPressFeedback()
-
-        // 第 7 轮属实项 1：顶行拆为两行——第 1 行只放月份标题，第 2 行放
-        // 操作钮（今 / 周月切换 / 上一 / 下一）。窄屏或大字号下两行不再同行
-        // 抢宽，标题与切换钮互不挤压、不裁字；操作钮仍靠右对齐，与改前
-        // 右侧成组的位置一致。原标题→“今”钮的 8pt 垫片随拆行作废（“今”钮
-        // 改为操作行首钮，显隐仍由 setTodayButtonVisible 控制栈内占位）。
-        let titleRow = UIStackView(arrangedSubviews: [titleLabel])
         titleRow.translatesAutoresizingMaskIntoConstraints = false
         titleRow.axis = .horizontal
         titleRow.alignment = .center
-        let controlsSpacer = UIView()
-        controlsSpacer.translatesAutoresizingMaskIntoConstraints = false
-        // R10-#19：控制行重分组——上一页／下一页是相邻导航组（组内 6pt），
-        // 周／月切换是模式切换（组间 12pt），“今”放组左边缘作快速归位入口。
-        // 各钮顺序／尺寸／样式不动；上一／下一仍优先官方 chevron 资产，
-        // 缺失才用 ‹ / › 文字兜底（兜底不是正式图标，不动）。
-        let pageNavStack = UIStackView(arrangedSubviews: [prevButton, nextButton])
-        pageNavStack.translatesAutoresizingMaskIntoConstraints = false
-        pageNavStack.axis = .horizontal
-        pageNavStack.alignment = .center
-        pageNavStack.spacing = 6
-        let controlsRow = UIStackView(arrangedSubviews: [controlsSpacer, todayButton, toggleButton, pageNavStack])
-        controlsRow.translatesAutoresizingMaskIntoConstraints = false
-        controlsRow.axis = .horizontal
-        controlsRow.alignment = .center
-        controlsRow.spacing = BearySpace.md
+        let titleSpacer = UIView()
+        titleSpacer.translatesAutoresizingMaskIntoConstraints = false
+        titleRow.addArrangedSubview(titleTextStack)
+        titleRow.addArrangedSubview(titleSpacer)
+        titleRow.addArrangedSubview(todayButton)
 
+        // 星期头行按 locale 取首日重排（#2092 同口径，不写死周一）：
+        // veryShortWeekdaySymbols 本就是周日起排，按 firstWeekday 旋转；
+        // 取不到 7 个符号时回落中文周一起始（不裸奔）。
         let weekdayRow = UIStackView()
         weekdayRow.translatesAutoresizingMaskIntoConstraints = false
         weekdayRow.axis = .horizontal
         weekdayRow.distribution = .fillEqually
-        for weekdayName in BearyLocalizedDate.orderedVeryShortWeekdaySymbols { // 2026-11-21 一周起始日本地化：按首日起排，中文与改前一致
+        let symbols = Calendar.current.veryShortWeekdaySymbols
+        let weekdayNames: [String] = symbols.count == 7 ? symbols : ["日", "一", "二", "三", "四", "五", "六"]
+        let firstWeekday = BearyBeijingDay.localeFirstWeekday
+        for offset in 0..<7 {
             let label = UILabel()
-            label.text = weekdayName
+            label.text = weekdayNames[(firstWeekday - 1 + offset) % 7]
             // 8-3 例外：星期单字属日历格装饰头，不缩放。
             label.font = UIFont.systemFont(ofSize: 12)
             label.textColor = BearyColors.gray
@@ -511,34 +532,51 @@ final class BearyCalendarCardView: UIView {
         gridStack.translatesAutoresizingMaskIntoConstraints = false
         gridStack.axis = .vertical
 
-        let outer = UIStackView(arrangedSubviews: [titleRow, controlsRow, weekdayRow, gridStack])
+        // 手势提示（模式相关文案见 render）：周视图下拉展开、左右切周；
+        // 月视图上滑收起、左右切月。
+        gestureHintLabel.translatesAutoresizingMaskIntoConstraints = false
+        gestureHintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        gestureHintLabel.adjustsFontForContentSizeCategory = true
+        gestureHintLabel.textColor = BearyColors.gray
+        gestureHintLabel.textAlignment = .center
+        gestureHintLabel.text = "向下滑动展开整月 · 左右滑动切换周"
+
+        let outer = UIStackView(arrangedSubviews: [titleRow, weekdayRow, gridStack, gestureHintLabel])
         outer.translatesAutoresizingMaskIntoConstraints = false
         outer.axis = .vertical
         outer.spacing = 0
         outer.setCustomSpacing(8, after: titleRow)
-        outer.setCustomSpacing(8, after: controlsRow)
         outer.setCustomSpacing(BearySpace.sm, after: weekdayRow)
+        outer.setCustomSpacing(4, after: gridStack)
         addSubview(outer)
         NSLayoutConstraint.activate([
             outer.topAnchor.constraint(equalTo: topAnchor, constant: BearySpace.lg),
             outer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: BearySpace.lg),
             outer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -BearySpace.lg),
             outer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -BearySpace.lg),
-            todayButton.widthAnchor.constraint(equalToConstant: 32),
-            todayButton.heightAnchor.constraint(equalToConstant: 32),
-            toggleButton.heightAnchor.constraint(equalToConstant: 32),
-            // 第 7 轮属实项 1：切换钮不再钉死 64。64 只作最小宽（内边距
-            // 12+12 + 默认字号 3 字标题的旧定值）；大字号下标题变宽时按钮随
-            // 内容增长，不再裁字。旧 64 包反馈修“两态同宽”与审计-时间线
-            // “宽度档位未定版前不改数值”的注释随本支 supersede：此前 V4
-            // 宽度档位待 Li 定版，本支按报告方向实现，Li 可再纠正数值。
-            // 其余数值（高 32、圆角 16、内边距 12、翻页钮 32）一律不动。
-            toggleButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 64),
-            prevButton.widthAnchor.constraint(equalToConstant: 32),
-            prevButton.heightAnchor.constraint(equalToConstant: 32),
-            nextButton.widthAnchor.constraint(equalToConstant: 32),
-            nextButton.heightAnchor.constraint(equalToConstant: 32),
+            todayButton.heightAnchor.constraint(equalToConstant: 28),
         ])
+
+        // 轻扫手势（卡片整块）：左/右切周或切月（VC 内按模式换算），
+        // 下滑只在周视图展开整月、上滑只在月视图收起回周条；慢速拖动
+        // 仍走列表滚动（不抢滚动），轻扫才触发——与预览的下拉/上滑口径
+        // 一致，见 PR 说明。
+        let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(didSwipeLeft))
+        swipeLeft.direction = .left
+        swipeLeft.cancelsTouchesInView = false
+        addGestureRecognizer(swipeLeft)
+        let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(didSwipeRight))
+        swipeRight.direction = .right
+        swipeRight.cancelsTouchesInView = false
+        addGestureRecognizer(swipeRight)
+        let swipeDown = UISwipeGestureRecognizer(target: self, action: #selector(didSwipeDown))
+        swipeDown.direction = .down
+        swipeDown.cancelsTouchesInView = false
+        addGestureRecognizer(swipeDown)
+        let swipeUp = UISwipeGestureRecognizer(target: self, action: #selector(didSwipeUp))
+        swipeUp.direction = .up
+        swipeUp.cancelsTouchesInView = false
+        addGestureRecognizer(swipeUp)
 
         // R15-L1：失败行挂在网格下方（卡内最后一行），默认隐藏、不占位；
         // 显隐只由 setLoadFailed 改，render 的格子签名不管它。
@@ -561,40 +599,11 @@ final class BearyCalendarCardView: UIView {
         calendarFailedRow.addArrangedSubview(UIView())
         calendarFailedRow.isHidden = true
         outer.addArrangedSubview(calendarFailedRow)
-        outer.setCustomSpacing(8, after: gridStack)
+        outer.setCustomSpacing(8, after: gestureHintLabel)
     }
 
     required init?(coder: NSCoder) {
         return nil
-    }
-
-    /// 审计-时间线：顶行 Hit44 热区重划——32pt 钮各扩 6pt 后，相邻热区在 6pt 间隙内重叠 6pt；
-    /// 顶行条带内按视觉归属分区（离哪钮中心近归哪钮），禁用钮不抢区（落回默认 hitTest）；
-    /// 其余区域走默认；重划逻辑未经真机验证（见 PR 说明，需真机点按复验）。
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        let candidates = [todayButton, toggleButton, prevButton, nextButton].filter { !$0.isHidden }
-        if !candidates.isEmpty {
-            var expanded: [(button: UIButton, rect: CGRect)] = []
-            var minY = CGFloat.greatestFiniteMagnitude
-            var maxY = -CGFloat.greatestFiniteMagnitude
-            var minX = CGFloat.greatestFiniteMagnitude
-            var maxX = -CGFloat.greatestFiniteMagnitude
-            for button in candidates {
-                let rect = convert(button.bounds, from: button).insetBy(dx: -6, dy: -6)
-                expanded.append((button, rect))
-                minY = min(minY, rect.minY)
-                maxY = max(maxY, rect.maxY)
-                minX = min(minX, rect.minX)
-                maxX = max(maxX, rect.maxX)
-            }
-            if point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY {
-                let sorted = expanded.sorted { abs(point.x - $0.rect.midX) < abs(point.x - $1.rect.midX) }
-                for entry in sorted where entry.button.isEnabled && entry.rect.contains(point) {
-                    return entry.button
-                }
-            }
-        }
-        return super.hitTest(point, with: event)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -602,57 +611,56 @@ final class BearyCalendarCardView: UIView {
         layer.bearyDynamicBorderColor = BearyColors.line
     }
 
-    /// 标题只在值变化时更新：同周/同月内切日期标题值不变时不重复赋值、
+    /// 年月标题只在值变化时更新：同月内切日期标题值不变时不重复赋值、
     /// 不重排；fadeTitleForDaySwitch 只在标题真变了时才淡入，同值切日期
     /// 不再先置 0 再淡回（即此前“标题闪一下”的来源）。
     private var titleChangedSinceSet = false
 
-    func setTitle(_ text: String) {
-        guard titleLabel.text != text else {
+    /// 年月标题常驻（周/月视图同一块日历，标题只写年月）：年份与月份
+    /// 数字分开设值（各是独立的长按把手），值不变时不重复赋值。
+    func setYearMonth(year: Int, month: Int) {
+        let yearText = "\(year)"
+        let monthText = "\(month)"
+        guard yearNumberLabel.text != yearText || monthNumberLabel.text != monthText else {
             titleChangedSinceSet = false
             return
         }
-        titleLabel.text = text
+        yearNumberLabel.text = yearText
+        monthNumberLabel.text = monthText
+        yearNumberLabel.accessibilityLabel = "\(year) 年"
+        monthNumberLabel.accessibilityLabel = "\(month) 月"
         titleChangedSinceSet = true
     }
 
     /// N3：换日时日历标题淡入（0.18s、只动 alpha；减动效时调用方不调本方法）。
-    /// 标题 label 是卡内常驻节点，不重建、不重播其他元素；标题值未变时直接
+    /// 标题是卡内常驻节点，不重建、不重播其他元素；标题值未变时直接
     /// 返回，不播淡入。
     func fadeTitleForDaySwitch() {
         guard titleChangedSinceSet else { return }
         titleChangedSinceSet = false
-        titleLabel.alpha = 0
+        titleTextStack.alpha = 0
         UIView.animate(withDuration: BearyMotion.micro, animations: {
-            self.titleLabel.alpha = 1
+            self.titleTextStack.alpha = 1
         })
     }
 
-    /// 周视图下按钮文案为“月视图”，月视图下为“周视图”（网页 calViewBtn 口径）。
-    func setToggleTitle(_ text: String) {
-        toggleButton.setTitle(text, for: .normal)
-    }
-
-    func setNavigation(prevEnabled: Bool, nextEnabled: Bool) {
-        prevButton.isEnabled = prevEnabled
-        nextButton.isEnabled = nextEnabled
-        prevButton.alpha = prevEnabled ? 1 : 0.35
-        nextButton.alpha = nextEnabled ? 1 : 0.35
-    }
-
-    /// C10 “今”钮显隐（VC 在每次 renderCalendar 末尾重算）：浮现 0.18s
-    /// 淡入、隐藏 0.18s 淡出后才 isHidden（栈内不占位）；减动效直设终值。
-    /// 重复调用同态时直接返回，不重播淡入淡出。
+    /// “回到今天”小药丸显隐（VC 在每次 renderCalendar 末尾重算）：
+    /// 浮现淡入＋回弹缩放（0.35s、阻尼 0.7）、隐藏淡出后才 isHidden
+    /// （栈内不占位）；减动效直设终值。重复调用同态时直接返回，不重播。
     func setTodayButtonVisible(_ visible: Bool) {
         if visible {
             guard todayButton.isHidden || todayButton.alpha < 1 else { return }
             todayButton.isHidden = false
             if UIAccessibility.isReduceMotionEnabled {
                 todayButton.alpha = 1
+                todayButton.transform = .identity
             } else {
-                UIView.animate(withDuration: BearyMotion.micro, animations: {
+                todayButton.alpha = 0
+                todayButton.transform = CGAffineTransform(scaleX: 0.85, y: 0.85)
+                UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0.5, options: [.beginFromCurrentState], animations: {
                     self.todayButton.alpha = 1
-                })
+                    self.todayButton.transform = .identity
+                }, completion: nil)
             }
         } else {
             guard !todayButton.isHidden else { return }
@@ -662,8 +670,10 @@ final class BearyCalendarCardView: UIView {
             } else {
                 UIView.animate(withDuration: BearyMotion.micro, animations: {
                     self.todayButton.alpha = 0
+                    self.todayButton.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
                 }, completion: { _ in
                     self.todayButton.isHidden = true
+                    self.todayButton.transform = .identity
                 })
             }
         }
@@ -694,9 +704,12 @@ final class BearyCalendarCardView: UIView {
     /// weekKeys：月视图入场错峰时要跳过的本周日期 key（网页 calStaggerMonthCells
     /// 口径：本周格子不加 .cal-in）。周视图下本参数无用。
     func render(days: [BearyCalendarDay], mode: ViewMode, weekKeys: Set<String> = []) {
+        currentMode = mode
+        // 手势提示按模式换文案（周视图：下拉展开、左右切周；月视图：上滑收起、左右切月）。
+        gestureHintLabel.text = (mode == .week) ? "向下滑动展开整月 · 左右滑动切换周" : "向上滑动收起整月 · 左右滑动切换月份"
         // 审计-时间线：月份回包增量——格子签名不变时不重建网格行（复用格子不重播错峰）；
         // 签名含 key/跨月/未来/今天/选中/篇数/加载态/失败态，任一变化即重建。
-        let daysSignature = "\(mode)|" + days.map { "\($0.key)|\($0.isOffMonth)|\($0.isFuture)|\($0.isToday)|\($0.isSelected)|\($0.published)|\($0.unpublished)|\($0.dataLoaded)|\($0.dataFailed)" }.joined(separator: ";")
+        let daysSignature = "\(mode)|" + days.map { "\($0.key)|\($0.isOffMonth)|\($0.isFuture)|\($0.isToday)|\($0.isSelected)|\($0.published)|\($0.unpublished)|\($0.friends)|\($0.limited)|\($0.dataLoaded)|\($0.dataFailed)" }.joined(separator: ";")
         if daysSignature == lastRenderedDaysSignature { return }
         lastRenderedDaysSignature = daysSignature
         // 日历卡底色与页面背景同色：周/月视图卡填充均走 BearyColors.bg（动态色，
@@ -704,9 +717,6 @@ final class BearyCalendarCardView: UIView {
         // 日记卡等其他卡片一律不动。（#410 只改了月视图，周视图仍走 surface
         // 深灰，本支补齐周视图。）
         backgroundColor = BearyColors.bg
-        // F3：翻页钮按周/月模式补无障碍文案。
-        prevButton.accessibilityLabel = (mode == .week) ? "上一周" : "上个月"
-        nextButton.accessibilityLabel = (mode == .week) ? "下一周" : "下个月"
         let wantedKeys = Set(days.map { $0.key })
         for key in Array(buttonByKey.keys) {
             if !wantedKeys.contains(key) {
@@ -778,20 +788,95 @@ final class BearyCalendarCardView: UIView {
         }
     }
 
-    @objc private func didTapToggle() {
-        onToggleView?()
-    }
-
     @objc private func didTapToday() {
         onGoToday?()
     }
 
-    @objc private func didTapPrevious() {
-        onPrevious?()
+    /// 轻扫：左滑去下一周/月、右滑回上一周/月（VC 内按模式换算步长）；
+    /// 下滑只在周视图展开整月、上滑只在月视图收起回周条。
+    @objc private func didSwipeLeft() {
+        resignYearMonthFocus()
+        onStepCalendar?(1)
     }
 
-    @objc private func didTapNext() {
-        onNext?()
+    @objc private func didSwipeRight() {
+        resignYearMonthFocus()
+        onStepCalendar?(-1)
+    }
+
+    @objc private func didSwipeDown() {
+        guard currentMode == .week else { return }
+        resignYearMonthFocus()
+        onToggleView?()
+    }
+
+    @objc private func didSwipeUp() {
+        guard currentMode == .month else { return }
+        resignYearMonthFocus()
+        onToggleView?()
+    }
+
+    /// 年月数字点按聚焦：成为第一响应者（方向键可用）并亮起；
+    /// 另一数字聚焦时先收回。切日/切视图/轻扫时收回（见 didTapDay 与各轻扫）。
+    @objc private func didTapYearNumber() {
+        focusYearMonthLabel(yearNumberLabel)
+    }
+
+    @objc private func didTapMonthNumber() {
+        focusYearMonthLabel(monthNumberLabel)
+    }
+
+    private func focusYearMonthLabel(_ label: BearyCalendarTitleNumberLabel) {
+        for other in [yearNumberLabel, monthNumberLabel] where other !== label {
+            other.isTitleFocused = false
+            other.resignFirstResponder()
+        }
+        label.isTitleFocused = true
+        _ = label.becomeFirstResponder()
+    }
+
+    /// 收回年月聚焦（切日/切视图/轻扫时调，不改标题值）。
+    func resignYearMonthFocus() {
+        for label in [yearNumberLabel, monthNumberLabel] {
+            label.isTitleFocused = false
+            label.resignFirstResponder()
+        }
+    }
+
+    /// 年月长按拖动（0.4 秒亮起后上下拖，30pt 一步）：下拖 +1、上拖 -1；
+    /// 年只换年、月只换月（拖过 12 月自动跨年由 VC 的 shiftedMonth 处理）。
+    @objc private func handleYearLongPress(_ gesture: UILongPressGestureRecognizer) {
+        handleTitleLongPress(gesture, isYear: true)
+    }
+
+    @objc private func handleMonthLongPress(_ gesture: UILongPressGestureRecognizer) {
+        handleTitleLongPress(gesture, isYear: false)
+    }
+
+    private func handleTitleLongPress(_ gesture: UILongPressGestureRecognizer, isYear: Bool) {
+        let label = isYear ? yearNumberLabel : monthNumberLabel
+        switch gesture.state {
+        case .began:
+            label.isTitleFocused = true
+            titleDragAnchorY = gesture.location(in: label).y
+            titleDragConsumedY = 0
+        case .changed:
+            let deltaY = gesture.location(in: label).y - titleDragAnchorY - titleDragConsumedY
+            let steps = Int(deltaY / 30)
+            guard steps != 0 else { return }
+            titleDragConsumedY += CGFloat(steps) * 30
+            if isYear {
+                onStepYear?(steps)
+            } else {
+                onStepMonth?(steps)
+            }
+        case .ended, .cancelled, .failed:
+            label.isTitleFocused = false
+            titleDragAnchorY = 0
+            titleDragConsumedY = 0
+        default:
+            break
+        }
     }
 
     @objc private func didTapDay(_ sender: BearyCalendarDayButton) {
@@ -799,6 +884,7 @@ final class BearyCalendarCardView: UIView {
         // 5-22 第二道守卫：跨月占位格即使上层 isEnabled 漏算仍不可点，
         // 此处直接返回，不进 selectDay。
         guard !day.isOffMonth else { return }
+        resignYearMonthFocus()
         onSelectDay?(day)
     }
 }
@@ -2065,57 +2151,8 @@ class BearyTimelineViewController: UIViewController {
     /// 时间线可见性筛子（好友第一期 §八）：五档互斥，默认全部。
     /// 档位名不用 `private` 作 case 名（关键字），另取 privatePosts 等名、
     /// queryValue 映射回后端 vis 取值；全部档 queryValue 为 nil（不发参数）。
-    fileprivate enum TimelineVisFilter: CaseIterable {
-        case all, publicPosts, privatePosts, ephemeral, friendsOnly
-        var title: String {
-            switch self {
-            case .all: return "全部"
-            case .publicPosts: return "公开"
-            case .privatePosts: return "私密"
-            case .ephemeral: return "限时"
-            case .friendsOnly: return "仅好友"
-            }
-        }
-        var queryValue: String? {
-            switch self {
-            case .all: return nil
-            case .publicPosts: return "public"
-            case .privatePosts: return "private"
-            case .ephemeral: return "ephemeral"
-            case .friendsOnly: return "friends"
-            }
-        }
-    }
-    private var timelineVisFilter: TimelineVisFilter = .all
-    /// R15-P1-1：按筛子档的内存快照（首屏成功回包写，见 fetchTimelineFirstPageFull /
-    /// loadTimelineSince 成功分支；只活在内存里，不落盘——落盘快照仍只代表
-    /// 全部档，筛子档不写盘）。切档时有对应快照即直接显示（标签与列表一起换，
-    /// 不闪空）；无快照则清表、结果区走加载态。
-    private struct FilterSnapshot {
-        let entries: [Entry]
-        let hasMore: Bool
-        let trashCount: Int
-        let counts: TlCounts?
-    }
-    private var filterSnapshots: [TimelineVisFilter: FilterSnapshot] = [:]
-    /// R15-P1-1：上次成功拿到首屏的档位（切档失败回滚的目的地；冷启动读盘
-    /// 成功即为 .all，见 applyTimelineCacheSnapshot）。
-    private var lastSuccessfulFilter: TimelineVisFilter = .all
-    /// R15-P1-1：在途切档（from = 切档前上次成功的档位，to = 目标档位）；
-    /// 成功时清掉，失败时按它回滚；非切档刷新失败不触发回滚。
-    private var pendingFilterSwitch: (from: TimelineVisFilter, to: TimelineVisFilter)?
-    /// 切筛子时的错峰来源：切档前已在列表里的 entry id 集合。
-    /// 首屏回包后只给不在此集合里的新行排错峰——已有元素不重播。
-    /// 失败/陈旧回包时清掉，不留残标志给下一次加载。
-    private var pendingFilterSwitchOldIds: Set<String>?
-    /// 筛子触发钮（列表顶表头内，个人页展开钮同款：官方 icon_chevron_down
-    /// 在左 + 档位名在右；标题即当前档位 = 选中态可见处）。
-    private let visFilterButton = BearyHit44Button(type: .system)
-    /// 筛子钮显式宽度约束：UIButton 固有宽度不计 titleEdgeInsets（见 updateVisFilterButton）。
-    private var visFilterButtonWidthConstraint: NSLayoutConstraint?
-    /// 筛子走底部 sheet（2026-11-18：尖角气泡改系统 sheet，见文件末
-    /// BearyVisFilterSheetViewController；旧 BearyBubbleMenuView 已删）。
-    /// 入口钮本身不动（#612 定圆角 17 的口径原样保留）。
+    /// 可见性筛选已整支撤掉（时间线改版 v14）：时间线恒出全部档，
+    /// 筛子钮、底 sheet 与切档状态机一并删除，不留死状态。
     /// 冷启动框架先行：首个宽就绪布局时先画日历框（当日周/月格＋占位圆点），
     /// 月份圆点由随后回包异步填入；只 prime 一次，后续由月份回包驱动。
     private var calendarFramePrimed = false
@@ -2239,9 +2276,8 @@ class BearyTimelineViewController: UIViewController {
     /// 不得用旧落盘把刚失效的缓存顶回去）。
     private var calendarSnapshotRestoreTried: Set<String> = []
     /// 64 包反馈修（第 3 项）+ 本批新规矩：统计行已渲染数值（streak|monthTotal，
-    /// 失败/空态另计）。签名故意不含月份 key——切月时数值不变即一字不碰按钮，
-    /// 旧签名含月份 key 是闪的根因（数值未变仍整行 setAttributedTitle 重建）。
-    /// 数值真变时只替换数字段（见 updateStatsNumbersOnly），静态段与火苗图标不动。
+    /// 失败/空态另计）。签名故意不含月份 key——切月时数值不变即一字不碰，
+    /// 旧签名含月份 key 是闪的根因（数值未变仍整行重建）。
     /// 签名只在写新日记时由 invalidateStatsLine 清掉（删除/回收站恢复走
     /// refreshAfterDetailChange 强制重拉，值变了签名自然不同、无需另清）。
     private var calendarMode: BearyCalendarCardView.ViewMode = .week
@@ -2272,6 +2308,12 @@ class BearyTimelineViewController: UIViewController {
 
     private var dayEntries: [Entry] = [] { didSet { cachedSections = nil } }
     private var dayState = LoadState.idle
+    /// v14 改版：空日占位判定——选中日非空、已加载、该天无条目时，当日面板
+    /// 出一枚纯文字占位行「这天没有日记」（不走整表背景空态，时间线其余组不动）。
+    private var isDayPanelEmpty: Bool {
+        guard let key = selectedDayKey, !key.isEmpty else { return false }
+        return dayEntries.isEmpty && dayState == .loaded
+    }
     private var dayKeyForLoad: String?
     /// 按日请求递增序号：快速切日 A→B→A 时，切回 A 的新请求会把 dayKeyForLoad
     /// 置回 A，旧 A 回包只验日期反而能通过；序号让旧回包一律作废（账号、
@@ -2316,15 +2358,12 @@ class BearyTimelineViewController: UIViewController {
     /// Data(contentsOf:) + JSONDecoder.decode，旧路在主线程调它会卡住切日），
     /// 与旧日退场动画并行；读到后回主线程回填内存缓存（与旧同步回填
     /// 同款语义），退场结束的提交只读内存，永不在主线程碰磁盘。
-    /// 校验：只在全部档（.all）预读——日缓存是全部档行，筛子档不读缓存
-    /// （与提交分支同口径）；回填前比对账号（uid 分桶，中途切号的旧账号
+    /// 校验：日缓存是全部档行；回填前比对账号（uid 分桶，中途切号的旧账号
     /// 落盘绝不写进新账号缓存）与日期（按 key 回填），并复用日缓存版本
     /// 检查（与相邻日预取同款）：期间网络已写过该日则版本已变、或槽位
-    /// 已被占，迟到的磁盘结果拒写，不覆盖新数据；筛子档位在提交处
-    /// 的内存查表时再校验（见 commitDaySwitch）。
+    /// 已被占，迟到的磁盘结果拒写，不覆盖新数据。
     private func prepareDayEntriesInBackground(key: String) {
-        guard timelineVisFilter == .all,
-              dayEntriesCache[key] == nil,
+        guard dayEntriesCache[key] == nil,
               !dayDiskLoadInFlight.contains(key),
               let uid = SessionManager.shared.currentUser?.id else { return }
         dayDiskLoadInFlight.insert(key)
@@ -2349,8 +2388,6 @@ class BearyTimelineViewController: UIViewController {
     /// 分桶，不动）；由 SceneDelegate onUserChanged 的 userChanged 分支在
     /// reloadTimeline 之前调用，登录与退出两个方向都覆盖。时间线 VC 换账号
     /// 不重建，故必须显式清，否则新账号当日面板会先闪出旧账号的日缓存。
-    /// 审计四轮第 7 项（P1）：筛选内存快照同款处理——filterSnapshots 键只
-    /// 有档位、无账号，不清会在新账号点旧档位时直接展示旧账号的快照。
     func clearDayCacheForAccountChange() {
         dayEntriesCache.removeAll()
         dayCacheVersions.removeAll()
@@ -2365,15 +2402,6 @@ class BearyTimelineViewController: UIViewController {
         calendarFailed.removeAll()
         calendarStreakUnknownKeys.removeAll()
         calendarSnapshotRestoreTried.removeAll()
-        // 审计四轮第 7 项（P1）：筛选内存快照按账号隔离——字典键只有档位、
-        // 无账号，时间线 VC 切号不重建，不清会在新账号点旧档位时直接展示
-        // 旧账号的快照（含私密日记）。切号即清空全部五档，并把上次成功档
-        // 位与在途切档标记一并复位；新账号各档由成功回包重写（.all 档另由
-        // applyTimelineCacheSnapshot 读盘覆写）。
-        filterSnapshots.removeAll()
-        lastSuccessfulFilter = .all
-        pendingFilterSwitch = nil
-        pendingFilterSwitchOldIds = nil
     }
     /// 相邻日预取在途集合（key=北京日）：独立通道专用，与正向单槽
     /// （dayKeyForLoad + dayState）完全分开；同日只发一次，失败不留痕。
@@ -2512,12 +2540,13 @@ class BearyTimelineViewController: UIViewController {
     /// 计数行最小高度约束（跳动修）：行高钉死一行，见 buildHeader 内注释；
     /// 字号变化时在 traitCollectionDidChange 里随新字号重算。
     private var countsLabelMinHeightConstraint: NSLayoutConstraint?
-    // 审计-时间线：表头统计/重试钮改 BearyHit44Button，视觉帧不动、热区扩至 44×44（正常态禁用，失败态可点时生效）。
-    private let statsButton = BearyHit44Button(type: .system)
     private let calendarCard = BearyCalendarCardView()
+    /// 写一笔速写器（v14 改版，表头底部）：写选中那天的日记。
+    private let inlineComposer = BearyInlineComposerView()
+    /// 写一笔速写器是否聚焦（键盘处理与表头高度重算用）。
+    private var inlineComposerFocused = false
     /// 表头筛选行——只放筛子钮（当前可见范围：全部／公开／私密／限时／
     /// 仅好友）；日期只在当日面板组头出现，见 dayPanelTitleParts。
-    private let filterRow = UIStackView()
     private var headerStack: UIStackView?
     private var lastHeaderWidth: CGFloat = 0
 
@@ -2584,6 +2613,10 @@ class BearyTimelineViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(handlePendingRefetchChanged(_:)), name: .bearyPendingRefetchDidChange, object: nil)
         // G15 toast 已委托 B 批统一 BearyToast（见 showTimelineToast），
         // 此处不再建常驻 toast 容器。
+        // v14 改版：写一笔键盘处理——聚焦时底部内边距顶起键盘高、把速写器
+        // 滚入可见区；收起时恢复（时间线此前无任何键盘监听）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleKeyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         // 第 2 项 A 调用点 1/2（初次进入）：置守卫挂起；2026-11-04 不跳日口径：
         // 选中日（今天）无日记时不再跳最近有篇日，只清挂起、走正常空态；
         // 标志不放在 reloadTimeline 内，以免空态重试等其他 reloadTimeline
@@ -2613,6 +2646,7 @@ class BearyTimelineViewController: UIViewController {
                 selectedDayKey = BearyBeijingDay.dayKey(year: today.year, month: today.month, day: today.day)
             }
             renderCalendar()
+            updateInlineComposerDay()
             fetchCalendarMonthsForCurrentView()
         }
         // 顶栏透度批：安全区变化时按已存栏态重算（容器 viewDidLayoutSubviews 也会重发，双重 no-op）。
@@ -2660,7 +2694,6 @@ class BearyTimelineViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         stopCountdownTimer()
-        dismissVisFilterSheet()
     }
 
     /// 审计-时间线：Timer 自保失效——容器切页走 pageDidLeave、模态离页走 viewWillDisappear，
@@ -2682,14 +2715,11 @@ class BearyTimelineViewController: UIViewController {
         // 都不碰栏，栏一旦藏住便无恢复路径。进页、切档、跳转、刷新完成四处
         // 均显式亮回（animated:false，不与在途动画打架），不靠“再滚一下”。
         restoreChromeAfterTimelineAction()
-        // 筛子进页重置：每次切进时间线都回到全部（默认态 no-op，不多发请求）。
-        resetVisFilterForPageEntry()
     }
 
 
     func pageDidLeave() {
         stopCountdownTimer()
-        dismissVisFilterSheet()
     }
 
     /// 底栏复位（时间线页从不藏栏，故任何时刻亮回都是正确态；animated:false
@@ -2699,158 +2729,6 @@ class BearyTimelineViewController: UIViewController {
     private func restoreChromeAfterTimelineAction() {
         guard view.window != nil, !view.isHidden else { return }
         SceneDelegate.chrome?.setChromeHidden(false, animated: false)
-    }
-
-    /// 筛子钮标题 = 当前档位（选中态可见处）+ 无障碍文案同步。
-    private func updateVisFilterButton() {
-        visFilterButton.setTitle(timelineVisFilter.title, for: .normal)
-        visFilterButton.accessibilityLabel = "按可见性筛选，当前：\(timelineVisFilter.title)"
-        visFilterButton.accessibilityHint = "点按展开选择全部、公开、私密、限时、仅好友"
-        // 显式宽度：UIButton 的固有宽度不计 titleEdgeInsets.left 的 6pt 间隙，
-        // 布局时标题区实得少 6pt、档位名被压成“…”；#810 的右补 6 无效
-        // （content insets 在固有宽与布局宽里同时出现、互相抵消）。
-        // 按当前标题实算所需宽度并显式约束；档位变化与字号变化时重算。
-        let font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        let titleWidth = (timelineVisFilter.title as NSString).size(withAttributes: [.font: font]).width
-        let imageWidth = visFilterButton.image(for: .normal)?.size.width ?? 0
-        let insets = visFilterButton.contentEdgeInsets
-        let titleInsets = visFilterButton.titleEdgeInsets
-        let width = ceil(insets.left + imageWidth + titleInsets.left + titleWidth + titleInsets.right + insets.right)
-        if let constraint = visFilterButtonWidthConstraint {
-            constraint.constant = width
-        } else {
-            let constraint = visFilterButton.widthAnchor.constraint(equalToConstant: width)
-            constraint.isActive = true
-            visFilterButtonWidthConstraint = constraint
-        }
-    }
-
-    /// 切筛子：点按弹出底部 sheet 选择（2026-11-18：尖角气泡改底 sheet，
-    /// 替代系统 actionSheet；不摊五段条）。五档、默认全部、进页回全部、
-    /// 切档错峰均不动，只换呈现形态。当前档仍列出（半粗体 + 对勾），
-    /// 点按即无操作、只收 sheet。
-    @objc private func didTapVisFilter() {
-        guard presentedViewController == nil else { return }
-        presentVisFilterSheet()
-    }
-
-    /// 弹出可见性筛选底 sheet：行上下内边距 8、顶留白 6、底留白 10、
-    /// 行内元素间距 8、无分隔线（规范 §1 列表 sheet 值）。
-    /// 篇数只取服务端下发的三档（全部／公开／私密）；限时／仅好友无
-    /// 服务端计数，不显示、不编造 0。
-    private func presentVisFilterSheet() {
-        let counts: [TimelineVisFilter: Int]
-        if let c = countsValue {
-            counts = [.all: c.total ?? 0, .publicPosts: c.pub ?? 0, .privatePosts: c.priv ?? 0]
-        } else {
-            counts = [:]
-        }
-        let sheet = BearyVisFilterSheetViewController(selected: timelineVisFilter, counts: counts, onPick: { [weak self] tier in
-            // 先收 sheet 再切档：切档会 scrollToTop + 重拉，与收起动画并行会抢布局（气泡版同款顺序）。
-            self?.applyVisFilter(tier)
-        })
-        BearySystemSheet.present(sheet, from: self)
-    }
-
-    /// 离页时收起在场的筛选 sheet（viewWillDisappear／pageDidLeave 共用）。
-    private func dismissVisFilterSheet() {
-        if let sheet = presentedViewController as? BearyVisFilterSheetViewController {
-            sheet.dismiss(animated: false)
-        }
-    }
-
-    /// 切档：按新 vis 重取列表，分页游标随新筛子重置（首屏 force 全量，
-    /// 不走 since 增量——since 只补新篇，旧档行会残留）。
-    /// R15-P1-1：切档不再只换标签——标签与列表一起提交、一起回滚：
-    /// 新档有内存快照即直接显示（标签与列表一起换，不闪空）；无快照则清表、
-    /// 结果区走加载态（timelineState=.loading + updateChrome 出背景 spinner，
-    /// 当日面板同清、否则面板行会挡住加载态）；失败时按 pendingFilterSwitch
-    /// 回滚到上次成功的档位与结果（见 fetchTimelineFirstPageFull 失败分支）。
-    private func applyVisFilter(_ newValue: TimelineVisFilter) {
-        guard newValue != timelineVisFilter else { return }
-        // 审计四轮第 8 项：命中缓存时面板也要按新筛子处理（见下方）。
-        let hadSnapshot = filterSnapshots[newValue] != nil
-        if let snapshot = filterSnapshots[newValue] {
-            timelineEntries = snapshot.entries
-            timelineHasMore = snapshot.hasMore
-            trashCountValue = snapshot.trashCount
-            countsValue = snapshot.counts
-            timelineState = .loaded
-            timelinePageFailed = false
-            // 切筛子错峰：只给快照里没有的新行排队（快照行是已显示行，不重播）。
-            pendingFilterSwitchOldIds = Set((timelineEntries + dayEntries).compactMap { $0.id })
-            updateTrashTitle()
-            updateCountsLabel()
-        } else {
-            pendingFilterSwitchOldIds = nil
-            timelineEntries = []
-            // 当日面板同清（否则 updateChrome 的加载态被面板行挡住、出不了
-            // 背景 spinner）；面板随首屏回包派生/回落重拉（见 deferredDayKey）。
-            dayEntries = []
-            dayState = .idle
-            timelineState = .loading
-            timelinePageFailed = false
-        }
-        timelineVisFilter = newValue
-        updateVisFilterButton()
-        pendingFilterSwitch = (from: lastSuccessfulFilter, to: newValue)
-        staggerGeneration += 1
-        clearStaggerEntries()
-        scrollToTop()
-        // 当日面板随新筛子重取：首屏回包派生（已覆盖）或回落正向拉取（带 vis）。
-        // 审计四轮第 8 项：有快照时不再留旧档面板——快照已覆盖选中日时立即
-        // 按快照派生新档面板（不闪空）；未覆盖时先清面板，待首屏回包派生/
-        // 回落重拉，与无快照分支同口径。否则列表已是新档、面板仍是旧档，
-        // 两者在首屏回包前混排。
-        if hadSnapshot, let key = selectedDayKey {
-            if firstPageCoversDay(key: key) {
-                deriveDayPanelFromFirstPageIfCovered(key: key)
-            } else {
-                dayEntries = []
-                dayState = .idle
-            }
-        }
-        deferredDayKeyForFirstPage = selectedDayKey
-        tableView.reloadData()
-        updateChrome()
-        loadTimelineFirstPage(force: true)
-        restoreChromeAfterTimelineAction()
-    }
-
-    /// R15-P1-1：切档失败回滚——标签与列表一起回到上次成功的档位：
-    /// 有该档快照即恢复其结果（state 回 .loaded，不出失败空态）；无快照
-    ///（此前从未成功过）只回标签，列表保持空失败态、由 updateChrome 出
-    /// 失败空态/登录态。随后 toast「筛选没成功，请重试」。
-    /// 调用方（fetchTimelineFirstPageFull 失败分支）在回滚后仍会走
-    /// deferredDayKey 回落，由 fetchDayEntries 按回滚后的档位重拉当日面板。
-    private func rollbackVisFilterAfterFailure(from fallback: TimelineVisFilter) {
-        timelineVisFilter = fallback
-        updateVisFilterButton()
-        if let snapshot = filterSnapshots[fallback] {
-            timelineEntries = snapshot.entries
-            timelineHasMore = snapshot.hasMore
-            trashCountValue = snapshot.trashCount
-            countsValue = snapshot.counts
-            timelineState = .loaded
-            timelinePageFailed = false
-            updateTrashTitle()
-            updateCountsLabel()
-        } else {
-            timelineState = .failed
-        }
-        tableView.reloadData()
-        updateChrome()
-        refreshHeaderHeight()
-        showTimelineToast(message: "筛选没成功，请重试")
-    }
-
-    /// 进页重置（切进时间线页时回到全部，modal 回落不走这里故不反复重置：
-    /// 容器 showPage(.timeline) 才调 pageDidEnter，详情/编辑器回落调的是
-    /// refreshAfterDetailChange / reloadTimeline，不经过本钩子）。
-    /// 重置走与切筛子同一路径（错峰口径一致：旧行不重播、新行滑入）。
-    private func resetVisFilterForPageEntry() {
-        guard timelineVisFilter != .all else { return }
-        applyVisFilter(.all)
     }
 
     /// 动画批 11 号：切 tab 离页时停掉本页可见行全部表情（容器只改 isHidden，
@@ -2902,6 +2780,134 @@ class BearyTimelineViewController: UIViewController {
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    // MARK: - 写一笔键盘处理（v14 改版）
+
+    /// 键盘升起：底部内边距顶起键盘高（减安全区底），速写器聚焦时把
+    /// 表头滚入可见区（表头在 tableHeaderView 内，scrollRectToVisible
+    /// 对表头区域用 contentOffset 直设更稳）；只在速写器聚焦时顶，
+    /// 其他输入源（如搜索）不抢。
+    @objc private func handleKeyboardWillShow(_ note: Notification) {
+        guard inlineComposerFocused,
+              let frameValue = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+        let keyboardHeight = frameValue.cgRectValue.height
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? BearyMotion.normal
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue ?? Int(UIView.AnimationOptions.curveEaseOut.rawValue)
+        let options = UIView.AnimationOptions(rawValue: UInt(curveRaw << 16))
+        let bottomInset = max(keyboardHeight - view.safeAreaInsets.bottom, 0)
+        UIView.animate(withDuration: duration, delay: 0, options: options, animations: {
+            self.tableView.contentInset.bottom = bottomInset
+            self.tableView.scrollIndicatorInsets.bottom = bottomInset
+        }, completion: nil)
+        // 速写器在表头底部：键盘升起后把它滚到键盘上方可见区。
+        let composerFrame = inlineComposer.convert(inlineComposer.bounds, to: tableView)
+        let visibleBottom = tableView.bounds.height - bottomInset
+        if composerFrame.maxY > visibleBottom {
+            var offset = tableView.contentOffset
+            offset.y += composerFrame.maxY - visibleBottom + 12
+            tableView.setContentOffset(offset, animated: true)
+        }
+    }
+
+    @objc private func handleKeyboardWillHide(_ note: Notification) {
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? BearyMotion.normal
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue ?? Int(UIView.AnimationOptions.curveEaseOut.rawValue)
+        let options = UIView.AnimationOptions(rawValue: UInt(curveRaw << 16))
+        UIView.animate(withDuration: duration, delay: 0, options: options, animations: {
+            self.tableView.contentInset.bottom = 0
+            self.tableView.scrollIndicatorInsets.bottom = 0
+        }, completion: nil)
+    }
+
+    // MARK: - 写一笔发布（v14 改版）
+
+    /// 速写器日期同步：选中日、该天有无日记、是否未来日（锁输入）。
+    /// 漏斗：selectDay（两处）＋fetchDayEntries 回包（成功/失败）＋首屏初建。
+    private func updateInlineComposerDay() {
+        let key = selectedDayKey
+        var isFuture = false
+        if let key = key {
+            let parts = key.split(separator: "-")
+            if parts.count == 3,
+               let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]),
+               let todayNumber = BearyBeijingDay.todayNumber(),
+               let dayNumber = BearyBeijingDay.dayNumber(year: year, month: month, day: day) {
+                isFuture = dayNumber > todayNumber
+            }
+        }
+        inlineComposer.updateDay(selectedDayKey: key, hasEntries: !dayEntries.isEmpty, isFuture: isFuture)
+    }
+
+    /// 写一笔发布：快照字段顺序照抄编辑器 makePublishSnapshot；date 只在
+    /// 选中日非今天时填 YYYY-MM-DD，今天填 nil 走旧口径；visibility 私密；
+    /// 标题/心情/天气不填（正文里的 [mood:]/[gif:] 内联记号由服务端渲染口径
+    /// 处理）；发布中心 pill 负责失败重试；成功回包清空速写器并刷新当日
+    /// 面板、日历圆点与统计行。
+    private func publishInlineComposer(_ draft: BearyInlineComposerDraft) {
+        let clientReq = BearyDraftStore.newClientReq()
+        let accountId = SessionManager.shared.currentUser?.id ?? BearyDraftStore.currentAccountId
+        var publishDate: String?
+        if let key = selectedDayKey,
+           let today = BearyBeijingDay.todayComponents(),
+           key != BearyBeijingDay.dayKey(year: today.year, month: today.month, day: today.day) {
+            publishDate = key
+        }
+        let snapshot = PublishSnapshot(
+            content: draft.text,
+            mood: nil,
+            weather: nil,
+            temperature: nil,
+            quoteId: draft.quoteId,
+            published: 0,
+            visibility: "private",
+            mentionedUserId: draft.mentionedUserId,
+            title: nil,
+            tags: draft.tags.isEmpty ? nil : draft.tags,
+            ephemeral: nil,
+            date: publishDate,
+            tzName: TimeZone.current.identifier,
+            locationName: draft.location?.name,
+            locationDistrict: draft.location?.district,
+            locationLatitude: draft.location?.latitude,
+            locationLongitude: draft.location?.longitude,
+            locationCountry: draft.location?.country,
+            locationRegion: draft.location?.region,
+            locationCity: draft.location?.city,
+            locationStreet: draft.location?.street,
+            clientReq: clientReq,
+            originAccountId: accountId,
+            draftId: nil,
+            accountId: accountId,
+            imageLocalFiles: draft.imageLocalFiles,
+            images: draft.images
+        )
+        let job = BearyPublishJob(
+            snapshot: snapshot,
+            images: draft.images,
+            publishTogether: false,
+            publishToken: UUID(),
+            sourceAlreadyPublished: false,
+            hostView: view,
+            onPublished: { [weak self] _, _ in
+                guard let self = self else { return }
+                self.inlineComposer.reset()
+                self.showTimelineToast(message: "已发布")
+                self.invalidateStatsLine()
+                self.fetchCalendarMonthsForCurrentView()
+                if let key = self.selectedDayKey {
+                    self.fetchDayEntries(key: key, clear: false)
+                }
+                self.reloadTimeline()
+            },
+            onRequireLogin: { [weak self] in
+                self?.onRequireLogin?()
+            },
+            onOpenDraft: nil
+        )
+        BearyPublishCenter.shared.start(job: job)
     }
 
     /// 审计 P2-20：拉黑/举报广播到后即时清行——内存三处（timelineEntries/dayEntries/
@@ -3061,13 +3067,7 @@ class BearyTimelineViewController: UIViewController {
         // 秒开-启动瘦身：自己的首载若与预取撞车，待发预取取消（自己的首拉
         // 已覆盖，不再重复发一份）；已发出的预取由首拉接手复用（见
         // fetchTimelineFirstPageFull 的 adoptFirstPageIfInFlight）。
-        // 账号翻转/冷启动即 fresh entry：筛子回到全部（缓存快照只存全部档，
-        // 带筛子读缓存会把全部档快照画在筛子名下），不另发请求（本函数随后即重拉）。
-        if timelineVisFilter != .all {
-            timelineVisFilter = .all
-            updateVisFilterButton()
-            pendingFilterSwitchOldIds = nil
-        }
+        // 账号翻转/冷启动即 fresh entry：不另发请求（本函数随后即重拉）。
         BearyTimelinePrefetch.cancelPendingPrefetch()
         // 审计 13：读盘 + 解码在缓存 IO 队列，界面先不阻塞；回包到主线程
         // 后再应用。桶已换（账号切换）时旧回包直接丢弃，不覆盖新桶内容。
@@ -3114,10 +3114,6 @@ class BearyTimelineViewController: UIViewController {
         timelinePageRetryNotBefore = nil
         timelineUnauthorized = false
         loginNotified = false
-        // R15-P1-1：读盘快照即 .all 档的上次成功结果，记入内存快照——
-        // 切回全部时有快照直接显示，不必清表等网络。
-        filterSnapshots[.all] = FilterSnapshot(entries: snap.entries, hasMore: snap.hasMore, trashCount: snap.trashCount, counts: countsValue)
-        lastSuccessfulFilter = .all
         // 当日面板先用缓存首屏里今天的篇顶上（静默刷新随后对齐），
         // 避免面板空等网络；缓存里今天无篇时面板空态由静默刷新补，
         // 初次进入守卫挂起（viewDidLoad 已置位）照常消费，不再跳转。
@@ -3256,7 +3252,7 @@ class BearyTimelineViewController: UIViewController {
             // 模型里没有（已被别处清掉），退回原有整页重拉保底；同时把
             // 快照同步写回（模型里已无本篇），免得重拉失败时快照复活它。
             // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
-            if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+            if let uid = SessionManager.shared.currentUser?.id {
                 BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
             }
             refreshAfterDetailChange()
@@ -3324,7 +3320,7 @@ class BearyTimelineViewController: UIViewController {
         // 快照——冷启动先渲染快照，已删篇会先回来、要等一次静默刷新成功
         // 才纠掉，弱网/刷新失败时就一直复活。此处删帖即把快照同步写回。
         // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
-        if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+        if let uid = SessionManager.shared.currentUser?.id {
             BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
         }
         // 连续删帖防撞：表当前已渲染行数须与 oldSections 一致才发批更新；
@@ -3371,7 +3367,7 @@ class BearyTimelineViewController: UIViewController {
         guard trashCountKnown else { return false }
         trashCountValue = max(0, trashCountValue - 1)
         updateTrashTitle()
-        if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+        if let uid = SessionManager.shared.currentUser?.id {
             BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
         }
         return true
@@ -3469,7 +3465,7 @@ class BearyTimelineViewController: UIViewController {
         }
         // 首屏快照同步写回（删帖同款）：冷启动先渲染快照，旧字段不得复活。
         // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
-        if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+        if let uid = SessionManager.shared.currentUser?.id {
             BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
         }
         // 可见行足数重渲（applyInteraction 同款）：模型已改，滑回显示时
@@ -4133,17 +4129,6 @@ class BearyTimelineViewController: UIViewController {
         countsMinHeight.isActive = true
         countsLabelMinHeightConstraint = countsMinHeight
 
-        statsButton.translatesAutoresizingMaskIntoConstraints = false
-        statsButton.contentHorizontalAlignment = .left
-        // R8：统计行按钮走 scaledFont + adjusts（富文本各段见 updateStatsLine）。
-        statsButton.titleLabel?.font = BearyDynamicType.secondaryFont()
-        statsButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        statsButton.addTarget(self, action: #selector(didTapStats), for: .touchUpInside)
-        statsButton.bearyAddPressFeedback()
-        // R15-L1：统计行恒不可点（只作次要信息展示；日历失败重试在卡内，
-        // 不经本钮；初态无文案、失败态留空、正常态展示统计）。
-        statsButton.isEnabled = false
-
         calendarCard.translatesAutoresizingMaskIntoConstraints = false
         calendarCard.onSelectDay = { [weak self] day in
             self?.didSelectCalendarDay(day)
@@ -4151,11 +4136,15 @@ class BearyTimelineViewController: UIViewController {
         calendarCard.onToggleView = { [weak self] in
             self?.toggleCalendarView()
         }
-        calendarCard.onPrevious = { [weak self] in
-            self?.stepCalendar(delta: -1)
+        // 轻扫切周/切月、年月长按/方向键步进：步长由 VC 按模式换算。
+        calendarCard.onStepCalendar = { [weak self] delta in
+            self?.stepCalendar(delta: delta)
         }
-        calendarCard.onNext = { [weak self] in
-            self?.stepCalendar(delta: 1)
+        calendarCard.onStepYear = { [weak self] delta in
+            self?.stepCalendarYear(delta: delta)
+        }
+        calendarCard.onStepMonth = { [weak self] delta in
+            self?.stepCalendarMonth(delta: delta)
         }
         calendarCard.onGoToday = { [weak self] in
             self?.goToToday()
@@ -4165,52 +4154,37 @@ class BearyTimelineViewController: UIViewController {
             self?.didTapStats()
         }
 
-        // 时间线筛子入口（列表顶表头内，随表滚走，不常驻占位）：
-        // 回收站 pill 同款 surface2 底 + 圆角 17 + 官方 chevron；标题即当前档位。
-        visFilterButton.translatesAutoresizingMaskIntoConstraints = false
-        visFilterButton.backgroundColor = BearyColors.surface2
-        visFilterButton.layer.cornerRadius = 17
-        // 右内边距 16（含补 6pt）：钮固有宽度不计 titleEdgeInsets.left 的 6pt
-        // 间隙，实测钮宽 63pt、内容需 68pt，标题被压成“…”；右补 6 后固有宽
-        // ＝内容宽，档位名完整显示。左缘不动，气泡箭头对齐不变。
-        visFilterButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 16)
-        if let chevronImage = BearyIconImages.image(named: "icon_chevron_down", pointSize: 14) {
-            visFilterButton.setImage(chevronImage, for: .normal)
+        // 写一笔速写器（表头底部）：写选中那天的日记，见 BearyInlineComposerView；
+        // 发布回调走 publishInlineComposer。
+        inlineComposer.translatesAutoresizingMaskIntoConstraints = false
+        inlineComposer.presenter = self
+        inlineComposer.onToast = { [weak self] message in
+            self?.showTimelineToast(message: message)
         }
-        visFilterButton.imageView?.contentMode = .scaleAspectFit
-        visFilterButton.tintColor = BearyColors.ink
-        visFilterButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        visFilterButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        visFilterButton.setTitleColor(BearyColors.ink, for: .normal)
-        visFilterButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        // 横向 hugging 降一档：宽度现由 updateVisFilterButton 的显式约束钉死，
-        // 若 hugging 仍为 required，会与显式宽度（比固有宽大 6pt）形成
-        // required 对 required 的冲突；压缩仍为 required，防栈内挤压。
-        visFilterButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        visFilterButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        visFilterButton.addTarget(self, action: #selector(didTapVisFilter), for: .touchUpInside)
-        visFilterButton.bearyAddPressFeedback()
-        updateVisFilterButton()
-        // 筛选行只放筛子钮（当前可见范围）；日期不在此重复——只在下方
-        // 当日面板组头出现（日期＋星期＋篇数，见 dayPanelTitleParts）。
-        filterRow.translatesAutoresizingMaskIntoConstraints = false
-        filterRow.axis = .horizontal
-        filterRow.alignment = .center
-        filterRow.spacing = 8
-        filterRow.addArrangedSubview(visFilterButton)
-        filterRow.addArrangedSubview(UIView())
+        inlineComposer.onHeightChanged = { [weak self] in
+            self?.refreshHeaderHeight()
+        }
+        inlineComposer.onPublish = { [weak self] snapshot in
+            self?.publishInlineComposer(snapshot)
+        }
+        inlineComposer.onFocusChanged = { [weak self] focused in
+            self?.inlineComposerFocused = focused
+            self?.refreshHeaderHeight()
+        }
+        inlineComposer.onRequireLogin = { [weak self] in
+            self?.onRequireLogin?()
+        }
 
-        // R15-L1：表头顺序改为标题与回收站 → 统计（共 X 篇／已连续写 X 天，
-        // 紧贴标题「时间线」下方，2026-11-12 Li 定）→ 日历 → 筛选 → 日记；
-        // ≥821pt 居中列 / ≤820pt 全宽列与左右各 16 边距一律不动
-        // （见下方约束与 SceneDelegate 宽度口径）。
-        let stack = UIStackView(arrangedSubviews: [titleRow, countsLabel, statsButton, calendarCard, filterRow])
+        // 表头顺序（v14 改版）：标题与回收站 → 合并统计行（共 X 篇／
+        // 私密／公开／连续天数／本月，本月计数只在统计行留）→ 日历
+        // → 写一笔速写器 → 日记；≥821pt 居中列 / ≤820pt 全宽列与左右
+        // 各 16 边距一律不动（见下方约束与 SceneDelegate 宽度口径）。
+        let stack = UIStackView(arrangedSubviews: [titleRow, countsLabel, calendarCard, inlineComposer])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.spacing = 0
         stack.setCustomSpacing(4, after: titleRow)
         stack.setCustomSpacing(2, after: countsLabel)
-        stack.setCustomSpacing(12, after: statsButton)
         stack.setCustomSpacing(12, after: calendarCard)
         headerStack = stack
         headerContainer.addSubview(stack)
@@ -4295,24 +4269,11 @@ class BearyTimelineViewController: UIViewController {
         }, completion: { [weak self] _ in self?.refreshHeaderHeight() })
     }
 
-    /// 本周首日（跟 region 走，见 BearyLocalizedDate.firstWeekday：
-    /// 中国大陆／欧洲多数地区为周一，美国等地区为周日）。与 mondayOf 同口径
-    /// （北京日界＋shifted），只是首日不写死周一；时间线周条／本周判定／
-    /// 翻周跟随共用。星图热力图仍走 mondayOf，不动。
-    private func weekStartOf(year: Int, month: Int, day: Int) -> (year: Int, month: Int, day: Int)? {
-        guard let date = BearyBeijingDay.date(year: year, month: month, day: day) else { return nil }
-        let weekday = BearyBeijingDay.calendar.component(.weekday, from: date)
-        let offset = (weekday - BearyLocalizedDate.firstWeekday + 7) % 7
-        guard let start = BearyBeijingDay.calendar.date(byAdding: .day, value: -offset, to: date) else { return nil }
-        let comps = BearyBeijingDay.calendar.dateComponents([.year, .month, .day], from: start)
-        guard let y = comps.year, let m = comps.month, let d = comps.day else { return nil }
-        return (y, m, d)
-    }
 
     /// 月视图错峰时要跳过的本周日期 key（网页 calStaggerMonthCells 口径）。
     private func currentWeekKeys() -> Set<String> {
         guard let anchor = calendarAnchor else { return [] }
-        guard let weekStart = weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return [] }
+        guard let weekStart = BearyBeijingDay.weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return [] }
         var keys: Set<String> = []
         for offset in 0..<7 {
             guard let day = BearyBeijingDay.shifted(year: weekStart.year, month: weekStart.month, day: weekStart.day, byDays: offset) else { continue }
@@ -4431,18 +4392,10 @@ class BearyTimelineViewController: UIViewController {
         })
     }
 
+    /// 计数行入口（v14 改版）：统计已并入标题下方一行小字，统一走
+    /// updateMergedStatsLine（116：文案不变时不重写、不重播淡入）。
     private func updateCountsLabel() {
-        if let counts = countsValue {
-            let total = counts.total ?? 0
-            let priv = counts.priv ?? 0
-            let pub = counts.pub ?? 0
-            // 116：数值变时整行只淡入（不拆多 label——拆分属布局结构改动，
-            // 且数字段已在行内；淡入覆盖整行文案，数字随之淡入，不弹一下）；
-            // 文案不变时不重复赋值不重播。
-            setLabelTextFaded(countsLabel, "共 \(total) 篇 · 私密 \(priv) · 公开 \(pub)")
-        } else {
-            setLabelTextFaded(countsLabel, "")
-        }
+        updateMergedStatsLine()
     }
 
     /// 64 包反馈修（第 3 项）：写新日记后统计行失效——清已渲染签名并丢掉当前视图月份缓存，
@@ -4468,9 +4421,7 @@ class BearyTimelineViewController: UIViewController {
     // MARK: - 统计行与日历失败态（R15-L1：悬浮条已收掉，重试只留卡内）
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // 字号变化时筛子钮显式宽度随新字号重算（否则标题仍按旧宽截断）。
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
-            updateVisFilterButton()
             // 跳动修：计数行最小高度随新字号重算（否则大字号下行高钉死旧值、文案被裁）。
             countsLabelMinHeightConstraint?.constant = countsLabel.font.lineHeight
         }
@@ -4482,16 +4433,15 @@ class BearyTimelineViewController: UIViewController {
     /// 重试走 didTapStats）；统计行失败时只留空、不再变重试入口（旧 G14
     /// 统计行重试与 113 顶部悬浮条随本支一并收掉）。在途/缺失月份不出加载态
     ///（无“日历加载中…”）。
-    private func updateStatsLine() {
-        let primaryKey = primaryStatsMonthKey()
+    /// 合并统计行（v14 改版：statsButton 已删，统计退到标题下方一行小字）：
+    /// “共 X 篇 · 私密 X · 公开 X”＋streak>0 时“ · 已连续写 X 天”＋
+    /// “ · 本月共 X 篇”；streak 0 天整项不显示；日历失败/未知态时只出
+    /// counts 部分。updateCountsLabel 与 updateStatsLine 都走本函数；
+    /// 文案不变时不重写（签名守卫）。
+    private func updateMergedStatsLine() {
+        // 卡内失败行先于签名守卫更新——切月/重试后失败态可能已变，显隐每次重算
+        //（不靠签名守卫）；显隐真变时重算表头高度（失败行约 20pt）。
         let visibleKeys = monthKeysForCurrentView()
-        let anyVisibleFailed = visibleKeys.contains { calendarFailed.contains($0) && calendarCache[$0] == nil }
-        // r17-C1 三态（原横条文案，R15-L1 后改写进卡内失败行，位置仍只留卡内
-        // 一处）：可视月里有失败且全无数据 →「日历加载失败」；有失败但有旧快照
-        // 可画 →「显示的是上次的数据」；有失败且其余月已画出（周跨月只到一部
-        // 分）→「只加载了一部分」。任一可视月失败即显卡内失败行，重试走
-        // didTapStats 强制重拉失败月；其余月/落盘已有数据时统计行走正常统计，
-        // 不抢文案。
         let failedUncached = visibleKeys.filter { calendarFailed.contains($0) && calendarCache[$0] == nil }
         let failedStale = visibleKeys.filter { calendarFailed.contains($0) && calendarCache[$0] != nil }
         let anyVisibleCached = visibleKeys.contains { calendarCache[$0] != nil }
@@ -4503,157 +4453,40 @@ class BearyTimelineViewController: UIViewController {
         } else {
             failedText = "日历加载失败"
         }
-        // R15-L1：卡内失败行先于统计行签名守卫更新——失败签名不变时统计行
-        // 提前返回，但切月/重试后失败态可能已变，卡内行的显隐必须每次重算
-        //（不靠签名守卫）；显隐真变时重算表头高度（失败行约 20pt）。
         if calendarCard.setLoadFailed(!failedUncached.isEmpty || !failedStale.isEmpty, text: failedText) {
             refreshHeaderHeight()
         }
-        if anyVisibleFailed {
-            // R15-L1：失败态统计行留空、不可点（重试入口已移到日历卡内）。
-            statsButton.isEnabled = false
-            statsButton.accessibilityLabel = nil
-            // 64 包反馈修（第 3 项）：失败态亦计签名，一致则不重碰按钮。
-            let signature = "fail"
-            guard signature != lastStatsLineSignature else { return }
-            lastStatsLineSignature = signature
-            lastStatsStreak = nil
-            lastStatsMonthTotal = nil
-            statsButton.setImage(nil, for: .normal)
-            statsButton.setAttributedTitle(nil, for: .normal)
-            statsButton.setTitle("", for: .normal)
-            return
+        var parts: [String] = []
+        if let counts = countsValue {
+            let total = counts.total ?? 0
+            let priv = counts.priv ?? 0
+            let pub = counts.pub ?? 0
+            parts.append("共 \(total) 篇 · 私密 \(priv) · 公开 \(pub)")
         }
-        guard let primaryKey = primaryKey, let data = calendarCache[primaryKey] else {
-            // P2：空态无内容、无重试可做，与正常态同为不可点。
-            statsButton.isEnabled = false
-            statsButton.accessibilityLabel = nil
-            let signature = "empty"
-            guard signature != lastStatsLineSignature else { return }
-            lastStatsLineSignature = signature
-            lastStatsStreak = nil
-            lastStatsMonthTotal = nil
-            statsButton.setImage(nil, for: .normal)
-            statsButton.setAttributedTitle(nil, for: .normal)
-            statsButton.setTitle("", for: .normal)
-            return
+        let anyVisibleFailed = visibleKeys.contains { calendarFailed.contains($0) && calendarCache[$0] == nil }
+        if !anyVisibleFailed, let primaryKey = primaryStatsMonthKey(), let data = calendarCache[primaryKey] {
+            let monthTotal = data.monthTotal ?? 0
+            if data.streak == nil, calendarStreakUnknownKeys.contains(primaryKey) {
+                // r17-C1：跨日恢复的 streak 未重新确认（nil）时不报连续天数，
+                // 只报本月篇数；刷新到达后恢复完整行。
+                parts.append("本月共 \(monthTotal) 篇")
+            } else {
+                let streak = data.streak ?? 0
+                if streak > 0 {
+                    parts.append("已连续写 \(streak) 天")
+                }
+                parts.append("本月共 \(monthTotal) 篇")
+            }
         }
-        // 本批新规矩：签名不含月份 key——切月数值不变直接返回，按钮一字不动
-        // （确诊：旧签名 "\(primaryKey)|streak|monthTotal"，切月必变签名 →
-        // 整行 setAttributedTitle 重建 → 闪；容器/表头在此路径下本就不重建，
-        // 闪只来自本行标题重建，不是 stepCalendar/renderCalendar 重建容器）。
-        // 数值真变时只换数字段（下分支），静态段与火苗图标一律不动。
-        // r17-C1：跨日恢复的 streak 未重新确认（nil）时不报连续天数，
-        // 只报本月篇数；刷新到达后恢复完整行（见 fetch 成功处摘未知态）。
-        // 服务端直接回 streak 缺失时未知态不含该月（见恢复体），走下方的 ?? 0 旧口径。
-        if data.streak == nil, calendarStreakUnknownKeys.contains(primaryKey) {
-            let signature = "month-only"
-            guard signature != lastStatsLineSignature else { return }
-            lastStatsLineSignature = signature
-            lastStatsStreak = nil
-            lastStatsMonthTotal = data.monthTotal ?? 0
-            statsButton.isEnabled = false
-            statsButton.accessibilityLabel = "本月共 \(data.monthTotal ?? 0) 篇，连续天数待刷新确认"
-            statsButton.setImage(nil, for: .normal)
-            statsButton.setAttributedTitle(nil, for: .normal)
-            statsButton.setTitle("本月共 \(data.monthTotal ?? 0) 篇", for: .normal)
-            statsButton.setTitleColor(BearyColors.gray, for: .normal)
-            fadeButtonTitle(statsButton)
-            return
-        }
-        let streak = data.streak ?? 0
-        let monthTotal = data.monthTotal ?? 0
-        // R15-L1：统计行恒不可点——禁用即去掉按压反馈（touchDown 缩放／点按
-        // 确认轻震只在启用钮上触发）；didTapStats 的重试逻辑只由日历卡内失败行触发，
-        // 不再经统计行可达；P1-26：无障碍名与可见统计文案一致。
-        statsButton.isEnabled = false
-        statsButton.accessibilityLabel = "已连续写 \(streak) 天，本月共 \(monthTotal) 篇"
-        if lastStatsLineSignature == "normal", lastStatsStreak == streak, lastStatsMonthTotal == monthTotal {
-            return
-        }
-        if lastStatsLineSignature == "normal",
-           let current = statsButton.attributedTitle(for: .normal),
-           updateStatsNumbersOnly(current, streak: streak, monthTotal: monthTotal) {
-            lastStatsLineSignature = "normal"
-            lastStatsStreak = streak
-            lastStatsMonthTotal = monthTotal
-            // 116：数字段-only 更新后只淡入标题文案（火苗图标不动）。
-            fadeButtonTitle(statsButton)
-            return
-        }
-        // 首建或态切换（失败/空态 → 正常）或数字段解析失败时才整行重建；
-        // 数字段解析失败回落整行是防残留旧格式的安全阀，不是常规路径。
-        lastStatsLineSignature = "normal"
-        lastStatsStreak = streak
-        lastStatsMonthTotal = monthTotal
-        statsButton.setImage(BearyIconImages.image(named: "icon_fire", pointSize: 16), for: .normal)
-        statsButton.tintColor = BearyColors.orange
-        statsButton.imageEdgeInsets = UIEdgeInsets.zero
-        statsButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        // R8：统计行富文本各段走 scaledFont（按钮 adjusts 开关见 buildHeader）。
-        let baseAttributes: [NSAttributedString.Key: Any] = [
-            .font: BearyDynamicType.secondaryFont(),
-            .foregroundColor: BearyColors.gray,
-        ]
-        let boldAttributes: [NSAttributedString.Key: Any] = [
-            .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13)),
-            .foregroundColor: BearyColors.ink,
-        ]
-        let text = NSMutableAttributedString(string: "已连续写 ", attributes: baseAttributes)
-        text.append(NSAttributedString(string: "\(streak) 天", attributes: boldAttributes))
-        text.append(NSAttributedString(string: " · 本月共 ", attributes: baseAttributes))
-        text.append(NSAttributedString(string: "\(monthTotal) 篇", attributes: boldAttributes))
-        statsButton.setTitle(nil, for: .normal)
-        statsButton.setAttributedTitle(text, for: .normal)
-        // 116：首建／态切换整行重建时同样只淡入标题文案（火苗图标不动）。
-        fadeButtonTitle(statsButton)
+        let text = parts.joined(separator: " · ")
+        guard text != lastStatsLineSignature else { return }
+        lastStatsLineSignature = text
+        setLabelTextFaded(countsLabel, text)
     }
 
-    /// 统计行数字段-only 更新：只替换两处纯数字区间（streak、monthTotal），
-    /// 静态段“已连续写 ”、“ 天 · 本月共 ”、“ 篇”与火苗图标原样不动（不重建
-    /// 整行 attributed 文案、不碰 image/tint）。格式对不上（旧格式残留、
-    /// 数字段非纯数字）时返回 false，调用方回落整行重建。
-    /// 区间用 NSString（UTF-16）定位：文案固定中文 + 阿拉伯数字，均为 BMP
-    /// 字符，NSString 长度与 NSRange 定位一致；先换后段（monthTotal）再换
-    /// 前段（streak），使前段位置不受后段长度变化影响。
-    private func updateStatsNumbersOnly(_ current: NSAttributedString, streak: Int, monthTotal: Int) -> Bool {
-        let prefix = "已连续写 "
-        let middle = " 天 · 本月共 "
-        let suffix = " 篇"
-        let full = current.string
-        guard full.hasPrefix(prefix), full.hasSuffix(suffix) else { return false }
-        let nsFull = full as NSString
-        let prefixLength = (prefix as NSString).length
-        let middleLength = (middle as NSString).length
-        let suffixLength = (suffix as NSString).length
-        let middleRange = nsFull.range(of: middle)
-        guard middleRange.location != NSNotFound else { return false }
-        let streakRange = NSRange(location: prefixLength, length: middleRange.location - prefixLength)
-        let totalRange = NSRange(
-            location: middleRange.location + middleRange.length,
-            length: nsFull.length - suffixLength - (middleRange.location + middleRange.length)
-        )
-        guard streakRange.length > 0, totalRange.length > 0 else { return false }
-        guard Int(nsFull.substring(with: streakRange)) != nil,
-              Int(nsFull.substring(with: totalRange)) != nil else { return false }
-        let boldAttributes: [NSAttributedString.Key: Any] = [
-            .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13)),
-            .foregroundColor: BearyColors.ink,
-        ]
-        let mutable = NSMutableAttributedString(attributedString: current)
-        let newStreakText = "\(streak)"
-        let newTotalText = "\(monthTotal)"
-        mutable.replaceCharacters(in: totalRange, with: newTotalText)
-        mutable.replaceCharacters(in: streakRange, with: newStreakText)
-        let newStreakRange = NSRange(location: prefixLength, length: (newStreakText as NSString).length)
-        let newTotalRange = NSRange(
-            location: prefixLength + (newStreakText as NSString).length + middleLength,
-            length: (newTotalText as NSString).length
-        )
-        mutable.addAttributes(boldAttributes, range: newStreakRange)
-        mutable.addAttributes(boldAttributes, range: newTotalRange)
-        statsButton.setAttributedTitle(mutable, for: .normal)
-        return true
+    /// 旧统计行入口（statsButton 已删）：统一走合并统计行。
+    private func updateStatsLine() {
+        updateMergedStatsLine()
     }
 
     private func primaryStatsMonthKey() -> String? {
@@ -4797,15 +4630,9 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.trashCountKnown = true
                     strongSelf.countsValue = list.tlCounts
                     strongSelf.timelineHasMore = (list.entries ?? []).count >= strongSelf.firstPageLimit
-                    // R15-P1-1：首屏成功即写本档内存快照（切档时有快照直接显示）
-                    // 并记下上次成功档位、清掉在途切档标记。
-                    strongSelf.filterSnapshots[strongSelf.timelineVisFilter] = FilterSnapshot(entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
-                    strongSelf.lastSuccessfulFilter = strongSelf.timelineVisFilter
-                    strongSelf.pendingFilterSwitch = nil
                     // 110：首屏成功即写时间线缓存（下次冷启动缓存优先；
                     // 只在已登录时写，避免游客态写 guest 桶；失败不写）。
-                    // 筛子档不写盘：快照只代表全部档，筛后快照会污染下次冷启动。
-                    if strongSelf.timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+                    if let uid = SessionManager.shared.currentUser?.id {
                         BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
                     }
                     // 开发者模式 1000 篇假日记（仅内存）：快照已存真实首屏，
@@ -4815,30 +4642,6 @@ class BearyTimelineViewController: UIViewController {
                         strongSelf.timelineHasMore = false
                         if let key = strongSelf.selectedDayKey {
                             strongSelf.deriveDayPanelFromFirstPageIfCovered(key: key)
-                        }
-                    }
-                    // 切筛子错峰：只给切档前不在列表里的新行排队（已有元素不重播；
-                    // 减动效时队列为空，不播；分页同款 willDisplay 起播机制）。
-                    // 当日面板分区（选中日时 section 0）排除在外：首屏后派生/
-                    // 正向拉取还会换面板行，队列行号会对不上、且面板行有
-                    // 自己的换日错峰口径；时间线分区序号不受面板行数影响。
-                    if let oldIds = strongSelf.pendingFilterSwitchOldIds {
-                        strongSelf.pendingFilterSwitchOldIds = nil
-                        if UIAccessibility.isReduceMotionEnabled == false {
-                            var queue: [IndexPath: Int] = [:]
-                            var order = 0
-                            for (section, sec) in strongSelf.currentSections().enumerated() {
-                                if section == 0, strongSelf.selectedDayKey != nil { continue }
-                                for (row, entry) in sec.entries.enumerated() {
-                                    guard let entryId = entry.id, !oldIds.contains(entryId) else { continue }
-                                    queue[IndexPath(row: row, section: section)] = order
-                                    order += 1
-                                }
-                            }
-                            strongSelf.staggerInsertOrder = queue
-                            // 审计 r16 第 10 项：筛子切换的新行按首屏档入场（60ms／8pt）。
-                            strongSelf.staggerInsertFirstLoad = true
-                            strongSelf.staggerQueueGeneration = strongSelf.staggerGeneration
                         }
                     }
                     strongSelf.lastTimelineFirstPageSuccessAt = Date()
@@ -4861,17 +4664,8 @@ class BearyTimelineViewController: UIViewController {
                     if hadOldRows {
                         strongSelf.setRefreshFailedBannerVisible(true)
                     }
-                    // 切筛子失败不排错峰：旧档行仍在，失败态不播入场。
-                    strongSelf.pendingFilterSwitchOldIds = nil
                     if case .unauthorized = error {
                         strongSelf.timelineUnauthorized = true
-                        strongSelf.pendingFilterSwitch = nil
-                    } else if let pending = strongSelf.pendingFilterSwitch, pending.to == strongSelf.timelineVisFilter {
-                        // R15-P1-1：切档失败回滚到上次成功的档位与结果（标签与
-                        // 列表一起回，不留“新标签＋旧日记”错配态），并 toast 提示重试。
-                        // 未授权不回滚：登录态失效时由 updateChrome 出登录空态。
-                        strongSelf.pendingFilterSwitch = nil
-                        strongSelf.rollbackVisFilterAfterFailure(from: pending.from)
                     }
                     // 112：首屏失败时暂存的当日面板仍需刷新——回落正向拉取，
                     // 面板失败态与旧口径一致（面板不被首屏失败拖空）。
@@ -4891,14 +4685,14 @@ class BearyTimelineViewController: UIViewController {
                 )
             }
         }
-        // A4：接手在途预取——同账号、同筛选（全部档）的首屏请求已在途时
+        // A4：接手在途预取——同账号的首屏请求已在途时
         // 不再另发一份，复用同一份回包走同一套首拉渲染；seq 与在途标记
         // 归本函数所有，预取回包到时按首拉口径渲染并清标记。
-        if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id,
+        if let uid = SessionManager.shared.currentUser?.id,
            BearyTimelinePrefetch.adoptFirstPageIfInFlight(userId: uid, vis: nil, completion: handleResult) {
             return
         }
-        BearyAPI.shared.fetchTimelineFirstPage(vis: timelineVisFilter.queryValue, completion: handleResult)
+        BearyAPI.shared.fetchTimelineFirstPage(completion: handleResult)
     }
 
     /// 113：首屏收尾（原 loadTimelineFirstPage 的尾巴，全量与 since 共用）——
@@ -4938,7 +4732,7 @@ class BearyTimelineViewController: UIViewController {
         for pendingCompletion in pendingFirstPageCompletions {
             pendingCompletion()
         }
-        // 刷新跑完后栏回到可见（下拉刷新/筛子切档/首拉均经此收口）。
+        // 刷新跑完后栏回到可见（下拉刷新/首拉均经此收口）。
         restoreChromeAfterTimelineAction()
     }
 
@@ -4951,7 +4745,6 @@ class BearyTimelineViewController: UIViewController {
         BearyAPI.shared.fetchEntriesSince(
             scope: .timeline, since: cursor, sinceId: headId,
             sortKey: { $0.createdAt }, knownIds: knownIds,
-            vis: timelineVisFilter.queryValue
         ) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -5030,16 +4823,8 @@ class BearyTimelineViewController: UIViewController {
                         strongSelf.trashCountKnown = true
                     }
                     if let counts = firstList.tlCounts { strongSelf.countsValue = counts }
-                    // R15-P1-1：since 增量成功同样刷新本档内存快照（首屏前插了新篇）；
-                    // 若本回包顶替了在途切档请求（seq 守卫已丢弃旧回包），切档即成功。
-                    strongSelf.filterSnapshots[strongSelf.timelineVisFilter] = FilterSnapshot(entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
-                    if strongSelf.pendingFilterSwitch?.to == strongSelf.timelineVisFilter {
-                        strongSelf.lastSuccessfulFilter = strongSelf.timelineVisFilter
-                        strongSelf.pendingFilterSwitch = nil
-                    }
                     // hasMore 不动：since 只补头部，旧页分页游标不受影响。
-                    // 筛子档不写盘（快照只代表全部档，见首屏同款守卫）。
-                    if strongSelf.timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+                    if let uid = SessionManager.shared.currentUser?.id {
                         BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
                     }
                     strongSelf.lastTimelineFirstPageSuccessAt = Date()
@@ -5174,7 +4959,7 @@ class BearyTimelineViewController: UIViewController {
         let oldSections = currentSections()
         // 80 包 A3：分页代际（首屏 timelineFirstPageSeq 同口径）——首屏重拉即作废在途分页。
         let nextPageSeq = timelineFirstPageSeq
-        BearyAPI.shared.fetchEntries(scope: .timeline, limit: pageLimit, before: lastCreated, beforeId: lastEntryIdValue, vis: timelineVisFilter.queryValue) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: .timeline, limit: pageLimit, before: lastCreated, beforeId: lastEntryIdValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.timelineLoadingMore = false
@@ -5287,7 +5072,7 @@ class BearyTimelineViewController: UIViewController {
         switch calendarMode {
         case .week:
             guard let anchor = calendarAnchor else { return [] }
-            guard let weekStart = weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return [] }
+            guard let weekStart = BearyBeijingDay.weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return [] }
             var keys: [String] = []
             for offset in 0..<7 {
                 guard let day = BearyBeijingDay.shifted(year: weekStart.year, month: weekStart.month, day: weekStart.day, byDays: offset) else { continue }
@@ -5390,11 +5175,18 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
-    private func calendarDayCounts(year: Int, month: Int, day: Int) -> (published: Int, unpublished: Int, loaded: Bool) {
+    private func calendarDayCounts(year: Int, month: Int, day: Int) -> (published: Int, unpublished: Int, friends: Int, limited: Int, loaded: Bool) {
         let key = BearyBeijingDay.monthKey(year: year, month: month)
-        guard let data = calendarCache[key] else { return (0, 0, false) }
+        guard let data = calendarCache[key] else { return (0, 0, 0, 0, false) }
         let info = data.days?["\(day)"]
-        return (info?.pub ?? 0, info?.priv ?? 0, true)
+        // 服务端 pub 仍含限时、priv 仍含仅好友（网页旧口径不动），App 侧做减法：
+        // 橙（公开）= pub - limited、蓝（私密）= priv - friends；墨、紫各取新键；
+        // 旧快照缺新键时 nil→0，减法结果钳在 ≥0（防服务端口径漂移出负数）。
+        let limited = info?.limited ?? 0
+        let friends = info?.friends ?? 0
+        let published = max((info?.pub ?? 0) - limited, 0)
+        let unpublished = max((info?.priv ?? 0) - friends, 0)
+        return (published, unpublished, friends, limited, true)
     }
 
     private func makeCalendarDay(year: Int, month: Int, day: Int, isOffMonth: Bool) -> BearyCalendarDay {
@@ -5419,6 +5211,7 @@ class BearyTimelineViewController: UIViewController {
             isOffMonth: isOffMonth, isFuture: isFuture, isToday: isToday,
             isSelected: (selectedDayKey == key),
             published: counts.published, unpublished: counts.unpublished,
+            friends: counts.friends, limited: counts.limited,
             dataLoaded: counts.loaded, dataFailed: monthFailed
         )
     }
@@ -5427,42 +5220,24 @@ class BearyTimelineViewController: UIViewController {
         switch calendarMode {
         case .week:
             guard let anchor = calendarAnchor else { return }
-            guard let weekStart = weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return }
+            guard let weekStart = BearyBeijingDay.weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return }
             var days: [BearyCalendarDay] = []
             for offset in 0..<7 {
                 guard let day = BearyBeijingDay.shifted(year: weekStart.year, month: weekStart.month, day: weekStart.day, byDays: offset) else { continue }
                 days.append(makeCalendarDay(year: day.year, month: day.month, day: day.day, isOffMonth: false))
             }
-            guard let first = days.first, let last = days.last else { return }
-            // 网页周标题口径：起日“[年]M月d日 – ”+ 尾日（同月只写 d日，同年写 M月d日，跨年写 Y年M月d日）。
-            // 2026-11-21 日期完全本地化：走共享 helper（同月只写日数字，同年写月日，跨年写年月日）。
-            // 年／月／日之间无空格（此前中文宽屏在年／月／日两侧加空格、窄屏才去空格；
-            // i18n-guard 不许中文插值，统一走 helper，与绝对日期格式同款）。
-            let todayYear = BearyBeijingDay.todayComponents()?.year
-            let firstDate = BearyLocalizedDate.dateFromComponents(year: first.year, month: first.month, day: first.day, timeZone: BearyLocalizedDate.gmt8) ?? Date()
-            let lastDate = BearyLocalizedDate.dateFromComponents(year: last.year, month: last.month, day: last.day, timeZone: BearyLocalizedDate.gmt8) ?? Date()
-            let firstPart = first.year != todayYear
-                ? BearyLocalizedDate.yearMonthDayString(from: firstDate, timeZone: BearyLocalizedDate.gmt8)
-                : BearyLocalizedDate.monthDayString(from: firstDate, timeZone: BearyLocalizedDate.gmt8)
-            let lastPart: String
-            if first.year == last.year && first.month == last.month {
-                lastPart = "\(last.day)"
-            } else if first.year == last.year {
-                lastPart = BearyLocalizedDate.monthDayString(from: lastDate, timeZone: BearyLocalizedDate.gmt8)
-            } else {
-                lastPart = BearyLocalizedDate.yearMonthDayString(from: lastDate, timeZone: BearyLocalizedDate.gmt8)
-            }
-            let title = firstPart + " – " + lastPart
-            calendarCard.setTitle(title)
-            calendarCard.setToggleTitle("月视图")
-            calendarCard.setNavigation(prevEnabled: true, nextEnabled: !isCurrentWeek(weekStart: weekStart))
+            guard days.first != nil else { return }
+            // v14 改版：周/月同一块日历，标题只写年月（周模式用锚点所在年月，
+            // 不再写“x月x日 – x月x日”周范围标题）；年月数字是两个分开的把手。
+            calendarCard.setYearMonth(year: anchor.year, month: anchor.month)
             calendarCard.render(days: days, mode: .week)
         case .month:
             guard let displayed = calendarDisplayedMonth else { return }
             guard let dim = BearyBeijingDay.daysInMonth(year: displayed.year, month: displayed.month) else { return }
             guard let firstDate = BearyBeijingDay.date(year: displayed.year, month: displayed.month, day: 1) else { return }
             let firstWeekday = BearyBeijingDay.calendar.component(.weekday, from: firstDate)
-            let leading = (firstWeekday - BearyLocalizedDate.firstWeekday + 7) % 7 // 2026-11-21 一周起始日本地化：首日跟 region 走
+            // 月视图前导空格按 locale 首日算（周一基 (firstWeekday + 5) % 7 已废）。
+            let leading = (firstWeekday - BearyBeijingDay.localeFirstWeekday + 7) % 7
             var days: [BearyCalendarDay] = []
             if leading > 0 {
                 guard let prevMonth = BearyBeijingDay.shiftedMonth(year: displayed.year, month: displayed.month, byMonths: -1) else { return }
@@ -5481,14 +5256,8 @@ class BearyTimelineViewController: UIViewController {
                     days.append(makeCalendarDay(year: nextMonth.year, month: nextMonth.month, day: day, isOffMonth: true))
                 }
             }
-            // TL-6 月标题：宽屏“Y 年 M 月”，≤340px 窄屏才为“Y年M月”。
-            if tableView.bounds.width <= 340 {
-                calendarCard.setTitle("\(displayed.year)年\(displayed.month)月")
-            } else {
-                calendarCard.setTitle("\(displayed.year) 年 \(displayed.month) 月")
-            }
-            calendarCard.setToggleTitle("周视图")
-            calendarCard.setNavigation(prevEnabled: true, nextEnabled: !isCurrentMonth(displayed: displayed))
+            // v14 改版：标题只写年月（周/月同一块日历）。
+            calendarCard.setYearMonth(year: displayed.year, month: displayed.month)
             calendarCard.render(days: days, mode: .month, weekKeys: currentWeekKeys())
         }
         updateStatsLine()
@@ -5497,7 +5266,7 @@ class BearyTimelineViewController: UIViewController {
 
     private func isCurrentWeek(weekStart: (year: Int, month: Int, day: Int)) -> Bool {
         guard let today = BearyBeijingDay.todayComponents() else { return false }
-        guard let currentWeekStart = weekStartOf(year: today.year, month: today.month, day: today.day) else { return false }
+        guard let currentWeekStart = BearyBeijingDay.weekStartOf(year: today.year, month: today.month, day: today.day) else { return false }
         return currentWeekStart.year == weekStart.year && currentWeekStart.month == weekStart.month && currentWeekStart.day == weekStart.day
     }
 
@@ -5561,7 +5330,7 @@ class BearyTimelineViewController: UIViewController {
         switch calendarMode {
         case .week:
             guard let anchor = calendarAnchor else { pendingStepFollow = false; return true }
-            guard let weekStart = weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) else { pendingStepFollow = false; return true }
+            guard let weekStart = BearyBeijingDay.weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) else { pendingStepFollow = false; return true }
             var weekDays: [(year: Int, month: Int, day: Int)] = []
             for offset in 0..<7 {
                 guard let day = BearyBeijingDay.shifted(year: weekStart.year, month: weekStart.month, day: weekStart.day, byDays: offset) else { continue }
@@ -5611,7 +5380,7 @@ class BearyTimelineViewController: UIViewController {
         }
         for day in candidateDays {
             let counts = calendarDayCounts(year: day.year, month: day.month, day: day.day)
-            if counts.published + counts.unpublished > 0 {
+            if counts.published + counts.unpublished + counts.friends + counts.limited > 0 {
                 pendingStepFollow = false
                 selectDay(key: BearyBeijingDay.dayKey(year: day.year, month: day.month, day: day.day))
                 return true
@@ -5717,7 +5486,7 @@ class BearyTimelineViewController: UIViewController {
             guard let base = base else { return }
             // 下一周不许翻进未来：已是本周时 next 按钮本身已禁用，此处再拦一道。
             if delta > 0 {
-                guard let weekStart = weekStartOf(year: base.year, month: base.month, day: base.day) else { return }
+                guard let weekStart = BearyBeijingDay.weekStartOf(year: base.year, month: base.month, day: base.day) else { return }
                 if isCurrentWeek(weekStart: weekStart) { return }
             }
             guard let moved = BearyBeijingDay.shifted(year: base.year, month: base.month, day: base.day, byDays: delta * 7) else { return }
@@ -5747,6 +5516,44 @@ class BearyTimelineViewController: UIViewController {
         refreshHeaderHeight()
     }
 
+    /// 年月把手步进（v14 改版）：长按年份数字拖动／方向键只换年，
+    /// 月份和号数不动（选中日与锚点只改年份）。
+    private func stepCalendarYear(delta: Int) {
+        guard delta != 0 else { return }
+        switch calendarMode {
+        case .week:
+            guard let anchor = calendarAnchor else { return }
+            let targetYear = anchor.year + delta
+            let dim = BearyBeijingDay.daysInMonth(year: targetYear, month: anchor.month) ?? 28
+            calendarAnchor = (year: targetYear, month: anchor.month, day: min(anchor.day, dim))
+        case .month:
+            guard let displayed = calendarDisplayedMonth else { return }
+            calendarDisplayedMonth = (year: displayed.year + delta, month: displayed.month)
+        }
+        fetchCalendarMonthsForCurrentView()
+        refreshHeaderHeight()
+    }
+
+    /// 年月把手步进（v14 改版）：长按月份数字拖动／方向键只换月，
+    /// 拖过 12 月自动跨年（shiftedMonth 处理）；选中日保留号数，
+    /// 超月长时截断到月末（同月模式翻页口径）。
+    private func stepCalendarMonth(delta: Int) {
+        guard delta != 0 else { return }
+        switch calendarMode {
+        case .week:
+            guard let anchor = calendarAnchor else { return }
+            guard let moved = BearyBeijingDay.shiftedMonth(year: anchor.year, month: anchor.month, byMonths: delta) else { return }
+            let dim = BearyBeijingDay.daysInMonth(year: moved.year, month: moved.month) ?? 28
+            calendarAnchor = (year: moved.year, month: moved.month, day: min(anchor.day, dim))
+        case .month:
+            guard let displayed = calendarDisplayedMonth else { return }
+            guard let moved = BearyBeijingDay.shiftedMonth(year: displayed.year, month: displayed.month, byMonths: delta) else { return }
+            calendarDisplayedMonth = moved
+        }
+        fetchCalendarMonthsForCurrentView()
+        refreshHeaderHeight()
+    }
+
     /// C10 “今”钮显隐：显示月份/周不含今天，或选中日不是今天时浮现；
     /// 回到今天后 renderCalendar 重算即隐藏。只读 anchor/displayed/
     /// selected，不改任何已有状态；renderCalendar 是唯一漏斗（翻页、
@@ -5761,7 +5568,7 @@ class BearyTimelineViewController: UIViewController {
         switch calendarMode {
         case .week:
             if let anchor = calendarAnchor,
-               let weekStart = weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) {
+               let weekStart = BearyBeijingDay.weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day) {
                 containsToday = isCurrentWeek(weekStart: weekStart)
             } else {
                 containsToday = false
@@ -5874,6 +5681,7 @@ class BearyTimelineViewController: UIViewController {
                 tableView.reloadData()
             }
             fetchDayEntries(key: key, clear: false)
+            updateInlineComposerDay()
             return
         }
         let hadPanel = selectedDayKey != nil
@@ -5887,6 +5695,7 @@ class BearyTimelineViewController: UIViewController {
             return key < oldKey ? .earlier : .later
         }()
         selectedDayKey = key
+        updateInlineComposerDay()
         renderCalendar()
         // N3：换日时日历标题淡入（仅非减动效；只动标题 alpha，不动高度）。
         if UIAccessibility.isReduceMotionEnabled == false && tableView.window != nil {
@@ -5905,17 +5714,14 @@ class BearyTimelineViewController: UIViewController {
             // 已命中；仍未命中时落盘读改异步（审计四轮增量 06 的 dayDiskReadQueue），
             // 回主线程复核通过才回填内存并按命中同款处理 + 静默刷新。
             // 提交处永不在主线程碰磁盘。
-            // 筛子档不读日缓存：缓存是全部档行，命中会先闪出非本档行、
-            // 再由带 vis 的静默刷新纠正——“只出对应篇”不容这一帧。
-            // 筛子档直接走下方网络分支（带 vis）。
-            if self.timelineVisFilter == .all, let cached = self.dayEntriesCache[key] {
+            if let cached = self.dayEntriesCache[key] {
                 self.showCachedDayPanel(entries: cached, key: key, reduceMotion: reduceMotion)
-            } else if self.timelineVisFilter == .all {
+            } else {
                 // 审计四轮增量 06：内存未命中时落盘读改异步——Data(contentsOf:)
                 // ＋JSON 解码不再占切日首帧。面板先不动（旧日行已退场淡出），
                 // 读完回主线程复核代次/选中日/账号，通过才回填内存并按命中/
-                // 未命中分流；期间用户又切日/清选区/切号/改筛子（筛子改动
-                // 同样 +1 代际），过期结果直接丢弃，由新的 selectDay 流程接管。
+                // 未命中分流；期间用户又切日/清选区/切号（同样 +1 代际），
+                // 过期结果直接丢弃，由新的 selectDay 流程接管。
                 let requestAccountId = SessionManager.shared.currentUser?.id
                 self.dayDiskReadQueue.async { [weak self] in
                     let disk: [Entry]? = {
@@ -5935,8 +5741,6 @@ class BearyTimelineViewController: UIViewController {
                         }
                     }
                 }
-            } else {
-                self.showNetworkDayPanel(key: key, reduceMotion: reduceMotion)
             }
         }
         // N3：旧日卡片退场（仅非减动效、表已入窗、旧面板存在且有可见行时）：
@@ -6126,7 +5930,7 @@ class BearyTimelineViewController: UIViewController {
         dayState = .loaded
         // 筛子档派生不写日缓存：派生行已按 vis 过滤，写盘会污染全部档日缓存。
         // 开发者模式假日记同样不写盘（假数据只放内存）。
-        if timelineVisFilter == .all && !BearyDevPreviewState.fakeEntriesEnabled {
+        if !BearyDevPreviewState.fakeEntriesEnabled {
             cacheDayEntries(key: key, entries: derived)
         }
         prefetchAdjacentDays(for: key)
@@ -6156,25 +5960,16 @@ class BearyTimelineViewController: UIViewController {
         // 账号代际：请求时捕获 uid，回包写缓存/落盘前比对——中途切号到达的
         // 旧账号回包直接丢弃（新账号的 reloadTimeline 会重拉，不靠旧回包对齐）。
         let requestUid = SessionManager.shared.currentUser?.id
-        let requestVis = timelineVisFilter
         // 按日请求序号：每次发出即 +1，回调先比序号——切回同日的旧回包
         // 即使日期、账号、筛子档全对上，也因序号过期而丢弃，不动面板与缓存。
         dayLoadSeq += 1
         let requestDaySeq = dayLoadSeq
-        BearyAPI.shared.fetchTimelineDay(date: key, vis: timelineVisFilter.queryValue) { [weak self] result in
+        BearyAPI.shared.fetchTimelineDay(date: key) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 guard requestDaySeq == strongSelf.dayLoadSeq else { return }
                 if strongSelf.dayKeyForLoad != key { return }
                 if SessionManager.shared.currentUser?.id != requestUid { return }
-                // 筛子档快照：请求发出后用户切了档，旧档回包不得写入当日面板
-                // 与日缓存；状态复位后按当前档重拉（在途守卫已让位，不重复发）。
-                if requestVis != strongSelf.timelineVisFilter {
-                    strongSelf.dayKeyForLoad = nil
-                    strongSelf.dayState = .idle
-                    strongSelf.fetchDayEntries(key: key, clear: false)
-                    return
-                }
                 // N2/N3 回包快照：静默刷新比对用旧签名；换日到达标志在此消费
                 // （早退分支如 fixSel 跳转也不留残标志，避免后一次回包误错峰）。
                 let oldDaySignatures = strongSelf.dayEntries.map { strongSelf.entrySignature($0) }
@@ -6194,11 +5989,7 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.dayEntries = list.entries ?? []
                     // N2：成功回包写入日缓存（失败不写）；静默刷新比对签名。
                     // 写透：内存与落盘同写（见 cacheDayEntries）。
-                    // 筛子档不写盘：过滤行写盘会污染全部档日缓存（按请求时档位判，
-                    // 不按回包时档位判，切档中途的旧档回包到此已被上游丢弃）。
-                    if requestVis == .all {
-                        strongSelf.cacheDayEntries(key: key, entries: strongSelf.dayEntries)
-                    }
+                    strongSelf.cacheDayEntries(key: key, entries: strongSelf.dayEntries)
                     dayUnchanged = (clear == false && oldDaySignatures == strongSelf.dayEntries.map { strongSelf.entrySignature($0) })
                     // B-G7: patch the timeline copy from the fresh day-panel copy
                     // before reload, so both copies render the same state.
@@ -6207,36 +5998,33 @@ class BearyTimelineViewController: UIViewController {
                     timelinePatchChanged = timelineBefore != strongSelf.timelineEntries.map { strongSelf.entrySignature($0) }
                     strongSelf.dayEntriesKey = key
                     strongSelf.dayState = .loaded
+                    strongSelf.updateInlineComposerDay()
                     // 相邻日预取触发点：正向加载成功后才触发（失败不触发）；
                     // 预取只写日缓存，不动面板与时间线行（见 prefetchAdjacentDays）。
                     strongSelf.prefetchAdjacentDays(for: key)
-                    // 筛子档下当日空是预期（该日无此分类篇），不是删空：
-                    // 选区守卫一律按全部档口径，不在筛子档里挪选区
-                    // （下方两段原语义一字不动，只包一层档位守卫）。
-                    if strongSelf.timelineVisFilter == .all {
-                        // 第 4 项：删除后挂起的守卫在当日面板已空时也跑一次
-                        // （以日历计数为准；守卫现不跳转，恒返回 false、走正常重载）。
-                        if strongSelf.pendingFixSelCheck && strongSelf.dayEntries.isEmpty {
-                            if strongSelf.checkFixSelForSelectedDay() {
-                                strongSelf.pendingEntryJumpCheck = false
-                                return
-                            }
-                        }
-                        // 第 2 项 A：初次进入 / 下拉刷新守卫在当日回包处消费。
-                        // 当日已空才跑（非空即清挂起、不跳转）；缓存未到时
-                        // checkEntryJumpForSelectedDay 会重新挂起并补拉该月，
-                        // 到达后由月份回包分支重试，本处先按空面板正常重载。
-                        if strongSelf.pendingEntryJumpCheck {
+                    // 第 4 项：删除后挂起的守卫在当日面板已空时也跑一次
+                    // （以日历计数为准；守卫现不跳转，恒返回 false、走正常重载）。
+                    if strongSelf.pendingFixSelCheck && strongSelf.dayEntries.isEmpty {
+                        if strongSelf.checkFixSelForSelectedDay() {
                             strongSelf.pendingEntryJumpCheck = false
-                            if strongSelf.dayEntries.isEmpty {
-                                if strongSelf.checkEntryJumpForSelectedDay() {
-                                    return
-                                }
+                            return
+                        }
+                    }
+                    // 第 2 项 A：初次进入 / 下拉刷新守卫在当日回包处消费。
+                    // 当日已空才跑（非空即清挂起、不跳转）；缓存未到时
+                    // checkEntryJumpForSelectedDay 会重新挂起并补拉该月，
+                    // 到达后由月份回包分支重试，本处先按空面板正常重载。
+                    if strongSelf.pendingEntryJumpCheck {
+                        strongSelf.pendingEntryJumpCheck = false
+                        if strongSelf.dayEntries.isEmpty {
+                            if strongSelf.checkEntryJumpForSelectedDay() {
+                                return
                             }
                         }
                     }
                 case .failure(let error):
                     strongSelf.dayState = .failed
+                    strongSelf.updateInlineComposerDay()
                 }
                 // M2：同日刷新（clear:false）只重载当日面板分区，不整表 reloadData。
                 // 本批 4b：换日（clear:true）回包也不再一律整表——分区数稳定且
@@ -6346,7 +6134,7 @@ class BearyTimelineViewController: UIViewController {
             return displayed.year != year || displayed.month != month
         case .week:
             guard let anchor = calendarAnchor,
-                  let weekStart = weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day),
+                  let weekStart = BearyBeijingDay.weekStartOf(year: anchor.year, month: anchor.month, day: anchor.day),
                   let weekStartNumber = BearyBeijingDay.dayNumber(year: weekStart.year, month: weekStart.month, day: weekStart.day),
                   let dayNumber = BearyBeijingDay.dayNumber(year: year, month: month, day: day) else { return false }
             return dayNumber < weekStartNumber || dayNumber > weekStartNumber + 6
@@ -6361,8 +6149,7 @@ class BearyTimelineViewController: UIViewController {
     /// “日期段不保留”）已废止——失败文案本身不再兼重试入口。
     /// head/suffix 分段供表头富文本使用（日期加粗 15 + 后段灰色 12）；
     /// failed 供组头决定是否出日期旁重试钮。
-    /// 日期去重：日期只在此处出现，表头筛选行不再重复（只留筛子钮，见
-    /// filterRow）。日历标题是“日历翻到了哪月／哪周”，此处是“下面正在看
+    /// 日期去重：日期只在此处出现，不在表头重复。日历标题是“日历翻到了哪月／哪周”，此处是“下面正在看
     /// 哪天”——翻到无记录的月／周时选区保留原日（见 tryStepFollowSelection），
     /// 两处所指可能不同月；此时 head 带年份写全（“2026 年 11 月 18 日”），
     /// 让正在看的那天自带年月，与日历标题一眼分清；在当前日历视图内时仍
@@ -6540,23 +6327,13 @@ class BearyTimelineViewController: UIViewController {
                 newBackgroundKind = "failed"
             }
         } else if timelineState == .loaded && !hasRows {
-            if timelineVisFilter != .all {
-                // 筛子档空态：不是“没有日记”，是该档无篇；给“回到全部”
-                // 快捷键（走同一切换路径，错峰口径一致），不用“写一篇”
-                // 误导（新篇默认私密，未必落进当前档）。
-                tableView.backgroundView = emptyView(title: "该分类下还没有日记", subtitle: "切回全部看看，或者写一篇新的", actionTitle: "回到全部", action: { [weak self] in
-                    self?.applyVisFilter(.all)
-                }, iconName: "icon_tray")
-                newBackgroundKind = "empty-filter"
-            } else {
-                // B-G9: web renderTimeline empty state uses beary-diary, not tray.
-                // Q5：时间线空态加“写一篇”按钮（走 onCompose 回调，容器接线打开编辑器；
-                // 回收站空态不在本文件，不动）。
-                tableView.backgroundView = emptyView(title: "把日子留在这里", subtitle: "写下第一篇，它会出现在这里", actionTitle: "写一篇", action: { [weak self] in
-                    self?.onCompose?()
-                }, iconName: "icon_diary")
-                newBackgroundKind = "empty"
-            }
+            // B-G9: web renderTimeline empty state uses beary-diary, not tray.
+            // Q5：时间线空态加“写一篇”按钮（走 onCompose 回调，容器接线打开编辑器；
+            // 回收站空态不在本文件，不动）。
+            tableView.backgroundView = emptyView(title: "把日子留在这里", subtitle: "写下第一篇，它会出现在这里", actionTitle: "写一篇", action: { [weak self] in
+                self?.onCompose?()
+            }, iconName: "icon_diary")
+            newBackgroundKind = "empty"
         } else {
             // 加载三件套·骨架淡出：首屏骨架出过屏时，背景视图 0.26s 淡出再摘；
             // 减动效或非骨架背景时直接摘（骨架淡出与内容 60ms/8px 入场同步）。
@@ -6897,6 +6674,8 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         let sections = currentSections()
         guard section < sections.count else { return 0 }
+        // v14 改版：空日占位行——当日面板无条目且已加载时出 1 行纯文字占位。
+        if section == 0, isDayPanelEmpty { return 1 }
         return sections[section].entries.count
     }
 
@@ -6941,6 +6720,8 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
     }
 
     func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
+        // v14 改版：空日占位行固定 44pt。
+        if indexPath.section == 0, isDayPanelEmpty { return 44 }
         // 固定 estimatedRowHeight 180 与真实行高（纯文字约 170、有图 400+）差近
         // 200pt，滚动中 contentSize 不断修正会漂移；按模型逐行估算。
         let sections = currentSections()
@@ -6949,6 +6730,32 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        // v14 改版：空日占位行——纯文字「这天没有日记」，15pt 灰，leading 36
+        // 与正文列对齐，上下各 12（行高 44）；不是日记卡，不挂任何操作。
+        if indexPath.section == 0, isDayPanelEmpty, indexPath.row == 0 {
+            let reuseId = "BearyEmptyDayCell"
+            let cell = tableView.dequeueReusableCell(withIdentifier: reuseId) ?? UITableViewCell(style: .default, reuseIdentifier: reuseId)
+            cell.selectionStyle = .none
+            cell.backgroundColor = .clear
+            cell.contentView.backgroundColor = .clear
+            // 复用 cell 先清旧文案（同一 identifier 只此一处用，仍防残留）。
+            for subview in cell.contentView.subviews {
+                subview.removeFromSuperview()
+            }
+            let label = UILabel()
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.text = "这天没有日记"
+            label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+            label.adjustsFontForContentSizeCategory = true
+            label.textColor = BearyColors.gray
+            cell.contentView.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: cell.contentView.leadingAnchor, constant: 36),
+                label.topAnchor.constraint(equalTo: cell.contentView.topAnchor, constant: 12),
+                label.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor, constant: -12),
+            ])
+            return cell
+        }
         let sections = currentSections()
         guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else {
             return UITableViewCell()
@@ -7575,175 +7382,756 @@ enum BearyCalendarSnapshotStore {
     }
 }
 
-// MARK: - 时间线可见性筛选底 sheet
+// MARK: - 写一笔速写器（v14 改版）
 
-/// 时间线可见性筛选底 sheet（2026-11-18：尖角气泡改底部 sheet）。
-/// 5 行：文字左对齐、无分隔线、篇数靠右、选中行最右打勾；行上下内边距 8、
-/// 顶留白 6、底留白 10、行内元素间距 8（BearySheetChrome 列表值）。
-/// 篇数只显调用方给的三档（全部／公开／私密）；无计数档不显示、不编造。
-/// 点一行即选定并收起，收起后由调用方切档；抓手下滑／点外收起走系统 sheet。
-final class BearyVisFilterSheetViewController: UIViewController, BearySystemSheetSizing {
+/// 写一笔交 VC 的草稿（点发布瞬间定格）：正文、图片、引用、@、标签、位置。
+/// 选中日期由 VC 在 publishInlineComposer 里按 selectedDayKey 填（nil = 今天）。
+struct BearyInlineComposerDraft {
+    var text: String
+    var images: [BearyPublishImage]
+    var imageLocalFiles: [String]
+    var quoteId: String?
+    var mentionedUserId: Int?
+    var tags: [String]
+    var location: DiaryLocation?
+}
 
-    /// 与 fileprivate enum 配对：init 参数走本别名，须同为 fileprivate（否则
-    /// 编译器按 private 别名卡初始化器级别）。
-    fileprivate typealias Filter = BearyTimelineViewController.TimelineVisFilter
+/// 写一笔速写器：写选中那天的日记（今天 nil 日期走旧口径，过去某天带 date）。
+/// 放在时间线表头底部（日历卡下方）；编辑器页不动。
+/// 工具复用编辑器同款签名（图片 PHPicker／定位／表情／标签／@／引用）；
+/// 自定义表情上传不做（toast 指去写日记页）；粘贴图片拦截同 #2090 口径。
+final class BearyInlineComposerView: UIView, UITextViewDelegate, PHPickerViewControllerDelegate {
 
-    private let selected: Filter
-    private let counts: [Filter: Int]
-    private let onPick: (Filter) -> Void
+    weak var presenter: UIViewController?
+    var onPublish: ((BearyInlineComposerDraft) -> Void)?
+    var onFocusChanged: ((Bool) -> Void)?
+    var onHeightChanged: (() -> Void)?
+    var onRequireLogin: (() -> Void)?
+    var onToast: ((String) -> Void)?
 
-    private let stackView = UIStackView()
+    static let maxImages = 9
+    /// 正文长到约 120pt 后内部滚动（与编辑器同口径的上限感）。
+    private static let maxTextHeight: CGFloat = 120
+    private static let minTextHeight: CGFloat = 48
 
-    /// 初始化器须与参数类型同级：Filter 是 fileprivate 枚举，init 只给同文件内的
-    /// presentVisFilterSheet 用，故也声明为 fileprivate。
-    fileprivate init(selected: Filter, counts: [Filter: Int], onPick: @escaping (Filter) -> Void) {
-        self.selected = selected
-        self.counts = counts
-        self.onPick = onPick
-        super.init(nibName: nil, bundle: nil)
+    private let dateLabel = UILabel()
+    private let boxView = UIView()
+    private let focusedBackgroundView = UIView()
+    private let dashedBorderView = BearyDashedBorderView()
+    private let textView = UITextView()
+    private let placeholderLabel = UILabel()
+    private let chipsScrollView = UIScrollView()
+    private let chipsStack = UIStackView()
+    private let toolRow = UIStackView()
+    private let publishButton = UIButton(type: .system)
+    private var textViewHeightConstraint: NSLayoutConstraint?
+    private var lastTextViewWidth: CGFloat = 0
+
+    private var composerFocused = false
+    /// 发布在途（发布中心 pill 负责失败重试；成功回包后 VC 调 reset 清掉）。
+    var isPublishing = false { didSet { updatePublishButton() } }
+
+    // 选中日状态（VC 每次选日／当日回包后调 updateDay 同步）。
+    private(set) var selectedDayKey: String?
+    private var dayHasEntries = false
+    private var isFutureDay = false
+
+    // 内容
+    private var imageItems: [(localFile: String, image: UIImage)] = []
+    private var gifKeys: [String] = []
+    private var selectedLocation: DiaryLocation?
+    private var selectedTags: [String] = []
+    private var mentionedUser: SearchUser?
+    private var selectedQuote: Entry?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        buildUI()
     }
 
     required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+        return nil
     }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if abs(textView.bounds.width - lastTextViewWidth) > 0.5 {
+            lastTextViewWidth = textView.bounds.width
+            updateTextViewHeight()
+        }
+    }
+
+    // MARK: - 搭建
+
+    private func buildUI() {
+        dateLabel.translatesAutoresizingMaskIntoConstraints = false
+        dateLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        dateLabel.adjustsFontForContentSizeCategory = true
+        dateLabel.textColor = BearyColors.gray
+
+        // 闲置态虚线框（现成 BearyDashedBorderView：1.5pt、[4,3]、圆角 16、line 色）；
+        // 聚焦时切微明度底（surface 系），虚线框不动。
+        focusedBackgroundView.translatesAutoresizingMaskIntoConstraints = false
+        focusedBackgroundView.backgroundColor = BearyColors.surface1
+        focusedBackgroundView.layer.cornerRadius = BearyCorners.single
+        focusedBackgroundView.alpha = 0
+        dashedBorderView.translatesAutoresizingMaskIntoConstraints = false
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.delegate = self
+        textView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textColor = BearyColors.ink
+        textView.backgroundColor = .clear
+        textView.textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        textView.textContainer.lineFragmentPadding = 0
+        textView.isScrollEnabled = false
+        textView.returnKeyType = .default
+        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        placeholderLabel.adjustsFontForContentSizeCategory = true
+        placeholderLabel.textColor = BearyColors.gray
+        placeholderLabel.isUserInteractionEnabled = false
+        boxView.translatesAutoresizingMaskIntoConstraints = false
+        boxView.addSubview(focusedBackgroundView)
+        boxView.addSubview(dashedBorderView)
+        boxView.addSubview(textView)
+        boxView.addSubview(placeholderLabel)
+        let heightConstraint = textView.heightAnchor.constraint(equalToConstant: Self.minTextHeight)
+        heightConstraint.isActive = true
+        textViewHeightConstraint = heightConstraint
+        NSLayoutConstraint.activate([
+            focusedBackgroundView.topAnchor.constraint(equalTo: boxView.topAnchor),
+            focusedBackgroundView.leadingAnchor.constraint(equalTo: boxView.leadingAnchor),
+            focusedBackgroundView.trailingAnchor.constraint(equalTo: boxView.trailingAnchor),
+            focusedBackgroundView.bottomAnchor.constraint(equalTo: boxView.bottomAnchor),
+            dashedBorderView.topAnchor.constraint(equalTo: boxView.topAnchor),
+            dashedBorderView.leadingAnchor.constraint(equalTo: boxView.leadingAnchor),
+            dashedBorderView.trailingAnchor.constraint(equalTo: boxView.trailingAnchor),
+            dashedBorderView.bottomAnchor.constraint(equalTo: boxView.bottomAnchor),
+            textView.topAnchor.constraint(equalTo: boxView.topAnchor),
+            textView.leadingAnchor.constraint(equalTo: boxView.leadingAnchor),
+            textView.trailingAnchor.constraint(equalTo: boxView.trailingAnchor),
+            textView.bottomAnchor.constraint(equalTo: boxView.bottomAnchor),
+            placeholderLabel.leadingAnchor.constraint(equalTo: boxView.leadingAnchor, constant: 12),
+            placeholderLabel.topAnchor.constraint(equalTo: boxView.topAnchor, constant: 12),
+            placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: boxView.trailingAnchor, constant: -12),
+        ])
+
+        chipsScrollView.translatesAutoresizingMaskIntoConstraints = false
+        chipsScrollView.showsHorizontalScrollIndicator = false
+        chipsStack.translatesAutoresizingMaskIntoConstraints = false
+        chipsStack.axis = .horizontal
+        chipsStack.spacing = 8
+        chipsStack.alignment = .center
+        chipsScrollView.addSubview(chipsStack)
+        NSLayoutConstraint.activate([
+            chipsStack.topAnchor.constraint(equalTo: chipsScrollView.topAnchor),
+            chipsStack.leadingAnchor.constraint(equalTo: chipsScrollView.leadingAnchor),
+            chipsStack.trailingAnchor.constraint(equalTo: chipsScrollView.trailingAnchor),
+            chipsStack.bottomAnchor.constraint(equalTo: chipsScrollView.bottomAnchor),
+            chipsStack.heightAnchor.constraint(equalToConstant: 48),
+        ])
+        chipsScrollView.isHidden = true
+
+        // 工具行默认收起，聚焦时展开（6 钮：图片、定位、表情、标签、@、引用；
+        // 图标复用编辑器同款；发布钮在行末）。
+        toolRow.translatesAutoresizingMaskIntoConstraints = false
+        toolRow.axis = .horizontal
+        toolRow.spacing = 20
+        toolRow.alignment = .center
+        toolRow.addArrangedSubview(makeToolButton(iconName: "icon_image", label: "添加图片", action: #selector(didTapImageTool)))
+        toolRow.addArrangedSubview(makeToolButton(locationIcon: true, label: "添加位置", action: #selector(didTapLocationTool)))
+        toolRow.addArrangedSubview(makeToolButton(iconName: "icon_mood", label: "添加表情", action: #selector(didTapEmoteTool)))
+        toolRow.addArrangedSubview(makeTagToolButton())
+        toolRow.addArrangedSubview(makeToolButton(iconName: "icon_at", label: "@ 谁", action: #selector(didTapRecipientTool)))
+        toolRow.addArrangedSubview(makeToolButton(iconName: "icon_quote", label: "引用一篇日记", action: #selector(didTapQuoteTool)))
+        let spacer = UIView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        toolRow.addArrangedSubview(spacer)
+        publishButton.translatesAutoresizingMaskIntoConstraints = false
+        publishButton.setTitle("发布", for: .normal)
+        publishButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 14))
+        publishButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        publishButton.layer.cornerRadius = 16
+        publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        publishButton.addTarget(self, action: #selector(didTapPublish), for: .touchUpInside)
+        publishButton.bearyAddPressFeedback()
+        toolRow.addArrangedSubview(publishButton)
+        NSLayoutConstraint.activate([
+            publishButton.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        toolRow.isHidden = true
+        updatePublishButton()
+
+        let stack = UIStackView(arrangedSubviews: [dateLabel, boxView, chipsScrollView, toolRow])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 8
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        updateDateLabel()
+        updatePlaceholder()
+    }
+
+    private func makeToolButton(iconName: String, label: String, action: Selector) -> UIButton {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setImage(BearyIconImages.image(named: iconName, pointSize: 24), for: .normal)
+        button.tintColor = BearyColors.ink
+        button.accessibilityLabel = label
+        button.addTarget(self, action: action, for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 44),
+            button.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        return button
+    }
+
+    private func makeToolButton(locationIcon: Bool, label: String, action: Selector) -> UIButton {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setImage(BearyLocationIcon.image(pointSize: 24), for: .normal)
+        button.tintColor = BearyColors.ink
+        button.accessibilityLabel = label
+        button.addTarget(self, action: action, for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 44),
+            button.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        return button
+    }
+
+    private func makeTagToolButton() -> UIButton {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle("#", for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 20, weight: .bold)
+        button.setTitleColor(BearyColors.ink, for: .normal)
+        button.accessibilityLabel = "添加标签"
+        button.addTarget(self, action: #selector(didTapTagTool), for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 44),
+            button.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        return button
+    }
+
+    // MARK: - 选中日同步（VC 调）
+
+    /// 选中日变化时同步日期行、提示语与可写态（未来日锁住写不了）。
+    func updateDay(selectedDayKey: String?, hasEntries: Bool, isFuture: Bool) {
+        self.selectedDayKey = selectedDayKey
+        self.dayHasEntries = hasEntries
+        self.isFutureDay = isFuture
+        textView.isEditable = !isFuture
+        if isFuture {
+            textView.resignFirstResponder()
+        }
+        updateDateLabel()
+        updatePlaceholder()
+    }
+
+    private func parsedSelectedDay() -> (year: Int, month: Int, day: Int)? {
+        guard let key = selectedDayKey else { return nil }
+        let parts = key.split(separator: "-")
+        guard parts.count == 3,
+              let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else { return nil }
+        return (year, month, day)
+    }
+
+    private func weekdayName(year: Int, month: Int, day: Int) -> String {
+        guard let date = BearyBeijingDay.date(year: year, month: month, day: day) else { return "" }
+        let weekday = BearyBeijingDay.calendar.component(.weekday, from: date)
+        let names = ["日", "一", "二", "三", "四", "五", "六"]
+        guard weekday >= 1, weekday <= 7 else { return "" }
+        return "周\(names[weekday - 1])"
+    }
+
+    /// 日期行：今天→“今天 · 11月21日 · 周五”；昨天→“昨天 · 11月20日 · 周四”；
+    /// 其他→“11月18日 · 周二”。中文硬编码（与 #2092 本地化支衔接）。
+    private func updateDateLabel() {
+        guard let day = parsedSelectedDay() else {
+            dateLabel.text = ""
+            return
+        }
+        let weekday = weekdayName(year: day.year, month: day.month, day: day.day)
+        let monthDay = "\(day.month)月\(day.day)日"
+        if let today = BearyBeijingDay.todayComponents(),
+           today.year == day.year && today.month == day.month && today.day == day.day {
+            dateLabel.text = "今天 · \(monthDay) · \(weekday)"
+            return
+        }
+        if let today = BearyBeijingDay.todayComponents(),
+           let yesterday = BearyBeijingDay.shifted(year: today.year, month: today.month, day: today.day, byDays: -1),
+           yesterday.year == day.year && yesterday.month == day.month && yesterday.day == day.day {
+            dateLabel.text = "昨天 · \(monthDay) · \(weekday)"
+            return
+        }
+        dateLabel.text = "\(monthDay) · \(weekday)"
+    }
+
+    /// 提示语随那天变：未来日锁住；那天已有日记提示再补一笔；今天没写
+    /// 「今天还没写日记哦」；过去某天没写「这天还没写，补一篇日记？」。
+    private func updatePlaceholder() {
+        if isFutureDay {
+            placeholderLabel.text = "还没到这天，等到了再写"
+        } else if dayHasEntries {
+            placeholderLabel.text = "再补一笔吧"
+        } else if let today = BearyBeijingDay.todayComponents(),
+                  let day = parsedSelectedDay(),
+                  today.year == day.year && today.month == day.month && today.day == day.day {
+            placeholderLabel.text = "今天还没写日记哦"
+        } else {
+            placeholderLabel.text = "这天还没写，补一篇日记？"
+        }
+        placeholderLabel.isHidden = !textView.text.isEmpty
+    }
+
+    // MARK: - 发布
+
+    private var canPublish: Bool {
+        if isPublishing { return false }
+        if !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        return !imageItems.isEmpty
+    }
+
+    private func updatePublishButton() {
+        let enabled = canPublish
+        publishButton.isEnabled = enabled
+        // 写字才亮橙，平时灰（只改底色与字色，不动布局）。
+        publishButton.backgroundColor = enabled ? BearyColors.orange : BearyColors.surface2
+        publishButton.setTitleColor(enabled ? .white : BearyColors.gray, for: .normal)
+    }
+
+    @objc private func didTapPublish() {
+        guard canPublish else { return }
+        let text = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let draft = BearyInlineComposerDraft(
+            text: text,
+            images: imageItems.map { BearyPublishImage(localFile: $0.localFile, serverKey: nil, liveVideoKey: nil, liveVideoFile: nil, liveVideoData: nil) },
+            imageLocalFiles: imageItems.map { $0.localFile },
+            quoteId: selectedQuote?.id,
+            mentionedUserId: mentionedUser?.id,
+            tags: selectedTags,
+            location: selectedLocation
+        )
+        isPublishing = true
+        onPublish?(draft)
+    }
+
+    /// 发布成功后 VC 调：清空全部内容，恢复闲置态。
+    func reset() {
+        textView.text = ""
+        imageItems = []
+        gifKeys = []
+        selectedLocation = nil
+        selectedTags = []
+        mentionedUser = nil
+        selectedQuote = nil
+        isPublishing = false
+        textView.resignFirstResponder()
+        toolRow.isHidden = true
+        focusedBackgroundView.alpha = 0
+        rebuildChips()
+        updatePlaceholder()
+        updatePublishButton()
+        updateTextViewHeight()
+        onHeightChanged?()
+    }
+
+    // MARK: - UITextViewDelegate
+
+    func textViewShouldBeginEditing(_ textView: UITextView) -> Bool {
+        // 游客点速写器走登录页（不进输入态）。
+        if SessionManager.shared.currentUser == nil {
+            onRequireLogin?()
+            return false
+        }
+        return true
+    }
+
+    func textViewDidBeginEditing(_ textView: UITextView) {
+        composerFocused = true
+        toolRow.isHidden = false
+        UIView.animate(withDuration: BearyMotion.micro, animations: {
+            self.focusedBackgroundView.alpha = 1
+        })
+        onFocusChanged?(true)
+        onHeightChanged?()
+    }
+
+    func textViewDidEndEditing(_ textView: UITextView) {
+        composerFocused = false
+        // 内容全空时工具行收起；有内容时留着（用户点发布不用再聚焦）。
+        if textView.text.isEmpty && imageItems.isEmpty && gifKeys.isEmpty
+            && selectedLocation == nil && selectedTags.isEmpty
+            && mentionedUser == nil && selectedQuote == nil {
+            toolRow.isHidden = true
+        }
+        UIView.animate(withDuration: BearyMotion.micro, animations: {
+            self.focusedBackgroundView.alpha = 0
+        })
+        onFocusChanged?(false)
+        onHeightChanged?()
+    }
+
+    func textViewDidChange(_ textView: UITextView) {
+        updatePlaceholder()
+        updatePublishButton()
+        updateTextViewHeight()
+    }
+
+    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        // 粘贴图片拦截（同 #2090 口径）："图片请用图片按钮添加"。
+        // 图片粘贴以附件字符 U+FFFC 进来；纯文字粘贴不受影响。
+        if text.contains("\u{FFFC}") {
+            onToast?("图片请用图片按钮添加")
+            return false
+        }
+        return true
+    }
+
+    private func updateTextViewHeight() {
+        guard textView.bounds.width > 0 else { return }
+        textView.isScrollEnabled = false
+        let fitting = textView.sizeThatFits(CGSize(width: textView.bounds.width, height: .greatestFiniteMagnitude))
+        let target = min(max(fitting.height, Self.minTextHeight), Self.maxTextHeight)
+        textView.isScrollEnabled = fitting.height > Self.maxTextHeight
+        guard let constraint = textViewHeightConstraint, abs(constraint.constant - target) > 0.5 else { return }
+        constraint.constant = target
+        onHeightChanged?()
+    }
+
+    private func insertTextAtCursor(_ text: String) {
+        if !textView.isFirstResponder {
+            textView.becomeFirstResponder()
+        }
+        textView.insertText(text)
+    }
+
+    // MARK: - 工具行
+
+    private var remainingImageSlots: Int {
+        max(Self.maxImages - imageItems.count - gifKeys.count, 0)
+    }
+
+    @objc private func didTapImageTool() {
+        // 9 图上限：照片条＋已插 GIF 合计满 9 即拦（编辑器同口径）。
+        if remainingImageSlots <= 0 {
+            onToast?("最多 9 张图片")
+            return
+        }
+        var config = PHPickerConfiguration()
+        // 内联版只接静态图（不接实况视频）。
+        config.filter = .images
+        config.selectionLimit = remainingImageSlots
+        config.selection = .ordered
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = self
+        presenter?.present(picker, animated: BearyMotion.animated(true))
+    }
+
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: BearyMotion.animated(true))
+        for result in results {
+            if imageItems.count + gifKeys.count >= Self.maxImages { break }
+            let provider = result.itemProvider
+            guard provider.canLoadObject(ofClass: UIImage.self) else { continue }
+            provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+                guard let self = self, let image = object as? UIImage else { return }
+                DispatchQueue.main.async {
+                    self.addPickedImage(image)
+                }
+            }
+        }
+    }
+
+    private func addPickedImage(_ image: UIImage) {
+        guard imageItems.count + gifKeys.count < Self.maxImages else {
+            onToast?("最多 9 张图片")
+            return
+        }
+        // 落盘口径同编辑器：长边 1600、q0.92 原图＋480 缩略图，账号版落盘。
+        guard let jpeg = BearyImagePrep.jpegData(image),
+              let thumb = BearyImagePrep.thumbData(image),
+              let localFile = BearyDraftImageStore.save(
+                fullData: jpeg.data, thumbData: thumb,
+                forAccount: SessionManager.shared.currentUser?.id ?? BearyDraftStore.currentAccountId) else {
+            onToast?("图片保存失败")
+            return
+        }
+        imageItems.append((localFile: localFile, image: image))
+        rebuildChips()
+        updatePublishButton()
+        onHeightChanged?()
+    }
+
+    @objc private func didTapLocationTool() {
+        guard let presenter = presenter else { return }
+        BearyLocationPicker.show(from: presenter, currentLocation: selectedLocation) { [weak self] location in
+            self?.selectedLocation = location
+            self?.rebuildChips()
+            self?.onHeightChanged?()
+        } onClear: { [weak self] in
+            self?.selectedLocation = nil
+            self?.rebuildChips()
+            self?.onHeightChanged?()
+        }
+    }
+
+    @objc private func didTapEmoteTool() {
+        guard let presenter = presenter else { return }
+        BearyMoodPickerSheet.show(from: presenter, gifKeys: BearyGIFLibrary.cachedKeys()) { [weak self] key in
+            guard let self = self else { return }
+            // 已插 GIF 也占 1 张（照片条＋已插 GIF 合计满 9 即拦，编辑器同口径）。
+            if self.imageItems.count + self.gifKeys.count >= Self.maxImages {
+                self.onToast?("最多 9 张图片")
+                return
+            }
+            if !self.gifKeys.contains(key) {
+                self.gifKeys.append(key)
+            }
+            self.insertTextAtCursor("[gif:\(key)] ")
+            self.updatePublishButton()
+        } onUploadGIF: { [weak self] in
+            // 自定义表情上传不做：请去写日记页（见 PR 说明）。
+            self?.onToast?("自定义表情上传请去写日记页")
+        }
+    }
+
+    @objc private func didTapTagTool() {
+        guard let presenter = presenter else { return }
+        BearyTagPicker.show(from: presenter, selected: selectedTags) { [weak self] tags in
+            self?.selectedTags = tags
+            self?.rebuildChips()
+            self?.onHeightChanged?()
+        }
+    }
+
+    @objc private func didTapRecipientTool() {
+        guard let presenter = presenter else { return }
+        let picker = BearyRecipientPickerViewController()
+        picker.onPick = { [weak self] user, _ in
+            guard let self = self else { return }
+            self.mentionedUser = user
+            if let handle = user.handle, !handle.isEmpty {
+                self.insertTextAtCursor("@\(handle) ")
+            }
+            self.rebuildChips()
+            self.onHeightChanged?()
+        }
+        presenter.present(picker, animated: BearyMotion.animated(true))
+    }
+
+    @objc private func didTapQuoteTool() {
+        guard let presenter = presenter else { return }
+        let picker = BearyInlineQuotePickerViewController()
+        picker.onPick = { [weak self] entry in
+            self?.selectedQuote = entry
+            self?.rebuildChips()
+            self?.onHeightChanged?()
+        }
+        let nav = UINavigationController(rootViewController: picker)
+        nav.modalPresentationStyle = .pageSheet
+        presenter.present(nav, animated: BearyMotion.animated(true))
+    }
+
+    // MARK: - chips 行
+
+    private func rebuildChips() {
+        for view in chipsStack.arrangedSubviews {
+            chipsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for (index, item) in imageItems.enumerated() {
+            chipsStack.addArrangedSubview(makeImageChip(item: item, index: index))
+        }
+        if let location = selectedLocation, !(location.name ?? "").isEmpty {
+            chipsStack.addArrangedSubview(makeTextChip(title: location.name ?? "", action: #selector(didTapClearLocationChip)))
+        }
+        for (index, tag) in selectedTags.enumerated() {
+            let chip = makeTextChip(title: "#\(tag)", action: #selector(didTapRemoveTagChip(_:)))
+            chip.tag = index
+            chipsStack.addArrangedSubview(chip)
+        }
+        if let user = mentionedUser, let handle = user.handle, !handle.isEmpty {
+            chipsStack.addArrangedSubview(makeTextChip(title: "@\(handle)", action: #selector(didTapClearMentionChip)))
+        }
+        if let quote = selectedQuote {
+            let title = (quote.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = title.isEmpty ? "引用了一篇日记" : "引用：\(title)"
+            chipsStack.addArrangedSubview(makeTextChip(title: label, action: #selector(didTapClearQuoteChip)))
+        }
+        chipsScrollView.isHidden = chipsStack.arrangedSubviews.isEmpty
+    }
+
+    private func makeImageChip(item: (localFile: String, image: UIImage), index: Int) -> UIView {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        let imageView = UIImageView(image: item.image)
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFill
+        imageView.clipsToBounds = true
+        imageView.layer.cornerRadius = 8
+        container.addSubview(imageView)
+        let deleteButton = UIButton(type: .system)
+        deleteButton.translatesAutoresizingMaskIntoConstraints = false
+        deleteButton.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
+        deleteButton.tintColor = BearyColors.gray
+        deleteButton.backgroundColor = BearyColors.surface1
+        deleteButton.layer.cornerRadius = 10
+        deleteButton.accessibilityLabel = "删除这张图片"
+        deleteButton.tag = index
+        deleteButton.addTarget(self, action: #selector(didTapRemoveImageChip(_:)), for: .touchUpInside)
+        container.addSubview(deleteButton)
+        NSLayoutConstraint.activate([
+            container.widthAnchor.constraint(equalToConstant: 48),
+            container.heightAnchor.constraint(equalToConstant: 48),
+            imageView.topAnchor.constraint(equalTo: container.topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            deleteButton.widthAnchor.constraint(equalToConstant: 20),
+            deleteButton.heightAnchor.constraint(equalToConstant: 20),
+            deleteButton.topAnchor.constraint(equalTo: container.topAnchor, constant: -4),
+            deleteButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: 4),
+        ])
+        return container
+    }
+
+    private func makeTextChip(title: String, action: Selector) -> UIButton {
+        let chip = UIButton(type: .system)
+        chip.translatesAutoresizingMaskIntoConstraints = false
+        chip.setTitle("\(title) ×", for: .normal)
+        chip.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        chip.titleLabel?.adjustsFontForContentSizeCategory = true
+        chip.setTitleColor(BearyColors.ink, for: .normal)
+        chip.backgroundColor = BearyColors.surface2
+        chip.layer.cornerRadius = 12
+        chip.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+        chip.addTarget(self, action: action, for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            chip.heightAnchor.constraint(equalToConstant: 24),
+        ])
+        return chip
+    }
+
+    @objc private func didTapRemoveImageChip(_ sender: UIButton) {
+        guard sender.tag < imageItems.count else { return }
+        imageItems.remove(at: sender.tag)
+        rebuildChips()
+        updatePublishButton()
+        onHeightChanged?()
+    }
+
+    @objc private func didTapClearLocationChip() {
+        selectedLocation = nil
+        rebuildChips()
+        onHeightChanged?()
+    }
+
+    @objc private func didTapRemoveTagChip(_ sender: UIButton) {
+        guard sender.tag < selectedTags.count else { return }
+        selectedTags.remove(at: sender.tag)
+        rebuildChips()
+        onHeightChanged?()
+    }
+
+    @objc private func didTapClearMentionChip() {
+        mentionedUser = nil
+        rebuildChips()
+        onHeightChanged?()
+    }
+
+    @objc private func didTapClearQuoteChip() {
+        selectedQuote = nil
+        rebuildChips()
+        onHeightChanged?()
+    }
+}
+
+// MARK: - 写一笔引用选择器（v14 改版轻量版）
+
+/// 最近 50 篇（scope=timeline），行显示标题/正文片段＋日期；pageSheet＋取消钮。
+/// 编辑器的 BearyQuoteSheetViewController 深嵌编辑器，不可复用。
+final class BearyInlineQuotePickerViewController: UITableViewController {
+
+    var onPick: ((Entry) -> Void)?
+    private var entries: [Entry] = []
+    private var loadFailed = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .clear
-        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
-        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        view.layer.masksToBounds = true
-
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-        stackView.axis = .vertical
-        stackView.spacing = 0
-        view.addSubview(stackView)
-
-        for filter in Filter.allCases {
-            let row = RowView(filter: filter, count: counts[filter], selected: filter == selected)
-            row.onTap = { [weak self] tier in
+        title = "引用一篇日记"
+        navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(didTapCancel))
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "cell")
+        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 50) { [weak self] result in
+            DispatchQueue.main.async {
                 guard let self = self else { return }
-                // 点当前档也只收起、不切档（调用方 applyVisFilter 有同值早退）。
-                self.dismiss(animated: BearyMotion.animated(true)) {
-                    self.onPick(tier)
+                switch result {
+                case .success(let list):
+                    self.entries = list.entries ?? []
+                    self.loadFailed = false
+                case .failure:
+                    self.entries = []
+                    self.loadFailed = true
                 }
+                self.tableView.reloadData()
             }
-            stackView.addArrangedSubview(row)
-        }
-
-        NSLayoutConstraint.activate([
-            // 顶部留白与旧抓手区等高（顶留白 6＋抓手高 4＋顶留白 6）：系统抓手占顶区，列表位置不动。
-            stackView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding + BearySheetChrome.grabberHeight + BearySheetChrome.listTopPadding),
-            stackView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            stackView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -BearySheetChrome.listBottomPadding),
-        ])
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        updatePreferredContentSize()
-    }
-
-    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高（标签选择器同款公式）。
-    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
-        let width = view.bounds.width > 0 ? view.bounds.width : 375
-        let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
-        let contentHeight = view.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
-        let safeBottom = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
-        let height = ceil(contentHeight) + safeBottom
-        let preferred = CGSize(width: width, height: height)
-        if preferredContentSize != preferred {
-            preferredContentSize = preferred
-            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 
-    /// 选项行（气泡版 RowView 同款：普通 UIView＋手势，选中行半粗体＋对勾，
-    /// 未选中行垫同宽空位、标题不漂移；按压轻震＋微缩）。
-    private final class RowView: UIView {
-        let filter: Filter
-        var onTap: ((Filter) -> Void)?
+    @objc private func didTapCancel() {
+        dismiss(animated: true)
+    }
 
-        private let titleLabel = UILabel()
-        private let countLabel = UILabel()
-        private let checkImageView = UIImageView()
+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        loadFailed ? 1 : entries.count
+    }
 
-        init(filter: Filter, count: Int?, selected: Bool) {
-            self.filter = filter
-            super.init(frame: .zero)
-            backgroundColor = .clear
-            titleLabel.translatesAutoresizingMaskIntoConstraints = false
-            titleLabel.font = BearyDynamicType.scaledFont(for: selected ? UIFont.boldSystemFont(ofSize: 15) : UIFont.systemFont(ofSize: 15))
-            titleLabel.adjustsFontForContentSizeCategory = true
-            titleLabel.textColor = BearyColors.ink
-            titleLabel.text = filter.title
-            countLabel.translatesAutoresizingMaskIntoConstraints = false
-            countLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-            countLabel.adjustsFontForContentSizeCategory = true
-            countLabel.textColor = BearyColors.gray
-            countLabel.text = count.map { "\($0) 篇" }
-            checkImageView.translatesAutoresizingMaskIntoConstraints = false
-            checkImageView.contentMode = .scaleAspectFit
-            checkImageView.tintColor = BearyColors.ink
-            // 未选中行不挂图、但留 24 宽位，标题与篇数不漂移（气泡版垫透明图同款）。
-            checkImageView.image = selected ? BearyIconImages.image(named: "icon_check", pointSize: 24) : nil
-            addSubview(titleLabel)
-            addSubview(countLabel)
-            addSubview(checkImageView)
-            NSLayoutConstraint.activate([
-                checkImageView.widthAnchor.constraint(equalToConstant: 24),
-                checkImageView.heightAnchor.constraint(equalToConstant: 24),
-                checkImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-                checkImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
-                countLabel.trailingAnchor.constraint(equalTo: checkImageView.leadingAnchor, constant: -BearySheetChrome.listRowElementSpacing),
-                countLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-                titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-                titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: countLabel.leadingAnchor, constant: -BearySheetChrome.listRowElementSpacing),
-                titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-                titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: BearySheetChrome.listRowVerticalPadding),
-                titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -BearySheetChrome.listRowVerticalPadding),
-                heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
-            ])
-            isAccessibilityElement = true
-            accessibilityLabel = filter.title + (count.map { "，\($0) 篇" } ?? "")
-            accessibilityTraits = selected ? [.button, .selected] : [.button]
-            let tap = UITapGestureRecognizer(target: self, action: #selector(didTap))
-            addGestureRecognizer(tap)
+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath)
+        var config = cell.defaultContentConfiguration()
+        if loadFailed {
+            config.text = "加载失败，请重试"
+            config.secondaryText = nil
+            cell.contentConfiguration = config
+            return cell
         }
-
-        required init?(coder: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
+        let entry = entries[indexPath.row]
+        let title = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty {
+            config.text = title
+        } else {
+            let snippet = (entry.content ?? "")
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            config.text = snippet.isEmpty ? "（无正文）" : String(snippet.prefix(40))
         }
-
-        @objc private func didTap() {
-            onTap?(filter)
+        if let createdMs = entry.createdAt,
+           let comps = BearyBeijingDay.components(ofMs: createdMs) {
+            config.secondaryText = "\(comps.month)月\(comps.day)日"
+        } else {
+            config.secondaryText = nil
         }
+        cell.contentConfiguration = config
+        return cell
+    }
 
-        override func accessibilityActivate() -> Bool {
-            onTap?(filter)
-            return true
-        }
-
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-            super.touchesBegan(touches, with: event)
-            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
-                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
-                           animations: { self.transform = CGAffineTransform(scaleX: 0.98, y: 0.98) })
-        }
-
-        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-            super.touchesEnded(touches, with: event)
-            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
-                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
-                           animations: { self.transform = .identity })
-        }
-
-        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-            super.touchesCancelled(touches, with: event)
-            UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
-                           delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
-                           animations: { self.transform = .identity })
+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        guard !loadFailed, indexPath.row < entries.count else { return }
+        let entry = entries[indexPath.row]
+        dismiss(animated: true) { [weak self] in
+            self?.onPick?(entry)
         }
     }
 }

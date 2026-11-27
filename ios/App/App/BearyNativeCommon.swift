@@ -3390,7 +3390,7 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, locationLatitude: Double? = nil, locationLongitude: Double? = nil, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, tags: [String]? = nil, timeZoneName: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, locationLatitude: Double? = nil, locationLongitude: Double? = nil, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, tags: [String]? = nil, date: String? = nil, timeZoneName: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
         // 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识；
         // nil=省略不传（无记录的旧草稿），服务端回落 Asia/Shanghai。编辑不改时区，故 updateEntry 不发本键。
@@ -3434,6 +3434,10 @@ extension BearyAPI {
         if let mentioned = mentionedUserId { body["mentioned_user_id"] = mentioned }
         // 标签完整版（2026-11-18）：非空才发 tags（新建无旧态可清，空组不发、服务端不建关联行）。
         if let tags = tags, !tags.isEmpty { body["tags"] = tags }
+        // 写一笔写选中日期：date 为 YYYY-MM-DD（今天或过去；未来日服务端 400）。
+        // nil = 不发（= 今天，服务端按发布时间盖戳，与旧请求一字相同）；
+        // 非 nil 时服务端把 created_at 落在该日（当日此时刻），published_at 同取该值。
+        if let d = date { body["date"] = d }
         request("/beary/api/entries", method: "POST", jsonBody: body, uploadProgress: uploadProgress, completion: completion)
     }
 
