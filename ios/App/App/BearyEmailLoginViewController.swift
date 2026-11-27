@@ -29,7 +29,8 @@ final class BearyEmailLoginViewController: UIViewController {
 
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
-    private let backButton = BearyHit44Button()
+    private let closeButton = BearyHit44Button()
+    private let mailCircleView = UIView()
     private let mailIconView = UIImageView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
@@ -55,8 +56,12 @@ final class BearyEmailLoginViewController: UIViewController {
     private let passwordErrorLabel = UILabel()
 
     private let actionButton = BearyHit44Button()
+    /// E3：贴底主按钮的底部约束（预览 v3 底 44；键盘弹出时再上抬遮挡高度，收起时回 −44）。
+    private var actionButtonBottomConstraint: NSLayoutConstraint?
     private let changeEmailButton = UIButton()
     private let passwordToggleButton = UIButton()
+    /// E3：栈底空白块（54 按钮＋44 底隙＋16 呼吸＝114），防小字行滚到固定按钮底下被盖住。
+    private let bottomSpacerView = UIView()
 
     private lazy var codeAccessoryToolbar: UIToolbar = {
         let toolbar = UIToolbar()
@@ -81,11 +86,20 @@ final class BearyEmailLoginViewController: UIViewController {
     /// 本次验证码发给了哪个邮箱（重发／校验都用它，不重读输入框）。
     private var submittedEmail = ""
 
+    // E1：本页按预览 v3 固定为 sheet 形态。呈现方（BearyWelcomeViewController）
+    // 在 present 前把本页设为 .fullScreen；这里用计算属性 override 把形态钉回
+    // .pageSheet，抓手＋× 的 sheet 形态不依赖调用点。只改本文件，不碰欢迎页
+    //（欢迎页另有 W1–W11 一批改动在修，避开同文件冲突）。
+    override var modalPresentationStyle: UIModalPresentationStyle {
+        get { .pageSheet }
+        set { super.modalPresentationStyle = .pageSheet }
+    }
+
     override init(nibName nibNameOrNil: String?, bundle nibBundleOrNil: Bundle?) {
-        emailContainer = BearyInputContainer(content: emailField)
-        codeContainer = BearyInputContainer(content: codeField)
-        inviteContainer = BearyInputContainer(content: inviteField)
-        passwordContainer = BearyInputContainer(content: passwordField)
+        emailContainer = BearyInputContainer(content: emailField, cornerRadius: 16) // beary-lint: allow（预览 v3 输入框圆角 16，BearyCorners 只有 12 入口）
+        codeContainer = BearyInputContainer(content: codeField, cornerRadius: 16) // beary-lint: allow（预览 v3 输入框圆角 16，BearyCorners 只有 12 入口）
+        inviteContainer = BearyInputContainer(content: inviteField, cornerRadius: 16) // beary-lint: allow（预览 v3 输入框圆角 16，BearyCorners 只有 12 入口）
+        passwordContainer = BearyInputContainer(content: passwordField, cornerRadius: 16) // beary-lint: allow（预览 v3 输入框圆角 16，BearyCorners 只有 12 入口）
         super.init(nibName: nibNameOrNil, bundle: nibBundleOrNil)
     }
 
@@ -98,6 +112,11 @@ final class BearyEmailLoginViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
+        // E1：sheet 配置（预览 v3：带抓手、.large() 单档）。
+        if let sheet = sheetPresentationController {
+            sheet.prefersGrabberVisible = true
+            sheet.detents = [.large()]
+        }
         buildLayout()
         configureFields()
         updateStepUI()
@@ -131,57 +150,75 @@ final class BearyEmailLoginViewController: UIViewController {
         contentStack.spacing = BearySpace.md
         scrollView.addSubview(contentStack)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            // E5：顶锚 safeArea（原锚 view.topAnchor，靠系统 contentInset 顶，分屏／横屏下不稳）。
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            // 信封顶边距 sheet 顶 63（预览：14 抓手区＋5 抓手＋44 间距）。
+            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 63),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 20),
             contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -20),
             contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40),
         ])
 
-        // 返回（手绘包 icon_arrow_left）：第二步回第一步，第一步关本页。
-        // 左对齐：stack 默认拉伸，包一层左对齐容器。
-        backButton.translatesAutoresizingMaskIntoConstraints = false
-        backButton.setImage(BearyIconImages.image(named: "icon_arrow_left", pointSize: 22), for: .normal)
-        backButton.tintColor = BearyColors.ink
-        backButton.bearyAddPressFeedback()
-        backButton.accessibilityLabel = NSLocalizedString("login.email.back", comment: "")
-        backButton.addTarget(self, action: #selector(backButtonTapped), for: .touchUpInside)
-        let backWrap = UIView()
-        backWrap.translatesAutoresizingMaskIntoConstraints = false
-        backWrap.addSubview(backButton)
+        // E1：右上 ×（预览 v3：38×38 圆、1px #EDEDED 边、白底、19px #555「✕」；
+        // 手绘包 icon_close＋token 色近似：底 BearyColors.bg、边 BearyColors.line、
+        // 字 BearyColors.gray；BearyHit44Button 补足 44pt 点按区）。
+        // × 直接关本页（旧返回钮的分步回退已被「更换邮箱」／密码切换覆盖）。
+        // 无障碍 label 复用 login.email.back（与旧返回钮同动作、同文案；
+        // catalog 里暂无「关闭」key，单文件范围不另加 key）。
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.backgroundColor = BearyColors.bg
+        closeButton.layer.cornerRadius = 999
+        closeButton.layer.borderWidth = 1
+        closeButton.layer.bearyDynamicBorderColor = BearyColors.line
+        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 19), for: .normal)
+        closeButton.tintColor = BearyColors.gray
+        closeButton.bearyAddPressFeedback()
+        closeButton.accessibilityLabel = NSLocalizedString("login.email.back", comment: "")
+        closeButton.addTarget(self, action: #selector(closeButtonTapped), for: .touchUpInside)
+        view.addSubview(closeButton)
         NSLayoutConstraint.activate([
-            backButton.leadingAnchor.constraint(equalTo: backWrap.leadingAnchor, constant: -10),
-            backButton.topAnchor.constraint(equalTo: backWrap.topAnchor),
-            backButton.bottomAnchor.constraint(equalTo: backWrap.bottomAnchor),
-            backButton.widthAnchor.constraint(equalToConstant: 44),
-            backButton.heightAnchor.constraint(equalToConstant: 44),
+            closeButton.topAnchor.constraint(equalTo: view.topAnchor, constant: 26),
+            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -22),
+            closeButton.widthAnchor.constraint(equalToConstant: 38),
+            closeButton.heightAnchor.constraint(equalToConstant: 38),
         ])
-        contentStack.addArrangedSubview(backWrap)
 
-        // 信封图标（手绘包 icon_mail，橙色）＋标题＋副标题，居中。
+        // E2：信封图标改 96px 灰圆＋42px 灰信封（预览 v3：圆 #F2F2F2、信封 #777；
+        // token 近似：圆 BearyColors.surface2、信封 BearyColors.gray）。
+        mailCircleView.translatesAutoresizingMaskIntoConstraints = false
+        mailCircleView.backgroundColor = BearyColors.surface2
+        mailCircleView.layer.cornerRadius = 999
         mailIconView.translatesAutoresizingMaskIntoConstraints = false
-        mailIconView.image = BearyIconImages.image(named: "icon_mail", pointSize: 36)
-        mailIconView.tintColor = BearyColors.orange
+        mailIconView.image = BearyIconImages.image(named: "icon_mail", pointSize: 42)
+        mailIconView.tintColor = BearyColors.gray
         mailIconView.contentMode = .scaleAspectFit
+        mailCircleView.addSubview(mailIconView)
+        NSLayoutConstraint.activate([
+            mailIconView.centerXAnchor.constraint(equalTo: mailCircleView.centerXAnchor),
+            mailIconView.centerYAnchor.constraint(equalTo: mailCircleView.centerYAnchor),
+            mailIconView.widthAnchor.constraint(equalToConstant: 42),
+            mailIconView.heightAnchor.constraint(equalToConstant: 42),
+        ])
         let mailWrap = UIView()
         mailWrap.translatesAutoresizingMaskIntoConstraints = false
-        mailWrap.addSubview(mailIconView)
+        mailWrap.addSubview(mailCircleView)
         NSLayoutConstraint.activate([
-            mailIconView.centerXAnchor.constraint(equalTo: mailWrap.centerXAnchor),
-            mailIconView.topAnchor.constraint(equalTo: mailWrap.topAnchor),
-            mailIconView.bottomAnchor.constraint(equalTo: mailWrap.bottomAnchor),
-            mailIconView.widthAnchor.constraint(equalToConstant: 36),
-            mailIconView.heightAnchor.constraint(equalToConstant: 36),
+            mailCircleView.centerXAnchor.constraint(equalTo: mailWrap.centerXAnchor),
+            mailCircleView.topAnchor.constraint(equalTo: mailWrap.topAnchor),
+            mailCircleView.bottomAnchor.constraint(equalTo: mailWrap.bottomAnchor),
+            mailCircleView.widthAnchor.constraint(equalToConstant: 96),
+            mailCircleView.heightAnchor.constraint(equalToConstant: 96),
         ])
         contentStack.addArrangedSubview(mailWrap)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = NSLocalizedString("login.email.title", comment: "")
-        titleLabel.font = BearyDynamicType.welcomeDisplayFont()
+        // E4：标题 28→25（预览 v3 25pt；BearyDynamicType 暂无 25pt 入口，scaledFont 正路＋单行放行）。
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 25, weight: .bold)) // beary-lint: allow（预览 v3 标题 25pt，暂无 25pt 语义入口）
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 0
@@ -197,7 +234,7 @@ final class BearyEmailLoginViewController: UIViewController {
 
         // 邮箱框＋行内错误。
         contentStack.addArrangedSubview(emailContainer)
-        emailContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+        emailContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 54).isActive = true
         emailErrorLabel.translatesAutoresizingMaskIntoConstraints = false
         emailErrorLabel.font = BearyDynamicType.captionFont()
         emailErrorLabel.textColor = BearyColors.destructiveText
@@ -207,7 +244,7 @@ final class BearyEmailLoginViewController: UIViewController {
 
         // 验证码框＋发送状态行（绿字＋重发钮）＋行内错误。
         contentStack.addArrangedSubview(codeContainer)
-        codeContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+        codeContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 54).isActive = true
         codeStatusRow.translatesAutoresizingMaskIntoConstraints = false
         codeStatusRow.axis = .horizontal
         codeStatusRow.alignment = .center
@@ -243,7 +280,7 @@ final class BearyEmailLoginViewController: UIViewController {
         inviteDisclosureButton.addTarget(self, action: #selector(inviteDisclosureTapped), for: .touchUpInside)
         contentStack.addArrangedSubview(inviteDisclosureButton)
         contentStack.addArrangedSubview(inviteContainer)
-        inviteContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+        inviteContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 54).isActive = true
         inviteErrorLabel.translatesAutoresizingMaskIntoConstraints = false
         inviteErrorLabel.font = BearyDynamicType.captionFont()
         inviteErrorLabel.textColor = BearyColors.destructiveText
@@ -253,7 +290,7 @@ final class BearyEmailLoginViewController: UIViewController {
 
         // 密码框（仅密码模式）＋行内错误。
         contentStack.addArrangedSubview(passwordContainer)
-        passwordContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+        passwordContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 54).isActive = true
         passwordErrorLabel.translatesAutoresizingMaskIntoConstraints = false
         passwordErrorLabel.font = BearyDynamicType.captionFont()
         passwordErrorLabel.textColor = BearyColors.destructiveText
@@ -261,14 +298,20 @@ final class BearyEmailLoginViewController: UIViewController {
         passwordErrorLabel.isHidden = true
         contentStack.addArrangedSubview(passwordErrorLabel)
 
-        // 主按钮（黑底 pill）：第一步「下一步」，第二步／密码模式「登录」。
+        // E3：主按钮（黑底 pill）改贴底固定：第一步「下一步」，第二步／密码模式「登录」。
+        // 预览 v3：左右 26、底 44、高 54；键盘弹出时底部约束再上抬遮挡高度（见键盘处理）。
         actionButton.translatesAutoresizingMaskIntoConstraints = false
         actionButton.titleLabel?.font = BearyDynamicType.buttonFont()
         actionButton.bearyAddPressFeedback()
         actionButton.addTarget(self, action: #selector(actionButtonTapped), for: .touchUpInside)
-        contentStack.addArrangedSubview(actionButton)
+        view.addSubview(actionButton)
+        let actionButtonBottom = actionButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -44)
+        actionButtonBottomConstraint = actionButtonBottom
         NSLayoutConstraint.activate([
-            actionButton.heightAnchor.constraint(equalToConstant: 56),
+            actionButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 26),
+            actionButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -26),
+            actionButton.heightAnchor.constraint(equalToConstant: 54),
+            actionButtonBottom,
         ])
 
         // 更换邮箱（第二步）与密码模式切换（底部小字）。
@@ -285,15 +328,21 @@ final class BearyEmailLoginViewController: UIViewController {
         passwordToggleButton.addTarget(self, action: #selector(passwordToggleTapped), for: .touchUpInside)
         contentStack.addArrangedSubview(passwordToggleButton)
 
-        contentStack.setCustomSpacing(BearySpace.xxl, after: backWrap)
-        contentStack.setCustomSpacing(BearySpace.sm, after: mailWrap)
+        // E3：栈底留 114pt 空白，防小字行滚到固定按钮底下被盖住。
+        bottomSpacerView.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(bottomSpacerView)
+        NSLayoutConstraint.activate([
+            bottomSpacerView.heightAnchor.constraint(equalToConstant: 114),
+        ])
+
+        // mail→标题间距按预览 v3 改为 24（原 sm 8；预览 CSS margin-top 24）。
+        contentStack.setCustomSpacing(BearySpace.xxl, after: mailWrap)
         contentStack.setCustomSpacing(BearySpace.sm, after: titleLabel)
         contentStack.setCustomSpacing(BearySpace.xxl, after: subtitleLabel)
         contentStack.setCustomSpacing(BearySpace.xxl, after: emailErrorLabel)
         contentStack.setCustomSpacing(BearySpace.xxl, after: codeErrorLabel)
         contentStack.setCustomSpacing(BearySpace.xxl, after: inviteErrorLabel)
         contentStack.setCustomSpacing(BearySpace.xxl, after: passwordErrorLabel)
-        contentStack.setCustomSpacing(BearySpace.lg, after: actionButton)
         contentStack.setCustomSpacing(BearySpace.sm, after: changeEmailButton)
     }
 
@@ -389,22 +438,9 @@ final class BearyEmailLoginViewController: UIViewController {
 
     // MARK: - 入口
 
-    @objc private func backButtonTapped() {
-        if isPasswordMode {
-            // 密码模式返回验证码模式第一步（不直接关页）。
-            isPasswordMode = false
-            updateStepUI()
-            emailField.becomeFirstResponder()
-            return
-        }
-        if step == .code {
-            step = .email
-            countdownTimer?.invalidate()
-            countdownTimer = nil
-            updateStepUI()
-            emailField.becomeFirstResponder()
-            return
-        }
+    /// E1：右上 × 直接关本页。旧返回钮的分步回退（第二步回第一步、密码模式
+    /// 退验证码模式）已被「更换邮箱」按钮与密码切换覆盖，不再需要。
+    @objc private func closeButtonTapped() {
         onCancelled?()
     }
 
@@ -840,6 +876,8 @@ final class BearyEmailLoginViewController: UIViewController {
         UIView.animate(withDuration: duration, delay: 0, options: UIView.AnimationOptions(rawValue: curveRaw << 16)) { [weak self] in
             self?.scrollView.contentInset.bottom = bottom
             self?.scrollView.scrollIndicatorInsets.bottom = bottom
+            // E3：贴底主按钮跟键盘上抬（键盘遮挡高度＋底隙 44）。
+            self?.actionButtonBottomConstraint?.constant = -(44 + bottom)
         }
     }
 
@@ -849,6 +887,8 @@ final class BearyEmailLoginViewController: UIViewController {
         UIView.animate(withDuration: duration, delay: 0, options: UIView.AnimationOptions(rawValue: curveRaw << 16)) { [weak self] in
             self?.scrollView.contentInset.bottom = 0
             self?.scrollView.scrollIndicatorInsets.bottom = 0
+            // E3：键盘收起，主按钮回到底隙 44。
+            self?.actionButtonBottomConstraint?.constant = -44
         }
     }
 }
