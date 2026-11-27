@@ -2131,7 +2131,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             removeStaleResultsBanner(preserveAnchor: !resultsStack.isHidden)
             return
         }
-        let text = "下方是「\(rendered)」的结果"
+        let text = String(format: NSLocalizedString("search.stale_results_format", comment: ""), rendered)
         if let banner = staleResultsBanner, banner.superview == resultsStack,
            let label = banner.subviews.first as? UILabel {
             // 同横幅只换文案：高度可能随词长/字号变化，按差量补偏移。
