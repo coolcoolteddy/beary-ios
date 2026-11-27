@@ -51,6 +51,10 @@ final class BearyWelcomeViewController: UIViewController {
     // MARK: - 卡片拖动状态
 
     private var cardTopConstraint: NSLayoutConstraint!
+    /// C7（完整复查）：821 断点——仅 iPad 且宽 ≥821 时登录列与日记条 600 居中（反馈页同款）；600 上限只在宽屏激活。
+    private var loginWidthCap: NSLayoutConstraint?
+    private var diaryStripWidthCap: NSLayoutConstraint?
+    private var welcomeColumnIsWide = false
     /// 卡片已上滑距离（0 = 全盖住登录区，maxLift = 登录区全露出）。
     private var cardLift: CGFloat = 0
     /// 卡片最大上滑距离 = 登录区高度（viewDidLayoutSubviews 后量到）。
@@ -85,6 +89,13 @@ final class BearyWelcomeViewController: UIViewController {
                 cardLift = maxLift
                 cardTopConstraint.constant = -cardLift
             }
+        }
+        // C7：821 断点——仅 iPad 且宽 ≥821 时登录列与日记条 600 居中，状态不变不开关，避免布局循环（反馈页同款）。
+        let wide = BearyDesktop.isWide(view.bounds.width)
+        if wide != welcomeColumnIsWide {
+            welcomeColumnIsWide = wide
+            loginWidthCap?.isActive = wide
+            diaryStripWidthCap?.isActive = wide
         }
         // 半高药丸圆角（lint 口径：写 height/2 表达式，不写字面量）。
         for pill in [emailButton, appleButton, googleButton, guestButton, dragButton] {
@@ -248,14 +259,21 @@ final class BearyWelcomeViewController: UIViewController {
         loginStack.setCustomSpacing(BearySpace.lg, after: socialRow)
         loginStack.setCustomSpacing(BearySpace.md, after: legalLabel)
 
+        // C7：iPad 600 居中（反馈页同款，含 750 宽度等式防短内容压塌；600 上限只在宽屏激活，见 viewDidLayoutSubviews）。
+        let loginWidthEquality = loginStack.widthAnchor.constraint(equalTo: loginSection.widthAnchor, constant: -40)
+        loginWidthEquality.priority = UILayoutPriority(750)
+        loginWidthCap = loginStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        loginWidthCap?.isActive = false
         NSLayoutConstraint.activate([
             loginSection.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             loginSection.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             loginSection.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             loginStack.topAnchor.constraint(equalTo: loginSection.topAnchor, constant: 24),
-            loginStack.leadingAnchor.constraint(equalTo: loginSection.leadingAnchor, constant: 20),
-            loginStack.trailingAnchor.constraint(equalTo: loginSection.trailingAnchor, constant: -20),
+            loginStack.centerXAnchor.constraint(equalTo: loginSection.centerXAnchor),
+            loginStack.leadingAnchor.constraint(greaterThanOrEqualTo: loginSection.leadingAnchor, constant: 20),
+            loginStack.trailingAnchor.constraint(lessThanOrEqualTo: loginSection.trailingAnchor, constant: -20),
             loginStack.bottomAnchor.constraint(equalTo: loginSection.safeAreaLayoutGuide.bottomAnchor, constant: -8),
+            loginWidthEquality,
         ])
     }
 
@@ -283,11 +301,18 @@ final class BearyWelcomeViewController: UIViewController {
         diaryStack.alignment = .fill
         diaryStack.spacing = BearySpace.md
         diaryStrip.addSubview(diaryStack)
+        // C7：iPad 600 居中（反馈页同款；600 上限只在宽屏激活，见 viewDidLayoutSubviews）。卡片本身仍全幅（拉窗背景），只收内容条宽度。
+        let stripWidthEquality = diaryStrip.widthAnchor.constraint(equalTo: cardView.widthAnchor)
+        stripWidthEquality.priority = UILayoutPriority(750)
+        diaryStripWidthCap = diaryStrip.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        diaryStripWidthCap?.isActive = false
         NSLayoutConstraint.activate([
             diaryStrip.topAnchor.constraint(equalTo: cardView.safeAreaLayoutGuide.topAnchor, constant: 16),
-            diaryStrip.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
-            diaryStrip.trailingAnchor.constraint(equalTo: cardView.trailingAnchor),
+            diaryStrip.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
+            diaryStrip.leadingAnchor.constraint(greaterThanOrEqualTo: cardView.leadingAnchor),
+            diaryStrip.trailingAnchor.constraint(lessThanOrEqualTo: cardView.trailingAnchor),
             diaryStrip.heightAnchor.constraint(equalToConstant: 210),
+            stripWidthEquality,
             diaryStack.topAnchor.constraint(equalTo: diaryStrip.contentLayoutGuide.topAnchor),
             diaryStack.bottomAnchor.constraint(equalTo: diaryStrip.contentLayoutGuide.bottomAnchor),
             diaryStack.leadingAnchor.constraint(equalTo: diaryStrip.contentLayoutGuide.leadingAnchor),

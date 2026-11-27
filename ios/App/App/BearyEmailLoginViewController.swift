@@ -29,6 +29,9 @@ final class BearyEmailLoginViewController: UIViewController {
 
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
+    /// C7（完整复查）：821 断点——仅 iPad 且宽 ≥821 时内容列 600 居中（反馈页同款）；600 上限只在宽屏激活。
+    private var contentWidthCap: NSLayoutConstraint?
+    private var emailColumnIsWide = false
     private let closeButton = BearyHit44Button()
     private let mailCircleView = UIView()
     private let mailIconView = UIImageView()
@@ -128,6 +131,12 @@ final class BearyEmailLoginViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // C7：821 断点——仅 iPad 且宽 ≥821 时内容列 600 居中，状态不变不开关，避免布局循环（反馈页同款）。
+        let wide = BearyDesktop.isWide(view.bounds.width)
+        if wide != emailColumnIsWide {
+            emailColumnIsWide = wide
+            contentWidthCap?.isActive = wide
+        }
         actionButton.layer.cornerRadius = actionButton.bounds.height / 2
     }
 
@@ -149,6 +158,11 @@ final class BearyEmailLoginViewController: UIViewController {
         contentStack.alignment = .fill
         contentStack.spacing = BearySpace.md
         scrollView.addSubview(contentStack)
+        // C7：iPad 600 居中（反馈页同款，含 750 宽度等式防短内容压塌；600 上限只在宽屏激活，见 viewDidLayoutSubviews）。
+        let contentWidthEquality = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
+        contentWidthEquality.priority = UILayoutPriority(750)
+        contentWidthCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        contentWidthCap?.isActive = false
         NSLayoutConstraint.activate([
             // E5：顶锚 safeArea（原锚 view.topAnchor，靠系统 contentInset 顶，分屏／横屏下不稳）。
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -158,9 +172,10 @@ final class BearyEmailLoginViewController: UIViewController {
             // 信封顶边距 sheet 顶 63（预览：14 抓手区＋5 抓手＋44 间距）。
             contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 63),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 20),
-            contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -20),
-            contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40),
+            contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 20),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -20),
+            contentWidthEquality,
         ])
 
         // E1：右上 ×（预览 v3：38×38 圆、1px #EDEDED 边、白底、19px #555「✕」；
