@@ -1489,7 +1489,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         self.inputTextView.isEditable = false
                         self.updateSendButton()
                         self.updateEmptyState()
-                        BearyToast.show(in: self.view, message: "该会话已关闭")
                     } else if error.isTimeoutOrUnknownResult {
                         self.removePendingSend(key: key, restoreDraft: true)
                         BearyToast.show(in: self.view, message: "发送结果未知，请确认对方是否已收到后再重发")
