@@ -34,7 +34,9 @@ enum BearySystemSheet {
     /// 调用方 show() 原有的 loadViewIfNeeded／frame／layout／updatePreferredContentSize
     /// 由本方法统一做，不再各写一套。completion 在 present 完成回调里调
     /// （草稿箱编辑器侧的 isDraftBoxPresenting 防重入旗靠它复位，见调用点）。
-    static func present(_ sheet: UIViewController, from presenter: UIViewController, completion: (() -> Void)? = nil) {
+    /// dismissable=false 时：isModalInPresentation=true（禁下滑关闭）、不挂点外关闭手势、
+    /// 抓手隐藏——供强制更新这类不可关闭的 sheet 用；其余 sheet 一律默认 true。
+    static func present(_ sheet: UIViewController, from presenter: UIViewController, dismissable: Bool = true, completion: (() -> Void)? = nil) {
         // 面板透明：系统 sheet 自带液态玻璃底，实色会盖住它（2026-11-25 Li 定）。
         sheet.view.backgroundColor = .clear
         sheet.loadViewIfNeeded()
@@ -49,9 +51,14 @@ enum BearySystemSheet {
         if sheet.preferredContentSize.width <= 0 {
             sheet.preferredContentSize.width = sheetWidth
         }
-        configure(sheet)
+        configure(sheet, dismissable: dismissable)
+        if !dismissable {
+            sheet.isModalInPresentation = true
+        }
         presenter.present(sheet, animated: BearyMotion.animated(true)) {
-            installOutsideTapDismiss(for: sheet)
+            if dismissable {
+                installOutsideTapDismiss(for: sheet)
+            }
             completion?()
         }
     }
@@ -59,12 +66,12 @@ enum BearySystemSheet {
     /// 只配系统 sheet、不 present（登录 sheet 的 make() 用：调用方随后自行 present）。
     /// 调用方须先 loadViewIfNeeded＋layoutIfNeeded 算好 preferredContentSize，
     /// 再调本方法（登录页 make() 内即此顺序）。
-    static func configure(_ sheet: UIViewController) {
+    static func configure(_ sheet: UIViewController, dismissable: Bool = true) {
         // 面板透明：系统 sheet 自带液态玻璃底，实色会盖住它（2026-11-25 Li 定）。
         sheet.view.backgroundColor = .clear
         sheet.modalPresentationStyle = .pageSheet
         guard let spc = sheet.sheetPresentationController else { return }
-        spc.prefersGrabberVisible = true
+        spc.prefersGrabberVisible = dismissable
         spc.preferredCornerRadius = BearySheetChrome.topCornerRadius
         spc.prefersScrollingExpandsWhenScrolledToEdge = false
         spc.detents = detents(for: sheet)
