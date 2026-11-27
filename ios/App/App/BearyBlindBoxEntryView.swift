@@ -178,7 +178,7 @@ final class BearyBlindBoxEntryView: UIView {
         iconView.image = icon
         pendingChip.isHidden = !isPlaceholder
         if SessionManager.shared.isLoggedIn == false {
-            setCountText("今日 0/1")
+            setCountText(NSLocalizedString("blindbox.count.remaining", comment: ""))
             subtitleLabel.text = "登录后可交换 · 放一篇旧公开日记，换一篇别人的旧日记"
             alpha = 1
             return
