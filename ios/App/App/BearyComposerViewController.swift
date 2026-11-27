@@ -4257,6 +4257,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard !selectedTags.isEmpty else {
             tagsScrollView.isHidden = true
             contentStack.setCustomSpacing(0, after: tagsScrollView)
+            updatePreferredContentSize()
             return
         }
         for (index, tag) in selectedTags.enumerated() {
@@ -4280,6 +4281,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         tagsScrollView.isHidden = false
         contentStack.setCustomSpacing(8, after: tagsScrollView)
+        updatePreferredContentSize()
     }
 
     /// 标签 chip 点按：按下标移除该标签（标题含 × 后缀，不从标题反解析原文）。
