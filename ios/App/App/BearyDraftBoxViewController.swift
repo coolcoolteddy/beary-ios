@@ -1246,7 +1246,7 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
                 } else {
                     strongSelf.renderDrafts()
                 }
-                strongSelf.showDraftToast(message: "保存失败，图片提示还在")
+                strongSelf.showDraftToast(message: NSLocalizedString("draftbox.save_failed_lost_image_hint_remains", comment: ""))
             }
         }
     }
