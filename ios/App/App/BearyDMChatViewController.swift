@@ -2671,7 +2671,7 @@ private final class BearyDMMessageCell: UITableViewCell {
         failButton.backgroundColor = .clear
         failButton.isHidden = true
         // 审计四轮 11：失败按钮补无障碍名称（否则 VoiceOver 只读到一个无名按钮）。
-        failButton.accessibilityLabel = "消息发送失败，重试"
+        failButton.accessibilityLabel = NSLocalizedString("dm.send_failed_retry_a11y", comment: "")
         failButton.addTarget(self, action: #selector(failTapped), for: .touchUpInside)
         failBadge.translatesAutoresizingMaskIntoConstraints = false
         failBadge.backgroundColor = BearyColors.red
@@ -2931,7 +2931,7 @@ private final class BearyDMMessageCell: UITableViewCell {
         // 失败叹号只挂本人行；对方行、成功行一律不画。
         failButton.isHidden = !(isMine && showFail)
         // 审计四轮 11：失败态变化时同步更新无障碍说明（复用 cell 不得串行）。
-        failButton.accessibilityLabel = (isMine && showFail) ? "消息发送失败，重试" : nil
+        failButton.accessibilityLabel = (isMine && showFail) ? NSLocalizedString("dm.send_failed_retry_a11y", comment: "") : nil
         self.onRetry = onRetry
         self.onSwipeReply = onSwipeReply
         // 左滑回复引用块：有引用名即显（名字＋原文摘要，最多两行），无引用藏起；
