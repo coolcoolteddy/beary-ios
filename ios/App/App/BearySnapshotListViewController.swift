@@ -57,7 +57,7 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "云端快照"
-        titleLabel.font = BearyDynamicType.pageTitleFont()
+        titleLabel.font = BearyDynamicType.smallActionFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         view.addSubview(titleLabel)
