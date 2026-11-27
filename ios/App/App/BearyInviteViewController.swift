@@ -721,7 +721,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
             // 补绑随时可做，不再算倒计时。
             bindRow.isHidden = false
             bindHintLabel.isHidden = false
-            setLabelTextFaded(bindHintLabel, "随时可补绑")
+            setLabelTextFaded(bindHintLabel, NSLocalizedString("invite.bind_anytime", comment: ""))
             updateBindButton()
         } else if referral != nil {
             // 审计 P2：未绑定且补绑窗口已关（bindOpen == false）——给过期文案，不整区静默消失。
