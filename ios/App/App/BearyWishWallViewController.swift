@@ -1188,10 +1188,13 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         titleField.translatesAutoresizingMaskIntoConstraints = false
-        titleField.placeholder = "愿望标题"
         // 31：44 高单行框配 cappedFont（上限 20，行高不撑破 44 高）；详情框可滚动，
         // 故走 scaledFont（反馈页 160 框同款），超大字号下框内滚动而非截断。
         titleField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        titleField.attributedPlaceholder = NSAttributedString(string: NSLocalizedString("wish.create.title_placeholder", comment: ""), attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: titleField.font ?? BearyDynamicType.fieldFont(),
+        ])
         titleField.adjustsFontForContentSizeCategory = true
         titleField.textColor = BearyColors.ink
         // 审计视觉 10：标题框去系统描边，走 surface2 底＋12 圆角；聚焦走聚焦阴影（见 refreshTitleBorder）。
