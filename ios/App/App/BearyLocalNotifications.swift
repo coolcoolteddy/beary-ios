@@ -322,7 +322,9 @@ final class BearyLocalNotifications: NSObject {
         let now = Date()
         let nowMs = Int(now.timeIntervalSince1970 * 1000)
         let calendar = BearyBeijingDay.calendar
-        let todayKey = BearyBeijingDay.dayKey(ofMs: nowMs) ?? ""
+        // 21:00 写日记提醒与 9:00 那年今日按设备本地时间排；
+        // 过去的自己送达仍按北京时间（送达日按北京时间算），仍用 calendar。
+        let localCalendar = Calendar.current
         // 存档读盘失败则本轮不重算（保留已排提醒，下次重算补上）；
         // 主线 loadAllEntries 自 #1069 起返回可选（读盘失败为 nil）。
         // 注意：已关种类的取消在上面已做完，不受这次 return 影响（第 4 项）。
@@ -345,30 +347,33 @@ final class BearyLocalNotifications: NSObject {
         // 仍会按 dmUnreadIdentifier 清掉待发送的。
         var desired: [DesiredRequest] = []
 
-        // 1. 每晚写日记提醒：下一个 21:00（北京）；今天已写则排明晚 21:00，不留空窗——
+        // 1. 每晚写日记提醒：下一个 21:00（本地时间）；今天已写则排明晚 21:00，不留空窗——
         // 单次触发不重复，差分删了今晚的就没人补明晚的，不再依赖之后 rebuild。
+        // “今天已写”按本地日历判，与提醒同一时钟，否则跨时区会错判。
         if enabled[.dailyReminder] == true {
-            var nextEvening = Self.nextOccurrence(hour: Self.dailyHour, after: now, calendar: calendar)
-            let isToday = calendar.isDate(nextEvening, inSameDayAs: now)
+            var nextEvening = Self.nextOccurrence(hour: Self.dailyHour, after: now, calendar: localCalendar)
+            let isToday = localCalendar.isDate(nextEvening, inSameDayAs: now)
             let hasEntryToday = entries.contains { entry in
                 guard let createdAt = entry.createdAt else { return false }
-                return BearyBeijingDay.dayKey(ofMs: createdAt) == todayKey
+                return localCalendar.isDate(Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000), inSameDayAs: now)
             }
             if isToday && hasEntryToday {
-                nextEvening = calendar.date(byAdding: .day, value: 1, to: nextEvening) ?? nextEvening
+                nextEvening = localCalendar.date(byAdding: .day, value: 1, to: nextEvening) ?? nextEvening
             }
             desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: NSLocalizedString("local_notifications.daily_reminder.body", comment: ""), kind: .dailyReminder, userInfo: ["kind": Kind.dailyReminder.rawValue, "accountId": accountId]))
         }
 
-        // 2. 那年今日：往后 30 天内每个 9:00（北京），那天往年有日记才排一条；
+        // 2. 那年今日：往后 30 天内每个 9:00（本地时间），那天往年有日记才排一条；
         // 只看下一个早上会漏掉更晚的纪念日（没有后续重算时尤其如此）。
         // 每日一条独立 id（旧单 id 待发送由差分清掉）。
         if enabled[.pastDay] == true {
-            let nextMorning = Self.nextOccurrence(hour: Self.morningHour, after: now, calendar: calendar)
+            let nextMorning = Self.nextOccurrence(hour: Self.morningHour, after: now, calendar: localCalendar)
             for offset in 0..<30 {
-                guard let morning = calendar.date(byAdding: .day, value: offset, to: nextMorning) else { continue }
-                guard BearyProfilePersonalLogic.thisDayInHistory(entries: entries, today: morning, calendar: calendar) != nil else { continue }
-                let dayKey = BearyBeijingDay.dayKey(ofMs: Int(morning.timeIntervalSince1970 * 1000)) ?? ""
+                guard let morning = localCalendar.date(byAdding: .day, value: offset, to: nextMorning) else { continue }
+                guard BearyProfilePersonalLogic.thisDayInHistory(entries: entries, today: morning, calendar: localCalendar) != nil else { continue }
+                let morningParts = localCalendar.dateComponents([.year, .month, .day], from: morning)
+                guard let year = morningParts.year, let month = morningParts.month, let day = morningParts.day else { continue }
+                let dayKey = BearyBeijingDay.dayKey(year: year, month: month, day: day)
                 desired.append(DesiredRequest(identifier: Self.pastDayIdentifier + "-" + dayKey, fireDate: morning, body: "往年今天，你写过日记，打开看看吧。", kind: .pastDay, userInfo: ["kind": Kind.pastDay.rawValue, "accountId": accountId, "dayKey": dayKey]))
             }
         }
@@ -393,6 +398,8 @@ final class BearyLocalNotifications: NSObject {
         }
 
         // 第 5 项：差分提交走串行队列，提交前再验代次与账号；旧重算直接丢弃。
+        // fireDate 是绝对时刻，commitDesired 拆分用的日历不改变触发时刻；
+        // 本地／北京的区别只在上面推算 fireDate 时的日历。
         let desiredSnapshot = desired
         commitQueue.async { [weak self] in
             guard let self = self else { return }
@@ -505,7 +512,7 @@ final class BearyLocalNotifications: NSObject {
 
     // MARK: - 日期
 
-    /// 当天 hour:00 已过则取明天同一时刻（北京日历）。
+    /// 当天 hour:00 已过则取明天同一时刻（按传入的日历）。
     private static func nextOccurrence(hour: Int, after date: Date, calendar: Calendar) -> Date {
         var comps = calendar.dateComponents([.year, .month, .day], from: date)
         comps.hour = hour
