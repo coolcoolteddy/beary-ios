@@ -1027,7 +1027,7 @@ final class BearyWishWallViewController: UIViewController {
                     self.rowViews[wishId]?.configure(item: rolledBack, isAdmin: self.isAdmin)
                     self.rowViews[wishId]?.shake()
                     BearyHaptics.rejectionWarning()
-                    BearyToast.show(in: self.view, message: "投票失败，请稍后再试")
+                    BearyToast.show(in: self.view, message: NSLocalizedString("wish.vote_failed", comment: ""))
                     onSettled?(false)
                 }
             }
@@ -1065,7 +1065,7 @@ final class BearyWishWallViewController: UIViewController {
                     // 审计视觉 15：标记失败补摇头＋警告震动（toast 已有）；乐观 status＋失败回滚不动（R23 #5 定版）。
                     self.rowViews[wishId]?.shake()
                     BearyHaptics.rejectionWarning()
-                    BearyToast.show(in: self.view, message: "标记失败，请稍后再试")
+                    BearyToast.show(in: self.view, message: NSLocalizedString("wish.mark_failed", comment: ""))
                 }
             }
         }
