@@ -546,7 +546,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                     showFailureState()
                     setStatusTextFaded("日记加载失败")
                 } else {
-                    setStatusTextFaded("仅展示已加载的部分，点按重试")
+                    setStatusTextFaded(NSLocalizedString("map.status.partial", comment: ""))
                     inlineRetryButton.isHidden = false
                 }
             } else {
