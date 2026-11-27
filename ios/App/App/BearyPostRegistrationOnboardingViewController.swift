@@ -13,13 +13,15 @@ import UserNotifications
 // 衬线只走展示性大标题（BearyDynamicType.serifDesign，New York＋宋体），其余系统字体。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
-// 残留：仅 ID 卡文件在用（ink／muted／faint／line／orange，随 #2748 删）与反应圆底
-// 三色（blueSoft／loveSoft／cheerSoft，暂无通用 token）；其余成员已收进 BearyColors。
+// 残留：仅 ID 卡文件在用（ink／ink2／muted／faint／line／line2／orange，随 #2748 删）
+// 与反应圆底三色（blueSoft／loveSoft／cheerSoft，暂无通用 token）；其余成员已收进 BearyColors。
 enum BearyOnboardingPalette {
     static let ink = UIColor(red: 17.0 / 255.0, green: 17.0 / 255.0, blue: 17.0 / 255.0, alpha: 1)
+    static let ink2 = UIColor(red: 58.0 / 255.0, green: 58.0 / 255.0, blue: 58.0 / 255.0, alpha: 1)
     static let muted = UIColor(red: 138.0 / 255.0, green: 138.0 / 255.0, blue: 134.0 / 255.0, alpha: 1)
     static let faint = UIColor(red: 199.0 / 255.0, green: 199.0 / 255.0, blue: 204.0 / 255.0, alpha: 1)
     static let line = UIColor(red: 230.0 / 255.0, green: 230.0 / 255.0, blue: 230.0 / 255.0, alpha: 1)
+    static let line2 = UIColor(red: 239.0 / 255.0, green: 239.0 / 255.0, blue: 239.0 / 255.0, alpha: 1)
     static let orange = BearyColors.orange
     static let blueSoft = UIColor(red: 238.0 / 255.0, green: 245.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
     static let loveSoft = UIColor(red: 253.0 / 255.0, green: 238.0 / 255.0, blue: 242.0 / 255.0, alpha: 1)
@@ -612,14 +614,14 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
     private func makeTitleLabel(_ text: String) -> UILabel {
         let label = UILabel()
         label.numberOfLines = 0
-        label.attributedText = attributed(text, font: BearyDynamicType.serifDesign(for: UIFont.systemFont(ofSize: 30)), color: BearyColors.ink, lineHeightMultiple: 1.35)
+        label.attributedText = attributed(text, font: BearyDynamicType.serifDesign(for: UIFont.systemFont(ofSize: 30)), color: BearyColors.ink, lineHeightMultiple: 1.35) // beary-lint: allow
         return label
     }
 
     private func makeLeadLabel(_ text: String) -> UILabel {
         let label = UILabel()
         label.numberOfLines = 0
-        label.attributedText = attributed(text, font: UIFont.systemFont(ofSize: 16), color: BearyColors.gray, lineHeightMultiple: 1.6)
+        label.attributedText = attributed(text, font: UIFont.systemFont(ofSize: 16), color: BearyColors.gray, lineHeightMultiple: 1.6) // beary-lint: allow
         return label
     }
 
@@ -627,7 +629,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         let label = UILabel()
         label.numberOfLines = 0
         label.textAlignment = .center
-        label.attributedText = attributed(text, font: UIFont.systemFont(ofSize: 23, weight: .semibold), color: BearyColors.ink, lineHeightMultiple: 1.4)
+        label.attributedText = attributed(text, font: UIFont.systemFont(ofSize: 23, weight: .semibold), color: BearyColors.ink, lineHeightMultiple: 1.4) // beary-lint: allow
         return label
     }
 
@@ -635,7 +637,7 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         let label = UILabel()
         label.numberOfLines = 0
         label.textAlignment = .center
-        label.attributedText = attributed(text, font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lineHeightMultiple: 1.6)
+        label.attributedText = attributed(text, font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lineHeightMultiple: 1.6) // beary-lint: allow
         return label
     }
 
@@ -1403,13 +1405,13 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         let titleLabel = UILabel()
         titleLabel.numberOfLines = 0
         titleLabel.textAlignment = .center
-        titleLabel.attributedText = attributed("设置完成", font: BearyDynamicType.serifDesign(for: UIFont.systemFont(ofSize: 30)), color: BearyColors.ink, lineHeightMultiple: 1.35)
+        titleLabel.attributedText = attributed(NSLocalizedString("onboarding.done.title", comment: ""), font: BearyDynamicType.serifDesign(for: UIFont.systemFont(ofSize: 30)), color: BearyColors.ink, lineHeightMultiple: 1.35) // beary-lint: allow
         stack.addArrangedSubview(titleLabel)
         stack.addArrangedSubview(spacer(10))
         let leadLabel = UILabel()
         leadLabel.numberOfLines = 0
         leadLabel.textAlignment = .center
-        leadLabel.attributedText = attributed("可以开始写日记了", font: UIFont.systemFont(ofSize: 16), color: BearyColors.gray, lineHeightMultiple: 1.6)
+        leadLabel.attributedText = attributed(NSLocalizedString("onboarding.done.lead", comment: ""), font: UIFont.systemFont(ofSize: 16), color: BearyColors.gray, lineHeightMultiple: 1.6) // beary-lint: allow
         stack.addArrangedSubview(leadLabel)
         return scrollView
     }
