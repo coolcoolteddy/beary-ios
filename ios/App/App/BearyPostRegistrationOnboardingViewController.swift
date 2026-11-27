@@ -1320,24 +1320,11 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         sub2.text = NSLocalizedString("onboarding.notifications.body", comment: "")
         texts2.addArrangedSubview(sub2)
         row2.addSubview(texts2)
-        let tagLabel = UILabel()
-        tagLabel.translatesAutoresizingMaskIntoConstraints = false
-        tagLabel.font = UIFont.systemFont(ofSize: 11)
-        tagLabel.textColor = BearyOnboardingPalette.muted
-        tagLabel.backgroundColor = BearyOnboardingPalette.tagBackground
-        tagLabel.layer.cornerRadius = 8
-        tagLabel.clipsToBounds = true
-        tagLabel.textAlignment = .center
-        tagLabel.text = "推送上线后开启"
-        row2.addSubview(tagLabel)
         NSLayoutConstraint.activate([
             row2.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
             texts2.leadingAnchor.constraint(equalTo: row2.leadingAnchor, constant: 16),
             texts2.centerYAnchor.constraint(equalTo: row2.centerYAnchor),
-            texts2.trailingAnchor.constraint(lessThanOrEqualTo: tagLabel.leadingAnchor, constant: -12),
-            tagLabel.trailingAnchor.constraint(equalTo: row2.trailingAnchor, constant: -16),
-            tagLabel.centerYAnchor.constraint(equalTo: row2.centerYAnchor),
-            tagLabel.heightAnchor.constraint(equalToConstant: 24),
+            texts2.trailingAnchor.constraint(lessThanOrEqualTo: row2.trailingAnchor, constant: -16),
         ])
         stack.addArrangedSubview(row2)
         return card
