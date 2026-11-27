@@ -720,9 +720,9 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
                 let corruptSubtitle = BearyDraftStore.hasCorruptBackup()
                     ? "这些草稿读不出来。清除后 App 内找不回，手机里的备份仍在；新草稿不受影响。"
                     : "这些草稿读不出来。清除后无法找回；新草稿不受影响。"
-                failedStateView.configure(kind: .error, title: "草稿库已损坏", subtitle: corruptSubtitle, iconName: nil, actionTitle: "清除损坏的草稿数据", actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
+                failedStateView.configure(kind: .error, title: NSLocalizedString("draftbox.corrupt_title", comment: ""), subtitle: corruptSubtitle, iconName: nil, actionTitle: NSLocalizedString("draftbox.clear_corrupt_drafts", comment: ""), actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
             } else {
-                failedStateView.configure(kind: .error, title: "草稿读取失败", subtitle: "原文件已保留，请稍后再试", iconName: nil, actionTitle: "重新读取", onAction: { [weak self] in self?.retryLoadDraftsTapped() })
+                failedStateView.configure(kind: .error, title: NSLocalizedString("draftbox.load_failed_title", comment: ""), subtitle: NSLocalizedString("draftbox.load_failed_subtitle", comment: ""), iconName: nil, actionTitle: NSLocalizedString("draftbox.retry_load", comment: ""), onAction: { [weak self] in self?.retryLoadDraftsTapped() })
             }
             listStack.addArrangedSubview(failedStateView)
             return
