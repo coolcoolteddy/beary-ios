@@ -5280,7 +5280,7 @@ class BearyProfileViewController: UIViewController {
         if hasEntries {
             label.text = "\(year) 年"
         } else {
-            label.text = modulesCorpusComplete ? "\(year) 年 · 这一年没有" : "\(year) 年 · 尚未检查完"
+            label.text = modulesCorpusComplete ? String(format: NSLocalizedString("pastself.year_empty_format", comment: ""), year) : String(format: NSLocalizedString("pastself.year_not_loaded_format", comment: ""), year)
         }
         return label
     }
