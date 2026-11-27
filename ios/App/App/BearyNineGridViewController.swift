@@ -170,7 +170,7 @@ enum BearyNineGridPresenter {
     static func present(from viewController: UIViewController, anchorView: UIView? = nil, imageKeys: [String], liveVideos: [String: String]?) {
         if SessionManager.shared.isLoggedIn == false {
             if SessionManager.shared.authUnknown {
-                BearyToast.show(in: viewController.view, message: "网络不稳定，请稍后再试")
+                BearyToast.show(in: viewController.view, message: NSLocalizedString("common.network_unstable", comment: ""))
             } else {
                 viewController.present(BearyLoginSheet.make(), animated: BearyMotion.animated(true), completion: nil)
             }

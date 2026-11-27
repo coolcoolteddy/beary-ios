@@ -1711,7 +1711,7 @@ final class BearySettingsViewController: UIViewController {
                 self.showToast("登录已过期，请重新登录")
                 self.openLoginForAccountSwitch()
             case .network:
-                self.showToast("网络不稳定，请稍后再试")
+                self.showToast(NSLocalizedString("common.network_unstable", comment: ""))
             case .failed, .unavailable:
                 self.showToast("切换失败，请稍后再试")
             }

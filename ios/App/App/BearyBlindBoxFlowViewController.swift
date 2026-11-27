@@ -1785,7 +1785,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             if code == 409 { return BearyRepeatedCopy.blindBoxAlreadySwappedToday }
             return "加载失败，请重试"
         default:
-            return "网络不稳定，请稍后再试"
+            return NSLocalizedString("common.network_unstable", comment: "")
         }
     }
 

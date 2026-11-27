@@ -1557,7 +1557,7 @@ final class BearyChromeViewController: UIViewController {
             if self?.profileMeWaitPending == true {
                 DispatchQueue.main.async { [weak self] in self?.resumePendingProfileAfterMe() }
             }
-            self?.showToast(message: "网络不稳定，请稍后再试")
+            self?.showToast(message: NSLocalizedString("common.network_unstable", comment: ""))
         }
         // 秒开-启动瘦身：启动期 /me 不在此处立即发——已改由 showPage 之前注册的
         // scheduleDeferredStartupMe 调度（首屏信号或 3 秒兜底，见下方两方法）。
@@ -4366,7 +4366,7 @@ final class BearyChromeViewController: UIViewController {
                             if let cached = snap?.entry {
                                 self.routeFetchedEntry(cached, request: request, source: source)
                             } else {
-                                self.showToast(message: "网络不稳定，请稍后再试")
+                                self.showToast(message: NSLocalizedString("common.network_unstable", comment: ""))
                             }
                         }
                     } else {
