@@ -2655,11 +2655,11 @@ final class BearySettingsViewController: UIViewController {
                 self.showToast(NSLocalizedString("settings.export.failed_retry", comment: ""))
                 return
             }
-            if let failedReason = exportFailedReason {
+            if exportFailedReason != nil {
                 self.isExporting = false
                 self.exportRowButton.isEnabled = true
                 self.setExportProgress(nil)
-                self.showToast("导出失败（\(failedReason)），未生成文件")
+                self.showToast(NSLocalizedString("settings.export.failed_retry", comment: ""))
                 return
             }
             // 触顶：分享前先弹明确标注，用户点“继续分享”才拼文件、出分享面板；
