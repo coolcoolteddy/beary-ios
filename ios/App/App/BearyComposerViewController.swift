@@ -4448,7 +4448,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationMetaButton.tintColor = BearyColors.gray
         locationMetaButton.titleLabel?.font = BearyDynamicType.secondaryFont()
         locationMetaButton.setTitleColor(BearyColors.gray, for: .normal)
-        locationMetaButton.titleLabel?.numberOfLines = 1
+        // 地址名长时换两行显示：单行会被天气 chip 挤掉尾巴（定位钮抗压 750 < 天气 chip 1000）。
+        locationMetaButton.titleLabel?.numberOfLines = 2
         locationMetaButton.titleLabel?.lineBreakMode = .byTruncatingTail
         locationMetaButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         locationMetaButton.addTarget(self, action: #selector(didTapMetaLocationRow), for: .touchUpInside)
