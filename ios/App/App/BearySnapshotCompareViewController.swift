@@ -128,7 +128,7 @@ final class BearySnapshotPreviewViewController: UIViewController, BearySystemShe
             restoreButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             restoreButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             restoreButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.orange).height),
-            restoreButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            restoreButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -BearySystemSheet.contentBottomPadding),
         ])
     }
 

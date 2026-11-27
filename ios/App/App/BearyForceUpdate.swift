@@ -369,7 +369,7 @@ final class BearySoftUpdateSheetViewController: UIViewController, BearySystemShe
             buttonStack.topAnchor.constraint(equalTo: lastView.bottomAnchor, constant: lastConstant),
             buttonStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             buttonStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -BearySystemSheet.contentBottomPadding),
         ])
     }
 

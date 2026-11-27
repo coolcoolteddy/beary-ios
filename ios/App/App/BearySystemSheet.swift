@@ -29,6 +29,8 @@ enum BearySystemSheet {
     private static let customDetentIdentifier = UISheetPresentationController.Detent.Identifier("bearySystemSheetContent")
     /// 底 sheet 高封顶（旧容器口径：min(内容高, 88% 容器高)）。
     private static let maxHeightRatio: CGFloat = 0.88
+    /// 系统 sheet 内容底边距（Li 2026-11-27 定：16→8；底留白 50pt＝16＋34 指示区 → 42pt，34pt 指示区不动）。
+    static let contentBottomPadding: CGFloat = 8
 
     /// 标准弹出：按 presenter 宽算 sheet 宽并预排一次内容高，再配系统 sheet 并 present。
     /// 调用方 show() 原有的 loadViewIfNeeded／frame／layout／updatePreferredContentSize
