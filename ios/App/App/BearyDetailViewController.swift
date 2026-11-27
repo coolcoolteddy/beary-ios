@@ -1683,7 +1683,7 @@ final class BearyDetailViewController: UIViewController {
             showStaleBanner()
             return
         }
-        BearyToast.show(in: view, message: "加载失败，请稍后再试", actionTitle: "重试", action: { [weak self] in self?.retryFetchDetail() })
+        BearyToast.show(in: view, message: NSLocalizedString("detail.load_failed", comment: ""), actionTitle: NSLocalizedString("common.retry", comment: ""), action: { [weak self] in self?.retryFetchDetail() })
     }
 
     /// B1：回包/失败已明确本篇不可见（无权限/找不到）时撤下全文：
