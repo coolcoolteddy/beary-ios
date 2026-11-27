@@ -2293,7 +2293,7 @@ class BearyDiaryCardCell: UITableViewCell {
         if let rawName = rawName, !rawName.isEmpty {
             return rawName
         }
-        return "beary 用户"
+        return NSLocalizedString("emote.posters.fallback_display_name", comment: "")
     }
 
     /// 图到后按实测尺寸纠槽宽（见 bearyStripWidth 注释：imgDims 恒 nil，
@@ -2635,7 +2635,7 @@ class BearyDiaryCardCell: UITableViewCell {
         cellBookmarkedByMe = entry.bookmarkedByMe ?? false
         profileDisabled = interactionDisabled
         self.isExpanded = isExpanded
-        let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? "beary 用户"
+        let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? NSLocalizedString("emote.posters.fallback_display_name", comment: "")
         nameLabel.text = authorNameValue
         // 我的页时间走日记口径（与 feed 模式同款：有效公开取发布时间，否则取创建时间；
         // 见 BearyVisibilityText.diaryTimeString）。

@@ -4099,7 +4099,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if let handle = user.handle, !handle.isEmpty {
             return "@" + handle
         }
-        return "beary 用户"
+        return NSLocalizedString("emote.posters.fallback_display_name", comment: "")
     }
 }
 

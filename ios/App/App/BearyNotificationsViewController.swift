@@ -3140,7 +3140,7 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
                 // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“用户已注销”。
                 // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，不落空串。
                 let deletedName = bearyDeletedAuthorDisplayName(latest.actorName) ?? ""
-                let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
+                let actorName = deletedName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : deletedName
                 let latestVerb = BearyNotificationCell.verb(for: latest.type)
                 cell.configureAsCard(
                     title: "互动消息",
@@ -3834,7 +3834,7 @@ final class BearyAvatarStackView: UIView {
             imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         // 首字母占位与单头像同款（15/700 灰）；无图直接露占位，不走加载。
-        let displayName = name.isEmpty ? "beary 用户" : name
+        let displayName = name.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : name
         let fallbackLabel = UILabel()
         fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
         fallbackLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
@@ -4402,7 +4402,7 @@ class BearyNotificationCell: UITableViewCell {
         avatarRetryURL = url
         // 第十三轮第 8 项：缺名（nil 或空串已在调用方回落，此处再兜底一次）不再回退字母 "T"，
         // 与全站缺省名“beary 用户”一致（首字母占位即 "B"）。
-        let displayName = actorName.isEmpty ? "beary 用户" : actorName
+        let displayName = actorName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : actorName
         avatarRetryActorName = displayName
         avatarImageView.image = nil
         avatarRetryButton.isHidden = true
@@ -4727,7 +4727,7 @@ class BearyNotificationCell: UITableViewCell {
             // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，
             // 与已注销（“用户已注销”）是两种状态，不混淆。
             let deletedName = bearyDeletedAuthorDisplayName(item.actorName) ?? ""
-            let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
+            let actorName = deletedName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : deletedName
             if let avatarURL = BearyImageURLs.avatarURL(item.actorAvatar) {
                 loadAvatar(url: avatarURL, actorName: actorName)
             } else {
@@ -4815,7 +4815,7 @@ class BearyNotificationCell: UITableViewCell {
         let overflowCount = members.count > 4 ? members.count - 3 : 0
         let actors: [(name: String, avatarURL: URL?)] = shownMembers.map { member in
             let deletedName = bearyDeletedAuthorDisplayName(member.actorName) ?? ""
-            let displayName = deletedName.isEmpty ? "beary 用户" : deletedName
+            let displayName = deletedName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : deletedName
             return (name: displayName, avatarURL: BearyImageURLs.avatarURL(member.actorAvatar))
         }
         avatarStackView.configure(actors: actors, overflowCount: overflowCount, expanded: expanded, onToggle: onToggle)
@@ -4829,7 +4829,7 @@ class BearyNotificationCell: UITableViewCell {
 
         let displayNames = members.map { member -> String in
             let deletedName = bearyDeletedAuthorDisplayName(member.actorName) ?? ""
-            return deletedName.isEmpty ? "beary 用户" : deletedName
+            return deletedName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : deletedName
         }
         let namesText: String
         if displayNames.count == 2 {
@@ -4838,7 +4838,7 @@ class BearyNotificationCell: UITableViewCell {
             let head = displayNames.dropLast().joined(separator: "、")
             namesText = head + " 和 " + (displayNames.last ?? "")
         } else {
-            namesText = displayNames.first ?? "beary 用户"
+            namesText = displayNames.first ?? NSLocalizedString("emote.posters.fallback_display_name", comment: "")
         }
         let title = NSMutableAttributedString()
         title.append(NSAttributedString(
@@ -5355,7 +5355,7 @@ extension BearyNotificationsViewController {
             // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“用户已注销”。
             // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，不落空串。
             let deletedName = bearyDeletedAuthorDisplayName(latest.actorName) ?? ""
-            let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
+            let actorName = deletedName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : deletedName
             let latestVerb = BearyNotificationCell.verb(for: latest.type)
             cards.append(NotifMergeCardData(
                 kind: .interactive,

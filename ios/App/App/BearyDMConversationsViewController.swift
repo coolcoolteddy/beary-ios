@@ -1297,7 +1297,7 @@ final class BearyDMConversationCell: UITableViewCell {
 
     func configure(conversation: BearyAPI.DMConversation) {
         let peer = conversation.peer
-        let displayName = (peer?.displayName?.isEmpty == false) ? peer!.displayName! : "beary 用户"
+        let displayName = (peer?.displayName?.isEmpty == false) ? peer!.displayName! : NSLocalizedString("emote.posters.fallback_display_name", comment: "")
         nameLabel.text = displayName
         // 审计：摘要空行折叠——空白摘要整行隐藏，不留空白行。
         let snippet = (conversation.lastBody ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

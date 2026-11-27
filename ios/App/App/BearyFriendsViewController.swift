@@ -788,7 +788,7 @@ private final class BearyFriendCell: UITableViewCell {
 
     func configure(user: BearyAPI.FriendUser, onMore: @escaping (UIButton) -> Void) {
         moreHandler = onMore
-        let displayName = (user.displayName?.isEmpty == false) ? user.displayName! : "beary 用户"
+        let displayName = (user.displayName?.isEmpty == false) ? user.displayName! : NSLocalizedString("emote.posters.fallback_display_name", comment: "")
         nameLabel.text = displayName
         if let handle = user.handle, !handle.isEmpty {
             handleLabel.text = "@\(handle)"
