@@ -1225,7 +1225,7 @@ final class BearyChromeViewController: UIViewController {
             badge.layer.borderWidth = 0
             badge.textColor = .white
         }
-        badge.accessibilityLabel = stale ? "未读数可能已过期，\(unread) 条" : "\(unread) 条未读"
+        badge.accessibilityLabel = stale ? String(format: NSLocalizedString("messages.unread_may_not_be_latest_count_format", comment: ""), unread) : String(format: NSLocalizedString("messages.unread_count_format", comment: ""), unread)
     }
 
     /// 开发者模式横幅位置：顶栏显示时贴顶栏下方，收起时贴安全区顶。
