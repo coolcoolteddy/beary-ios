@@ -4369,10 +4369,18 @@ class BearyDiaryCardCell: UITableViewCell {
             // 时下滑即此因）。此处异步通知一次，让表立即取新高；复核 entryId
             // 与高度，防复用／又变高后过期通知误触发（个人主页布局通知同款口径）。
             // 异步发：防 configure／reloadRows 的更新块内嵌套批更新。
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self, self.cellEntryId == entryIdValue,
-                      self.emoteRowHeightConstraint?.constant == settledHeight else { return }
-                self.onNeedsEmoteRowAnimation?()
+            // 去重（与个人主页布局通知同款 lastEmoteHeightNotified）：同一
+            // (entry, 高度) 只通知一次——离屏行 reloadRows → configure →
+            // 复位 0 → 再报 0→H 变化 → 再通知 → 再 reloadRows 是无终止
+            // 循环，行高缓存翻转会让内容抖动、顶栏反复滑入滑出（广场抽搐）。
+            let key = (entryId: entryIdValue, height: settledHeight)
+            if lastEmoteHeightNotified?.entryId != key.entryId || lastEmoteHeightNotified?.height != key.height {
+                lastEmoteHeightNotified = key
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, self.cellEntryId == entryIdValue,
+                          self.emoteRowHeightConstraint?.constant == settledHeight else { return }
+                    self.onNeedsEmoteRowAnimation?()
+                }
             }
         }
     }
