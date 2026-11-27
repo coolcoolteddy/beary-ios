@@ -1112,6 +1112,12 @@ final class BearyWishWallViewController: UIViewController {
             SessionManager.shared.cancelAccountAddSession()
             self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
         }
+        login.onGuestMode = { [weak self] in
+            // 游客入口：关登录页、进游客态（回许愿墙原地；投票仍按游客口径走登录门）。
+            self?.dismiss(animated: BearyMotion.animated(true)) {
+                SessionManager.shared.isGuestMode = true
+            }
+        }
         present(login, animated: BearyMotion.animated(true), completion: nil)
     }
 }

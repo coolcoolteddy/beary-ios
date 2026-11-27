@@ -858,6 +858,13 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             SessionManager.shared.cancelAccountAddSession()
             self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
         }
+        login.onGuestMode = { [weak self] in
+            // 游客入口：关登录页、进游客态（回盲盒登录步；与取消同效回原地，
+            // 另置游客旗，后续受限动作按游客口径走登录门）。
+            self?.dismiss(animated: BearyMotion.animated(true)) {
+                SessionManager.shared.isGuestMode = true
+            }
+        }
         present(login, animated: BearyMotion.animated(true), completion: nil)
     }
 
