@@ -1235,7 +1235,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 self.presentLogOnlyComposer()
             } else {
                 // 仅发送日志无文字可复制，不走复制 fallback：toast 明说两条出路。
-                BearyToast.show(in: self.view, message: "请先配置邮箱，或改用“分享诊断日志”")
+                BearyToast.show(in: self.view, message: NSLocalizedString("feedback.email_not_configured_action", comment: ""))
                 BearyHaptics.rejectionWarning()
             }
         }
@@ -1258,7 +1258,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         guard MFMailComposeViewController.canSendMail() else {
             // 补缺 P3-34：复制 fallback 只复制描述文字，设备信息与附件不随复制发出，toast 明说。
             UIPasteboard.general.string = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            BearyToast.show(in: view, message: "未配置邮箱，已仅复制反馈文字，附件不随复制发出")
+            BearyToast.show(in: view, message: NSLocalizedString("feedback.no_email_copied_text_only", comment: ""))
             BearyAppLog.event("feedback mail no account copy fallback")
             return
         }
