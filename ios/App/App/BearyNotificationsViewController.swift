@@ -2321,7 +2321,7 @@ final class BearyNotificationsViewController: UIViewController {
                         // 旧缓存态原样保留（重验调用点只对已有缓存态发请求）。
                     } else {
                         self.followCardStates[actorId] = .loadFailed
-                        self.showToast(message: "回关状态加载失败，点按可重试")
+                        self.showToast(message: NSLocalizedString("notif.followback.load_failed", comment: ""))
                     }
                 }
                 self.refreshFollowCardRows(actorId: actorId)
