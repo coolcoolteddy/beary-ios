@@ -672,7 +672,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
         // 服务端部署前的旧档位：只作回显，不再提供选择；新档位保存后即被替换。
         case "followers": return "仅关注我的人"
         case "friends": return "仅好友"
-        default: return "获取失败，点按重试"
+        default: return NSLocalizedString("settings.dm.level_load_failed", comment: "")
         }
     }
 
@@ -706,7 +706,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
                     }
                 case .failure:
                     if self.dmLevel == nil {
-                        self.dmDetailLabel?.text = "获取失败，点按重试"
+                        self.dmDetailLabel?.text = NSLocalizedString("settings.dm.level_load_failed", comment: "")
                     }
                 }
             }
@@ -759,7 +759,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
                     self.dmDetailLabel?.text = self.dmLevelText(saved)
                 case .failure:
                     self.dmLevel = previousLevel
-                    self.dmDetailLabel?.text = previousLevel.map { self.dmLevelText($0) } ?? "获取失败，点按重试"
+                    self.dmDetailLabel?.text = previousLevel.map { self.dmLevelText($0) } ?? NSLocalizedString("settings.dm.level_load_failed", comment: "")
                     self.playDenyShake()
                     BearyToast.show(in: self.view, message: "保存失败，请重试")
                 }
