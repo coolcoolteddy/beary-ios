@@ -151,7 +151,7 @@ final class BearyInputSheetViewController: UIViewController, BearySystemSheetSiz
         let scrollBottom = scrollView.bottomAnchor.constraint(equalTo: buttonStack.topAnchor)
         scrollBottom.priority = UILayoutPriority(rawValue: 999)
         // 按钮组底边：贴安全区底边 -16；停靠键盘时由 keyboardAvoidance 按键盘顶升改常量。
-        let buttonBottom = buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16)
+        let buttonBottom = buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -BearySystemSheet.contentBottomPadding)
         buttonStackBottomConstraint = buttonBottom
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -223,14 +223,14 @@ final class BearyInputSheetViewController: UIViewController, BearySystemSheetSiz
     /// 按当前宽度算内容高，推给系统 sheet 当 detent 高；宽/字号档变化时跟帧补齐。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     /// 滚动区无固有高，整体系 fitting 算不出高：改为滚动内容高（已含内容底
-    /// 16 留白）＋按钮组高＋底边 16＋安全区底边分别相加；与改前总高一致，
+    /// 16 留白）＋按钮组高＋底边 8＋安全区底边分别相加；与改前总高一致，
     /// 超高时表单在滚动区内纵向滚动、按钮组贴底不动（系统 sheet 封顶 88%）。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
         let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
         let contentHeight = scrollContentView.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
         let buttonsHeight = buttonStack.systemLayoutSizeFitting(target, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
-        let height = ceil(contentHeight) + ceil(buttonsHeight) + 16 + view.safeAreaInsets.bottom + extraBottomInset
+        let height = ceil(contentHeight) + ceil(buttonsHeight) + BearySystemSheet.contentBottomPadding + view.safeAreaInsets.bottom + extraBottomInset
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred

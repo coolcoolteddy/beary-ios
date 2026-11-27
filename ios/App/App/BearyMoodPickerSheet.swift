@@ -172,7 +172,7 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         let width = view.bounds.width > 0 ? view.bounds.width : 375
         let maxHeight = max(0, containerHeight * 0.5)
         let safeBottom = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
-        let bottomPad = safeBottom + 16
+        let bottomPad = safeBottom + BearySystemSheet.contentBottomPadding
         let titleHeight = titleLabel.intrinsicContentSize.height
         let topHeight = BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 14 + titleHeight + 12
         let gridHeight = gridContentHeight(forWidth: width)
