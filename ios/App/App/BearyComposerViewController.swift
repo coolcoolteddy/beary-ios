@@ -4521,7 +4521,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let locationName: String?
         if let location = selectedLocation, !location.isEmpty {
             hasLocation = true
-            locationName = BearyLocationDisplay.dedupedAddressName(location.name ?? location.district ?? "")
+            locationName = BearyLocationDisplay.shortenedAddressName(location.name ?? location.district ?? "", district: location.district)
         } else {
             hasLocation = false
             locationName = nil

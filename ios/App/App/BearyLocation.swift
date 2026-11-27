@@ -190,6 +190,16 @@ enum BearyLocationDisplay {
         }
         return text
     }
+
+    /// 编辑器定位行短名（单行显示）：名字里含区级时只留区级往后的部分
+    /// （省市前缀去掉，如“浙江省宁波市鄞州区天童南路 123 号”→“鄞州区天童南路 123 号”）；
+    /// 不含区级（店名/地名）或无区级时原样返回。去重口径与 dedupedAddressName 一致。
+    static func shortenedAddressName(_ raw: String, district: String?) -> String {
+        let text = dedupedAddressName(raw)
+        guard let district = district?.trimmingCharacters(in: .whitespacesAndNewlines), !district.isEmpty,
+              let range = text.range(of: district) else { return text }
+        return String(text[range.lowerBound...])
+    }
 }
 
 /// 按当前系统语言重取地名（2026-11-14 Li 定，推翻方案 A“只存地点文字、不存经纬度”口径）：
