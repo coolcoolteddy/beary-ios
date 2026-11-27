@@ -5459,7 +5459,7 @@ class BearyProfileViewController: UIViewController {
     @objc private func pastSelfEntryTapped() {
         guard thisDayMainEntry?.id != nil, pastSelfStore() != nil else { return }
         guard let deliverOn = PastSelfLogic.nextYearDateString(fromMs: pastSelfNowMs(), calendar: Self.beijingCalendar) else {
-            BearyToast.show(in: view, message: "日期算不出来，换一天再试")
+            BearyToast.show(in: view, message: NSLocalizedString("pastself.date_failed_try_another_day", comment: ""))
             return
         }
         pastSelfThisDayDeliverOn = deliverOn
