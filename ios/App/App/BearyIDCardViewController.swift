@@ -295,7 +295,8 @@ final class BearyIDCardFormViewController: UIViewController, UITableViewDataSour
             cityButton.setTitleColor(BearyOnboardingPalette.ink, for: .normal)
         } else {
             cityButton.setTitle("请选择", for: .normal)
-            cityButton.setTitleColor(BearyOnboardingPalette.faint, for: .normal)
+            // faint 做文字只有 1.68，改走 gray #666666（5.74）；与页码同理。
+            cityButton.setTitleColor(BearyOnboardingPalette.gray, for: .normal)
         }
     }
 
@@ -740,7 +741,8 @@ final class BearyIDCardSheetViewController: UIViewController, BearySystemSheetSi
         plusRow.addArrangedSubview(plusTitle)
         let plusNote = UILabel()
         plusNote.font = UIFont.systemFont(ofSize: 11.5)
-        plusNote.textColor = BearyOnboardingPalette.faint
+        // faint 做文字只有 1.68，改走 gray #666666（5.74）；与页码同理。
+        plusNote.textColor = BearyOnboardingPalette.gray
         plusNote.text = "预览开关"
         plusRow.addArrangedSubview(plusNote)
         let plusSpacer = UIView()

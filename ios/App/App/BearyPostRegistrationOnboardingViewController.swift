@@ -18,6 +18,10 @@ enum BearyOnboardingPalette {
     static let ink = UIColor(red: 17.0 / 255.0, green: 17.0 / 255.0, blue: 17.0 / 255.0, alpha: 1)
     static let ink2 = UIColor(red: 58.0 / 255.0, green: 58.0 / 255.0, blue: 58.0 / 255.0, alpha: 1)
     static let muted = UIColor(red: 138.0 / 255.0, green: 138.0 / 255.0, blue: 134.0 / 255.0, alpha: 1)
+    /// 可读的弱文字色：固定 #666666（2026-11-27 Li 定，对比度审计：浅色 gray 由 #737373 改深至 #666666）。
+    /// 本 palette 固定浅色，不用 BearyColors.gray 的动态色——其深色值 #A8A8A8 落在固定浅底上只有约 2.2。
+    /// 页底 #F4F4F2 上 5.21、白底 5.74，均过 4.5 线。
+    static let gray = UIColor(red: 102.0 / 255.0, green: 102.0 / 255.0, blue: 102.0 / 255.0, alpha: 1)
     static let faint = UIColor(red: 199.0 / 255.0, green: 199.0 / 255.0, blue: 204.0 / 255.0, alpha: 1)
     static let line = UIColor(red: 230.0 / 255.0, green: 230.0 / 255.0, blue: 230.0 / 255.0, alpha: 1)
     static let line2 = UIColor(red: 239.0 / 255.0, green: 239.0 / 255.0, blue: 239.0 / 255.0, alpha: 1)
@@ -193,7 +197,8 @@ final class BearyPostRegistrationOnboardingViewController: UIViewController, UIG
         topBarView.addSubview(backButton)
         pageLabel.translatesAutoresizingMaskIntoConstraints = false
         pageLabel.textAlignment = .center
-        pageLabel.textColor = BearyOnboardingPalette.faint
+        // faint 做文字只有 1.53，改走 gray #666666（5.21）；:132 的 surface2 是底色口径，文字走 surface2 白底只有 1.20。
+        pageLabel.textColor = BearyOnboardingPalette.gray
         pageLabel.font = UIFont.systemFont(ofSize: 13)
         topBarView.addSubview(pageLabel)
         skipButton.translatesAutoresizingMaskIntoConstraints = false
