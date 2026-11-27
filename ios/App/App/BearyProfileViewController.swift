@@ -4076,7 +4076,7 @@ class BearyProfileViewController: UIViewController {
                 nameLabel.text = "—"
                 stickyHeaderNameLabel.text = "—"
             } else {
-                BearyToast.show(in: view, message: "资料刷新失败，显示的是上次内容，下拉可重试")
+                BearyToast.show(in: view, message: NSLocalizedString("profile.refresh_failed_showing_previous_content", comment: ""))
             }
             endCustomPullRefresh()
             refreshFooter()
@@ -4846,7 +4846,7 @@ class BearyProfileViewController: UIViewController {
         } else if modulesCorpus.isEmpty {
             // r17-C7：有旧结果且刷新失败时标“显示的是上次的数据”，不清空；
             // 无快照时才显加载失败。
-            modulesRetryLabel.text = showingCachedStats ? "显示的是上次的数据" : "加载失败，请重试"
+            modulesRetryLabel.text = showingCachedStats ? NSLocalizedString("common.showing_previous_content", comment: "") : NSLocalizedString("common.load_failed_retry", comment: "")
             modulesRetryButton.isEnabled = true
         } else {
             modulesRetryLabel.text = "只加载了部分日记，请重试"
@@ -7391,7 +7391,7 @@ class BearyProfileViewController: UIViewController {
                     // 文案请 Li 纠正。
                     if !strongSelf.backgroundReconcileFailToasted {
                         strongSelf.backgroundReconcileFailToasted = true
-                        BearyToast.show(in: strongSelf.view, message: "同步失败，显示的是上次的数据")
+                        BearyToast.show(in: strongSelf.view, message: NSLocalizedString("profile.sync_failed_showing_previous_content", comment: ""))
                     }
                 }
             }

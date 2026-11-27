@@ -4499,7 +4499,7 @@ class BearyTimelineViewController: UIViewController {
         if !failedUncached.isEmpty, anyVisibleCached {
             failedText = "只加载了一部分"
         } else if !failedStale.isEmpty, failedUncached.isEmpty {
-            failedText = "显示的是上次的数据"
+            failedText = NSLocalizedString("common.showing_previous_content", comment: "")
         } else {
             failedText = "日历加载失败"
         }

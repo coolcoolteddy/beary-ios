@@ -402,7 +402,7 @@ final class BearyWishWallViewController: UIViewController {
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
-        labelValue.text = "显示的是上次的数据"
+        labelValue.text = NSLocalizedString("common.showing_previous_content", comment: "")
         labelValue.isHidden = true
         return labelValue
     }()
