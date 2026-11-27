@@ -2796,7 +2796,6 @@ final class BearyDetailViewController: UIViewController {
                         self.confirmedFollowState = target
                         self.noteMutualFriend(target == .mutual, forEntryId: self.entry.id)
                         BearyFriends.clearDiaryCachesAndNotify(userId: authorId)
-                        BearyToast.show(in: self.view, message: wasFollowedBy ? NSLocalizedString("follow.toast.mutual", comment: "") : NSLocalizedString("follow.button.following", comment: ""))
                     case .failure(let error):
                         // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
                         self.followState = self.confirmedFollowState
