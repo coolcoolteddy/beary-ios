@@ -262,7 +262,6 @@ final class BearySnapshotListViewController: UIViewController, BearySystemSheetS
                     self.refreshEmptyState()
                     self.updateTableHeight()
                     self.tableView.reloadData()
-                    BearyToast.show(in: self.view, message: "快照已清空")
                 case .failure:
                     BearyToast.show(in: self.view, message: "操作失败，请重试")
                 }
