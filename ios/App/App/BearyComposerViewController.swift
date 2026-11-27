@@ -2790,7 +2790,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             self.clearPendingCheckpointQuoteRetry()
             self.refreshQuoteSection()
             self.updatePublishState()
-            self.showToast(message: "引用已移除，保存后生效")
         }, onKeepPrivate: {})
     }
 
