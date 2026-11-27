@@ -4892,7 +4892,6 @@ enum BearyReportFlow {
                             NotificationCenter.default.post(name: .bearyDidReportEntry, object: entryId)
                             // 补缺 P3-39：重复举报（服务端 duplicate 成功态）按已举报处理并置灰下次菜单，
                             // 文案不谎称“谢谢反馈”，改“已举报”。
-                            BearyToast.show(in: vc.view, message: resp.duplicate == true ? "已举报" : "已举报，谢谢反馈")
                         case .failure:
                             BearyToast.show(in: vc.view, message: "举报失败，请重试")
                         }
