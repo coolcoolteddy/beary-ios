@@ -1031,7 +1031,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         errorStateWrap.isHidden = true
         contentStack.addArrangedSubview(errorStateWrap)
         errorStateView.translatesAutoresizingMaskIntoConstraints = false
-        errorStateView.configure(kind: .error, title: "搜索失败", subtitle: "检查网络后重试", iconName: "icon_search", actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
+        errorStateView.configure(kind: .error, title: NSLocalizedString("search.failed_title", comment: ""), subtitle: nil, iconName: "icon_search", actionTitle: NSLocalizedString("common.retry", comment: ""), onAction: { [weak self] in self?.retryTapped() })
         errorStateWrap.addSubview(errorStateView)
         NSLayoutConstraint.activate([
             errorStateView.topAnchor.constraint(equalTo: errorStateWrap.topAnchor, constant: 28),
