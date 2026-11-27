@@ -1,9 +1,9 @@
 // ===== beary 设置页（2026-10-26：原独立账户页整体迁移为本页「账号与安全」分区；
 // 齿轮菜单与头像菜单的“账户设置”入口均改开本页，旧 BearyAccountViewController 已删除，
 // 不留两个入口、不留死代码页）=====
-// C 批（C2/C3/C4）：模块顺序改为 [ID 概览卡 & Plus 状态] → [通用与通知
+// C 批（C2/C3/C4）：模块顺序改为 [Plus 状态] → [通用与通知
 // （外观切换、使用指南入口）] → [账户与安全（登录设备管理、导出数据；
-// 个人资料入口为 ID 卡右侧“编辑资料”钮，旧账户组四行已按 C4 删除）] → [隐私与协议]；
+// 旧账户组四行已按 C4 删除）] → [隐私与协议]；
 // 退出登录为独立居中常规钮（BearyButton 工厂），注销账户下沉至页底弱化灰字，
 // 两者行为一字不动；齿轮直达本页，不再经 ActionSheet / 外观 Popover 中转。
 // 新增行一律真实能力：外观主题三选
@@ -20,9 +20,6 @@ import UIKit
 // - 账户 Worker ~/workspace/teddy_accounts_v2/worker.js（端点与字段均以它为准）：
 //   GET /api/account/me → {ok, user: {id, is_admin, email, display_name, avatar, cover_ver,
 //     created_at, handle, plus, plus_until, plus_free, invite_code, referral}}。
-//     注意：现行 /me 不返回 serial_id，
-//     故本页 ID 行不编造序列号：serial_id 若将来由服务端下发则显示它，
-//     否则显示 @handle（与现行网页 heroId 口径一致），再无 handle 时显示“ID <id>”。
 //   GET /api/account/plus-detail → {ok, personal_until, free_until, effective_until,
 //     permanent, grants: [{days, source, created_at, until_after}]}（LIMIT 20，id DESC）。
 //     结论：第 3 项 Plus 发放记录明细有现成接口，直接接它，不编造、不造假数据。
@@ -356,7 +353,7 @@ final class BearySettingsViewController: UIViewController {
     private let accountSessionsLoad = BearySharedLoad<BearyAccountSessionsResponse>(fetch: { BearyAPI.shared.fetchAccountSessions(completion: $0) })
     private var isLoadingMe = false
     /// /me 代次：切换账号成功时 +1 作废旧请求，旧回包凭代次丢弃，
-    /// 不再把旧账号写回 ID 卡（旧请求发在切换前，回包体仍是旧账号）。
+    /// 不再把旧账号写回界面（旧请求发在切换前，回包体仍是旧账号）。
     private var meLoadGeneration = 0
     /// 第三轮审计 13：Plus/设备列表已请求代次——同一次页面加载（同一
     /// meLoadGeneration）各只请求一次，第二轮调用直接跳过；重进页/切号
@@ -447,12 +444,11 @@ final class BearySettingsViewController: UIViewController {
     private let loginWrap = UIStackView()
     private let loginHintLabel = UILabel()
     private let loginButton = UIButton(type: .system)
-    /// C2：登录态相关容器。contentWrap = [ID 卡]；plusWrap = [Plus 会员]；
+    /// C2：登录态相关容器。plusWrap = [Plus 会员]；
     /// accountSecurityWrap = [隐私与安全]；accountActionWrap = [账号]；
-    /// 四者未登录 / 加载失败时隐藏。generalNotifyWrap = [通用]、
+    /// 三者未登录 / 加载失败时隐藏。generalNotifyWrap = [通用]、
     /// storageDataWrap = [存储与数据]、dataFeedbackWrap = [反馈与建议]
     /// 登录态无关，恒可见。
-    private let contentWrap = UIStackView()
     private let generalNotifyWrap = UIStackView()
     private let storageDataWrap = UIStackView()
     private let plusWrap = UIStackView()
@@ -477,8 +473,6 @@ final class BearySettingsViewController: UIViewController {
     /// 2026-10-29 第 10 项：页底版本脚注（通用组版本行移至页底，Bundle 动态读）。
     private let versionFooterWrap = UIView()
 
-    // ID 卡（2026-11-19 七组版：注册时弹出的可翻转 ID 卡，见 BearySettingsIDCardView）。
-    private let idCardView = BearySettingsIDCardView()
 
     // Plus 分组
     /// Plus 页入口行尾文案（未开通／至到期日／永久有效，随 fillPlusDetail 更新）。
@@ -1142,15 +1136,9 @@ final class BearySettingsViewController: UIViewController {
         loginWrap.addArrangedSubview(loginButton)
         loginWrap.isHidden = true
 
-        contentWrap.translatesAutoresizingMaskIntoConstraints = false
-        contentWrap.axis = .vertical
-        contentWrap.spacing = 20
-        contentWrap.alignment = .fill
-        contentWrap.isHidden = true
 
-        // 2026-11-19 七组版（从上往下）：ID 卡 → 通用 → 存储与数据 →
+        // 2026-11-19 七组版（从上往下）：通用 → 存储与数据 →
         // Plus 会员 → 隐私与安全 → 反馈与建议 → 账号；页脚版本号＋隐私／协议链接。
-        buildIdCard()
 
         generalNotifyWrap.translatesAutoresizingMaskIntoConstraints = false
         generalNotifyWrap.axis = .vertical
@@ -1190,7 +1178,6 @@ final class BearySettingsViewController: UIViewController {
         contentStack.addArrangedSubview(loadingView)
         contentStack.addArrangedSubview(failureStateView)
         contentStack.addArrangedSubview(loginWrap)
-        contentStack.addArrangedSubview(contentWrap)
         contentStack.addArrangedSubview(generalNotifyWrap)
         contentStack.addArrangedSubview(storageDataWrap)
         contentStack.addArrangedSubview(plusWrap)
@@ -1204,16 +1191,6 @@ final class BearySettingsViewController: UIViewController {
         // toast 已委托 B 批统一 BearyToast（见 showToast），此处不再建常驻容器。
     }
 
-    /// 2026-11-19 七组版：ID 卡（注册时弹出的可翻转 ID 卡，见 BearySettingsIDCardView）。
-    /// 正面干净纯白、只有头像＋昵称；背面分段放注册时间、账号所在地、
-    /// 用户名更改（几次＋上次更改时间）、ID。无编辑资料钮（改资料入口在
-    /// 我的页）、无会员行（会员在 Plus 卡）、无同步状态行。
-    /// fillIdCard 组装数据调 idCardView.configure；未登录时整卡隐藏（contentWrap）。
-    private func buildIdCard() {
-        idCardView.translatesAutoresizingMaskIntoConstraints = false
-        contentWrap.addArrangedSubview(idCardView)
-    }
-
     /// 2026-11-19 七组版：Plus 会员卡只留入口行一行；点入口进 Plus 页，
     /// 页内是来源明细（见 BearyPlusPageViewController）。当前状态行、
     /// 专属会员行、Plus 更多折叠全删。
@@ -1225,7 +1202,7 @@ final class BearySettingsViewController: UIViewController {
         plusEntryLabel.numberOfLines = 0
         plusEntryLabel.textAlignment = .right
         // Plus 页入口行：标题“Plus 会员”＋行尾状态（未开通／到期日／
-        // 永久有效），点按进 Plus 展示页；到期日只留 Plus 组，不进 ID 卡（全修 3-2）。
+        // 永久有效），点按进 Plus 展示页；到期日只留 Plus 组（全修 3-2）。
         let plusEntryTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
         plusEntryTitle.font = BearyDynamicType.smallBodyFont()
@@ -2159,11 +2136,9 @@ final class BearySettingsViewController: UIViewController {
             loginWrap.isHidden = true
             loadingView.stopSpinning()
             loadingView.isHidden = true
-            contentWrap.isHidden = false
             accountSecurityWrap.isHidden = false
             plusWrap.isHidden = false
             accountActionWrap.isHidden = false
-            fillIdCard(user: cached)
             // 注销入口：只用 is_admin，缓存与刷新后同一口径（见下）。
             setAccountActionDeleteHidden(cached.isAdmin == true)
             loadPlusDetail()
@@ -2183,7 +2158,6 @@ final class BearySettingsViewController: UIViewController {
                             return
                         }
                         self.meUser = userValue
-                        self.fillIdCard(user: userValue)
                         self.setAccountActionDeleteHidden(userValue.isAdmin == true)
                         self.loadPlusDetail()
                         self.loadSessions()
@@ -2204,7 +2178,6 @@ final class BearySettingsViewController: UIViewController {
         loadingView.isHidden = false
         failureStateView.isHidden = true
         loginWrap.isHidden = true
-        contentWrap.isHidden = true
         accountSecurityWrap.isHidden = true
         plusWrap.isHidden = true
         accountActionWrap.isHidden = true
@@ -2229,19 +2202,15 @@ final class BearySettingsViewController: UIViewController {
                     }
                     self.meUser = userValue
                     // 116：三组容器随 /me 到达首次出现时只淡入容器本身。
-                    let contentWasHidden = self.contentWrap.isHidden
                     let securityWasHidden = self.accountSecurityWrap.isHidden
                     let plusWasHidden = self.plusWrap.isHidden
                     let actionWasHidden = self.accountActionWrap.isHidden
-                    self.contentWrap.isHidden = false
                     self.accountSecurityWrap.isHidden = false
                     self.plusWrap.isHidden = false
                     self.accountActionWrap.isHidden = false
-                    self.fadeViewIfAppearing(self.contentWrap, wasHidden: contentWasHidden)
                     self.fadeViewIfAppearing(self.accountSecurityWrap, wasHidden: securityWasHidden)
                     self.fadeViewIfAppearing(self.plusWrap, wasHidden: plusWasHidden)
                     self.fadeViewIfAppearing(self.accountActionWrap, wasHidden: actionWasHidden)
-                    self.fillIdCard(user: userValue)
                     self.refreshAccountSwitchSection()
                     // 注销入口：只用 /me 下发的 is_admin（服务端算出），客户端不写 id 判定；
                     // 服务端 403 admin_cannot_delete 仍是最终判定（见 delete 失败映射）。
@@ -2259,35 +2228,9 @@ final class BearySettingsViewController: UIViewController {
         }
     }
 
-    /// 2026-11-19 七组版：ID 卡数据组装（缺值显“–”，绝不编造）。
-    /// 账号所在地／用户名更改次数／上次更改时间走 /me 新字段（见 BearyAPI.MeUser：
-    /// accountRegion / handleChangeCount / handleChangedAt；服务端 diff 在
-    /// ~/workspace/settings-reorg-server-diff/，只备不部署——后端未部署前
-    /// 这三项为 nil，卡上显“–”）。
-    private func fillIdCard(user: MeUser) {
-        let idText: String
-        if let serial = user.serialId, !serial.isEmpty {
-            idText = serial
-        } else if let handle = user.handle, !handle.isEmpty {
-            idText = "@" + handle
-        } else if let id = user.id {
-            idText = "№ \(id)"
-        } else {
-            idText = "–"
-        }
-        idCardView.configure(data: BearySettingsIDCardData(
-            displayName: user.displayName ?? user.email ?? "–",
-            avatar: user.avatar,
-            createdAt: user.createdAt,
-            accountRegion: user.accountRegion,
-            handleChangeCount: user.handleChangeCount,
-            handleChangedAt: user.handleChangedAt,
-            idText: idText
-        ))
-    }
 
     // C4：fillAccountRows 已随旧账户组删除（显示名称 / 用户名 / 邮箱 /
-    // 注册时间四行不再渲染；ID 卡 fillIdCard 仍呈现名 / 邮箱 / 注册时间 / 会员）。
+    // 注册时间四行不再渲染）。
 
     private func loadPlusDetail(force: Bool = false) {
         // 第三轮审计 13：同一代次内只请求一次（loadAll 缓存路径里 /me 成功
