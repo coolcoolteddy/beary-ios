@@ -108,6 +108,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     // 新行首次出现透明度过渡的已播记账（按消息 id 键，已有行更新不重播）。
     private var fadedRowKeys = Set<String>()
     private let inputBar = UIView()
+    /// 输入框盒子（预览 v11 的胶囊输入框）：surface2 底＋single 圆角，
+    /// 内装引用卡片（上）与输入框（下）；发送钮在盒子外。
+    private let inputBoxView = UIView()
     private let inputTextView = UITextView()
     // 审计：发送钮视觉高 32 不变，热区用 Hit44 扩到 44（读“全部已读”钮同款口径）。
     private let sendButton = BearyHit44Button(type: .system)
@@ -121,8 +124,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     // 输入框上方引用条（名字＋原文第一行＋× 取消）；平时高 0 不占位。
     private var replyingTo: BearyAPI.DMMessage?
     private let replyBar = UIView()
-    private let replyBarTopLine = UIView()
-    private let replyBarAccent = UIView()
     private let replyBarNameLabel = UILabel()
     private let replyBarBodyLabel = UILabel()
     private let replyBarCloseButton = UIButton(type: .system)
@@ -140,6 +141,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var didShowCorruptStoreToast = false
     /// 输入框高度约束：跟内容走（空态一行、上限五行），替代旧的 36~160 区间约束。
     private var inputTextViewHeightConstraint: NSLayoutConstraint?
+    /// 多行模式切换用约束：单行时盒子右接发送钮；多行时盒子占满整行、发送钮沉到盒子下方。
+    private var inputBoxTrailingNarrowConstraint: NSLayoutConstraint?
+    private var inputBoxTrailingWideConstraint: NSLayoutConstraint?
+    private var sendButtonTopConstraint: NSLayoutConstraint?
+    private var isInputBarMultiline = false
+    /// 引用卡片顶边距约束：展开时 8pt，收起时 0（卡片高 0 时不占位）。
+    private var replyCardTopConstraint: NSLayoutConstraint?
     private var messages: [BearyAPI.DMMessage] = []
     // 审计：下拉刷新与翻旧消息分开加载态，不再共用同一 busy 锁静默吞刷新：
     // latestLoading = 最新页在途；olderLoading = 翻旧消息在途；
@@ -306,17 +314,22 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         topLine.translatesAutoresizingMaskIntoConstraints = false
         topLine.backgroundColor = BearyColors.line
         inputBar.addSubview(topLine)
+        // 输入框盒子（预览 v11 的胶囊输入框）：surface2 底＋single 圆角，
+        // 内装引用卡片（上）与输入框（下）；圆角由盒子提供，输入框本身透明无圆角。
+        inputBoxView.translatesAutoresizingMaskIntoConstraints = false
+        inputBoxView.backgroundColor = BearyColors.surface2
+        inputBoxView.layer.cornerRadius = BearyCorners.single
+        inputBoxView.clipsToBounds = true
+        inputBar.addSubview(inputBoxView)
         inputTextView.translatesAutoresizingMaskIntoConstraints = false
         inputTextView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         inputTextView.adjustsFontForContentSizeCategory = true
         inputTextView.textColor = BearyColors.ink
-        inputTextView.backgroundColor = BearyColors.surface2
-        inputTextView.layer.cornerRadius = BearyCorners.single
-        inputTextView.clipsToBounds = true
+        inputTextView.backgroundColor = .clear
         inputTextView.textContainerInset = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
         inputTextView.delegate = self
         inputTextView.isScrollEnabled = true
-        inputBar.addSubview(inputTextView)
+        inputBoxView.addSubview(inputTextView)
         // 审计：输入框占位（空输入时显，见 updateInputChrome）。
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
@@ -342,19 +355,18 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         sendButton.isEnabled = false
         sendButton.alpha = 0.6
         inputBar.addSubview(sendButton)
-        // 左滑回复引用条（2026-11-26 Li 定）：平时高 0 不占位，回复态展开；
-        // 名字＋原文第一行＋× 取消，点 × 只关条、不动键盘。高度走内容
-        // （名字 13 semibold＋正文 13＋上下各 8），最低 52（见 replyBarMinHeight）。
+        // 左滑回复引用条（2026-11-26 Li 定，2026-11-27 改版合进输入框）：
+        // 平时高 0 不占位，回复态展开；名字＋原文第一行＋× 取消，点 × 只关条、不动键盘。
+        // 卡片内嵌在输入框盒子内：四边留 8pt、圆角 16（预览 v11 定版，与 DM 发送钮同值）、
+        // 微明度底（hov：深白 8%／浅黑 6%——surface 档里没有比 surface2 更亮的深色档，
+        // surface1 深色反而更暗；hov 是与预览白 6%／黑 4.5% 最接近的现成 token）。
+        // 高度走内容（名字 13 semibold＋正文 13＋上下各 8），最低 52（见 replyBarMinHeight）。
         replyBar.translatesAutoresizingMaskIntoConstraints = false
-        replyBar.backgroundColor = BearyColors.bg
+        replyBar.backgroundColor = BearyColors.hov
+        replyBar.layer.cornerRadius = 16 // beary-lint: allow
+        replyBar.clipsToBounds = true
         replyBar.isHidden = true
-        view.addSubview(replyBar)
-        replyBarTopLine.translatesAutoresizingMaskIntoConstraints = false
-        replyBarTopLine.backgroundColor = BearyColors.line
-        replyBar.addSubview(replyBarTopLine)
-        replyBarAccent.translatesAutoresizingMaskIntoConstraints = false
-        replyBarAccent.backgroundColor = BearyColors.gray
-        replyBar.addSubview(replyBarAccent)
+        inputBoxView.addSubview(replyBar)
         replyBarNameLabel.translatesAutoresizingMaskIntoConstraints = false
         replyBarNameLabel.font = BearyDynamicType.buttonSmallFont()
         replyBarNameLabel.adjustsFontForContentSizeCategory = true
@@ -378,37 +390,26 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         replyBarHeight?.isActive = true
         replyBarMinHeight = replyBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52)
         replyBarMinHeight?.isActive = false
-        // 名字／正文／竖条的上下内边距用 defaultHigh：收起时 0 高约束优先、
+        replyCardTopConstraint = replyBar.topAnchor.constraint(equalTo: inputBoxView.topAnchor, constant: 0)
+        replyCardTopConstraint?.isActive = true
+        // 名字／正文上下内边距用 defaultHigh：收起时 0 高约束优先、
         // 它静默让位，不报约束冲突；展开时无竞争的定高约束，条高由内容＋
         // 上下各 8 撑起，不低于 52（与权限横幅同款收起口径）。
         let replyBarNameTop = replyBarNameLabel.topAnchor.constraint(equalTo: replyBar.topAnchor, constant: 8)
         replyBarNameTop.priority = .defaultHigh
         let replyBarBodyBottom = replyBarBodyLabel.bottomAnchor.constraint(equalTo: replyBar.bottomAnchor, constant: -8)
         replyBarBodyBottom.priority = .defaultHigh
-        let replyBarAccentTop = replyBarAccent.topAnchor.constraint(equalTo: replyBar.topAnchor, constant: 8)
-        replyBarAccentTop.priority = .defaultHigh
-        let replyBarAccentBottom = replyBarAccent.bottomAnchor.constraint(equalTo: replyBar.bottomAnchor, constant: -8)
-        replyBarAccentBottom.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            replyBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            replyBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            replyBar.bottomAnchor.constraint(equalTo: inputBar.topAnchor),
-            replyBarTopLine.topAnchor.constraint(equalTo: replyBar.topAnchor),
-            replyBarTopLine.leadingAnchor.constraint(equalTo: replyBar.leadingAnchor),
-            replyBarTopLine.trailingAnchor.constraint(equalTo: replyBar.trailingAnchor),
-            replyBarTopLine.heightAnchor.constraint(equalToConstant: 0.5),
-            replyBarAccent.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            replyBarAccentTop,
-            replyBarAccentBottom,
-            replyBarAccent.widthAnchor.constraint(equalToConstant: 3),
+            replyBar.leadingAnchor.constraint(equalTo: inputBoxView.leadingAnchor, constant: 8),
+            replyBar.trailingAnchor.constraint(equalTo: inputBoxView.trailingAnchor, constant: -8),
             replyBarNameTop,
-            replyBarNameLabel.leadingAnchor.constraint(equalTo: replyBarAccent.trailingAnchor, constant: 8),
+            replyBarNameLabel.leadingAnchor.constraint(equalTo: replyBar.leadingAnchor, constant: 12),
             replyBarNameLabel.trailingAnchor.constraint(equalTo: replyBarCloseButton.leadingAnchor, constant: -8),
             replyBarBodyLabel.topAnchor.constraint(equalTo: replyBarNameLabel.bottomAnchor, constant: 2),
             replyBarBodyLabel.leadingAnchor.constraint(equalTo: replyBarNameLabel.leadingAnchor),
             replyBarBodyLabel.trailingAnchor.constraint(equalTo: replyBarNameLabel.trailingAnchor),
             replyBarBodyBottom,
-            replyBarCloseButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8),
+            replyBarCloseButton.trailingAnchor.constraint(equalTo: replyBar.trailingAnchor, constant: -8),
             replyBarCloseButton.centerYAnchor.constraint(equalTo: replyBar.centerYAnchor),
             replyBarCloseButton.widthAnchor.constraint(equalToConstant: 44),
             replyBarCloseButton.heightAnchor.constraint(equalToConstant: 44),
@@ -433,14 +434,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         newMessagePill.bearyAddPressFeedback()
         view.addSubview(newMessagePill)
         NSLayoutConstraint.activate([
-            // 计数与 pill 锚在引用条顶（条收起时高 0、顶即输入条顶，位置不变；
-            // 条展开时两者随之上移，不盖住引用条）。
-            countLabel.bottomAnchor.constraint(equalTo: replyBar.topAnchor, constant: -4),
+            // 计数与 pill 锚在输入条顶（引用条已合进输入框内，不再另占顶边）。
+            countLabel.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -4),
             countLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             newMessagePill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             newMessagePill.heightAnchor.constraint(equalToConstant: 32),
         ])
-        newMessagePillBottomConstraint = newMessagePill.bottomAnchor.constraint(equalTo: replyBar.topAnchor, constant: -8)
+        newMessagePillBottomConstraint = newMessagePill.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -8)
         newMessagePillBottomConstraint?.isActive = true
         // 翻旧加载态浮标（见声明处注释）：悬在列表顶部，不占表高。
         olderLoadingView.translatesAutoresizingMaskIntoConstraints = false
@@ -581,7 +581,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             tableView.topAnchor.constraint(equalTo: permBannerView.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: replyBar.topAnchor),
+            tableView.bottomAnchor.constraint(equalTo: inputBar.topAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
@@ -597,19 +597,31 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             topLine.leadingAnchor.constraint(equalTo: inputBar.leadingAnchor),
             topLine.trailingAnchor.constraint(equalTo: inputBar.trailingAnchor),
             topLine.heightAnchor.constraint(equalToConstant: 0.5),
-            inputTextView.topAnchor.constraint(equalTo: inputBar.topAnchor, constant: 9),
-            // 横向安全区：竖屏 safeArea 左右为 0、与原 16 内距一致；横屏时输入框不再贴圆角/刘海边缘。
-            // inputBar 本身仍铺满宽度（背景与顶线不变），只让框与发送钮的横向边界让出安全区。
-            inputTextView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            inputTextView.bottomAnchor.constraint(equalTo: inputBar.bottomAnchor, constant: -9),
+            // 输入框盒子：顶／底各留 9pt；横向安全区：竖屏 safeArea 左右为 0、与原 16 内距一致；
+            // 横屏时输入框不再贴圆角/刘海边缘。inputBar 本身仍铺满宽度（背景与顶线不变），
+            // 只让盒子与发送钮的横向边界让出安全区。盒子内：引用卡片在上、输入框在下。
+            inputBoxView.topAnchor.constraint(equalTo: inputBar.topAnchor, constant: 9),
+            inputBoxView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            inputBoxView.bottomAnchor.constraint(equalTo: inputBar.bottomAnchor, constant: -9),
             // 输入框高度走 inputTextViewHeightConstraint（空态一行、上限五行，见 updateInputTextViewHeight）；
             // 旧的 36~160 区间约束不给确定高度，空态会被布局落到高处，故不再保留。
-            sendButton.leadingAnchor.constraint(equalTo: inputTextView.trailingAnchor, constant: 8),
+            inputTextView.topAnchor.constraint(equalTo: replyBar.bottomAnchor),
+            inputTextView.leadingAnchor.constraint(equalTo: inputBoxView.leadingAnchor),
+            inputTextView.trailingAnchor.constraint(equalTo: inputBoxView.trailingAnchor),
+            inputTextView.bottomAnchor.constraint(equalTo: inputBoxView.bottomAnchor),
             sendButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             sendButton.bottomAnchor.constraint(equalTo: inputBar.bottomAnchor, constant: -9),
             // V6：发送钮改最小高度 32——常规字号视觉仍 32，大字号下字高超 32 时钮随内容长高不截字。
             sendButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
         ])
+        // 多行模式切换用约束（见 updateInputBarMultilineMode）：单行时盒子右接发送钮；
+        // 多行时盒子占满整行、发送钮沉到盒子下方。初始单行。
+        inputBoxTrailingNarrowConstraint = inputBoxView.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -8)
+        inputBoxTrailingNarrowConstraint?.isActive = true
+        inputBoxTrailingWideConstraint = inputBoxView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16)
+        inputBoxTrailingWideConstraint?.isActive = false
+        sendButtonTopConstraint = sendButton.topAnchor.constraint(equalTo: inputBoxView.bottomAnchor, constant: 8)
+        sendButtonTopConstraint?.isActive = false
 
         // 会话内搜索栏（默认收起、高 0 不占位）：搜索框＋取消＋提示行。
         // 提示行明说只搜本机已有消息；结果表盖在聊天列表上方，输入条不动。
@@ -1185,6 +1197,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private func updateInputTextViewHeight() {
         let width = inputTextView.bounds.width
         guard width > 0 else { return }
+        updateInputBarMultilineMode()
         let font = inputTextView.font ?? UIFont.systemFont(ofSize: 15)
         let insets = inputTextView.textContainerInset.top + inputTextView.textContainerInset.bottom
         let minHeight = max(36, font.lineHeight + insets)
@@ -1212,6 +1225,28 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             }
             // 不在底部时不碰 contentOffset：列表顶边不动，阅读位置自然保留。
         }, completion: nil)
+    }
+
+    /// 多行模式切换（预览 v11 长文多行）：窄宽下超过一行即输入框占满整行在上、
+    /// 发送钮沉到底部一行；删回一行即恢复并排。行数按窄宽（发送钮在侧时）量，
+    /// 与当前模式无关，切换不往复；只在变化时改约束。
+    private func updateInputBarMultilineMode() {
+        let barWidth = inputBar.bounds.width
+        let buttonWidth = sendButton.bounds.width
+        guard barWidth > 0, buttonWidth > 0, let font = inputTextView.font else { return }
+        // 窄宽＝栏宽 − 安全区 − 左 16 − 间隙 8 − 发送钮 − 右 16。
+        let safeWidth = barWidth - view.safeAreaInsets.left - view.safeAreaInsets.right
+        let narrowWidth = safeWidth - 16 - 8 - buttonWidth - 16
+        guard narrowWidth > 0 else { return }
+        let insets = inputTextView.textContainerInset.top + inputTextView.textContainerInset.bottom
+        let minHeight = max(36, font.lineHeight + insets)
+        let fitting = inputTextView.sizeThatFits(CGSize(width: narrowWidth, height: .greatestFiniteMagnitude)).height
+        let multiline = fitting > minHeight
+        guard multiline != isInputBarMultiline else { return }
+        isInputBarMultiline = multiline
+        inputBoxTrailingNarrowConstraint?.isActive = !multiline
+        inputBoxTrailingWideConstraint?.isActive = multiline
+        sendButtonTopConstraint?.isActive = multiline
     }
 
     /// 输入框占位与接近 2000 字计数（审计）：占位随有无文字显隐；
@@ -2261,10 +2296,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             replyBarBodyLabel.text = (message.body ?? "").components(separatedBy: .newlines).first ?? ""
             replyBarHeight?.isActive = false
             replyBarMinHeight?.isActive = true
+            replyCardTopConstraint?.constant = 8
             replyBar.isHidden = false
         } else {
             replyBarHeight?.isActive = true
             replyBarMinHeight?.isActive = false
+            replyCardTopConstraint?.constant = 0
             replyBar.isHidden = true
         }
         UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.normal : 0) { self.view.layoutIfNeeded() }
@@ -2604,6 +2641,12 @@ private final class BearyDMMessageCell: UITableViewCell {
     private var isUnconfirmed = false
     /// 私信时间分组（2026-11-18 Li 定）：组内气泡贴紧，改边距只改这四个约束。
     private var mineTopConstraint: NSLayoutConstraint!
+    /// 气泡连发圆角（预览 v11）：与前后同发件人消息的贴紧关系，由 configure 按时间分组传入；
+    /// layoutSubviews 时按它给气泡蒙版换角（见 updateBubbleMasks）。
+    private var bubbleHasPrevious = false
+    private var bubbleHasNext = false
+    private let mineBubbleMask = CAShapeLayer()
+    private let theirsBubbleMask = CAShapeLayer()
     private var mineBottomConstraint: NSLayoutConstraint!
     private var theirsTopConstraint: NSLayoutConstraint!
     private var theirsBottomConstraint: NSLayoutConstraint!
@@ -2649,6 +2692,10 @@ private final class BearyDMMessageCell: UITableViewCell {
             stack.addArrangedSubview(timeLabel)
             contentView.addSubview(stack)
         }
+        // 连发圆角走蒙版（四角可各取不同半径，见 updateBubbleMasks）；
+        // cornerRadius 仍保留作蒙版未生效前的底色。
+        mineBubble.layer.mask = mineBubbleMask
+        theirsBubble.layer.mask = theirsBubbleMask
         mineTopConstraint = mineStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6)
         mineBottomConstraint = mineStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6)
         theirsTopConstraint = theirsStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6)
@@ -2760,6 +2807,57 @@ private final class BearyDMMessageCell: UITableViewCell {
             mineWidthCap.isActive = wide
             theirsWidthCap.isActive = wide
         }
+        updateBubbleMasks()
+    }
+
+    /// 四角可各取不同圆角的圆角矩形路径（气泡连发用；layer.maskedCorners
+    /// 只支持单一半径，做不出“贴紧侧小圆角、其余侧 single”的组合）。
+    /// 半径各自夹到边长一半以内；零尺寸返回空路径。
+    private static func roundedRectPath(in rect: CGRect, topLeft: CGFloat, topRight: CGFloat, bottomLeft: CGFloat, bottomRight: CGFloat) -> UIBezierPath {
+        let maxRadius = min(rect.width, rect.height) / 2
+        let tl = min(max(topLeft, 0), maxRadius)
+        let tr = min(max(topRight, 0), maxRadius)
+        let bl = min(max(bottomLeft, 0), maxRadius)
+        let br = min(max(bottomRight, 0), maxRadius)
+        let minX = rect.minX, minY = rect.minY, maxX = rect.maxX, maxY = rect.maxY
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: minX + tl, y: minY))
+        path.addLine(to: CGPoint(x: maxX - tr, y: minY))
+        path.addArc(withCenter: CGPoint(x: maxX - tr, y: minY + tr), radius: tr, startAngle: -.pi / 2, endAngle: 0, clockwise: true)
+        path.addLine(to: CGPoint(x: maxX, y: maxY - br))
+        path.addArc(withCenter: CGPoint(x: maxX - br, y: maxY - br), radius: br, startAngle: 0, endAngle: .pi / 2, clockwise: true)
+        path.addLine(to: CGPoint(x: minX + bl, y: maxY))
+        path.addArc(withCenter: CGPoint(x: minX + bl, y: maxY - bl), radius: bl, startAngle: .pi / 2, endAngle: .pi, clockwise: true)
+        path.addLine(to: CGPoint(x: minX, y: minY + tl))
+        path.addArc(withCenter: CGPoint(x: minX + tl, y: minY + tl), radius: tl, startAngle: .pi, endAngle: .pi * 3 / 2, clockwise: true)
+        path.close()
+        return path
+    }
+
+    /// 连发圆角（预览 v11）：贴紧侧的角取小圆角（single 的一半＝6pt），其余角走 single（12pt）。
+    /// 自己：单条／首条小右下，中间条右上＋右下都小，末条小右上；对方镜像到左边。
+    private func bubbleCornerRadii(isMine: Bool, hasPrevious: Bool, hasNext: Bool) -> (topLeft: CGFloat, topRight: CGFloat, bottomLeft: CGFloat, bottomRight: CGFloat) {
+        let big = BearyCorners.single
+        let small = big / 2
+        if isMine {
+            if hasPrevious && hasNext { return (big, small, big, small) }
+            if hasPrevious { return (big, small, big, big) }
+            return (big, big, big, small)
+        }
+        if hasPrevious && hasNext { return (small, big, small, big) }
+        if hasPrevious { return (small, big, big, big) }
+        return (big, big, small, big)
+    }
+
+    /// 按当前连发位置给两侧气泡换蒙版；bounds 未定（复用初态）时先清掉，
+    /// 待 layoutSubviews 拿到实尺寸再补。隐藏侧的气泡一并算，无额外开销。
+    private func updateBubbleMasks() {
+        for (bubble, mask, isMine) in [(mineBubble, mineBubbleMask, true), (theirsBubble, theirsBubbleMask, false)] as [(UIView, CAShapeLayer, Bool)] {
+            guard bubble.bounds.width > 0, bubble.bounds.height > 0 else { mask.path = nil; continue }
+            let radii = bubbleCornerRadii(isMine: isMine, hasPrevious: bubbleHasPrevious, hasNext: bubbleHasNext)
+            mask.frame = bubble.bounds
+            mask.path = Self.roundedRectPath(in: bubble.bounds, topLeft: radii.topLeft, topRight: radii.topRight, bottomLeft: radii.bottomLeft, bottomRight: radii.bottomRight).cgPath
+        }
     }
 
     @objc private func failTapped() {
@@ -2862,6 +2960,11 @@ private final class BearyDMMessageCell: UITableViewCell {
         mineBottomConstraint.constant = -6
         theirsTopConstraint.constant = 6
         theirsBottomConstraint.constant = -6
+        // 气泡连发圆角：复用不得把上一行的贴紧蒙版带给下一行。
+        bubbleHasPrevious = false
+        bubbleHasNext = false
+        mineBubbleMask.path = nil
+        theirsBubbleMask.path = nil
         lastCreatedAtMs = nil
         isUnconfirmed = false
         // 失败叹号与重发闭包不得串行（复用 cell 默认无叹号）。
@@ -2927,6 +3030,10 @@ private final class BearyDMMessageCell: UITableViewCell {
         theirsBottomConstraint.constant = -bottomPadding
         mineTimeLabel.isHidden = !showTime
         theirsTimeLabel.isHidden = !showTime
+        // 气泡连发圆角（预览 v11）：贴紧关系复用时间分组（tightTop＝续接上一条，
+        // showTime＝组尾即无下一条），与时间显示同一口径，不另算分组。
+        bubbleHasPrevious = tightTop
+        bubbleHasNext = !showTime
         // 失败叹号只挂本人行；对方行、成功行一律不画。
         failButton.isHidden = !(isMine && showFail)
         // 审计四轮 11：失败态变化时同步更新无障碍说明（复用 cell 不得串行）。
