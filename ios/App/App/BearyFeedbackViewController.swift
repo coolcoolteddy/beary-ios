@@ -1421,8 +1421,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                         var parts: [String] = []
                         if failures > 0 {
                             parts.append(oversized > 0
-                                ? "有 \(failures) 个附件未能加载，其中 \(oversized) 个视频超过 50MB"
-                                : "有 \(failures) 个附件未能加载")
+                                ? String(format: NSLocalizedString("feedback.attachments_failed_with_oversized", comment: ""), failures, oversized)
+                                : String(format: NSLocalizedString("feedback.attachments_failed", comment: ""), failures))
                         }
                         if budgetRejected > 0 {
                             parts.append("附件总大小超过 50MB，已跳过 \(budgetRejected) 个附件")
