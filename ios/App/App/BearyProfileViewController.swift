@@ -4849,7 +4849,7 @@ class BearyProfileViewController: UIViewController {
             modulesRetryLabel.text = showingCachedStats ? NSLocalizedString("common.showing_previous_content", comment: "") : NSLocalizedString("common.load_failed_retry", comment: "")
             modulesRetryButton.isEnabled = true
         } else {
-            modulesRetryLabel.text = "只加载了部分日记，请重试"
+            modulesRetryLabel.text = NSLocalizedString("common.partially_loaded", comment: "")
             modulesRetryButton.isEnabled = true
         }
     }
