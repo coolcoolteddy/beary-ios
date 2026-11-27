@@ -4455,7 +4455,7 @@ final class BearyEmotePostersViewController: UIViewController, BearySystemSheetS
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = String(format: NSLocalizedString("emote.posters.title_format", comment: ""), BearyText.moodNames[emoteKey] ?? emoteKey, count)
-        titleLabel.font = BearyDynamicType.pageTitleFont()
+        titleLabel.font = BearyDynamicType.smallActionFont()
         titleLabel.textColor = BearyColors.ink
         view.addSubview(titleLabel)
 
