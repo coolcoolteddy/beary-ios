@@ -176,7 +176,7 @@ final class BearyMessagesViewController: UIViewController {
         staleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         staleLabel.adjustsFontForContentSizeCategory = true
         staleLabel.textColor = BearyColors.gray
-        staleLabel.text = "未读数可能已过期"
+        staleLabel.text = NSLocalizedString("messages.unread_may_not_be_latest", comment: "")
         staleBanner.addSubview(staleLabel)
         staleRetryButton.translatesAutoresizingMaskIntoConstraints = false
         staleRetryButton.setTitle("重试", for: .normal)
