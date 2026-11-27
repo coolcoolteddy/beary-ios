@@ -370,7 +370,7 @@ final class BearyNotificationsViewController: UIViewController {
         let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
-        button.setTitle("全部已读", for: .normal)
+        button.setTitle(NSLocalizedString("notif.read_all.mark_all", comment: ""), for: .normal)
         button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         button.titleLabel?.adjustsFontForContentSizeCategory = true
         button.setTitleColor(BearyColors.gray, for: .normal)
@@ -2817,7 +2817,11 @@ final class BearyNotificationsViewController: UIViewController {
                 BearyIconMotion.stopSpin(on: buttonImageView, key: "bearyReadAllSpin")
             }
             readAllButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
-            readAllButton.setTitle("全部已读", for: .normal)
+            if state == .done {
+                readAllButton.setTitle(NSLocalizedString("notif.read_all.all_read", comment: ""), for: .normal)
+            } else {
+                readAllButton.setTitle(NSLocalizedString("notif.read_all.mark_all", comment: ""), for: .normal)
+            }
         case .marking:
             readAllButton.isEnabled = false
             readAllButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 14), for: .normal)
