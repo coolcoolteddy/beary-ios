@@ -5429,7 +5429,7 @@ class BearyProfileViewController: UIViewController {
             // 失败过的行改显「同步失败，点按重试」，点按重发创建（见
             // pastSelfSyncRetryTapped）。业务码拒绝不给重试，只显等待同步。
             if message.localOnly {
-                pastSelfSyncPendingLabel.text = "仅保存在本设备，等待同步"
+                pastSelfSyncPendingLabel.text = NSLocalizedString("profile.local_only_pending_sync", comment: "")
                 let failed = pastSelfCreateFailedLocalIds.contains(message.id)
                 pastSelfSyncPendingLabel.isHidden = failed
                 pastSelfSyncRetryButton.isHidden = !failed
