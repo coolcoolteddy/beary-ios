@@ -4,11 +4,13 @@ import CryptoKit
 
 /// 登录改版（2026-11-26 Li 定，Luma 式，预览 v3）：欢迎页＋底部登录卡。
 ///
-/// 全屏容器：上方是一张可上滑的欢迎卡片（广场公开日记横滑条＋beary 横版
-/// logo＋「日子值得记得」标语＋底部橙色拖钮），卡片下方是登录区（「把日子
+/// 全屏容器：上方是一张可上滑的欢迎卡片（广场公开日记纵向漂移＋beary 横版
+/// logo＋「日子值得记得」标语＋底部橙色拖钮＋抓手），卡片下方是登录区（「把日子
 /// 留在这里。」＋邮箱登录黑钮＋Apple／Google 胶囊＋游客圆钮＋法律行）。
-/// 拖钮按住拖动时卡片跟手 1:1 上滑，松开后吸附到最近一端（全开／全收）；
-/// 卡片收起后底部露一条抓手，点按或下拖可把卡片放回来。
+/// 卡片与登录区靠微明度区分（卡片白 bg、登录区 surface1，预览 v3 实测）。
+/// 拖钮按住拖动时卡片跟手 1:1 上滑，松开后吸附到最近一端（全开／全收），
+/// 吸附 0.8s cubic-bezier(.22,.9,.3,1)、带甩动速度；收起后拖钮淡出、抓手淡入，
+/// 点按抓手或下拖可把卡片放回来。
 ///
 /// 容器契约与旧 BearyLoginViewController 相同：onLoggedIn／onCancelled／
 /// onGuestMode 三个回调＋loggedInIsNew 标志，本页不自己 dismiss。
@@ -38,11 +40,15 @@ final class BearyWelcomeViewController: UIViewController {
     private let legalLabel = UITextView()
     private let grabberButton = UIButton()
 
-    /// 欢迎卡片（全屏，top 约束随拖动上滑）。
+    /// 欢迎卡片（全屏，top 约束随拖动上滑；底圆角 30＋阴影，预览 v3）。
     private let cardView = UIView()
-    private let diaryStrip = UIScrollView()
-    private let diaryStack = UIStackView()
-    private let logoStack = UIStackView()
+    /// 漂移区（铺满整卡，裁剪；广场公开日记在里面纵向漂移，预览 v3）。
+    private let driftZone = UIView()
+    /// 底部淡出渐变（漂移卡片在 logo 区上方淡出，预览 welcome-content 的渐变）。
+    private let bottomFadeView = UIView()
+    private var bottomFadeLayer: CAGradientLayer?
+    /// 贴底内容组：wordmark＋标语＋拖钮＋抓手（预览 welcome-content，贴底 24）。
+    private let bottomStack = UIStackView()
     private let logoImageView = UIImageView()
     private let sloganLabel = UILabel()
     private let dragButton = BearyHit44Button()
@@ -55,11 +61,32 @@ final class BearyWelcomeViewController: UIViewController {
     private var loginWidthCap: NSLayoutConstraint?
     private var diaryStripWidthCap: NSLayoutConstraint?
     private var welcomeColumnIsWide = false
-    /// 卡片已上滑距离（0 = 全盖住登录区，maxLift = 登录区全露出）。
+    /// 卡片已上滑距离（0 = 全盖住登录区，maxLift = 收起态卡高 556 对应的上滑量）。
     private var cardLift: CGFloat = 0
-    /// 卡片最大上滑距离 = 登录区高度（viewDidLayoutSubviews 后量到）。
+    /// 卡片最大上滑距离（预览 v3 收起高 556：874−556＝318；按屏高算，收起高恒 556）。
     private var maxLift: CGFloat = 0
     private var panStartLift: CGFloat = 0
+
+    // MARK: - 漂移（预览 v3：6 张卡纵向漂移，26s 匀速）
+
+    /// 漂移轨道（x／宽／相位秒，预览 CSS .c1–.c6 原值，视口 402 宽）。
+    private static let driftLanes: [(x: CGFloat, width: CGFloat, phase: CGFloat)] = [
+        (12, 126, 2), (148, 120, 7), (268, 132, 12),
+        (66, 122, 17), (212, 128, 22), (8, 124, 4.5),
+    ]
+    /// 漂移速度（预览：900→−260 共 1160pt 用 26s，约 44.6pt/s）。
+    private static let driftSpeed: CGFloat = 1160.0 / 26.0
+    /// 漂移卡片圆角（预览 .card 14）。
+    private static let driftCardRadius: CGFloat = 14
+    /// 卡片底圆角（预览 .welcome-card 底 30）。
+    private static let cardBottomRadius: CGFloat = 30
+    /// 吸附时长（预览收起过渡 .8s）。
+    private static let snapDuration: TimeInterval = 0.8
+    /// 漂移卡片（外包 wrap＋内卡 card 成对；取数／重建后版本＋1，驱动动画重起）。
+    private var driftCards: [(wrap: UIView, card: UIView)] = []
+    private var driftVersion = 0
+    private var driftActiveVersion: Int?
+    private var driftActiveSize: CGSize = .zero
 
     // MARK: - Apple 登录状态（旧 BearyLoginViewController 原样搬来）
 
@@ -73,7 +100,8 @@ final class BearyWelcomeViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
+        // 微明度区分（预览 v3 实测）：卡片白 bg、登录区 surface1（浅 #F5F5F5≈#FAFAFA）。
+        view.backgroundColor = BearyColors.surface1
         buildLoginSection()
         buildCard()
         fetchPlazaEntries()
@@ -81,10 +109,10 @@ final class BearyWelcomeViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // 登录区高度量到后即为卡片最大上滑距离；卡片已抬起时按新高度夹住。
-        let measured = loginSection.bounds.height
-        if measured > 0 {
-            maxLift = measured
+        // 收起态卡高恒 556：最大上滑量＝屏高−556（874 屏上为 318）；卡片已抬起时按新高度夹住。
+        let lift = max(0, view.bounds.height - 556)
+        if lift != maxLift {
+            maxLift = lift
             if cardLift > maxLift {
                 cardLift = maxLift
                 cardTopConstraint.constant = -cardLift
@@ -97,6 +125,8 @@ final class BearyWelcomeViewController: UIViewController {
             loginWidthCap?.isActive = wide
             diaryStripWidthCap?.isActive = wide
         }
+        layoutDriftCards()
+        startDriftIfNeeded()
         // 半高药丸圆角（lint 口径：写 height/2 表达式，不写字面量）。
         for pill in [emailButton, appleButton, googleButton, guestButton, dragButton] {
             pill.layer.cornerRadius = pill.bounds.height / 2
@@ -104,12 +134,14 @@ final class BearyWelcomeViewController: UIViewController {
         grabberButton.layer.cornerRadius = grabberButton.bounds.height / 2
         dragGradientLayer?.frame = dragButton.bounds
         dragGradientLayer?.cornerRadius = dragButton.bounds.height / 2
+        bottomFadeLayer?.frame = bottomFadeView.bounds
     }
 
     // MARK: - 登录区
 
     private func buildLoginSection() {
         loginSection.translatesAutoresizingMaskIntoConstraints = false
+        loginSection.backgroundColor = BearyColors.surface1
         view.addSubview(loginSection)
 
         loginStack.translatesAutoresizingMaskIntoConstraints = false
@@ -119,9 +151,9 @@ final class BearyWelcomeViewController: UIViewController {
         loginSection.addSubview(loginStack)
 
         loginTitleLabel.text = NSLocalizedString("login.welcome.login_title", comment: "")
-        loginTitleLabel.font = BearyDynamicType.welcomeDisplayFont()
-        loginTitleLabel.textColor = BearyColors.ink
-        loginTitleLabel.textAlignment = .left
+        loginTitleLabel.font = BearyDynamicType.smallBodyFont()
+        loginTitleLabel.textColor = BearyColors.gray
+        loginTitleLabel.textAlignment = .center
         loginTitleLabel.numberOfLines = 0
         loginStack.addArrangedSubview(loginTitleLabel)
 
@@ -136,10 +168,6 @@ final class BearyWelcomeViewController: UIViewController {
         emailContent.alignment = .center
         emailContent.spacing = BearySpace.sm
         emailContent.isUserInteractionEnabled = false
-        let mailIcon = UIImageView(image: BearyIconImages.image(named: "icon_mail", pointSize: 20))
-        mailIcon.tintColor = BearyColors.bg
-        mailIcon.contentMode = .scaleAspectFit
-        emailContent.addArrangedSubview(mailIcon)
         let emailTitle = UILabel()
         emailTitle.text = NSLocalizedString("login.welcome.email_button", comment: "")
         emailTitle.font = BearyDynamicType.buttonFont()
@@ -149,7 +177,7 @@ final class BearyWelcomeViewController: UIViewController {
         NSLayoutConstraint.activate([
             emailContent.centerXAnchor.constraint(equalTo: emailButton.centerXAnchor),
             emailContent.centerYAnchor.constraint(equalTo: emailButton.centerYAnchor),
-            emailButton.heightAnchor.constraint(equalToConstant: 56),
+            emailButton.heightAnchor.constraint(equalToConstant: 54),
         ])
         emailButton.addTarget(self, action: #selector(emailButtonTapped), for: .touchUpInside)
         loginStack.addArrangedSubview(emailButton)
@@ -180,7 +208,7 @@ final class BearyWelcomeViewController: UIViewController {
             appleIcon.centerYAnchor.constraint(equalTo: appleButton.centerYAnchor),
             appleIcon.widthAnchor.constraint(equalToConstant: 24),
             appleIcon.heightAnchor.constraint(equalToConstant: 24),
-            appleButton.heightAnchor.constraint(equalToConstant: 56),
+            appleButton.heightAnchor.constraint(equalToConstant: 58),
         ])
         appleButton.addTarget(self, action: #selector(appleLoginTapped), for: .touchUpInside)
         socialRow.addArrangedSubview(appleButton)
@@ -200,7 +228,7 @@ final class BearyWelcomeViewController: UIViewController {
             googleIcon.centerYAnchor.constraint(equalTo: googleButton.centerYAnchor),
             googleIcon.widthAnchor.constraint(equalToConstant: 24),
             googleIcon.heightAnchor.constraint(equalToConstant: 24),
-            googleButton.heightAnchor.constraint(equalToConstant: 56),
+            googleButton.heightAnchor.constraint(equalToConstant: 58),
         ])
         googleButton.addTarget(self, action: #selector(googleButtonTapped), for: .touchUpInside)
         socialRow.addArrangedSubview(googleButton)
@@ -222,8 +250,8 @@ final class BearyWelcomeViewController: UIViewController {
             guestIcon.centerYAnchor.constraint(equalTo: guestButton.centerYAnchor),
             guestIcon.widthAnchor.constraint(equalToConstant: 24),
             guestIcon.heightAnchor.constraint(equalToConstant: 24),
-            guestButton.heightAnchor.constraint(equalToConstant: 56),
-            guestButton.widthAnchor.constraint(equalToConstant: 56),
+            guestButton.heightAnchor.constraint(equalToConstant: 58),
+            guestButton.widthAnchor.constraint(equalToConstant: 58),
         ])
         guestButton.addTarget(self, action: #selector(guestButtonTapped), for: .touchUpInside)
         socialRow.addArrangedSubview(guestButton)
@@ -231,33 +259,9 @@ final class BearyWelcomeViewController: UIViewController {
         configureLegalLine()
         loginStack.addArrangedSubview(legalLabel)
 
-        // 抓手：卡片收起后露在登录区最底部，点按或下拖把卡片放回来。
-        // 点按走 tap 手势（须等拖动手势失败才触发，拖完松手不误触切换）。
-        grabberButton.translatesAutoresizingMaskIntoConstraints = false
-        grabberButton.backgroundColor = BearyColors.line
-        grabberButton.alpha = 0
-        grabberButton.accessibilityLabel = NSLocalizedString("login.welcome.grabber", comment: "")
-        let grabberPan = UIPanGestureRecognizer(target: self, action: #selector(cardPanChanged(_:)))
-        grabberButton.addGestureRecognizer(grabberPan)
-        let grabberTap = UITapGestureRecognizer(target: self, action: #selector(grabberTapped))
-        grabberTap.require(toFail: grabberPan)
-        grabberButton.addGestureRecognizer(grabberTap)
-        // 抓手居中：stack 默认拉伸，包一层居中容器。
-        let grabberWrap = UIView()
-        grabberWrap.translatesAutoresizingMaskIntoConstraints = false
-        grabberWrap.addSubview(grabberButton)
-        NSLayoutConstraint.activate([
-            grabberButton.widthAnchor.constraint(equalToConstant: 36),
-            grabberButton.heightAnchor.constraint(equalToConstant: 5),
-            grabberButton.centerXAnchor.constraint(equalTo: grabberWrap.centerXAnchor),
-            grabberButton.topAnchor.constraint(equalTo: grabberWrap.topAnchor),
-            grabberButton.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
-        ])
-        loginStack.addArrangedSubview(grabberWrap)
-
-        loginStack.setCustomSpacing(BearySpace.xl, after: loginTitleLabel)
+        // 预览 v3：tagline 到邮箱钮 18。
+        loginStack.setCustomSpacing(18, after: loginTitleLabel)
         loginStack.setCustomSpacing(BearySpace.lg, after: socialRow)
-        loginStack.setCustomSpacing(BearySpace.md, after: legalLabel)
 
         // C7：iPad 600 居中（反馈页同款，含 750 宽度等式防短内容压塌；600 上限只在宽屏激活，见 viewDidLayoutSubviews）。
         let loginWidthEquality = loginStack.widthAnchor.constraint(equalTo: loginSection.widthAnchor, constant: -40)
@@ -282,6 +286,13 @@ final class BearyWelcomeViewController: UIViewController {
     private func buildCard() {
         cardView.translatesAutoresizingMaskIntoConstraints = false
         cardView.backgroundColor = BearyColors.bg
+        // 底圆角 30＋阴影（预览 .welcome-card；只圆底角，阴影随卡片走）。
+        cardView.layer.cornerRadius = Self.cardBottomRadius
+        cardView.layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        cardView.layer.shadowColor = UIColor.black.cgColor
+        cardView.layer.shadowOpacity = 0.12
+        cardView.layer.shadowRadius = 40
+        cardView.layer.shadowOffset = CGSize(width: 0, height: 12)
         view.addSubview(cardView)
         cardTopConstraint = cardView.topAnchor.constraint(equalTo: view.topAnchor)
         NSLayoutConstraint.activate([
@@ -291,38 +302,42 @@ final class BearyWelcomeViewController: UIViewController {
             cardView.heightAnchor.constraint(equalTo: view.heightAnchor),
         ])
 
-        // 广场日记横滑条。
-        diaryStrip.translatesAutoresizingMaskIntoConstraints = false
-        diaryStrip.showsHorizontalScrollIndicator = false
-        diaryStrip.contentInset = UIEdgeInsets(top: 0, left: BearySpace.xl, bottom: 0, right: BearySpace.xl)
-        cardView.addSubview(diaryStrip)
-        diaryStack.translatesAutoresizingMaskIntoConstraints = false
-        diaryStack.axis = .horizontal
-        diaryStack.alignment = .fill
-        diaryStack.spacing = BearySpace.md
-        diaryStrip.addSubview(diaryStack)
-        // C7：iPad 600 居中（反馈页同款；600 上限只在宽屏激活，见 viewDidLayoutSubviews）。卡片本身仍全幅（拉窗背景），只收内容条宽度。
-        let stripWidthEquality = diaryStrip.widthAnchor.constraint(equalTo: cardView.widthAnchor)
-        stripWidthEquality.priority = UILayoutPriority(750)
-        diaryStripWidthCap = diaryStrip.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
-        diaryStripWidthCap?.isActive = false
+        // 广场日记纵向漂移区（铺满整卡，裁剪；预览 float-zone）。
+        driftZone.translatesAutoresizingMaskIntoConstraints = false
+        driftZone.clipsToBounds = true
+        cardView.addSubview(driftZone)
         NSLayoutConstraint.activate([
-            diaryStrip.topAnchor.constraint(equalTo: cardView.safeAreaLayoutGuide.topAnchor, constant: 16),
-            diaryStrip.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
-            diaryStrip.leadingAnchor.constraint(greaterThanOrEqualTo: cardView.leadingAnchor),
-            diaryStrip.trailingAnchor.constraint(lessThanOrEqualTo: cardView.trailingAnchor),
-            diaryStrip.heightAnchor.constraint(equalToConstant: 210),
-            stripWidthEquality,
-            diaryStack.topAnchor.constraint(equalTo: diaryStrip.contentLayoutGuide.topAnchor),
-            diaryStack.bottomAnchor.constraint(equalTo: diaryStrip.contentLayoutGuide.bottomAnchor),
-            diaryStack.leadingAnchor.constraint(equalTo: diaryStrip.contentLayoutGuide.leadingAnchor),
-            diaryStack.trailingAnchor.constraint(equalTo: diaryStrip.contentLayoutGuide.trailingAnchor),
-            diaryStack.heightAnchor.constraint(equalTo: diaryStrip.frameLayoutGuide.heightAnchor),
+            driftZone.topAnchor.constraint(equalTo: cardView.topAnchor),
+            driftZone.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
+            driftZone.trailingAnchor.constraint(equalTo: cardView.trailingAnchor),
+            driftZone.bottomAnchor.constraint(equalTo: cardView.bottomAnchor),
         ])
-        // 取数回来前先放三张柔和占位卡，页面不空。
-        for _ in 0..<3 { diaryStack.addArrangedSubview(makePlaceholderCard()) }
+        // 取数回来前先放六张柔和占位卡，页面不空。
+        rebuildDriftCards(entries: nil)
 
-        // logo＋标语：居中，略偏下（卡片中部偏下，见预览 v3）。
+        // 底部淡出渐变（漂移卡片在 logo 区上方淡出；预览 welcome-content 的渐变，
+        // 底部 88% 实色、顶部 12% 淡出；top 约束在 bottomStack 建好后补，见本方法末尾）。
+        bottomFadeView.translatesAutoresizingMaskIntoConstraints = false
+        bottomFadeView.isUserInteractionEnabled = false
+        cardView.addSubview(bottomFadeView)
+        let fade = CAGradientLayer()
+        fade.colors = [
+            BearyColors.bg.withAlphaComponent(0).cgColor,
+            BearyColors.bg.withAlphaComponent(1).cgColor,
+            BearyColors.bg.withAlphaComponent(1).cgColor,
+        ]
+        fade.locations = [0, 0.12, 1]
+        fade.startPoint = CGPoint(x: 0.5, y: 0)
+        fade.endPoint = CGPoint(x: 0.5, y: 1)
+        bottomFadeView.layer.addSublayer(fade)
+        bottomFadeLayer = fade
+        NSLayoutConstraint.activate([
+            bottomFadeView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
+            bottomFadeView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor),
+            bottomFadeView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor),
+        ])
+
+        // logo＋标语：贴底一组的头两项（预览 welcome-content；wordmark 宽 92 高约 33）。
         logoImageView.translatesAutoresizingMaskIntoConstraints = false
         logoImageView.image = UIImage(named: "LogoHorizontal")
         logoImageView.contentMode = .scaleAspectFit
@@ -338,25 +353,13 @@ final class BearyWelcomeViewController: UIViewController {
         ])
         slogan.append(NSAttributedString(string: sloganHighlight, attributes: [
             .font: BearyDynamicType.welcomeDisplayFont(),
-            .foregroundColor: BearyColors.orange,
+            // 标语高亮（预览 v3 em #F97316）。
+            .foregroundColor: UIColor(red: 249.0/255.0, green: 115.0/255.0, blue: 22.0/255.0, alpha: 1),
         ]))
         sloganLabel.attributedText = slogan
-        logoStack.translatesAutoresizingMaskIntoConstraints = false
-        logoStack.axis = .vertical
-        logoStack.alignment = .center
-        logoStack.spacing = BearySpace.md
-        logoStack.addArrangedSubview(logoImageView)
-        logoStack.addArrangedSubview(sloganLabel)
-        cardView.addSubview(logoStack)
-        NSLayoutConstraint.activate([
-            logoImageView.heightAnchor.constraint(equalToConstant: 28),
-            logoStack.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
-            logoStack.centerYAnchor.constraint(equalTo: cardView.centerYAnchor, constant: 60),
-            logoStack.leadingAnchor.constraint(greaterThanOrEqualTo: cardView.leadingAnchor, constant: 20),
-            logoStack.trailingAnchor.constraint(lessThanOrEqualTo: cardView.trailingAnchor, constant: -20),
-        ])
 
-        // 橙色渐变拖钮（手绘包 icon_chevron_down，白字）。
+        // 橙色渐变拖钮（手绘包 icon_chevron_down，白字；预览 v3：52px、
+        // #FF8A00→#FF5E3A 135° 对角渐变＋0 6px 18px rgba(255,94,58,.35) 阴影）。
         dragButton.translatesAutoresizingMaskIntoConstraints = false
         dragButton.backgroundColor = .clear
         dragButton.bearyAddPressFeedback()
@@ -364,14 +367,19 @@ final class BearyWelcomeViewController: UIViewController {
         dragButton.accessibilityHint = NSLocalizedString("login.welcome.drag_button_hint", comment: "")
         let gradient = CAGradientLayer()
         gradient.colors = [
-            UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1).cgColor,
-            UIColor(red: 1.0, green: 0.42, blue: 0.0, alpha: 1).cgColor,
+            UIColor(red: 1.0, green: 138.0/255.0, blue: 0, alpha: 1).cgColor,
+            UIColor(red: 1.0, green: 94.0/255.0, blue: 58.0/255.0, alpha: 1).cgColor,
         ]
-        gradient.startPoint = CGPoint(x: 0.5, y: 0)
-        gradient.endPoint = CGPoint(x: 0.5, y: 1)
+        gradient.startPoint = CGPoint(x: 1, y: 0)
+        gradient.endPoint = CGPoint(x: 0, y: 1)
         dragButton.layer.insertSublayer(gradient, at: 0)
         dragGradientLayer = gradient
-        dragButton.layer.masksToBounds = true
+        // 阴影要画出按钮外，masksToBounds 须关；渐变层自己带圆角（见 viewDidLayoutSubviews）。
+        dragButton.layer.masksToBounds = false
+        dragButton.layer.shadowColor = UIColor(red: 1.0, green: 94.0/255.0, blue: 58.0/255.0, alpha: 1).cgColor
+        dragButton.layer.shadowOpacity = 0.35
+        dragButton.layer.shadowRadius = 18
+        dragButton.layer.shadowOffset = CGSize(width: 0, height: 6)
         let chevron = UIImageView(image: BearyIconImages.image(named: "icon_chevron_down", pointSize: 22))
         chevron.tintColor = .white
         chevron.contentMode = .scaleAspectFit
@@ -382,8 +390,8 @@ final class BearyWelcomeViewController: UIViewController {
             chevron.centerYAnchor.constraint(equalTo: dragButton.centerYAnchor),
             chevron.widthAnchor.constraint(equalToConstant: 22),
             chevron.heightAnchor.constraint(equalToConstant: 22),
-            dragButton.widthAnchor.constraint(equalToConstant: 64),
-            dragButton.heightAnchor.constraint(equalToConstant: 64),
+            dragButton.widthAnchor.constraint(equalToConstant: 52),
+            dragButton.heightAnchor.constraint(equalToConstant: 52),
         ])
         // 点按走 tap 手势（须等拖动手势失败才触发，拖完松手不误触切换）。
         let dragPan = UIPanGestureRecognizer(target: self, action: #selector(cardPanChanged(_:)))
@@ -391,11 +399,41 @@ final class BearyWelcomeViewController: UIViewController {
         let dragTap = UITapGestureRecognizer(target: self, action: #selector(dragButtonTapped))
         dragTap.require(toFail: dragPan)
         dragButton.addGestureRecognizer(dragTap)
-        cardView.addSubview(dragButton)
+
+        // 抓手：卡片收起后露在卡片底部边缘，点按或下拖把卡片放回来（预览 .grabber）。
+        grabberButton.translatesAutoresizingMaskIntoConstraints = false
+        grabberButton.backgroundColor = BearyColors.line
+        grabberButton.alpha = 0
+        grabberButton.accessibilityLabel = NSLocalizedString("login.welcome.grabber", comment: "")
+        let grabberPan = UIPanGestureRecognizer(target: self, action: #selector(cardPanChanged(_:)))
+        grabberButton.addGestureRecognizer(grabberPan)
+        let grabberTap = UITapGestureRecognizer(target: self, action: #selector(grabberTapped))
+        grabberTap.require(toFail: grabberPan)
+        grabberButton.addGestureRecognizer(grabberTap)
+
+        // 贴底一组：wordmark（12）标语（20）拖钮（20）抓手，贴底 24（预览 welcome-content）。
+        bottomStack.translatesAutoresizingMaskIntoConstraints = false
+        bottomStack.axis = .vertical
+        bottomStack.alignment = .center
+        bottomStack.addArrangedSubview(logoImageView)
+        bottomStack.addArrangedSubview(sloganLabel)
+        bottomStack.addArrangedSubview(dragButton)
+        bottomStack.addArrangedSubview(grabberButton)
+        bottomStack.setCustomSpacing(BearySpace.md, after: logoImageView)
+        bottomStack.setCustomSpacing(BearySpace.xl, after: sloganLabel)
+        bottomStack.setCustomSpacing(BearySpace.xl, after: dragButton)
+        cardView.addSubview(bottomStack)
         NSLayoutConstraint.activate([
-            dragButton.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
-            dragButton.bottomAnchor.constraint(equalTo: cardView.safeAreaLayoutGuide.bottomAnchor, constant: -32),
+            logoImageView.widthAnchor.constraint(equalToConstant: 92),
+            logoImageView.heightAnchor.constraint(equalToConstant: 33),
+            grabberButton.widthAnchor.constraint(equalToConstant: 36),
+            grabberButton.heightAnchor.constraint(equalToConstant: 5),
+            bottomStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 26),
+            bottomStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -26),
+            bottomStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -24),
         ])
+        // 淡出渐变从贴底组顶上方 60 起（盖住组的上半截淡出区）。
+        bottomFadeView.topAnchor.constraint(equalTo: bottomStack.topAnchor, constant: -60).isActive = true
     }
 
     // MARK: - 广场日记卡片
@@ -408,15 +446,14 @@ final class BearyWelcomeViewController: UIViewController {
         (UIColor(red: 0.918, green: 0.969, blue: 0.937, alpha: 1), UIColor(red: 0.106, green: 0.149, blue: 0.125, alpha: 1)),
     ]
 
+    /// 占位卡（取数前）：柔和底色，固定高 150；宽由漂移轨道定。
     private func makePlaceholderCard() -> UIView {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
         card.backgroundColor = BearyColors.surface1
-        card.layer.cornerRadius = BearyCorners.single
-        NSLayoutConstraint.activate([
-            card.widthAnchor.constraint(equalToConstant: 150),
-            card.heightAnchor.constraint(equalToConstant: 210),
-        ])
+        card.layer.cornerRadius = Self.driftCardRadius
+        card.clipsToBounds = true
+        card.heightAnchor.constraint(equalToConstant: 150).isActive = true
         return card
     }
 
@@ -428,29 +465,22 @@ final class BearyWelcomeViewController: UIViewController {
                     // 取数失败／空：占位卡留着，欢迎页不因此坏掉。
                     return
                 }
-                strongSelf.diaryStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-                for (index, entry) in entries.prefix(6).enumerated() {
-                    strongSelf.diaryStack.addArrangedSubview(strongSelf.makeDiaryCard(entry: entry, tintIndex: index))
-                }
+                strongSelf.rebuildDriftCards(entries: Array(entries.prefix(6)))
             }
         }
     }
 
-    /// 日记卡片：有图用真实日记图（缩略图），纯文字用柔和底色卡；
-    /// 底部都带 M月d日（按日记自身时区）。
+    /// 日记卡片（漂移用）：有图上图下文（配图高 78，预览 .ph），纯文字用柔和底色卡；
+    /// 高度随内容走（不写死宽高，宽由漂移轨道定），底部都带 M月d日（按日记自身时区）。
     private func makeDiaryCard(entry: Entry, tintIndex: Int) -> UIView {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
-        card.layer.cornerRadius = BearyCorners.single
+        card.layer.cornerRadius = Self.driftCardRadius
         card.clipsToBounds = true
         card.isUserInteractionEnabled = false
-        NSLayoutConstraint.activate([
-            card.widthAnchor.constraint(equalToConstant: 150),
-            card.heightAnchor.constraint(equalToConstant: 210),
-        ])
         let dateText = diaryDateText(entry: entry)
         if let key = entry.images?.first, !key.isEmpty {
-            card.backgroundColor = BearyColors.surface1
+            card.backgroundColor = BearyColors.bg
             let imageView = UIImageView()
             imageView.translatesAutoresizingMaskIntoConstraints = false
             imageView.contentMode = .scaleAspectFill
@@ -458,30 +488,41 @@ final class BearyWelcomeViewController: UIViewController {
             card.addSubview(imageView)
             NSLayoutConstraint.activate([
                 imageView.topAnchor.constraint(equalTo: card.topAnchor),
-                imageView.bottomAnchor.constraint(equalTo: card.bottomAnchor),
                 imageView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
                 imageView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+                imageView.heightAnchor.constraint(equalToConstant: 78),
             ])
             if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
                 BearyImageLoader.shared.load(url: url, downsampleToWidth: 300) { [weak imageView] image in
                     DispatchQueue.main.async { imageView?.image = image }
                 }
             }
+            let textLabel = UILabel()
+            textLabel.translatesAutoresizingMaskIntoConstraints = false
+            textLabel.text = Self.plainDiaryText(entry.content ?? "")
+            textLabel.font = BearyDynamicType.captionFont()
+            textLabel.textColor = BearyColors.ink
+            textLabel.numberOfLines = 3
+            card.addSubview(textLabel)
+            NSLayoutConstraint.activate([
+                textLabel.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 9),
+                textLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 11),
+                textLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -11),
+            ])
             if let dateText = dateText {
                 let dateLabel = UILabel()
                 dateLabel.translatesAutoresizingMaskIntoConstraints = false
                 dateLabel.text = dateText
                 dateLabel.font = BearyDynamicType.captionFont()
-                dateLabel.textColor = .white
-                dateLabel.layer.shadowColor = UIColor.black.cgColor
-                dateLabel.layer.shadowOpacity = 0.6
-                dateLabel.layer.shadowRadius = 2
-                dateLabel.layer.shadowOffset = CGSize(width: 0, height: 1)
+                dateLabel.textColor = BearyColors.gray
                 card.addSubview(dateLabel)
                 NSLayoutConstraint.activate([
-                    dateLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: BearySpace.md),
-                    dateLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -BearySpace.md),
+                    dateLabel.topAnchor.constraint(equalTo: textLabel.bottomAnchor, constant: 5),
+                    dateLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 11),
+                    dateLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
                 ])
+            } else {
+                textLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10).isActive = true
             }
         } else {
             let tint = Self.textCardTints[tintIndex % Self.textCardTints.count]
@@ -496,9 +537,9 @@ final class BearyWelcomeViewController: UIViewController {
             textLabel.numberOfLines = 4
             card.addSubview(textLabel)
             NSLayoutConstraint.activate([
-                textLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: BearySpace.md),
-                textLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: BearySpace.md),
-                textLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -BearySpace.md),
+                textLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
+                textLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
+                textLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
             ])
             if let dateText = dateText {
                 let dateLabel = UILabel()
@@ -508,9 +549,12 @@ final class BearyWelcomeViewController: UIViewController {
                 dateLabel.textColor = BearyColors.gray
                 card.addSubview(dateLabel)
                 NSLayoutConstraint.activate([
-                    dateLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: BearySpace.md),
-                    dateLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -BearySpace.md),
+                    dateLabel.topAnchor.constraint(equalTo: textLabel.bottomAnchor, constant: 8),
+                    dateLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
+                    dateLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
                 ])
+            } else {
+                textLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12).isActive = true
             }
         }
         return card
@@ -547,8 +591,9 @@ final class BearyWelcomeViewController: UIViewController {
             applyCardLift()
         case .ended, .cancelled:
             setDragButtonPressed(false)
-            // 松开后吸附到最近一端（拖过一半即全开，否则回落全盖）。
-            snapCard(to: cardLift > maxLift / 2 ? maxLift : 0)
+            // 松开后吸附到最近一端（拖过一半即全开，否则回落全盖），
+            // 甩动速度带进吸附（fling），不要 initialSpringVelocity: 0 那种丢速度的写法。
+            snapCard(to: cardLift > maxLift / 2 ? maxLift : 0, velocity: gesture.velocity(in: view).y)
         default:
             break
         }
@@ -557,17 +602,42 @@ final class BearyWelcomeViewController: UIViewController {
     private func applyCardLift() {
         cardTopConstraint.constant = -cardLift
         grabberButton.alpha = maxLift > 0 ? cardLift / maxLift : 0
+        // 收起后拖钮淡出（预览 .down-btn opacity: 0）；抬起过程同步淡出。
+        // 交互开关不在这里改（拖动中途关掉会取消进行中的手势），只在 snapCard 里改。
+        dragButton.alpha = maxLift > 0 ? 1 - cardLift / maxLift : 1
         view.layoutIfNeeded()
     }
 
-    private func snapCard(to target: CGFloat) {
+    /// 吸附到目标端（预览收起过渡 .8s cubic-bezier(.22,.9,.3,1)，平滑减速无回弹）。
+    /// 甩动速度做 fling：顺着目标方向甩时按速度缩短时长（下限 0.2s），
+    /// 逆向或无速度时按预览的 0.8s 走满；曲线始终是预览的 cubic-bezier。
+    private func snapCard(to target: CGFloat, velocity: CGFloat = 0) {
+        let startLift = cardLift
         cardLift = target
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [.curveEaseOut]) { [weak self] in
+        let distance = abs(target - startLift)
+        let towardSpeed: CGFloat = target > startLift ? -velocity : velocity
+        let duration: TimeInterval
+        if towardSpeed > 0, distance > 0 {
+            duration = min(Self.snapDuration, max(0.2, TimeInterval(distance / towardSpeed)))
+        } else {
+            duration = Self.snapDuration
+        }
+        let animator = UIViewPropertyAnimator(
+            duration: duration,
+            timingParameters: UICubicTimingParameters(
+                controlPoint1: CGPoint(x: 0.22, y: 0.9),
+                controlPoint2: CGPoint(x: 0.3, y: 1.0)
+            )
+        )
+        animator.addAnimations { [weak self] in
             guard let strongSelf = self else { return }
             strongSelf.cardTopConstraint.constant = -strongSelf.cardLift
             strongSelf.grabberButton.alpha = strongSelf.maxLift > 0 ? strongSelf.cardLift / strongSelf.maxLift : 0
+            strongSelf.dragButton.alpha = strongSelf.maxLift > 0 ? 1 - strongSelf.cardLift / strongSelf.maxLift : 1
             strongSelf.view.layoutIfNeeded()
         }
+        dragButton.isUserInteractionEnabled = target < maxLift
+        animator.startAnimation()
     }
 
     /// 按住拖动时按钮缩小（按下态）；松开恢复。
@@ -585,6 +655,94 @@ final class BearyWelcomeViewController: UIViewController {
 
     @objc private func grabberTapped() {
         snapCard(to: 0)
+    }
+
+    // MARK: - 漂移（预览 v3：6 张卡三列纵向匀速漂移）
+
+    /// 重建漂移卡片（entries 为 nil＝占位卡）；只建视图，布帧与启动动画在 viewDidLayoutSubviews 里做。
+    private func rebuildDriftCards(entries: [Entry]?) {
+        driftCards.forEach { $0.wrap.removeFromSuperview() }
+        driftCards = []
+        driftVersion += 1
+        for (index, _) in Self.driftLanes.enumerated() {
+            let card: UIView
+            if let entries = entries, index < entries.count {
+                card = makeDiaryCard(entry: entries[index], tintIndex: index)
+            } else {
+                card = makePlaceholderCard()
+            }
+            let wrap = driftCardWrap(card: card)
+            driftZone.addSubview(wrap)
+            driftCards.append((wrap: wrap, card: card))
+        }
+        driftActiveVersion = nil
+        view.setNeedsLayout()
+    }
+
+    /// 漂移卡片外包（圆角＋阴影画在外包上；卡片本身裁剪内容，阴影不被裁掉）。
+    private func driftCardWrap(card: UIView) -> UIView {
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        wrap.backgroundColor = .clear
+        wrap.layer.cornerRadius = Self.driftCardRadius
+        wrap.layer.shadowColor = UIColor.black.cgColor
+        wrap.layer.shadowOpacity = 0.12
+        wrap.layer.shadowRadius = 24
+        wrap.layer.shadowOffset = CGSize(width: 0, height: 8)
+        card.translatesAutoresizingMaskIntoConstraints = false
+        wrap.addSubview(card)
+        NSLayoutConstraint.activate([
+            card.topAnchor.constraint(equalTo: wrap.topAnchor),
+            card.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+            card.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+        ])
+        return wrap
+    }
+
+    /// 按当前卡宽布漂移卡片帧（轨道按 402 宽等比缩放、居中；宽屏不拉散）。
+    /// 卡高随内容走：按轨道宽量卡片的适配高（宽窄屏文字换行不同，高也不同）。
+    private func layoutDriftCards() {
+        let zoneSize = driftZone.bounds.size
+        guard zoneSize.width > 0, driftCards.count == Self.driftLanes.count else { return }
+        let scale = min(1, zoneSize.width / 402)
+        for (index, item) in driftCards.enumerated() {
+            let lane = Self.driftLanes[index]
+            let width = lane.width * scale
+            let centerX = zoneSize.width / 2 + (lane.x + lane.width / 2 - 201) * scale
+            let fitting = item.card.systemLayoutSizeFitting(
+                CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            )
+            item.wrap.frame = CGRect(x: centerX - width / 2, y: 0, width: width, height: fitting.height)
+        }
+    }
+
+    /// 启动漂移（卡片内容或漂移区尺寸变了才重起；动画按预览速度匀速循环，
+    /// 负相位＝动画已跑了几秒，卡片一开始就错开在不同高度）。
+    private func startDriftIfNeeded() {
+        let zoneSize = driftZone.bounds.size
+        guard zoneSize.width > 0, zoneSize.height > 0, !driftCards.isEmpty else { return }
+        if driftActiveVersion == driftVersion, driftActiveSize == zoneSize { return }
+        driftActiveVersion = driftVersion
+        driftActiveSize = zoneSize
+        let fromY = zoneSize.height + 26
+        for (index, item) in driftCards.enumerated() {
+            let lane = Self.driftLanes[index]
+            let toY = -(item.wrap.frame.height + 40)
+            let duration = CFTimeInterval((fromY - toY) / Self.driftSpeed)
+            let anim = CABasicAnimation(keyPath: "transform.translation.y")
+            anim.fromValue = fromY
+            anim.toValue = toY
+            anim.duration = duration
+            anim.repeatCount = .infinity
+            anim.beginTime = CACurrentMediaTime() - CFTimeInterval(lane.phase)
+            anim.fillMode = .both
+            anim.isRemovedOnCompletion = false
+            item.wrap.layer.removeAnimation(forKey: "drift")
+            item.wrap.layer.add(anim, forKey: "drift")
+        }
     }
 
     // MARK: - 登录入口
@@ -626,16 +784,16 @@ final class BearyWelcomeViewController: UIViewController {
         legalLabel.textContainerInset = UIEdgeInsets.zero
         legalLabel.textContainer.lineFragmentPadding = 0
         legalLabel.textAlignment = .center
-        legalLabel.font = BearyDynamicType.secondaryFont()
+        legalLabel.font = BearyDynamicType.captionFont()
         legalLabel.adjustsFontForContentSizeCategory = true
         legalLabel.textColor = BearyColors.gray
+        // 协议链接灰色无下划线（token :142；预览 v3 法律行纯文本无下划线）。
         legalLabel.linkTextAttributes = [
-            .foregroundColor: BearyColors.blue,
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .foregroundColor: BearyColors.gray,
         ]
         let fullText = NSLocalizedString("login.welcome.legal", comment: "")
         let attributed = NSMutableAttributedString(string: fullText, attributes: [
-            .font: BearyDynamicType.secondaryFont(),
+            .font: BearyDynamicType.captionFont(),
             .foregroundColor: BearyColors.gray,
         ])
         let paragraph = NSMutableParagraphStyle()
