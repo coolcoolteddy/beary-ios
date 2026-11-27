@@ -8,8 +8,9 @@ import UIKit
 // 套餐切换按预览 v32 定版：英文胶囊（Monthly/Yearly/Lifetime）＋下方
 // 三小点，点胶囊或左右滑切换；解锁动效同 v32（皇冠轻跳＋星星飘散＋呼吸光晕）。
 // 权益区四行文案不动（规范同步等 Li 开口）；“免费得 Plus”行与“去邀请”
-// 入口保留。协议正文未定：全仓无《Plus 会员服务协议》正文，协议入口已
-// 去掉，绝不现编正文；等正式开通、有真实协议正文后再恢复。
+// 入口保留。页底一行小字法律链接（2026-11-27 1.0 审核合规：订阅页须有
+// EULA 与隐私政策入口，只加链接、不加订阅说明话术）；Plus 会员服务协议
+// 正文未定：全仓无《Plus 会员服务协议》正文，绝不现编正文。
 // 状态由调用方传入（/me 的 plus），购买成功后本页内翻转为已开通。
 
 final class BearyPlusPageViewController: UIViewController {
@@ -674,13 +675,14 @@ final class BearyPlusPageViewController: UIViewController {
         contentStack.addArrangedSubview(spacer)
 
         // 页尾 CTA：未开通是购买入口“继续”（点后进系统支付页）；
-        // 已开通按 v32 定版置灰“已开通 ✓”（不可点）。协议正文未定，
-        // 协议入口已去掉（见文件头注释），不留死入口。
+        // 已开通按 v32 定版置灰“已开通 ✓”（不可点）。页底一行小字法律
+        // 链接（2026-11-27 1.0 审核合规），两段各自可点；不加订阅说明话术。
         let foot = UIView()
         foot.translatesAutoresizingMaskIntoConstraints = false
         foot.addSubview(mainButton)
         foot.addSubview(priceNoteLabel)
         foot.addSubview(restoreButton)
+        foot.addSubview(legalLinksRow)
         applyMainButtonState()
         NSLayoutConstraint.activate([
             mainButton.topAnchor.constraint(equalTo: foot.topAnchor, constant: 24),
@@ -693,7 +695,9 @@ final class BearyPlusPageViewController: UIViewController {
             priceNoteLabel.trailingAnchor.constraint(lessThanOrEqualTo: foot.trailingAnchor, constant: -16),
             restoreButton.topAnchor.constraint(equalTo: priceNoteLabel.bottomAnchor, constant: 12),
             restoreButton.centerXAnchor.constraint(equalTo: foot.centerXAnchor),
-            restoreButton.bottomAnchor.constraint(equalTo: foot.bottomAnchor, constant: -32),
+            legalLinksRow.topAnchor.constraint(equalTo: restoreButton.bottomAnchor, constant: 12),
+            legalLinksRow.centerXAnchor.constraint(equalTo: foot.centerXAnchor),
+            legalLinksRow.bottomAnchor.constraint(equalTo: foot.bottomAnchor, constant: -32),
         ])
         contentStack.addArrangedSubview(foot)
     }
@@ -720,6 +724,47 @@ final class BearyPlusPageViewController: UIViewController {
         buttonValue.addTarget(self, action: #selector(restoreButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         return buttonValue
+    }()
+
+    /// 页底法律链接行（2026-11-27 1.0 审核合规）：小字灰链，两段各自可点；
+    /// 使用条款→苹果标准 EULA（外跳 Safari），隐私政策→设置页同款原生法律页。
+    private lazy var legalTermsButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle(NSLocalizedString("plus.legal_terms", comment: ""), for: .normal)
+        buttonValue.setTitleColor(BearyColors.gray, for: .normal)
+        buttonValue.titleLabel?.font = BearyDynamicType.captionFont()
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        buttonValue.addTarget(self, action: #selector(legalTermsTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    private lazy var legalPrivacyButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle(NSLocalizedString("plus.legal_privacy", comment: ""), for: .normal)
+        buttonValue.setTitleColor(BearyColors.gray, for: .normal)
+        buttonValue.titleLabel?.font = BearyDynamicType.captionFont()
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        buttonValue.addTarget(self, action: #selector(legalPrivacyTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    private lazy var legalLinksRow: UIStackView = {
+        let separator = UILabel()
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.font = BearyDynamicType.captionFont()
+        separator.adjustsFontForContentSizeCategory = true
+        separator.textColor = BearyColors.gray
+        separator.text = "·"
+        let row = UIStackView(arrangedSubviews: [legalTermsButton, separator, legalPrivacyButton])
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = BearySpace.sm
+        return row
     }()
 
     private func statusText() -> String {
@@ -941,6 +986,26 @@ final class BearyPlusPageViewController: UIViewController {
             case .failure:
                 self.showPurchaseToast(key: "plus.restore.failed")
             }
+        }
+    }
+
+    /// 使用条款：苹果标准 EULA，外跳 Safari（App 内无该页原生文本；
+    /// 外跳做法同 BearyForceUpdate／BearyLocalNotifications）。
+    @objc private func legalTermsTapped() {
+        guard let url = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/") else { return }
+        UIApplication.shared.open(url)
+    }
+
+    /// 隐私政策：设置页同款原生法律页（服务器＋缓存＋包内兜底，不开网页）。
+    @objc private func legalPrivacyTapped() {
+        let vc = BearyLegalTextViewController(pageTitle: NSLocalizedString("plus.legal_privacy", comment: ""), pageText: BearyLegalServerText.displayText(for: .privacy), pageVersion: BearyLegalServerText.cachedUpdatedAt(for: .privacy))
+        vc.modalPresentationStyle = .fullScreen
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        present(vc, animated: BearyMotion.animated(true))
+        BearyLegalServerText.refresh(doc: .privacy) { [weak vc] text in
+            guard let text = text, let vc = vc, vc.isViewLoaded else { return }
+            vc.updateText(text)
+            vc.updateVersionText(BearyLegalServerText.cachedUpdatedAt(for: .privacy))
         }
     }
 
