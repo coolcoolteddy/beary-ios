@@ -457,7 +457,6 @@ final class BearyStorageSettingsViewController: BearySettingsSubpageViewControll
             self.isClearing = false
             self.measurement = measurement
             self.render()
-            BearyToast.show(in: self.view, message: "已清除缓存")
         }
     }
 }
