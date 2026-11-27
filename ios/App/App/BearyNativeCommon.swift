@@ -203,7 +203,7 @@ enum BearyScrollAnchor {
 
 // MARK: - Sheet/居中模态统一口径（B 批）
 
-/// 底 sheet 与居中模态的共享 chrome：顶部圆角 20、抓手 40×4（顶距 10、圆角 2）、
+/// 底 sheet 与居中模态的共享 chrome：顶部圆角＝屏幕圆角（26+）／20（26 以下）、抓手 40×4（顶距 10、圆角 2）、
 /// 遮罩 scrim 0.45。B 批前四处各写各的数值（恰好同值），改一处即全跟走，防再分裂。
 /// 2026-10-28 Li 令：回应 Sheet 与草稿箱 Sheet 统一走本 chrome（此前草稿箱遮罩全透明、
 /// 回应 Sheet 圆角 22 / 抓手 38×4 的例外一律撤销）；遮罩出现时 0.26s 淡入。
@@ -216,7 +216,54 @@ enum BearyScrollAnchor {
 /// 已废弃并删除——@ 选人 iPad 卡片改走 raised（BearyShadow.applyRaised），
 /// 草稿箱 sheet 改走底 sheet 档；居中卡片此前已走 raised（见 BearyCenteredModal），不变。
 enum BearySheetChrome {
-    static let topCornerRadius: CGFloat = 20
+    /// 底 sheet 四角圆角（2026-11-27 修：跟屏幕圆角一致，Threads 同款口径；
+    /// 同日 Li 纠正：38pt（iOS 26 系统默认值）相对 62pt 屏幕还是小、不够贴）。
+    /// 动态读没有公开 API：`_displayCornerRadius` 是私有 key，生产代码走 KVC 读它
+    /// 有 App Store 审核风险（首版可能放过、越往后越可能被拒），故不用；
+    /// 改走机型查表：hw.machine（uname，公开 API）→ 已实测的屏幕圆角。
+    /// iPhone 17 Pro 实测 62pt（iOS 27 探针读私有 key，仅探针用、不进生产代码）；
+    /// 其余机型值为已公开的实测表；未知新机型回退 62pt（当前旗舰值，也是主值）；
+    /// iPad 18pt（Air / Pro 11" / 12.9" 实测）；SE 直角屏回退旧 20pt。
+    /// 26 以下无浮动 sheet（底边贴合、只圆顶角），保持旧 20pt 不动。
+    static var topCornerRadius: CGFloat {
+        if #available(iOS 26.0, *) { screenCornerRadius } else { 20 }
+    }
+
+    /// 屏幕圆角（机型查表，见 topCornerRadius 注释；值均为实测，非拍脑袋）。
+    static var screenCornerRadius: CGFloat {
+        switch deviceModelIdentifier {
+        case "iPhone10,3", "iPhone10,6", "iPhone11,2", "iPhone11,4", "iPhone11,6",
+             "iPhone12,3", "iPhone12,5":
+            return 39
+        case "iPhone11,8", "iPhone12,1":
+            return 41.5
+        case "iPhone13,1", "iPhone14,4":
+            return 44
+        case "iPhone13,2", "iPhone13,3", "iPhone14,2", "iPhone14,5", "iPhone14,7", "iPhone17,5":
+            return 47.33
+        case "iPhone13,4", "iPhone14,3", "iPhone14,8":
+            return 53.33
+        case "iPhone15,2", "iPhone15,3", "iPhone15,4", "iPhone15,5",
+             "iPhone16,1", "iPhone16,2", "iPhone17,3", "iPhone17,4":
+            return 55
+        case "iPhone17,1", "iPhone17,2", "iPhone18,1", "iPhone18,2", "iPhone18,3", "iPhone18,4":
+            return 62
+        case "iPhone12,8", "iPhone14,6":
+            return 20
+        default:
+            if UIDevice.current.userInterfaceIdiom == .pad { return 18 }
+            return 62
+        }
+    }
+
+    /// 机型标识（如 iPhone18,2），uname 公开 API，无审核风险。
+    private static var deviceModelIdentifier: String {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        return withUnsafePointer(to: &systemInfo.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
+        }
+    }
     static let grabberWidth: CGFloat = 40
     static let grabberHeight: CGFloat = 4
     static let grabberTop: CGFloat = 10
@@ -323,8 +370,10 @@ enum BearySheetDrag {
 /// 玻璃适用范围 Token（视觉清单第 12 项）：系统材质（UIGlassEffect /
 /// systemMaterial 降级）只允许在栏与菜单区域使用——顶栏、底栏衬底、顶栏内
 /// 登录 pill、菜单卡（bearyMenuGlassView）——以及底部弹窗（Li 2026-11-25 新定：
-/// 底部弹窗要不带颜色的液态玻璃效果，覆盖本条对弹窗的限制；系统 sheet 走系统
-/// 材质）。其余窗口 / 弹窗 / Toast / 浮动按钮
+/// 底部弹窗要不带颜色的液态玻璃效果，覆盖本条对弹窗的限制；2026-11-27 修：
+/// 弹窗背板改走 .systemUltraThinMaterial（无色、无亮面），盖住系统液态玻璃
+/// 自带的颜色与上下亮边，见 BearySystemSheet.installGlassBackdrop）。
+/// 其余窗口 / 弹窗 / Toast / 浮动按钮
 /// 一律不用系统材质，改走实色底（见各调用点注释）。
 /// 注意：本令推翻 Li 2026-10-26“所有窗口弹窗与全 App 按钮都用官方玻璃”
 /// 的旧令，可逆——恢复旧令 = 把本支删掉的玻璃背板原样贴回（见 PR 描述清单）。

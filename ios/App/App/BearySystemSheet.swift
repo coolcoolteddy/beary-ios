@@ -13,7 +13,8 @@ import UIKit
 // BearySheetKeyboardAvoidance 做（只跟停靠键盘，浮动/分屏不动，旧口径）；
 // 登录页自带 inset 处理，不动。
 // 系统 sheet 做不到旧容器那套，迁移带来的变化（见 PR 正文）：背后页面不再
-// 缩 0.92（只压暗）；面板底色透明、走系统液态玻璃（2026-11-25 Li 定）；
+// 缩 0.92（只压暗）；面板底色透明、走系统液态玻璃（2026-11-25 Li 定），
+// 2026-11-27 起再铺一层无色超薄材质背板盖住系统玻璃的颜色与上下亮边；
 // 出现/消失走系统弹簧，不再是 0.38s/damping 0.7 定制弹簧；iPad 宽屏 600
 // iPad 宽屏 600 居中靠 widthFollowsPreferredContentSizeWhenEdgeAttached 保证。
 // 部署目标 iOS 16.0。
@@ -72,6 +73,9 @@ enum BearySystemSheet {
         // 面板透明：系统 sheet 自带液态玻璃底，实色会盖住它（2026-11-25 Li 定）。
         sheet.view.backgroundColor = .clear
         sheet.modalPresentationStyle = .pageSheet
+        // 无色背板（2026-11-27 修）：iOS 26+ 系统液态玻璃自带颜色与上下亮边，
+        // 在内容最底层铺一层无色无亮面的超薄材质盖住它，见 installGlassBackdrop。
+        installGlassBackdrop(for: sheet)
         guard let spc = sheet.sheetPresentationController else { return }
         spc.prefersGrabberVisible = dismissable
         spc.preferredCornerRadius = BearySheetChrome.topCornerRadius
@@ -102,6 +106,44 @@ enum BearySystemSheet {
             let maxHeight = context.maximumDetentValue * maxHeightRatio
             guard contentHeight > 0 else { return maxHeight * 0.5 }
             return min(contentHeight, maxHeight)
+        }
+    }
+
+    /// 底 sheet 无色背板（2026-11-27 修，Li 反馈三问题之二／三）：
+    /// iOS 26+ 系统 sheet 的液态玻璃底自带颜色（折射背后内容）与上下亮边
+    /// （玻璃高光，深色下整片泛白，见 BearyProgressiveBlur 的 iOS 27 实机注释）；
+    /// 在内容最底层铺一层 .systemUltraThinMaterial（随深浅自适应、无 tint、
+    /// 无亮面，垫片同款已验证口径），把系统玻璃的亮边与颜色盖住，仍保留透
+    /// 明模糊的玻璃感。26 以下无液态玻璃、不铺（旧材质底无此问题）。
+    /// 只铺一次（configure 会被 present 与登录 make 两路调，重复调不重复铺）。
+    private static func installGlassBackdrop(for sheet: UIViewController) {
+        if #available(iOS 26.0, *) {
+            guard let view = sheet.view else { return }
+            guard !view.subviews.contains(where: { $0 is BearySheetGlassBackdrop }) else { return }
+            let backdrop = BearySheetGlassBackdrop()
+            backdrop.translatesAutoresizingMaskIntoConstraints = false
+            view.insertSubview(backdrop, at: 0)
+            NSLayoutConstraint.activate([
+                backdrop.topAnchor.constraint(equalTo: view.topAnchor),
+                backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            ])
+        }
+    }
+
+    /// 背板本体：超薄材质＋圆角与 sheet 同值＋不拦截触摸。
+    /// 用独立子类只为防重入判重（按类型查），无其他行为。
+    private final class BearySheetGlassBackdrop: UIVisualEffectView {
+        init() {
+            super.init(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+            isUserInteractionEnabled = false
+            layer.cornerRadius = BearySheetChrome.topCornerRadius
+            clipsToBounds = true
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
         }
     }
 

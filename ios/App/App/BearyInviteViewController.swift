@@ -204,8 +204,8 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
 
     private func buildLayout() {
         // 面板透明、走系统液态玻璃（2026-11-25 Li 定，见 #2536；旧口径“弹窗
-        // 不在玻璃范围”已作废）；外形圆角由系统 sheet 的 preferredCornerRadius（20）
-        // 定，本文件不动。
+        // 不在玻璃范围”已作废）；外形圆角由系统 sheet 的 preferredCornerRadius
+        // （屏幕圆角，iOS 26+；26 以下 20）定，本文件不动。
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         scrollView.delaysContentTouches = false
