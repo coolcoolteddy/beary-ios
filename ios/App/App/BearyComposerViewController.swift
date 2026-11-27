@@ -6774,7 +6774,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         DispatchQueue.main.async {
                             guard let self = self, let item = item else { return }
                             self.removeImageItem(item)
-                            self.showToast(message: "未能读取实况视频，未添加")
+                            self.showToast(message: NSLocalizedString("composer.livephoto.unread_video_not_added", comment: ""))
                         }
                         return
                     }
@@ -6783,7 +6783,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         DispatchQueue.main.async {
                             guard let self = self, let item = item else { return }
                             self.removeImageItem(item)
-                            self.showToast(message: "未能读取实况视频，未添加")
+                            self.showToast(message: NSLocalizedString("composer.livephoto.unread_video_not_added", comment: ""))
                         }
                         return
                     }
@@ -6797,7 +6797,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         DispatchQueue.main.async {
                             guard let self = self, let item = item else { return }
                             self.removeImageItem(item)
-                            self.showToast(message: "实况视频读取失败，未添加")
+                            self.showToast(message: NSLocalizedString("composer.livephoto.read_failed_not_added", comment: ""))
                         }
                         return
                     }
@@ -6848,22 +6848,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             }
                             if videoOverLimit {
                                 self.removeImageItem(item)
-                                self.showToast(message: "实况视频超过 10MB，未添加")
+                                self.showToast(message: NSLocalizedString("composer.livephoto.oversize_not_added", comment: ""))
                                 return
                             }
                             if error != nil || videoStripFailed {
                                 self.removeImageItem(item)
-                                self.showToast(message: "实况视频读取失败，未添加")
+                                self.showToast(message: NSLocalizedString("composer.livephoto.read_failed_not_added", comment: ""))
                                 return
                             }
                             guard let videoData = videoData, !videoData.isEmpty else {
                                 self.removeImageItem(item)
-                                self.showToast(message: "实况视频读取失败，未添加")
+                                self.showToast(message: NSLocalizedString("composer.livephoto.read_failed_not_added", comment: ""))
                                 return
                             }
                             if videoData.count > BearyLivePhoto.maxVideoBytes {
                                 self.removeImageItem(item)
-                                self.showToast(message: "实况视频超过 10MB，未添加")
+                                self.showToast(message: NSLocalizedString("composer.livephoto.oversize_not_added", comment: ""))
                                 return
                             }
                             item.liveVideoData = videoData
@@ -7159,7 +7159,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // B1：实况视频已丢的项不起传——无视频重传会把实况静默降级为静态，
         // 须用户重新选择；续传入口已跳过本态，此处是点图重试的第二道守卫。
         if item.liveVideoMissing {
-            showToast(message: "这张实况需重新选择")
+            showToast(message: NSLocalizedString("composer.livephoto.reselect", comment: ""))
             return
         }
         // 原图确认：已选原图的项走原图路（读 .orig、剥 GPS、按实测格式发）；
@@ -7248,7 +7248,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 此处再 guard let 会因“非 Optional 不能条件绑定”编译失败，
                 // 故直接用已解包的 item/self（与本函数其他同步段同款）。
                 self.markFailed(item)
-                self.showToast(message: "实况视频超过 10MB，未上传")
+                self.showToast(message: NSLocalizedString("composer.livephoto.oversize_not_uploaded", comment: ""))
                 self.saveDraftNow()
                 self.updatePublishState()
             }
@@ -7666,7 +7666,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 令牌校验作废，不起传。
     private func startOriginalUpload(for item: ComposerImageItem) {
         if item.liveVideoMissing {
-            showToast(message: "这张实况需重新选择")
+            showToast(message: NSLocalizedString("composer.livephoto.reselect", comment: ""))
             return
         }
         let previewImage = item.imageView.image
@@ -9993,7 +9993,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // B1：实况视频已丢的图拦截不发（与失败图同口径）：视频不在了还发，
         // 等于把用户明确选中的实况静默降级为静态图；须重新选择后再发布。
         if hasLiveVideoMissingImage() {
-            showToast(message: "有实况视频已丢失，重新选择该图片后再发布")
+            showToast(message: NSLocalizedString("composer.livephoto.lost_reselect", comment: ""))
             return
         }
         // 原图确认：有未确认上传方式的图时先弹确认弹窗，不直接发布；
@@ -10258,7 +10258,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func showLiveVideoMissingToast() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self, self.view.window != nil else { return }
-            self.showToast(message: "这张实况需重新选择")
+            self.showToast(message: NSLocalizedString("composer.livephoto.reselect", comment: ""))
         }
     }
 
