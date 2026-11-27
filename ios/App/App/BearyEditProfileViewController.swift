@@ -1762,7 +1762,7 @@ extension BearyEditProfileViewController: UITextFieldDelegate {
             // 免得每敲一字都弹；多字替换视为粘贴才提示；光标落末尾是
             // 程序赋值固有行为，本条只补提示，不改光标逻辑）。
             if string.count > 1 {
-                BearyToast.show(in: view, message: "超出上限的部分已截断")
+                BearyToast.show(in: view, message: NSLocalizedString("profile.paste_truncated", comment: ""))
             }
             return false
         }
