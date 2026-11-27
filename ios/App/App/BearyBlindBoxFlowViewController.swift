@@ -479,7 +479,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         openButton.tintColor = BearyColors.bg
         openButton.imageEdgeInsets.left = -6
         if exchangePlaceholder {
-            openButton.setTitle("开盒（图标待补）", for: .normal)
+            openButton.setTitle(NSLocalizedString("blindbox.open.title", comment: ""), for: .normal)
         }
         openButton.translatesAutoresizingMaskIntoConstraints = false
         openButton.addTarget(self, action: #selector(openTapped), for: .touchUpInside)
