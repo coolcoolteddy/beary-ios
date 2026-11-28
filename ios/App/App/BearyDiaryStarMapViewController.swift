@@ -1418,7 +1418,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let second = model.entryById[edge.secondId]
         let rows = [first, second].compactMap { $0 }
         rebuildSheet(title: reasons.isEmpty ? "连线" : reasons, rows: rows)
-        sheetStack.addArrangedSubview(sheetBodyLabel("点篇名进详情；连线只表示关系，不改原文。"))
     }
 
     /// P2-11：连线列表——沿用当前连线筛选，按条读出连线原因和两篇日记。
