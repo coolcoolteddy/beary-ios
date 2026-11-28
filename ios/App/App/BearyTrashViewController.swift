@@ -249,7 +249,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         headerRow.spacing = 8
         titleLabel.text = "回收站"
         // 扫查组：此前裸 16 粗体，标题不跟随大字号（栈行高自适应）。
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 17))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         closeButton.isHidden = false
