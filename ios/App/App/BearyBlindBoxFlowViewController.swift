@@ -200,9 +200,15 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private let introLabel = UILabel()
     private let poolStack = UIStackView()
     private let poolButton = BearyButton.make(style: .primaryPill(.ink), title: "放进池子")
-    /// 选篇分页“加载更多 / 重试”入口（第八轮审计 02，地图 #944 同款口径）：
-    /// 触顶时标题“加载更多”、分页中途失败时标题“重试”，平时隐藏。
-    private let poolLoadMoreButton = BearyButton.make(style: .secondaryOutline(.compact), title: "加载更多")
+    /// 选篇分页脚部（广场同款 BearyLoadMoreFooterView 复用）：滑到底自动续拉，
+    /// 续拉在途亮 3 个跳动点、中断亮脚部自带失败＋重试、短页收尾亮“没有更多了”。
+    private let poolLoadMoreFooterView = BearyLoadMoreFooterView()
+    /// 滑到底 / 脚部重试触发的续拉批次在途标记：亮脚部三点、防滚动重复触发；
+    /// 首批加载不走它（首批由顶部转圈表示）。
+    private var poolAutoLoading = false
+    /// 失败静默自动重试一次（2026-11-22 Li 定）：每批首次分页失败先静默重拉
+    /// 同一页，再失败才落失败态；每批（首批 / 续拉）各一次。
+    private var poolSilentRetried = false
     private let openSection = UIView()
     /// 开盒区退场快照：setStep(.received) 过渡时盖在开盒区原位做淡出，
     /// 动画结束只移除快照，开盒区本身在过渡开始时就已藏起（见 setStep）。
@@ -247,9 +253,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private var poolCollected: [Entry] = []
     private var poolSeenIds = Set<String>()
     /// 选篇分页触顶/中断状态（第八轮审计 02，地图 #944 同款口径）：每批上限
-    /// 40 页（poolMaxPages）防无界；触顶时记 poolCapped 并留游标，页内留“加载更多”入口供按需
-    /// 续拉新一批；分页中途失败时记 poolInterrupted 并留失败页游标，页内留
-    /// “重试”入口从中断处续拉，不直接把部分结果当完整。
+    /// 40 页（poolMaxPages）防无界；触顶时记 poolCapped 并留游标，滑到底自动
+    /// 续拉新一批；分页中途失败时记 poolInterrupted 并留失败页游标，脚部失败
+    /// 态重试从中断处续拉，不直接把部分结果当完整。
     private var poolCapped = false
     private var poolInterrupted = false
     private var poolResumeBefore: Int?
@@ -372,6 +378,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         scrollView.delaysContentTouches = false
+        // 选篇自动续拉：滑到底由 scrollViewDidScroll 触发（广场同口径）。
+        scrollView.delegate = self
         contentStack.axis = .vertical
         contentStack.spacing = 12
         contentStack.translatesAutoresizingMaskIntoConstraints = false
@@ -468,10 +476,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         poolButton.addTarget(self, action: #selector(poolTapped), for: .touchUpInside)
         poolButton.bearyAddPressFeedback()
 
-        poolLoadMoreButton.translatesAutoresizingMaskIntoConstraints = false
-        poolLoadMoreButton.addTarget(self, action: #selector(didTapPoolLoadMore), for: .touchUpInside)
-        poolLoadMoreButton.bearyAddPressFeedback()
-        poolLoadMoreButton.isHidden = true
+        poolLoadMoreFooterView.translatesAutoresizingMaskIntoConstraints = false
+        poolLoadMoreFooterView.onRetry = { [weak self] in self?.resumePoolLoad() }
+        poolLoadMoreFooterView.isHidden = true
 
         // 交换流程图标：icon_exchange（#229 已注册，不画在按钮标题里，只挂图标位）。
         let (exchangeIcon, exchangePlaceholder) = BlindBoxIcons.exchange(pointSize: 20)
@@ -534,7 +541,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         contentStack.addArrangedSubview(spinnerWrap)
         contentStack.addArrangedSubview(introLabel)
         contentStack.addArrangedSubview(poolStack)
-        contentStack.addArrangedSubview(poolLoadMoreButton)
+        contentStack.addArrangedSubview(poolLoadMoreFooterView)
         contentStack.addArrangedSubview(poolButton)
         contentStack.addArrangedSubview(openSection)
         contentStack.addArrangedSubview(receivedView)
@@ -544,7 +551,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         contentStack.addArrangedSubview(errorStateView)
         NSLayoutConstraint.activate([
             poolButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
-            poolLoadMoreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
+            poolLoadMoreFooterView.heightAnchor.constraint(equalToConstant: BearyLoadMoreFooterView.height),
         ])
     }
 
@@ -725,7 +732,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         introLabel.isHidden = true
         poolStack.isHidden = true
         poolButton.isHidden = true
-        poolLoadMoreButton.isHidden = true
+        poolLoadMoreFooterView.isHidden = true
+        poolLoadMoreFooterView.setState(.hidden)
         openSection.isHidden = !exitOpenSection
         receivedView.isHidden = true
         placeholderView.isHidden = true
@@ -762,9 +770,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             openSection.isHidden = pooledEntryId == nil
             poolButton.isEnabled = selectedEntryId != nil && poolBusy == false
             openButton.isEnabled = openBusy == false
-            // 选篇分页入口按状态恢复（第八轮审计 02）：行点按也走 setStep(.pool)，
-            // 显隐不能只在分页完成处管，否则一点行入口就被藏起来。
-            updatePoolLoadMoreButton()
+            // 选篇分页脚部按状态恢复（第八轮审计 02）：行点按也走 setStep(.pool)，
+            // 显隐不能只在分页完成处管，否则一点行脚部就被藏起来。
+            updatePoolLoadMoreFooter()
         case .received:
             receivedView.isHidden = false
             if exitOpenSection {
@@ -970,6 +978,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         poolSeenIds = []
         poolCapped = false
         poolInterrupted = false
+        poolAutoLoading = false
+        poolSilentRetried = false
         poolResumeBefore = nil
         poolResumeBeforeId = nil
         poolResumePage = 1
@@ -1038,12 +1048,20 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         }
     }
 
-    /// 选篇分页入口显隐（第八轮审计 02）：触顶留“加载更多”、中断留“重试”，
-    /// 游标不在时不留入口；其余时候隐藏。setStep(.pool) 与分页完成处共用。
-    private func updatePoolLoadMoreButton() {
-        let show = (poolCapped || poolInterrupted) && poolResumeBefore != nil && poolResumeBeforeId != nil
-        poolLoadMoreButton.isHidden = !show
-        poolLoadMoreButton.setTitle(poolInterrupted ? "重试" : "加载更多", for: .normal)
+    /// 选篇分页脚部（第八轮审计 02，广场同款 BearyLoadMoreFooterView 复用）：
+    /// 触顶待续拉时藏起（滑到底自动拉，不留按钮）、续拉在途亮 3 个跳动点、
+    /// 中断亮脚部自带失败＋重试、短页收尾亮“没有更多了”；非选篇态或空列表
+    /// 时隐藏。setStep(.pool) 与分页完成处共用。
+    private func updatePoolLoadMoreFooter() {
+        let footerState: BearyLoadMoreFooterView.State = {
+            guard case .pool = step, !poolEntries.isEmpty else { return .hidden }
+            if poolAutoLoading { return .loading }
+            if poolInterrupted { return .failed }
+            if poolCapped { return .hidden }
+            return .end
+        }()
+        poolLoadMoreFooterView.setState(footerState)
+        poolLoadMoreFooterView.isHidden = footerState == .hidden
     }
 
     /// 选篇提示文案（第八轮审计 02）：基础文案不变；触顶时追加星图同款明示
@@ -1063,20 +1081,24 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             text += " · 篇数较多，仅展示最近拉取的 \(poolCollected.count) 篇"
         }
         if poolInterrupted {
-            text += "仅展示已加载的部分，点按重试可继续加载。"
+            text += "仅展示已加载的部分，点底部“加载失败，重试”可继续加载。"
         }
         openHintLabel.text = text
     }
 
-    /// 选篇分页续拉入口（第八轮审计 02，地图 #944 同款口径）：中断时从失败页
-    /// 游标续拉（页码不动），触顶时从触顶页末尾游标续拉新一批（page 从 1
-    /// 重新计、最多再 40 页）；已收页与去重集保留、成功后整批成表；点按后先
-    /// 藏入口防重复点按，代次 +1 作废旧回包。
-    @objc private func didTapPoolLoadMore() {
-        poolLoadMoreButton.isHidden = true
+    /// 选篇分页续拉入口（第八轮审计 02，地图 #944 同款口径；滑到底自动拉与
+    /// 脚部重试共用）：中断时从失败页游标续拉（页码不动），触顶时从触顶页
+    /// 末尾游标续拉新一批（page 从 1 重新计、最多再 40 页）；已收页与去重集
+    /// 保留、成功后整批成表；触发后即记 poolAutoLoading 亮脚部三点、防滚动
+    /// 重复触发，代次 +1 作废旧回包。
+    private func resumePoolLoad() {
         guard let before = poolResumeBefore, let beforeId = poolResumeBeforeId else { return }
+        guard !poolAutoLoading else { return }
+        poolSilentRetried = false
+        poolAutoLoading = true
         poolLoadGeneration += 1
         let page = poolInterrupted ? poolResumePage : 1
+        updatePoolLoadMoreFooter()
         loadPoolEntriesPage(before: before, beforeId: beforeId, page: page, generation: poolLoadGeneration)
     }
 
@@ -1096,8 +1118,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         return
                     }
                     // 触顶（第八轮审计 02，地图 #944 同款口径）：末页仍满页，后面
-                    // 可能还有——记 poolCapped，留末页游标供按需续拉新一批；末页
-                    // 满页却无游标时清旧游标、不留入口。是否满页只看末页篇数，
+                    // 可能还有——记 poolCapped，留末页游标供滑到底自动续拉新一批；末页
+                    // 满页却无游标时清旧游标、不留游标。是否满页只看末页篇数，
                     // 不看停在哪一页：找够 20 篇提前停时末页也可能满页，游标同
                     // 样要留，否则更早的日记再也进不来（审计 16 项第 4 项）。
                     // 本批拉完即清中断态（续拉成功说明链已接上）。
@@ -1111,15 +1133,24 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         self.poolResumeBefore = nil
                         self.poolResumeBeforeId = nil
                     }
+                    self.poolAutoLoading = false
                     self.poolEntries = self.poolCollected
                     self.renderPoolRows()
                     self.updatePoolHint()
                     self.setStep(.pool)
                 case .failure(let error):
                     // 分页中途断网（第八轮审计 02）：已收集到的页不作废，照常进池，
-                    // 但不再当作完整——记 poolInterrupted 并留失败页游标，页内留
-                    // “重试”入口从中断处续拉（失败页的 before / beforeId 即本次
+                    // 但不再当作完整——记 poolInterrupted 并留失败页游标，脚部失败
+                    // 态重试从中断处续拉（失败页的 before / beforeId 即本次
                     // 调用的入参）；一页未得才走失败态。
+                    // 失败静默自动重试一次（2026-11-22 Li 定）：每批首次失败先静默
+                    // 重拉同一页，脚部保持三点；再失败才落失败态，点按重试仍保留。
+                    if !self.poolSilentRetried {
+                        self.poolSilentRetried = true
+                        self.loadPoolEntriesPage(before: before, beforeId: beforeId, page: page, generation: generation)
+                        return
+                    }
+                    self.poolAutoLoading = false
                     if !self.poolCollected.isEmpty {
                         self.poolInterrupted = true
                         self.poolCapped = false
@@ -1849,6 +1880,24 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             return fallback
         default:
             return fallback
+        }
+    }
+}
+
+// MARK: - UIScrollViewDelegate（选篇自动续拉）
+
+extension BearyBlindBoxFlowViewController: UIScrollViewDelegate {
+    /// 选篇自动续拉（广场 scrollViewDidScroll 同口径）：滑到离底部一屏时从
+    /// 触顶游标续拉下一批；加载中 / 中断 / 无游标 / 非选篇态时守卫拦住。
+    /// emoteScroll 是内层横向滚动条，只响应主 scrollView。
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === self.scrollView else { return }
+        guard case .pool = step else { return }
+        guard !poolAutoLoading, poolCapped, !poolInterrupted, !poolEntries.isEmpty else { return }
+        guard poolResumeBefore != nil, poolResumeBeforeId != nil else { return }
+        let remaining = scrollView.contentSize.height - (scrollView.contentOffset.y + scrollView.bounds.height - scrollView.adjustedContentInset.bottom)
+        if remaining <= scrollView.bounds.height {
+            resumePoolLoad()
         }
     }
 }
