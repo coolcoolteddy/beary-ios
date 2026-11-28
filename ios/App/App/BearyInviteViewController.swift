@@ -21,17 +21,18 @@ import UIKit
 // 呈现方式：系统 sheet（BearySystemSheet.present，宽 ≥821 居中 600 / 宽 ≤820 底 sheet）；
 // 本页不决定呈现，只定内容与弹窗高度（见 updatePreferredSheetHeight）。
 // 容器接线：
-//   - onClose：用户点关闭钮；本页不自己 dismiss，容器负责关闭弹窗。
+//   - onClose：首页“不再提示”流程调本回调关页；本页不自己 dismiss，容器负责关闭弹窗。
 //   - onRequireLogin：未登录（fetchMe 返回 nil 或 401）时调用，容器接登录页；
 //     未接时页内只显示“请先登录”。
 //   - reload()：手动刷新（每次点开新建一页，打开时 viewDidLoad 已拉取一次）。
 // 礼物钮门控不在本页：容器用 refreshMe 结果（/me 的
 // referral.enabled，网页 giftBtn 显示逻辑同款）决定是否显示礼物钮。
 // 颜色一律走 BearyColors，不新增字面量颜色；弹窗面板透明、走系统液态玻璃
-// （2026-11-25 Li 定，见 #2536）；关闭/复制钮是内容元素，颜色不动；无 force unwrap。
+// （2026-11-25 Li 定，见 #2536）；复制钮是内容元素，颜色不动；无 force unwrap。
 
 final class BearyInviteViewController: UIViewController, BearySystemSheetSizing {
-    /// 用户点关闭钮。本页不自己 dismiss，容器负责关闭。
+    /// 首页“不再提示”流程调本回调关页（2026-11-27 Li 定拿掉叉叉后，关闭只走抓手下滑／点外）。
+    /// 本页不自己 dismiss，容器负责关闭。
     var onClose: (() -> Void)?
     /// 未登录时调用，容器接登录页；为 nil 时页内显示“请先登录”。
     var onRequireLogin: (() -> Void)?
@@ -44,9 +45,6 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let stackView = UIStackView()
-    private let closeButton = BearyHit44Button(type: .system)
-    /// 审计 8/10 项：关闭行固定在面板顶部（不再是滚动栈首项），滚动后关闭钮仍在顶。
-    private let closeRow = UIView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let codeBox = UIView()
@@ -133,11 +131,9 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
         updatePreferredSheetHeight()
     }
 
-    /// 弹窗高度跟内容走：固定关闭行高（44）+ 内容栈 fitting 高 + 上下边距
-    /// （栈顶 34 = 原 16 上边距 + 原 closeRow 后间距 18，标题首帧位置不变；
-    /// 栈底 24）+ 上下安全区；
-    /// 系统 sheet 以 custom detent 封顶 88% 容器高，内容超高时内层 scrollView 可滚
-    /// （关闭行固定在面板顶部不随滚走）。
+    /// 弹窗高度跟内容走：内容栈 fitting 高 + 上下边距
+    /// （栈顶 16、栈底 24）+ 上下安全区；
+    /// 系统 sheet 以 custom detent 封顶 88% 容器高，内容超高时内层 scrollView 可滚。
     /// 绑定区显隐变化时布局重算即跟高；
     /// 仅高度变化超 0.5pt 才写 preferredContentSize，避免布局循环。
     /// 面板透明、走系统液态玻璃（2026-11-25 Li 定）；外形圆角由系统 sheet 定，
@@ -153,7 +149,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
             verticalFittingPriority: .fittingSizeLevel
         )
         let bottomInset = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
-        let height = view.safeAreaInsets.top + 44 + fitting.height + 34 + 24 + bottomInset
+        let height = view.safeAreaInsets.top + fitting.height + 16 + 24 + bottomInset
         // 升起动画进行中（/me 回包改内容常落在这个窗口）：此时写
         // preferredContentSize 会让呈现层在弹簧中途直接改 presentedView 的帧，
         // 升起卡一下。先记下，等动画完成后再落位（viewDidAppear）。
@@ -213,22 +209,9 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .vertical
         stackView.spacing = 0
-        // 审计 10 项：关闭行固定在面板顶部，不进滚动栈；其余内容顺序不变。
-        view.addSubview(closeRow)
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
         contentView.addSubview(stackView)
-
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.backgroundColor = BearyColors.surface2
-        closeButton.layer.cornerRadius = 16
-        closeButton.tintColor = BearyColors.ink
-        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
-        closeButton.accessibilityLabel = "关闭"
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        closeRow.translatesAutoresizingMaskIntoConstraints = false
-        closeRow.addSubview(closeButton)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "邀请好友"
@@ -382,18 +365,8 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
         stackView.setCustomSpacing(12, after: retryButton)
 
         NSLayoutConstraint.activate([
-            // 审计 10 项：关闭行钉面板顶、行宽与面板同宽（关闭钮贴面板右缘）；
-            // 滚动区从关闭行下方起，不再盖住它。
-            closeRow.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            // 叉叉贴面板边修法：此前行宽＝内容列宽、钮贴行右缘即贴内容列右缘，
-            // 手机上钮右缘离面板边约 37.5pt，看着悬在半空、不是右上角（用户报位置不对）；
-            // 规范§8“非全屏弹窗统一右上角叉叉”＋回应 Sheet（面板边 −18）、草稿箱
-            // Sheet（面板边 −14）均把钮贴面板边。本支把行放宽到面板、钮贴行右缘
-            // 内收 16（两先例中间值），不是改回旧口径（旧口径是行宽未定被压成钮宽
-            // 32 再居中、叉叉落在屏中）。
-            closeRow.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            closeRow.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: closeRow.bottomAnchor),
+            // 2026-11-27 Li 定拿掉叉叉：滚动区直接钉面板顶，标题顶回到原 16 上边距。
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
@@ -402,19 +375,13 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
             contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-            // 栈顶 34 = 原 16 上边距 + 原 closeRow 后间距 18，标题首帧位置不变。
-            stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 34),
+            // 栈顶 16：拿掉叉叉后标题顶回到原上边距，不留叉叉行的空档。
+            stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
             stackView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -24),
             stackView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 22),
             stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -22),
             stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             stackView.widthAnchor.constraint(lessThanOrEqualToConstant: 432),
-            // Hit44：行高放开到 44（钮 32 居中，上下各留 6），热区不再被 32 高行截断；钮视觉尺寸不变。
-            closeRow.heightAnchor.constraint(equalToConstant: 44),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-            closeButton.trailingAnchor.constraint(equalTo: closeRow.trailingAnchor, constant: -16),
-            closeButton.centerYAnchor.constraint(equalTo: closeRow.centerYAnchor),
             codeBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 56),
             codeLabel.leadingAnchor.constraint(equalTo: codeBox.leadingAnchor, constant: 16),
             codeLabel.centerYAnchor.constraint(equalTo: codeBox.centerYAnchor),
@@ -779,10 +746,6 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
     }
 
     // MARK: - 动作
-
-    @objc private func closeTapped() {
-        onClose?()
-    }
 
     @objc private func dismissPromptTapped() {
         onDismissHomePrompt?()
