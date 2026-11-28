@@ -4473,10 +4473,11 @@ class BearyNotificationCell: UITableViewCell {
     }
 
     /// C-G10：已读态直接改 class——只动高亮与未读点，不重载行。
-    /// 普通行未读底蓝 7%、sys 行蓝 9%（与 configure 同口径）；highlight
+    /// 普通行未读底蓝 3%、sys 行蓝 4%（与 configure 同口径）；highlight
     /// 由调用方按 seen 水印算（未读但已 seen 时高亮灭、点仍亮）。
     func setReadAppearance(isUnread: Bool, isSystemStyle: Bool, highlight: Bool) {
-        applyUnreadHighlight(highlight: highlight, blueAlpha: isSystemStyle ? 0.09 : 0.07, nested: !nestedLineView.isHidden)
+        // 展示审计 G6-H7：未读 wash 浓度下调（sys 9%→4%、普通 7%→3%），蓝点保留。
+        applyUnreadHighlight(highlight: highlight, blueAlpha: isSystemStyle ? 0.04 : 0.03, nested: !nestedLineView.isHidden)
         unreadDotView.isHidden = !isUnread
     }
 
@@ -4496,10 +4497,10 @@ class BearyNotificationCell: UITableViewCell {
         }
     }
 
-    /// C-G10：卡面已读态直接改 class——未读底一律蓝 9%；highlight 同上。
+    /// C-G10：卡面已读态直接改 class——未读底一律蓝 4%；highlight 同上。
     /// 类别色同步重算（就地标已读也要把互动卡蓝图标／蓝底退回墨／灰，见上）。
     func setCardReadAppearance(anyUnread: Bool, highlight: Bool, isSystem: Bool) {
-        applyUnreadHighlight(highlight: highlight, blueAlpha: 0.09, nested: false)
+        applyUnreadHighlight(highlight: highlight, blueAlpha: 0.04, nested: false)
         unreadDotView.isHidden = !anyUnread
         applyCardCategoryColors(isSystem: isSystem, anyUnread: anyUnread)
     }
@@ -4539,7 +4540,7 @@ class BearyNotificationCell: UITableViewCell {
     }
 
     /// 折叠卡卡面：系统卡橙 14% 底 + mail 图，互动卡未读蓝 12% 底 + heart 图、
-    /// 已读灰底＋墨图标（第十轮 #15）；未读底一律蓝 9%（网页 .nt-item.sys.unread，
+    /// 已读灰底＋墨图标（第十轮 #15）；未读底一律蓝 4%（网页 .nt-item.sys.unread，
     /// 互动卡同样带 sys 类）。
     /// - Parameter mergedList: 合并消息页与通知详情页时 true：分隔线缩进 16、
     ///   标题/摘要不用 1.5 倍行高、头像垂直居中、标题／摘要间距 5（与私信行一致），
@@ -4552,7 +4553,7 @@ class BearyNotificationCell: UITableViewCell {
         avatarRetryURL = nil
         avatarRetryActorName = ""
         avatarRetryButton.isHidden = true
-        applyUnreadHighlight(highlight: highlight, blueAlpha: 0.09, nested: false)
+        applyUnreadHighlight(highlight: highlight, blueAlpha: 0.04, nested: false)
         unreadDotView.isHidden = !anyUnread
         applyCardCategoryColors(isSystem: isSystem, anyUnread: anyUnread)
         popperView.stop()
@@ -4684,9 +4685,9 @@ class BearyNotificationCell: UITableViewCell {
         chevronView.isHidden = true
         applyBodyStackTrailing()
 
-        // 未读底：普通行蓝 7%、sys 行（含信件行）蓝 9%（网页 .nt-item.unread / .sys.unread）。
+        // 未读底：普通行蓝 3%、sys 行（含信件行）蓝 4%（网页 .nt-item.unread / .sys.unread）。
         // 高亮走 unreadBgView（嵌套行从竖线右侧起），点只看未读。
-        applyUnreadHighlight(highlight: highlight, blueAlpha: isSystemStyle ? 0.09 : 0.07, nested: nested)
+        applyUnreadHighlight(highlight: highlight, blueAlpha: isSystemStyle ? 0.04 : 0.03, nested: nested)
         unreadDotView.isHidden = !isUnread
 
         if isSystemStyle {
@@ -4830,7 +4831,7 @@ class BearyNotificationCell: UITableViewCell {
         applyBodyStackTrailing()
 
         let anyUnread = members.contains(where: { ($0.read ?? true) == false })
-        applyUnreadHighlight(highlight: highlight, blueAlpha: 0.07, nested: nested)
+        applyUnreadHighlight(highlight: highlight, blueAlpha: 0.03, nested: nested)
         unreadDotView.isHidden = !anyUnread
 
         // 头像组：≤4 人全显示，超 4 人前 3 个头像＋第 4 个圆“+数字”。
