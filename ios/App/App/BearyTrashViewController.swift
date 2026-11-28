@@ -1313,88 +1313,151 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             return
         }
         trashBusyIdentifiers.insert(identifier)
-        setRowButtonBusy(sender, busy: true, busyTitle: "恢复中…", idleTitle: "恢复")
-        // 扫荡 B：同行另一钮（彻底删除）在途期间一并禁用，否则恢复在途时
-        // 点彻底删除会弹出确认框，确认后与恢复双请求齐飞（见 purge 确认处
-        // 的复验守卫）；标题不动，只禁点按，结束时与恢复钮一起恢复。
-        let purgeSibling = purgeEntries.button(forID: identifier)
-        purgeSibling?.isEnabled = false
-        purgeSibling?.alpha = 0.5
+        // 乐观恢复（本批 ⑧）：行先走，不等回包——点按即退场，失败时按原位
+        // 插回＋toast，可再点重试。行既已摘掉，同行彻底删除钮随行消失，
+        // 不再另行禁用；purge 确认处的复验守卫（trashBusyIdentifiers）仍拦
+        // 住在途期间经刷新重现的行，不会双请求齐飞。
+        let restoreIndex = trashItems.firstIndex(where: { $0.entryIdentifier == identifier }) ?? trashItems.count
+        removeRow(identifier: identifier)
         // 在途切号门：发起时捕获账号 ID 与鉴权代际（通知页 P1-21 同款口径）。
-        // 恢复成功回调现行读回调时刻账号清桶——在途切号会把清理记到新账号
-        // 名下（还连带推全局写盘代际，误伤新号在途的静默刷新快照）。
-        // 回调先比对两者，任一对不上即旧登录态回包：busy 复位仍执行
-        // （否则行按钮永久置灰），其余一律丢弃，不动当前页、不清任何桶。
+        // 回调先比对两者，任一对不上即旧登录态回包：只清在途标记（行已乐观
+        // 摘掉、落盘未动，切回账号后重拉即恢复），其余一律丢弃，不动当前页、
+        // 不清任何桶。
         let requestAccountId = SessionManager.shared.currentUser?.id
         let requestAuthEpoch = BearyAPI.shared.authEpoch
+        requestRestoreTrash(identifier: identifier, trashValue: trashValue, restoreIndex: restoreIndex, requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch, retryUsed: false)
+    }
+
+    /// 乐观恢复请求（本批 ⑧）：4xx 立刻回滚；5xx／超时／连接丢失后台重试一次
+    /// （BearyRetryPolicy.publishBackoffInitialDelay，1 秒），重试成功不再回滚，
+    /// 仍失败再插回原位＋toast。在途标记只在落定时清：重试窗口内行虽已摘掉，
+    /// 刷新重现的行仍被标记拦住，不会重发恢复。
+    private func requestRestoreTrash(identifier: String, trashValue: TrashItem, restoreIndex: Int, requestAccountId: Int?, requestAuthEpoch: Int, retryUsed: Bool) {
         BearyAPI.shared.restoreTrashDetail(id: identifier) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.trashBusyIdentifiers.remove(identifier)
-                self.setRowButtonBusy(sender, busy: false, busyTitle: "恢复中…", idleTitle: "恢复")
-                purgeSibling?.isEnabled = true
-                purgeSibling?.alpha = 1
                 if self.isStaleTrashRequest(requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch) {
+                    self.trashBusyIdentifiers.remove(identifier)
                     return
                 }
                 switch result {
                 case .success(let resp):
-                    // iCity：恢复回原可见性——服务端返回 published/isPublic 时按其分流，
-                    // 均缺失时用通用文案，时间线重拉为准，不猜原态。
-                    // 好友第一期：visibility=friends 时显“仅好友”文案（恢复回仅好友）。
-                    let restoredMessage: String
-                    if resp.visibility == "friends" {
-                        restoredMessage = NSLocalizedString("trash.restored.friends_only", comment: "")
-                    } else if resp.published == 1 || resp.isPublic == true {
-                        restoredMessage = NSLocalizedString("trash.restored.public", comment: "")
-                    } else if resp.published == 0 || resp.isPublic == false {
-                        restoredMessage = NSLocalizedString("trash.restored.private", comment: "")
-                    } else {
-                        restoredMessage = NSLocalizedString("trash.restored.generic", comment: "")
-                    }
-                    // 恢复后行即移除、唯一一篇时随即变空态：toast 上挂「查看日记」，
-                    // 点了才打开刚恢复的那篇（不点则留在列表，连续恢复多篇不受影响）。
-                    self.showToast(message: restoredMessage, actionTitle: NSLocalizedString("trash.restored.view_entry", comment: "")) { [weak self] in
-                        self?.onOpenEntry?(identifier)
-                    }
-                    self.removeRow(identifier: identifier)
-                    // 防回插：先在主线程记下本轮已移除 id（静默终态检查时
-                    // 后台落盘写可能尚未执行、代际尚未 +1，只靠代际会漏网），
-                    // 再把整桶读→过滤→编码→写盘投到同步串行后台队列——
-                    // 与静默刷新写同一队列，先后顺序即落盘顺序，迟到快照
-                    // 若已先入队，恢复写随后读桶再清，终态仍不含本篇。
-                    // 不走 runTrashDiskWrite：removeItem 内部 saveAll 已记
-                    // 一次代际，再记一次会重复计数。
-                    // 不限静默刷新在途：首屏请求在途时恢复同样记入，迟到
-                    // 首屏回包过滤后即消费（见 loadFirstPageFromNetwork）。
-                    self.trashRemovedDuringSilentRefresh.insert(identifier)
-                    // 清桶用发起账号，不再读回调时刻账号（已门控，两者此时相等，
-                    // 但发起值才是本次请求的归属，避免校验与写盘之间再被切号钻空）。
-                    if let uid = requestAccountId {
-                        BearyEntrySync.shared.runDiskWrite(accountId: uid) {
-                            // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
-                            let ok = BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
-                            if !ok { NSLog("[BearyEntrySync] trash removeItem failed account=%d entry=%@", uid, identifier) }
-                        }
-                    }
-                    self.onRestored?(trashValue)
+                    self.trashBusyIdentifiers.remove(identifier)
+                    self.handleRestoreTrashSuccess(identifier: identifier, trashValue: trashValue, resp: resp, requestAccountId: requestAccountId)
                 case .failure(let error):
-                    if case .unauthorized = error {
-                        self.notifyTrashLoginOnce()
-                    } else if case .network = error {
-                        // 网络错误：请求可能已送达、只是回包丢了，恢复与否未确认——
-                        // 不报“恢复失败”，行按钮改成「重新检查」，点按先核对状态。
-                        self.trashRecheckIdentifiers.insert(identifier)
-                        sender.setTitle(NSLocalizedString("trash.recheck.recheck", comment: ""), for: .normal)
-                        sender.accessibilityLabel = String(format: NSLocalizedString("trash.recheck.recheck_entry_format", comment: ""), self.trashRowTitle(trashValue))
-                        self.showToast(message: NSLocalizedString("trash.recheck.unconfirmed", comment: ""))
+                    if Self.isRetryableRestoreError(error), !retryUsed {
+                        // 可重试且未试过：1 秒后重发一次。重发前再验一次账号／
+                        // 代际——窗口内切号则不发新请求（新号 cookie 下发旧号
+                        // 恢复无意义），只清标记，行随切回重拉恢复。
+                        DispatchQueue.main.asyncAfter(deadline: .now() + BearyRetryPolicy.publishBackoffInitialDelay) { [weak self] in
+                            guard let self = self else { return }
+                            if self.isStaleTrashRequest(requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch) {
+                                self.trashBusyIdentifiers.remove(identifier)
+                                return
+                            }
+                            self.requestRestoreTrash(identifier: identifier, trashValue: trashValue, restoreIndex: restoreIndex, requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch, retryUsed: true)
+                        }
                     } else {
-                        self.shakeFailedRow(identifier: identifier)
-                        self.showToast(message: "恢复失败，请刷新后重试")
+                        self.trashBusyIdentifiers.remove(identifier)
+                        self.handleRestoreTrashFailure(identifier: identifier, trashValue: trashValue, restoreIndex: restoreIndex, error: error)
                     }
                 }
             }
         }
+    }
+
+    /// 本乐观写点专用的重试判定（与删日记 #2806 同款）：5xx 与超时／连接
+    /// 丢失可重试一次；4xx、401、离线、取消、解析失败立刻回滚（离线重试必败，
+    /// 不追试；重试 404 不按成功算——服务端恢复语义未核实，404 仍走失败回滚，
+    /// 行插回后用户可点恢复重试，或走「重新检查」核对）。
+    private static func isRetryableRestoreError(_ error: APIError) -> Bool {
+        switch error {
+        case .server(_, let status):
+            return (status ?? 0) >= 500
+        case .http(let status, _):
+            return status >= 500
+        case .network:
+            return error.isTimeoutOrUnknownResult
+        default:
+            return false
+        }
+    }
+
+    /// 乐观恢复成功分支（原 restoreTapped 成功分支原样抽出，减去已提前做的
+    /// removeRow）：toast 上挂「查看日记」，点按打开刚恢复的那篇；随后记
+    /// 防回插、清桶、回调 onRestored。
+    private func handleRestoreTrashSuccess(identifier: String, trashValue: TrashItem, resp: RestoreResponse, requestAccountId: Int?) {
+        // iCity：恢复回原可见性——服务端返回 published/isPublic 时按其分流，
+        // 均缺失时用通用文案，时间线重拉为准，不猜原态。
+        // 好友第一期：visibility=friends 时显“仅好友”文案（恢复回仅好友）。
+        let restoredMessage: String
+        if resp.visibility == "friends" {
+            restoredMessage = NSLocalizedString("trash.restored.friends_only", comment: "")
+        } else if resp.published == 1 || resp.isPublic == true {
+            restoredMessage = NSLocalizedString("trash.restored.public", comment: "")
+        } else if resp.published == 0 || resp.isPublic == false {
+            restoredMessage = NSLocalizedString("trash.restored.private", comment: "")
+        } else {
+            restoredMessage = NSLocalizedString("trash.restored.generic", comment: "")
+        }
+        // 恢复后行已乐观移除、唯一一篇时随即变空态：toast 上挂「查看日记」，
+        // 点了才打开刚恢复的那篇（不点则留在列表，连续恢复多篇不受影响）。
+        self.showToast(message: restoredMessage, actionTitle: NSLocalizedString("trash.restored.view_entry", comment: "")) { [weak self] in
+            self?.onOpenEntry?(identifier)
+        }
+        // 防回插：先在主线程记下本轮已移除 id（静默终态检查时
+        // 后台落盘写可能尚未执行、代际尚未 +1，只靠代际会漏网），
+        // 再把整桶读→过滤→编码→写盘投到同步串行后台队列——
+        // 与静默刷新写同一队列，先后顺序即落盘顺序，迟到快照
+        // 若已先入队，恢复写随后读桶再清，终态仍不含本篇。
+        // 不走 run TrashDiskWrite：removeItem 内部 saveAll 已记
+        // 一次代际，再记一次会重复计数。
+        // 不限静默刷新在途：首屏请求在途时恢复同样记入，迟到
+        // 首屏回包过滤后即消费（见 loadFirstPageFromNetwork）。
+        self.trashRemovedDuringSilentRefresh.insert(identifier)
+        // 清桶用发起账号，不再读回调时刻账号（已门控，两者此时相等，
+        // 但发起值才是本次请求的归属，避免校验与写盘之间再被切号钻空）。
+        if let uid = requestAccountId {
+            BearyEntrySync.shared.runDiskWrite(accountId: uid) {
+                // r17-C2：落盘写返回结果，失败记日志（内存态已更新，静默刷新会纠正）。
+                let ok = BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                if !ok { NSLog("[BearyEntrySync] trash removeItem failed account=%d entry=%@", uid, identifier) }
+            }
+        }
+        self.onRestored?(trashValue)
+    }
+
+    /// 乐观恢复失败回滚（本批 ⑧）：行已摘掉，先按原位插回（行已在时不重复插），
+    /// 再按原有口径 toast；用户可再点恢复重试，在途标记已清。
+    /// 网络错误仍走原有「未确认」态：行插回后按钮改成「重新检查」，点按先
+    /// 核对状态（请求可能已送达、只是回包丢了，不报“恢复失败”）。
+    private func handleRestoreTrashFailure(identifier: String, trashValue: TrashItem, restoreIndex: Int, error: APIError) {
+        reinsertRestoredRow(trashValue: trashValue, at: restoreIndex)
+        if case .unauthorized = error {
+            self.notifyTrashLoginOnce()
+        } else if case .network = error {
+            self.trashRecheckIdentifiers.insert(identifier)
+            if let button = self.restoreEntries.button(forID: identifier) {
+                button.setTitle(NSLocalizedString("trash.recheck.recheck", comment: ""), for: .normal)
+                button.accessibilityLabel = String(format: NSLocalizedString("trash.recheck.recheck_entry_format", comment: ""), self.trashRowTitle(trashValue))
+            }
+            self.showToast(message: NSLocalizedString("trash.recheck.unconfirmed", comment: ""))
+        } else {
+            self.shakeFailedRow(identifier: identifier)
+            self.showToast(message: NSLocalizedString("trash.restore.failed", comment: ""))
+        }
+    }
+
+    /// 乐观恢复回滚：把该篇按原位插回回收站列表（原位按点按时在 trashItems
+    /// 里的下标，越界时夹到末尾；行已在时不重复插）。新行走增量刷新同款
+    /// 错峰滑入，空态随 renderStateViews 复位。
+    private func reinsertRestoredRow(trashValue: TrashItem, at index: Int) {
+        let identifier = trashValue.entryIdentifier
+        guard trashItems.contains(where: { $0.entryIdentifier == identifier }) == false else { return }
+        let clampedIndex = max(0, min(index, trashItems.count))
+        trashItems.insert(trashValue, at: clampedIndex)
+        updateListRowsIncrementally()
+        renderStateViews()
     }
 
     /// 未确认恢复态的核对：点「重新检查」后翻页查服务端回收站列表，
