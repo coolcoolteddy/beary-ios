@@ -278,7 +278,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         // D8：底部留白与 @ 选人 Sheet 统一为 14 + 安全区底（BearyComposerPickers
         // 的 listBottom/bottomPad 同款公式）：collection 底已贴
         // safeAreaLayoutGuide 底沿，sectionInset.bottom 即为安全区底沿之上的留白。
-        layout.sectionInset = UIEdgeInsets(top: 4, left: 18, bottom: 14, right: 18)
+        layout.sectionInset = UIEdgeInsets(top: BearySpace.xs, left: BearySpace.lg, bottom: 14, right: BearySpace.lg) // beary-lint: allow（bottom 14＝与 @ 选人 Sheet 统一的底部留白公式值，无对应 token）
         let collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
         collection.translatesAutoresizingMaskIntoConstraints = false
         collection.backgroundColor = .clear
@@ -295,7 +295,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             // 顶部留白与公告 sheet 同口径（抓手顶 10＋高 4＋标题间距 16）：
             // 系统抓手占顶区，标题位置不动。
             titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16),
-            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
+            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: BearySpace.lg),
             collection.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
             collection.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             collection.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -462,7 +462,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     }
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
-        let totalSpacing: CGFloat = 18 * 2 + 6 * 3
+        let totalSpacing: CGFloat = BearySpace.lg * 2 + 6 * 3
         let width = max(44, (collectionView.bounds.width - totalSpacing) / 4)
         // 自定义组 cell 无名签，行高恒 72（与心情选择器同口径）；名签按
         // 库 key（服务端 image key）量高会撑出多行，故不走内置的名签量高。
@@ -557,7 +557,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
 // MARK: - 视觉批 2-2：最近使用节标题
 /// 只在最近节存在时出现（referenceSizeForHeaderInSection 其余情况回 .zero，
 /// 故最近行为空时不留占位）。样式沿用搜索页“最近搜索”标题口径：13 半粗
-/// scaled、灰字、左 inset 18 与网格 sectionInset 左边对齐；不新增图标与按钮。
+/// scaled、灰字、左 inset 16 与网格 sectionInset 左边对齐；不新增图标与按钮。
 final class BearyEmotePickerSectionHeaderView: UICollectionReusableView {
 
     private let titleLabel = UILabel()
@@ -570,7 +570,7 @@ final class BearyEmotePickerSectionHeaderView: UICollectionReusableView {
         titleLabel.textColor = BearyColors.gray
         addSubview(titleLabel)
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: BearySpace.lg),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }

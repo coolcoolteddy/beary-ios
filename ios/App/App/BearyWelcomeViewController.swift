@@ -264,7 +264,7 @@ final class BearyWelcomeViewController: UIViewController {
         loginStack.setCustomSpacing(BearySpace.lg, after: socialRow)
 
         // C7：iPad 600 居中（反馈页同款，含 750 宽度等式防短内容压塌；600 上限只在宽屏激活，见 viewDidLayoutSubviews）。
-        let loginWidthEquality = loginStack.widthAnchor.constraint(equalTo: loginSection.widthAnchor, constant: -40)
+        let loginWidthEquality = loginStack.widthAnchor.constraint(equalTo: loginSection.widthAnchor, constant: -(BearySpace.lg * 2))
         loginWidthEquality.priority = UILayoutPriority(750)
         loginWidthCap = loginStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
         loginWidthCap?.isActive = false
@@ -274,8 +274,8 @@ final class BearyWelcomeViewController: UIViewController {
             loginSection.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             loginStack.topAnchor.constraint(equalTo: loginSection.topAnchor, constant: 24),
             loginStack.centerXAnchor.constraint(equalTo: loginSection.centerXAnchor),
-            loginStack.leadingAnchor.constraint(greaterThanOrEqualTo: loginSection.leadingAnchor, constant: 20),
-            loginStack.trailingAnchor.constraint(lessThanOrEqualTo: loginSection.trailingAnchor, constant: -20),
+            loginStack.leadingAnchor.constraint(greaterThanOrEqualTo: loginSection.leadingAnchor, constant: BearySpace.lg),
+            loginStack.trailingAnchor.constraint(lessThanOrEqualTo: loginSection.trailingAnchor, constant: -BearySpace.lg),
             loginStack.bottomAnchor.constraint(equalTo: loginSection.safeAreaLayoutGuide.bottomAnchor, constant: -8),
             loginWidthEquality,
         ])
