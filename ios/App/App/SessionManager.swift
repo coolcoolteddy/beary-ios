@@ -45,6 +45,9 @@ final class SessionManager {
     }
     /// 游客模式的 UserDefaults 键（见 isGuestMode）。
     private static let guestModeDefaultsKey = "bearyGuestMode"
+    /// 添加账号守卫的落盘键（2026-11-28：守卫只活内存，杀 App 即丢；落盘份
+    /// 只存 user id＋token＋过期时间，与内存抓拍同字段）。
+    private static let pendingAccountAddDefaultsKey = "bearyPendingAccountAddSession"
     /// 64 包反馈修（第 17 项）：本地有效会话 cookie（teddy_session 且未过期）——
     /// 首帧缓存态依据，同步读存储、不发网络；后台 refreshMe 验出 401 才切游客态。
     /// 注意：只判断 cookie 存在与过期，不证明服务端会话仍有效，401 回来即纠正。
@@ -412,6 +415,8 @@ final class SessionManager {
         currentUser = nil
         authUnknown = false
         isGuestMode = false
+        // 显式退出后落盘守卫不得复活：清落盘份（401 不走这里，不动它）。
+        clearPendingAccountAddSessionFromDisk()
         notifyUserChanged(nil)
     }
 
@@ -721,6 +726,7 @@ final class SessionManager {
         let expiresMs = live?.expiresDate.map { $0.timeIntervalSince1970 * 1000 }
             ?? BearyAccountVault.shared.load(userId: userId)?.tokenExpiresAtMs
         pendingAccountAddSession = PendingAccountAddSession(user: user, token: tokenValue, tokenExpiresAtMs: expiresMs)
+        savePendingAccountAddSessionToDisk(userId: userId, token: tokenValue, tokenExpiresAtMs: expiresMs)
     }
 
     /// 新号登录成功后调用：只解 arm，不恢复（当前态即新号；容器随后
@@ -732,6 +738,7 @@ final class SessionManager {
             return
         }
         pendingAccountAddSession = nil
+        clearPendingAccountAddSessionFromDisk()
     }
 
     /// 取消/返回时调用：当前态与抓拍一致时只解 arm，不发多余通知；
@@ -745,6 +752,7 @@ final class SessionManager {
         }
         guard let pending = pendingAccountAddSession else { return }
         pendingAccountAddSession = nil
+        clearPendingAccountAddSessionFromDisk()
         let cookieValue = currentSessionCookie()?.value
         guard currentUser?.id != pending.user.id || cookieValue != pending.token else { return }
         installSessionCookie(token: pending.token, expiresDate: pending.tokenExpiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) })
@@ -754,6 +762,73 @@ final class SessionManager {
         currentUser = pending.user
         authUnknown = false
         notifyUserChanged(pending.user)
+    }
+
+    /// 落盘守卫的快照（只存 user id＋token＋过期时间，与内存抓拍同字段）。
+    private struct PendingAccountAddDiskSnapshot {
+        let userId: Int
+        let token: String
+        let tokenExpiresAtMs: Double?
+    }
+
+    /// 抓拍时同步写落盘份（与内存抓拍同字段；已 arm 时不覆盖外层抓拍，
+    /// 调用点 beginAccountAddSession 的守卫在前）。
+    private func savePendingAccountAddSessionToDisk(userId: Int, token: String, tokenExpiresAtMs: Double?) {
+        var dict: [String: Any] = ["userId": userId, "token": token]
+        if let expiresMs = tokenExpiresAtMs {
+            dict["tokenExpiresAtMs"] = expiresMs
+        }
+        UserDefaults.standard.set(dict, forKey: Self.pendingAccountAddDefaultsKey)
+    }
+
+    private func loadPendingAccountAddSessionFromDisk() -> PendingAccountAddDiskSnapshot? {
+        guard let dict = UserDefaults.standard.dictionary(forKey: Self.pendingAccountAddDefaultsKey),
+              let userId = dict["userId"] as? Int,
+              let token = dict["token"] as? String, !token.isEmpty else { return nil }
+        return PendingAccountAddDiskSnapshot(userId: userId, token: token, tokenExpiresAtMs: dict["tokenExpiresAtMs"] as? Double)
+    }
+
+    private func clearPendingAccountAddSessionFromDisk() {
+        UserDefaults.standard.removeObject(forKey: Self.pendingAccountAddDefaultsKey)
+    }
+
+    /// 冷启动恢复落盘的添加账号守卫（2026-11-28：App 死在添加账号登录页
+    /// 期间，内存守卫已丢；落盘份存在时按抓拍恢复原会话，再清落盘份）。
+    /// 只在冷启动调用（容器在 restoreCachedUserFromVault 之后调）：
+    /// - 保管库已恢复出用户时不恢复（已有登录态，守卫已无意义），只清落盘份；
+    /// - 游客态时不恢复（用户上次主动点了“先逛逛”，游客选择优先），只清落盘份；
+    /// - token 已过期时不恢复，只清落盘份；
+    /// - 其余情况按抓拍装回（cookie＋currentUser＋代次，与 cancelAccountAddSession
+    ///   同口径；首帧翻转仍由后台 /me 回包驱动，这里不发 onUserChanged，
+    ///   与 restoreCachedUserFromVault 同口径），再清落盘份。
+    /// 返回恢复的用户，未恢复时返回 nil。
+    @discardableResult
+    func restorePendingAccountAddSessionIfNeeded() -> MeUser? {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in _ = self?.restorePendingAccountAddSessionIfNeeded() }
+            return nil
+        }
+        guard let snapshot = loadPendingAccountAddSessionFromDisk() else { return nil }
+        // 落盘份只消费一次：先清，再决定是否恢复。
+        clearPendingAccountAddSessionFromDisk()
+        guard currentUser == nil, !isGuestMode else { return nil }
+        if let expiresMs = snapshot.tokenExpiresAtMs,
+           expiresMs <= Date().timeIntervalSince1970 * 1000 {
+            return nil
+        }
+        installSessionCookie(token: snapshot.token, expiresDate: snapshot.tokenExpiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) })
+        sessionGeneration += 1
+        api.bumpAuthEpoch()
+        api.setAuthAccountId(snapshot.userId)
+        let user: MeUser
+        if let account = BearyAccountVault.shared.load(userId: snapshot.userId) {
+            user = MeUser(id: account.userId, email: account.email, displayName: account.displayName, handle: account.handle, avatar: account.avatarURL, coverVer: nil, createdAt: nil, plus: nil, plusUntil: nil, plusFree: nil, isAdmin: nil, inviteCode: nil, referral: nil, serialId: nil)
+        } else {
+            user = MeUser(id: snapshot.userId, email: nil, displayName: nil, handle: nil, avatar: nil, coverVer: nil, createdAt: nil, plus: nil, plusUntil: nil, plusFree: nil, isAdmin: nil, inviteCode: nil, referral: nil, serialId: nil)
+        }
+        currentUser = user
+        authUnknown = false
+        return user
     }
 
     /// 当前会话 token（共享桶里的 teddy_session 值，供导出钉住凭据用；
@@ -920,6 +995,11 @@ final class SessionManager {
             }
             // 推送登记：移除成功即清该号的已上报标记（重登后必重报）。
             BearyPushNotifications.shared.clearLastSentToken(userId: userId)
+            // 落盘守卫：移除的正是抓拍的原账号时清落盘份，免得
+            // 下次冷启动把它复活；移除的是别的号时落盘份不动。
+            if self.loadPendingAccountAddSessionFromDisk()?.userId == userId {
+                self.clearPendingAccountAddSessionFromDisk()
+            }
             // 推送登记清理：移除前删目标号在本机的登记行——隔离请求＋目标号
             // 保管库 token（共享 cookie 属于当前号，删不掉目标号的行）。
             // fire-and-forget：失败不改移除结论；已上报标记已清，移除失败

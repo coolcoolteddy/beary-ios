@@ -39,6 +39,8 @@ final class BearyWelcomeViewController: UIViewController {
     private let guestButton = BearyHit44Button()
     private let legalLabel = UITextView()
     private let grabberButton = UIButton()
+    /// 取消钮（仅已有登录会话时显示，见 buildCancelButton）。
+    private let cancelButton = BearyButton.closeButton()
 
     /// 欢迎卡片（全屏，top 约束随拖动上滑；底圆角 30＋阴影，预览 v3）。
     private let cardView = UIView()
@@ -104,6 +106,7 @@ final class BearyWelcomeViewController: UIViewController {
         view.backgroundColor = BearyColors.surface1
         buildLoginSection()
         buildCard()
+        buildCancelButton()
         fetchPlazaEntries()
     }
 
@@ -434,6 +437,32 @@ final class BearyWelcomeViewController: UIViewController {
         ])
         // 淡出渐变从贴底组顶上方 60 起（盖住组的上半截淡出区）。
         bottomFadeView.topAnchor.constraint(equalTo: bottomStack.topAnchor, constant: -60).isActive = true
+    }
+
+    // MARK: - 取消钮
+
+    /// 取消钮（2026-11-28：有账号时点「添加账号」进登录页无处可退——欢迎页
+    /// 没有关闭入口，唯一出口是游客钮（点了即游客态）。仅已有登录会话时
+    /// 显示（添加账号／过期重登入口），未登录直登不加（游客钮即那里的出口）。
+    /// 样式走现成关闭圆钮（surface2 底 32 圆钮＋icon_close，与全站关闭口径一致，
+    /// 热区由父类扩到 44）；点按走容器 onCancelled（守卫恢复＋dismiss，调用点已接好）。
+    /// 挂在容器 view 上（不在卡片里）：卡片上滑后钮仍在左上角，不随卡片移走。
+    private func buildCancelButton() {
+        guard SessionManager.shared.currentUser != nil else { return }
+        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+        cancelButton.bearyAddPressFeedback()
+        cancelButton.addTarget(self, action: #selector(cancelButtonTapped), for: .touchUpInside)
+        view.addSubview(cancelButton)
+        NSLayoutConstraint.activate([
+            cancelButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: BearySpace.lg),
+            cancelButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: BearySpace.sm),
+            cancelButton.widthAnchor.constraint(equalToConstant: BearyButtonStyle.iconCircleClose.height),
+            cancelButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.iconCircleClose.height),
+        ])
+    }
+
+    @objc private func cancelButtonTapped() {
+        onCancelled?()
     }
 
     // MARK: - 广场日记卡片
