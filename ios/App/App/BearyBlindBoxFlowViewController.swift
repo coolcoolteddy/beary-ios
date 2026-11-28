@@ -172,6 +172,80 @@ private final class BlindBoxPoolRowView: UIView {
     }
 }
 
+/// 展示审计 G7-01：首批加载的三点指示（广场脚部 BearyLoadMoreFooterView 同款
+/// 几何与动效：3 个 8pt 灰点、间距 10，依次上跳 6pt、0.45s、错峰 0.15s；
+/// 减动效时静态，开关变化时只在仍需加载且在窗口内时恢复跳动）。
+private final class BlindBoxLoadingDotsView: UIView {
+    private var dots: [UIView] = []
+    private var isStarted = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        let stack = UIStackView()
+        stack.axis = .horizontal
+        stack.spacing = 10
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        for _ in 0..<3 {
+            let dot = UIView()
+            dot.backgroundColor = BearyColors.gray
+            dot.layer.cornerRadius = 4
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                dot.widthAnchor.constraint(equalToConstant: 8),
+                dot.heightAnchor.constraint(equalToConstant: 8),
+            ])
+            dots.append(dot)
+            stack.addArrangedSubview(dot)
+        }
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        NotificationCenter.default.addObserver(self, selector: #selector(reduceMotionChanged), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    func start() {
+        isStarted = true
+        guard BearyMotion.animated(true) else { return }
+        for (i, dot) in dots.enumerated() {
+            dot.layer.removeAnimation(forKey: "beary-dot-bounce")
+            let anim = CABasicAnimation(keyPath: "transform.translation.y")
+            anim.fromValue = 0
+            anim.toValue = -6
+            anim.duration = 0.45
+            anim.autoreverses = true
+            anim.repeatCount = .infinity
+            anim.beginTime = CACurrentMediaTime() + Double(i) * 0.15
+            dot.layer.add(anim, forKey: "beary-dot-bounce")
+        }
+    }
+
+    func stop() {
+        isStarted = false
+        for dot in dots {
+            dot.layer.removeAnimation(forKey: "beary-dot-bounce")
+            dot.transform = .identity
+        }
+    }
+
+    @objc private func reduceMotionChanged() {
+        if UIAccessibility.isReduceMotionEnabled {
+            stop()
+        } else {
+            guard isStarted, window != nil else { return }
+            start()
+        }
+    }
+}
+
 final class BearyBlindBoxFlowViewController: UIViewController {
 
     private enum Step {
@@ -188,12 +262,12 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private let contentStack = UIStackView()
     private var colCapConstraints: [NSLayoutConstraint] = []
 
-    private let spinner = BearyRefreshIconView()
+    private let loadingDots = BlindBoxLoadingDotsView()
     private let spinnerWrap = UIView()
-    /// 加载容器高度：有状态文案时 50（转圈 20＋文案行），只有转圈时 30。
+    /// 加载容器高度：有状态文案时 50（三点 20＋文案行），只有三点时 32。
     private var spinnerWrapHeightConstraint: NSLayoutConstraint?
     /// 加载态文案——只有交换 ID、还没拿到正文时写「已换到，
-    /// 正在加载」；其余加载不写文案、只有转圈。由 setStep(.loading) 消费一次。
+    /// 正在加载」；其余加载不写文案、只有三点。由 setStep(.loading) 消费一次。
     private let loadingLabel = UILabel()
     private var loadingStatusText: String?
     private let receivedPillWrap = UIView()
@@ -423,18 +497,17 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     private func buildSections() {
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        // 与原系统 medium 转圈同尺寸（RefreshIconView 图为 32pt，框定 20pt 渲染）。
-        spinner.tintColor = BearyColors.ink
-        spinner.widthAnchor.constraint(equalToConstant: 20).isActive = true
-        spinner.heightAnchor.constraint(equalToConstant: 20).isActive = true
-        // 填充式竖栈（.fill）会把子视图横向拉满整行，固定 20pt 的转圈不能
-        // 直接进栈：改由普通容器承接，容器填满整行、转圈在容器内居中。
+        loadingDots.translatesAutoresizingMaskIntoConstraints = false
+        // 首批加载走三个跳动点（广场脚部同款，不再用旋转图标）。
+        loadingDots.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        loadingDots.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        // 填充式竖栈（.fill）会把子视图横向拉满整行，固定宽的三点不能
+        // 直接进栈：改由普通容器承接，容器填满整行、三点在容器内居中。
         // r17-m4：容器内再加一行加载文案（只有交换 ID 时由
         // refreshExchangeDetail 改写「已换到，正在加载」，其余加载不写文案、
-        // 只有转圈，容器随之收窄）；容器随之加高。
+        // 只有三点，容器随之收窄）；容器随之加高。
         spinnerWrap.translatesAutoresizingMaskIntoConstraints = false
-        spinnerWrap.addSubview(spinner)
+        spinnerWrap.addSubview(loadingDots)
         loadingLabel.translatesAutoresizingMaskIntoConstraints = false
         loadingLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         loadingLabel.adjustsFontForContentSizeCategory = true
@@ -444,9 +517,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         spinnerWrap.addSubview(loadingLabel)
         spinnerWrapHeightConstraint = spinnerWrap.heightAnchor.constraint(equalToConstant: 50)
         NSLayoutConstraint.activate([
-            spinner.topAnchor.constraint(equalTo: spinnerWrap.topAnchor, constant: 4),
-            spinner.centerXAnchor.constraint(equalTo: spinnerWrap.centerXAnchor),
-            loadingLabel.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 6),
+            loadingDots.topAnchor.constraint(equalTo: spinnerWrap.topAnchor, constant: 4),
+            loadingDots.centerXAnchor.constraint(equalTo: spinnerWrap.centerXAnchor),
+            loadingLabel.topAnchor.constraint(equalTo: loadingDots.bottomAnchor, constant: 6),
             loadingLabel.leadingAnchor.constraint(equalTo: spinnerWrap.leadingAnchor),
             loadingLabel.trailingAnchor.constraint(equalTo: spinnerWrap.trailingAnchor),
             loadingLabel.bottomAnchor.constraint(equalTo: spinnerWrap.bottomAnchor, constant: -2),
@@ -721,7 +794,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             exitOpenSection = false
         }
         spinnerWrap.isHidden = true
-        spinner.stopSpinning()
+        loadingDots.stop()
         introLabel.isHidden = true
         poolStack.isHidden = true
         poolButton.isHidden = true
@@ -735,9 +808,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         switch next {
         case .loading:
             spinnerWrap.isHidden = false
-            spinner.startSpinning()
+            loadingDots.start()
             // 只有交换 ID 时留一行状态文案（「已换到，正在加载」）；其余加载
-            // 只有转圈、不再配「加载中…」文字（转圈本身即加载态），容器随之收窄。
+            // 只有三点、不再配「加载中…」文字（三点本身即加载态），容器随之收窄。
             if let status = loadingStatusText {
                 loadingLabel.text = status
                 loadingLabel.isHidden = false
