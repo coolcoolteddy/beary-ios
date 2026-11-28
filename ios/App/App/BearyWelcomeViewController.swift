@@ -402,6 +402,12 @@ final class BearyWelcomeViewController: UIViewController {
         let dragTap = UITapGestureRecognizer(target: self, action: #selector(dragButtonTapped))
         dragTap.require(toFail: dragPan)
         dragButton.addGestureRecognizer(dragTap)
+        // 卡片空白处也能发起拖动（Li 2026-11-28 定）：与拖钮同一套 cardPanChanged。
+        // 触摸落在卡片内控件（拖钮／抓手）上时不启动——它们自己有拖动手势；
+        // 登录区按钮与取消钮不在卡片子树里，本来就碰不到。
+        let cardPan = UIPanGestureRecognizer(target: self, action: #selector(cardPanChanged(_:)))
+        cardPan.delegate = self
+        cardView.addGestureRecognizer(cardPan)
 
         // 抓手：卡片收起后露在卡片底部边缘，点按或下拖把卡片放回来（预览 .grabber）。
         grabberButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1077,5 +1083,19 @@ extension BearyWelcomeViewController: ASAuthorizationControllerDelegate {
 extension BearyWelcomeViewController: ASAuthorizationControllerPresentationContextProviding {
     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
         return view.window ?? UIWindow()
+    }
+}
+
+// MARK: - UIGestureRecognizerDelegate（卡片空白处拖动）
+
+extension BearyWelcomeViewController: UIGestureRecognizerDelegate {
+    /// 卡片空白处拖动只在触摸落在非控件区域时启动；落在拖钮／抓手上时
+    /// 由它们自己的拖动手势处理，避免两套手势同时驱动 cardPanChanged。
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        let point = gestureRecognizer.location(in: cardView)
+        if let hit = cardView.hitTest(point, with: nil), hit is UIControl {
+            return false
+        }
+        return true
     }
 }
