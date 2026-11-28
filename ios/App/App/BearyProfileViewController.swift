@@ -5668,11 +5668,11 @@ class BearyProfileViewController: UIViewController {
             }
         case .due:
             pastSelfDueNoteLabel.isHidden = false
-            pastSelfDueNoteLabel.text = "对话已送达，见上方「去年的对话」"
+            pastSelfDueNoteLabel.text = "对话已送达"
         case .answered(let waiting, _):
             pastSelfDueNoteLabel.isHidden = false
             // r25-48：同上，未同步时标明仅保存在本机；年份词走 main 的 pastSelfYearWord。
-            pastSelfDueNoteLabel.text = "已回一句 · \(pastSelfYearWord(for: waiting.deliverOn)) \(pastSelfDisplayMonthDay(waiting.deliverOn))再见" + (waiting.localOnly ? "（仅保存在本机，等待同步）" : "") + "，见上方「去年的对话」"
+            pastSelfDueNoteLabel.text = "已回一句 · \(pastSelfYearWord(for: waiting.deliverOn)) \(pastSelfDisplayMonthDay(waiting.deliverOn))再见" + (waiting.localOnly ? "（仅保存在本机，等待同步）" : "")
         }
         pastSelfRefreshLayout()
     }
