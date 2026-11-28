@@ -4563,7 +4563,7 @@ class BearyNotificationCell: UITableViewCell {
         kindBadgeView.isHidden = true
         nestedLineView.isHidden = true
         titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
-        excerptLabel.attributedText = BearyNotificationCell.moodLineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: mergedList ? 12 : 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
+        excerptLabel.attributedText = BearyNotificationCell.moodLineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         lastTimeMs = timeMs
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
         if mergedList {
@@ -4797,7 +4797,7 @@ class BearyNotificationCell: UITableViewCell {
             titleLabel.attributedText = title
         }
 
-        excerptLabel.attributedText = BearyNotificationCell.moodLineHeightText(item.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: mergedList ? 12 : 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
+        excerptLabel.attributedText = BearyNotificationCell.moodLineHeightText(item.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         lastTimeMs = item.createdAt
         timeLabel.text = BearyNotificationCell.timeText(ms: item.createdAt)
     }
