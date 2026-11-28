@@ -169,7 +169,7 @@ final class BearyHeatmapView: UIView {
         let gridHeight = gridArea.heightAnchor.constraint(equalToConstant: 0)
         gridAreaHeightConstraint = gridHeight
         NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             titleLabel.trailingAnchor.constraint(equalTo: legendStack.leadingAnchor, constant: -8),
             gridArea.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
@@ -178,7 +178,7 @@ final class BearyHeatmapView: UIView {
             gridHeight,
             legendStack.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             legendStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            gridArea.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+            gridArea.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
         ])
     }
 
