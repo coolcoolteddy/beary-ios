@@ -49,9 +49,8 @@ final class BearyBlindBoxEntryView: UIView {
         iconView.contentMode = .scaleAspectFit
         iconView.tintColor = BearyColors.ink
 
-        // 待补标注：新图标未注册时暂代图旁挂虚线 chip（预览页「待补」chip 同款口径）。
+        // 待补标注：新图标未注册时暂代图旁挂虚线占位框（不挂文字）。
         pendingChip.translatesAutoresizingMaskIntoConstraints = false
-        pendingChip.text = "待补"
         pendingChip.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
         pendingChip.textColor = BearyColors.ink
         pendingChip.textAlignment = .center
