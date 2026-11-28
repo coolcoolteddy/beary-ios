@@ -3952,14 +3952,41 @@ class BearyProfileViewController: UIViewController {
                         }
                         BearyToast.show(in: self.view, message: wasFollowedBy ? "已互关" : "已关注")
                     case .failure(let error):
-                        // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
-                        self.followState = self.confirmedFollowState
-                        self.applyFollowButton()
                         if case .unauthorized = error {
+                            // 401 走登录门：回滚＋登录入口，不复核。
+                            self.followState = self.confirmedFollowState
+                            self.applyFollowButton()
                             self.onRequireLogin?()
                         } else {
-                            self.playFollowDenyShake()
-                            BearyToast.show(in: self.view, message: wasFollowedBy ? "回关失败，请重试" : "关注失败，请重试")
+                            // 回滚前复核一次：服务端若已是目标态（回包丢了／
+                            // 别处已写），静默保留成功态，不回滚、不提示；
+                            // 否则回滚＋原失败反馈。
+                            BearyRollbackRefetch.refetch(
+                                fetch: { completion in BearyAPI.shared.fetchFollowState(userId: targetId, completion: completion) },
+                                matches: { BearyFollowState(response: $0) == target }
+                            ) { [weak self] server in
+                                guard let self = self,
+                                      requestSeq == self.followActionSeq else { return }
+                                if server != nil {
+                                    self.confirmedFollowState = target
+                                    if let viewerId = self.viewerUserIdValue {
+                                        BearyFriends.BearyFollowStateCache.save(target, viewerId: viewerId, targetId: targetId)
+                                    }
+                                    if wasFollowedBy {
+                                        // B2：回关确认带上对方 id——通知页只更新此人卡片。
+                                        BearyFriends.clearDiaryCachesAndNotify(userId: targetId)
+                                        self.reloadProfile()
+                                    }
+                                    // 复核成功即静默保留成功态（审阅 #6「不提示」）：
+                                    // 成功 toast 是正常回包路径的反馈，复核路径不补。
+                                } else {
+                                    // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
+                                    self.followState = self.confirmedFollowState
+                                    self.applyFollowButton()
+                                    self.playFollowDenyShake()
+                                    BearyToast.show(in: self.view, message: wasFollowedBy ? NSLocalizedString("follow.toast.followBackFailed", comment: "") : NSLocalizedString("follow.toast.followFailed", comment: ""))
+                                }
+                            }
                         }
                     }
                 }
@@ -3998,16 +4025,38 @@ class BearyProfileViewController: UIViewController {
                             BearyFriends.clearDiaryCachesAndNotify(userId: targetId)
                             self.reloadProfile()
                         case .failure(let error):
-                            // 失败回滚到最后确认态；401 与关注分支同款走登录入口
-                            // （onRequireLogin），登录后由用户重试取关，不弹失败 toast；
-                            // 其他失败仍走原拒绝动效＋“取关失败”toast。
-                            self.followState = self.confirmedFollowState
-                            self.applyFollowButton()
                             if case .unauthorized = error {
+                                // 401 走登录门：回滚＋登录入口，不复核。
+                                self.followState = self.confirmedFollowState
+                                self.applyFollowButton()
                                 self.onRequireLogin?()
                             } else {
-                                self.playFollowDenyShake()
-                                BearyToast.show(in: self.view, message: "取消关注失败，请重试")
+                                // 回滚前复核一次：服务端若已是目标态（回包丢了／
+                                // 别处已写），静默保留成功态，不回滚、不提示；
+                                // 否则回滚＋原失败反馈。
+                                BearyRollbackRefetch.refetch(
+                                    fetch: { completion in BearyAPI.shared.fetchFollowState(userId: targetId, completion: completion) },
+                                    matches: { BearyFollowState(response: $0) == target }
+                                ) { [weak self] server in
+                                    guard let self = self,
+                                          requestSeq == self.followActionSeq else { return }
+                                    if server != nil {
+                                        self.confirmedFollowState = target
+                                        if let viewerId = self.viewerUserIdValue {
+                                            BearyFriends.BearyFollowStateCache.save(target, viewerId: viewerId, targetId: targetId)
+                                        }
+                                        // B2：取关确认带上对方 id——通知页只更新此人卡片。
+                                        BearyFriends.clearDiaryCachesAndNotify(userId: targetId)
+                                        self.reloadProfile()
+                                    } else {
+                                        // 失败回滚到最后确认态；其他失败仍走原
+                                        // 拒绝动效＋“取关失败”toast。
+                                        self.followState = self.confirmedFollowState
+                                        self.applyFollowButton()
+                                        self.playFollowDenyShake()
+                                        BearyToast.show(in: self.view, message: NSLocalizedString("follow.toast.unfollowFailed", comment: ""))
+                                    }
+                                }
                             }
                         }
                     }
@@ -9362,18 +9411,61 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.tableView.reloadData()
                     BearyToast.show(in: strongSelf.view, message: pinning ? "已置顶" : "已取消置顶")
                 case .failure(let err):
-                    strongSelf.updateEntryInAllTabs(entry: originalTarget)
-                    if let prev = originalPrevious {
-                        strongSelf.updateEntryInAllTabs(entry: prev)
-                    }
-                    strongSelf.tableView.reloadData()
-                    BearyToast.show(in: strongSelf.view, message: BearyDiaryPin.errorMessage(for: err, pinning: pinning))
-                    // reloadData 后布局未必已落定，下一 runloop 再取可见行摇头。
-                    DispatchQueue.main.async {
-                        guard let row = strongSelf.displayedEntries.firstIndex(where: { $0.id == entryId }),
-                              let cell = strongSelf.tableView.cellForRow(at: IndexPath(row: row, section: 0)) as? BearyDiaryCardCell,
-                              cell.cellEntryId == entryId else { return }
-                        cell.playPublishDenyShake()
+                    if case .unauthorized = err {
+                        // 401：回滚＋登录提示（errorMessage 内含“请先登录”），不复核。
+                        // 注：审阅 #c（PR #2815）已把此处 401 改为只回滚、不 toast
+                        // 不摇头；本支基于 #c 之前 main，变基时以 #c 版为准。
+                        strongSelf.updateEntryInAllTabs(entry: originalTarget)
+                        if let prev = originalPrevious {
+                            strongSelf.updateEntryInAllTabs(entry: prev)
+                        }
+                        strongSelf.tableView.reloadData()
+                        BearyToast.show(in: strongSelf.view, message: BearyDiaryPin.errorMessage(for: err, pinning: pinning))
+                        // reloadData 后布局未必已落定，下一 runloop 再取可见行摇头。
+                        DispatchQueue.main.async {
+                            guard let row = strongSelf.displayedEntries.firstIndex(where: { $0.id == entryId }),
+                                  let cell = strongSelf.tableView.cellForRow(at: IndexPath(row: row, section: 0)) as? BearyDiaryCardCell,
+                                  cell.cellEntryId == entryId else { return }
+                            cell.playPublishDenyShake()
+                        }
+                    } else {
+                        // 回滚前复核一次：服务端若已是目标态（回包丢了／别处
+                        // 已写），静默保留成功态，不回滚、不提示；否则回滚＋
+                        // 原失败反馈。
+                        BearyRollbackRefetch.refetch(
+                            fetch: { completion in BearyAPI.shared.fetchEntry(id: entryId, completion: completion) },
+                            matches: { $0.isPinned == pinning }
+                        ) { [weak strongSelf] server in
+                            guard let strongSelf = strongSelf,
+                                  SessionManager.shared.currentUser?.id == requestAccountId else { return }
+                            if let server = server {
+                                var updated = optimistic
+                                updated.pinned = server.isPinned ? 1 : 0
+                                updated.pinnedAt = server.pinnedAt
+                                if updated.isPinned {
+                                    strongSelf.clearOtherPinnedEntries(except: entryId)
+                                }
+                                strongSelf.updateEntryInAllTabs(entry: updated)
+                                BearyDiaryPin.notePinResult(entryId: entryId, pinned: updated.isPinned)
+                                strongSelf.tableView.reloadData()
+                                // 复核成功即静默保留成功态（审阅 #6「不提示」）：
+                                // 成功 toast 是正常回包路径的反馈，复核路径不补。
+                            } else {
+                                strongSelf.updateEntryInAllTabs(entry: originalTarget)
+                                if let prev = originalPrevious {
+                                    strongSelf.updateEntryInAllTabs(entry: prev)
+                                }
+                                strongSelf.tableView.reloadData()
+                                BearyToast.show(in: strongSelf.view, message: BearyDiaryPin.errorMessage(for: err, pinning: pinning))
+                                // reloadData 后布局未必已落定，下一 runloop 再取可见行摇头。
+                                DispatchQueue.main.async {
+                                    guard let row = strongSelf.displayedEntries.firstIndex(where: { $0.id == entryId }),
+                                          let cell = strongSelf.tableView.cellForRow(at: IndexPath(row: row, section: 0)) as? BearyDiaryCardCell,
+                                          cell.cellEntryId == entryId else { return }
+                                    cell.playPublishDenyShake()
+                                }
+                            }
+                        }
                     }
                 }
             }

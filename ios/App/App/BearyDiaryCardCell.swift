@@ -3996,18 +3996,43 @@ class BearyDiaryCardCell: UITableViewCell {
                     // 会再炸一次）；取消点赞不炸。
                     strongSelf.onInteractionChanged?(entryIdValue, strongSelf.currentEntry?.likeCount, newLiked, nil)
                 case .failure(let err):
-                    // 失败回滚到最后服务端确认态（不是本次点按前的中间态），
-                    // 再走既有失败路径（拒绝动效 + 通用提示），不另起一套。
-                    strongSelf.currentEntry?.likedByMe = strongSelf.likeState.confirmed.liked
-                    strongSelf.currentEntry?.likeCount = strongSelf.likeState.confirmed.count
-                    strongSelf.updateLikeButton()
-                    // 回滚到未填色：在飞的点赞微粒一并清掉，屏幕只反映最新点按态。
-                    strongSelf.clearLikeBurst()
                     if case .unauthorized = err {
+                        // 401 走登录门：回滚＋登录入口，不复核。
+                        strongSelf.currentEntry?.likedByMe = strongSelf.likeState.confirmed.liked
+                        strongSelf.currentEntry?.likeCount = strongSelf.likeState.confirmed.count
+                        strongSelf.updateLikeButton()
+                        // 回滚到未填色：在飞的点赞微粒一并清掉，屏幕只反映最新点按态。
+                        strongSelf.clearLikeBurst()
                         strongSelf.onRequireLogin?()
                     } else {
-                        strongSelf.playDenyShake(on: strongSelf.likeButton)
-                        strongSelf.onActionFailed?()
+                        // 回滚前复核一次：服务端若已是目标态（回包丢了／别处
+                        // 已写），静默保留成功态，不回滚、不提示；否则回滚＋
+                        // 原失败反馈。
+                        BearyRollbackRefetch.refetch(
+                            fetch: { completion in BearyAPI.shared.fetchEntry(id: entryIdValue, completion: completion) },
+                            matches: { $0.likedByMe == targetLiked }
+                        ) { [weak strongSelf] server in
+                            guard let strongSelf = strongSelf,
+                                  strongSelf.cellEntryId == entryIdValue,
+                                  strongSelf.likeState.isCurrent(reqSeq) else { return }
+                            if let server = server {
+                                strongSelf.currentEntry?.likedByMe = server.likedByMe ?? targetLiked
+                                if let count = server.likeCount { strongSelf.currentEntry?.likeCount = count }
+                                strongSelf.likeState.confirm(reqSeq, value: BearyLikeState(liked: strongSelf.currentEntry?.likedByMe ?? targetLiked, count: strongSelf.currentEntry?.likeCount ?? 0))
+                                strongSelf.updateLikeButton()
+                                strongSelf.onInteractionChanged?(entryIdValue, strongSelf.currentEntry?.likeCount, strongSelf.currentEntry?.likedByMe, nil)
+                            } else {
+                                // 失败回滚到最后服务端确认态（不是本次点按前的中间态），
+                                // 再走既有失败路径（拒绝动效 + 通用提示），不另起一套。
+                                strongSelf.currentEntry?.likedByMe = strongSelf.likeState.confirmed.liked
+                                strongSelf.currentEntry?.likeCount = strongSelf.likeState.confirmed.count
+                                strongSelf.updateLikeButton()
+                                // 回滚到未填色：在飞的点赞微粒一并清掉，屏幕只反映最新点按态。
+                                strongSelf.clearLikeBurst()
+                                strongSelf.playDenyShake(on: strongSelf.likeButton)
+                                strongSelf.onActionFailed?()
+                            }
+                        }
                     }
                 }
             }
@@ -4058,17 +4083,42 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.updateActionInteractivity()
                     strongSelf.onInteractionChanged?(entryIdValue, nil, nil, newBookmarked)
                 case .failure(let err):
-                    // 失败回滚到最后服务端确认态，再走既有失败路径。
-                    strongSelf.currentEntry?.bookmarkedByMe = strongSelf.bookmarkState.confirmed
-                    strongSelf.updateBookmarkButton()
-                    // 回滚到未填色：在飞的收藏微粒一并清掉。
-                    BearyBurstParticles.clear(from: strongSelf.bookmarkButton)
-                    strongSelf.updateActionInteractivity()
                     if case .unauthorized = err {
+                        // 401 走登录门：回滚＋登录入口，不复核。
+                        strongSelf.currentEntry?.bookmarkedByMe = strongSelf.bookmarkState.confirmed
+                        strongSelf.updateBookmarkButton()
+                        // 回滚到未填色：在飞的收藏微粒一并清掉。
+                        BearyBurstParticles.clear(from: strongSelf.bookmarkButton)
+                        strongSelf.updateActionInteractivity()
                         strongSelf.onRequireLogin?()
                     } else {
-                        strongSelf.playDenyShake(on: strongSelf.bookmarkButton)
-                        strongSelf.onActionFailed?()
+                        // 回滚前复核一次：服务端若已是目标态（回包丢了／别处
+                        // 已写），静默保留成功态，不回滚、不提示；否则回滚＋
+                        // 原失败反馈。
+                        BearyRollbackRefetch.refetch(
+                            fetch: { completion in BearyAPI.shared.fetchEntry(id: entryIdValue, completion: completion) },
+                            matches: { $0.bookmarkedByMe == flipped }
+                        ) { [weak strongSelf] server in
+                            guard let strongSelf = strongSelf,
+                                  strongSelf.cellEntryId == entryIdValue,
+                                  strongSelf.bookmarkState.isCurrent(reqSeq) else { return }
+                            if let server = server {
+                                strongSelf.currentEntry?.bookmarkedByMe = server.bookmarkedByMe ?? flipped
+                                strongSelf.bookmarkState.confirm(reqSeq, value: strongSelf.currentEntry?.bookmarkedByMe ?? flipped)
+                                strongSelf.updateBookmarkButton()
+                                strongSelf.updateActionInteractivity()
+                                strongSelf.onInteractionChanged?(entryIdValue, nil, nil, strongSelf.currentEntry?.bookmarkedByMe)
+                            } else {
+                                // 失败回滚到最后服务端确认态，再走既有失败路径。
+                                strongSelf.currentEntry?.bookmarkedByMe = strongSelf.bookmarkState.confirmed
+                                strongSelf.updateBookmarkButton()
+                                // 回滚到未填色：在飞的收藏微粒一并清掉。
+                                BearyBurstParticles.clear(from: strongSelf.bookmarkButton)
+                                strongSelf.updateActionInteractivity()
+                                strongSelf.playDenyShake(on: strongSelf.bookmarkButton)
+                                strongSelf.onActionFailed?()
+                            }
+                        }
                     }
                 }
             }
