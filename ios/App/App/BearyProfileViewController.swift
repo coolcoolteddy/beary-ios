@@ -4076,6 +4076,10 @@ class BearyProfileViewController: UIViewController {
             }
             endCustomPullRefresh()
             refreshFooter()
+            // 弱网三份空态修复：同 loadTab，失败分支标志翻转后立即重问行数；
+            // 旧口径只走 layoutHeaderForced 的 begin/endUpdates，重问可见行
+            // cell 而不重问行数，缓存行数停在骨架屏的 3 行。
+            tableView.reloadData()
             layoutHeaderForced(widthValue: headerWidthValue)
         }
     }
@@ -6700,6 +6704,10 @@ class BearyProfileViewController: UIViewController {
             tabLoading = true
             tabError = false
             refreshFooter()
+            // 弱网三份空态修复：标志翻转后立即重问行数——tabLoading 翻 true
+            // 会关掉占位行，旧口径只 refreshFooter 不 reloadData，行数缓存
+            // 停在旧值，模型翻成空占位态后表仍按旧行数问 cell。
+            tableView.reloadData()
             // 109：记下请求发出时的 tab；回包按该归属分发，切走即丢弃
             //（与后台回填 loadTabBackground 的 tabAtStart 同口径）。
             let tabAtStart = currentTab
@@ -9951,7 +9959,9 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         }
         // 109：占位行优先返回——不走日记卡创建与更多按钮分支；点按时
         // didSelectRowAt 的 row < displayedEntries.count 守卫会直接返回，无动作。
-        if showsOwnEmptyPlaceholder {
+        // 弱网三份空态修复：占位只认 row 0——行数缓存过期时表可能问到
+        // row 1/2，旧口径任意行都回占位 cell，空态成倍叠出。
+        if showsOwnEmptyPlaceholder, indexPath.row == 0 {
             let placeholder: BearyProfileEmptyPlaceholderCell
             if let reused = tableView.dequeueReusableCell(withIdentifier: "BearyProfileEmptyPlaceholderCell") as? BearyProfileEmptyPlaceholderCell {
                 placeholder = reused
@@ -9976,6 +9986,11 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             let moreCell = BearyProfileMoreDiaryCell(style: .default, reuseIdentifier: "BearyProfileMoreDiaryCell")
             moreCell.onTap = { [weak self] in self?.moreDiaryButtonTapped() }
             return moreCell
+        }
+        // 弱网三份空态修复：行数缓存过期时表可能问到越界行，越界直接回
+        // 空 cell，绝不取 displayedEntries 越界下标（旧口径在此 crash）。
+        guard indexPath.row >= 0, indexPath.row < displayedEntries.count else {
+            return UITableViewCell(style: .default, reuseIdentifier: nil)
         }
         let entryValue = displayedEntries[indexPath.row]
         let entryId = entryValue.id ?? ""
