@@ -891,12 +891,15 @@ final class BearyPublishCenter {
         for record in failedList {
             lines.append("“\(Self.previewText(for: record.job.snapshot))” 发布失败：\(record.message)")
         }
-        let alert = UIAlertController(title: "发布状态", message: lines.joined(separator: "\n"), preferredStyle: .alert)
+        // 发布状态走共享确认底 sheet（全仓其余确认弹窗同款入口）：
+        // 重试标题与 retryPublish 回调原样传入，「关闭」走 cancel 样式；
+        // presenter 与 keyWindowRootView 回落口径不变（后台／无窗口时仍回落）。
+        var actions: [BearyConfirmSheet.Action] = []
         for record in failedList {
             let preview = Self.previewText(for: record.job.snapshot)
             let title = record.sourcePublished ? "只重试新篇“\(preview)”" : "重试“\(preview)”"
             let key = record.job.snapshot.draftId ?? record.job.snapshot.clientReq
-            alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
+            actions.append(BearyConfirmSheet.Action(title: title, style: .default) { [weak self] in
                 guard let self = self else { return }
                 if self.retryPublish(draftId: key) == .needsEditor,
                    let fallbackContainer = self.currentPill?.superview ?? Self.keyWindowRootView() {
@@ -904,8 +907,8 @@ final class BearyPublishCenter {
                 }
             })
         }
-        alert.addAction(UIAlertAction(title: "关闭", style: .cancel))
-        presenter.present(alert, animated: true)
+        actions.append(BearyConfirmSheet.Action(title: "关闭", style: .cancel))
+        BearyConfirmSheet.show(from: presenter, title: "发布状态", message: lines.joined(separator: "\n"), actions: actions)
     }
 
     /// 状态表里的篇目短名：标题优先，无标题取正文前 10 字（去空白换行），再无取“这篇日记”。
