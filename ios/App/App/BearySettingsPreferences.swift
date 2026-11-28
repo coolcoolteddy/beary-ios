@@ -23,7 +23,7 @@ enum BearyDataSaver {
 
 /// 高画质图片（数据用量页）：在什么网络下拉原图。
 /// cellularOrWifi = 使用蜂窝或无线网络；wifiOnly = 仅无线网络；off = 关闭。
-/// 关闭时时间线/详情只下缩略图（与流量节省程序同款缩略图路径），点开大图仍下原图。
+/// 关闭时时间线/详情只下缩略图（与流量节省程序同款缩略图路径），点开大图也不下原图。
 enum BearyHiResImagePolicy: String {
     case cellularOrWifi = "cellular_or_wifi"
     case wifiOnly = "wifi_only"

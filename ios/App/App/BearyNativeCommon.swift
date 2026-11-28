@@ -628,9 +628,10 @@ enum BearyConnectivity {
         return offline || !pathKnown || !onWiFi || constrained
     }
 
-    /// 列表/详情是否只拉缩略图：流量节省程序开，或当前网络是弱网档。
+    /// 列表/详情是否只拉缩略图：流量节省程序开，或当前网络是弱网档，
+    /// 或高画质图片设置不允许在当前网络拉原图。弱网档优先于该设置。
     static var shouldLoadThumbnailOnly: Bool {
-        BearyDataSaver.isEnabled || isWeakNetwork
+        BearyDataSaver.isEnabled || isWeakNetwork || !BearyHiResImagePolicy.allowsOriginalOnCurrentNetwork
     }
 
     static func startIfNeeded() {

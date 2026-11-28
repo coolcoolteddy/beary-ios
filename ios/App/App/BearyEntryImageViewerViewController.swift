@@ -872,7 +872,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         // 图片缓存（切图时不再等网络，空白只剩解码一帧）；翻页同样走 loadCurrent，预取随之跟进。
         prefetchAdjacent()
         updateLiveOverlay()
-        guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else {
+        guard let url = viewerImageURL(key: key) else {
             isFailed = true
             retryButton.isHidden = false
             updateLoadingSpinner()
@@ -977,6 +977,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         dismissViewer()
     }
 
+    /// 灯箱取图口径：高画质图片设为「关闭」时只取缩略图，点开也不拉原图；
+    /// 其余档位（包括弱网）点开仍拉原图（与 #2825 口径一致）。
+    private func viewerImageURL(key: String) -> URL? {
+        BearyImageURLs.imageURL(key: key, thumb: BearyHiResImagePolicy.current == .off)
+    }
+
     /// E-G3 相邻图预取：前后各一张（回绕也算相邻，与本页循环翻页一致），
     /// 只暖缓存、不动当前图；单图时不预取。
     /// 111：预取必须带与展示加载同款下采样宽度——旧口径不带下采样时
@@ -992,7 +998,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             if index == currentIndex {
                 continue
             }
-            guard let url = BearyImageURLs.imageURL(key: imageKeys[index], thumb: false) else {
+            guard let url = viewerImageURL(key: imageKeys[index]) else {
                 continue
             }
             BearyImageLoader.shared.load(url: url, downsampleToWidth: downsampleWidth) { _ in }
@@ -1013,12 +1019,14 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 回包丢弃且不拉低 zoomHiResWidth 水位，画面不再重新变糊。
     private func maybeUpgradeZoomResolution() {
         guard scale > 1, localImages.isEmpty, currentIndex >= 0, currentIndex < imageKeys.count else { return }
+        // 高画质图片设为「关闭」时不拉原图：缩放升级也不拉（缩略图已是最高档）。
+        guard BearyHiResImagePolicy.current != .off else { return }
         let key = imageKeys[currentIndex]
         let baseWidth = pageWidthValue() * UIScreen.main.scale
         let targetWidth = min(baseWidth * scale, 3072)
         if zoomHiResKey == key && targetWidth <= zoomHiResWidth { return }
         guard targetWidth > baseWidth else { return }
-        guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else { return }
+        guard let url = viewerImageURL(key: key) else { return }
         let generation = imageLoadGeneration
         BearyImageLoader.shared.load(url: url, downsampleToWidth: targetWidth) { [weak self] img in
             guard let self = self, let img = img else { return }
@@ -1059,7 +1067,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             neighborDirection = direction
             neighborImageView.image = nil
             neighborImageView.isHidden = false
-            if let url = BearyImageURLs.imageURL(key: imageKeys[target], thumb: false) {
+            if let url = viewerImageURL(key: imageKeys[target]) {
                 let w = pageWidthValue()
                 BearyImageLoader.shared.load(url: url, downsampleToWidth: w * UIScreen.main.scale) { [weak self] img in
                     guard let self = self, self.neighborIndex == target else { return }
@@ -1566,7 +1574,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// B5：目标图内存缓存同步取图（只读内存，不读磁盘、不发网络）——
     /// 预取已暖过的全尺寸图（与 loadCurrent 同下采样宽）可直接交接。
     private func cachedWrapTargetImage(forKey key: String) -> UIImage? {
-        guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else { return nil }
+        guard let url = viewerImageURL(key: key) else { return nil }
         return BearyImageLoader.shared.cachedImage(url: url, downsampleToWidth: pageWidthValue() * UIScreen.main.scale)
     }
 
@@ -1719,7 +1727,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             neighborImageView.image = nil
             neighborImageView.isHidden = false
             neighborImageView.transform = CGAffineTransform(translationX: CGFloat(direction) * width, y: 0)
-            if let url = BearyImageURLs.imageURL(key: imageKeys[wrapped], thumb: false) {
+            if let url = viewerImageURL(key: imageKeys[wrapped]) {
                 BearyImageLoader.shared.load(url: url, downsampleToWidth: width * UIScreen.main.scale) { [weak self] img in
                     guard let self = self, self.neighborIndex == wrapped else { return }
                     self.neighborImageView.image = img
