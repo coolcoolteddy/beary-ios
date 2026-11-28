@@ -86,8 +86,9 @@ enum BearyDiaryPin {
     }
 
     /// 置顶失败 toast 文案：401／404／403／503 按接口口径分流，其余走通用失败文案；
-    /// 限流沿用项目现有 rate_limited／429 文案。error 体带码的 403（.server）无法从码反推，
-    /// 走通用文案，不编造服务端码。
+    /// 限流沿用项目现有 rate_limited／429 文案。带码的 403 经通用路 mapStatus
+    /// （codeFirst）解成 .server(code, 403)，可按业务码分流（rate_limited／
+    /// pin_limit 等）；未列出的码走通用文案，不编造服务端码。
     static func errorMessage(for error: APIError, pinning: Bool) -> String {
         switch error {
         case .unauthorized:
@@ -100,6 +101,10 @@ enum BearyDiaryPin {
             return "置顶功能暂不可用，请稍后再试"
         case .server(let code, _) where code == "rate_limited":
             return "操作太频繁，请稍后再试"
+        case .server(let code, _) where code == "pin_limit":
+            // pin_limit 只在置顶已满 3 篇时回（服务端 pinMax == 3，Plus 生效或免费期）；
+            // 免费用户收不到此码，不另写一版。英文为 agent 译法，待 Li 纠正。
+            return NSLocalizedString("diary_pin.limit_reached", comment: "")
         case .http(let status, _) where status == 429:
             return "操作太频繁，请稍后再试"
         default:
