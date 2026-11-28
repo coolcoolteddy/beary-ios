@@ -265,9 +265,9 @@ class BearyFeedViewController: UIViewController {
     /// 用户已开始拖动列表（scrollViewWillBeginDragging 置位）：冷启动置顶只在用户动手前做。
     private var feedUserHasScrolled = false
 
-    /// 有新内容 pill（网页 #newPill 口径：ink 底、bg 字、13 semibold、999 圆角、padding 9/16，
-    /// 阴影 0 6px 18px rgba(0,0,0,.22)，
-    /// 底部 92 + 安全区上方，点按应用待定内容并回顶）。
+    /// 有新内容 pill（展示审计 G1-17：轻量形态——surface2 灰底、墨字，
+    /// 无阴影；原网页 #newPill 口径 ink 底、bg 字＋阴影，出现时是全页最重的元素之一）。
+    /// 底部 92 + 安全区上方，点按应用待定内容并回顶。
     private lazy var newContentPill: UIButton = {
         // 按钮普查：悬浮 pill 视觉高约 34（13pt 字＋上下 9 内边距），热区用 Hit44 扩到 44；
         // 居中悬浮、无相邻按钮，视觉不动。
@@ -276,17 +276,15 @@ class BearyFeedViewController: UIViewController {
         btn.setTitle("有新内容", for: .normal)
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
-        btn.setTitleColor(BearyColors.bg, for: .normal)
+        btn.setTitleColor(BearyColors.ink, for: .normal)
         // 网页 #newPill 口径：左侧 15pt 上箭头（beary-arrow-up 官方路径渲染），与标题 gap 6。
         btn.setImage(BearyIconImages.image(named: "icon_arrow_up", pointSize: 15), for: .normal)
-        btn.tintColor = BearyColors.bg
+        btn.tintColor = BearyColors.ink
         btn.titleEdgeInsets.left = 6
-        btn.backgroundColor = BearyColors.ink
+        btn.backgroundColor = BearyColors.surface2
         // 8-11：圆角取半高，见 viewDidLayoutSubviews（跟 bounds 走，不手写 17；
         // Dynamic Type 变高后仍为 pill 形）。
-        btn.clipsToBounds = false
-        btn.layer.shadowColor = UIColor.black.cgColor
-        BearyShadow.applyRaised(to: btn.layer)
+        btn.clipsToBounds = true
         btn.contentEdgeInsets = UIEdgeInsets(top: 9, left: 16, bottom: 9, right: 16)
         btn.isHidden = true
         btn.addTarget(self, action: #selector(newContentPillTapped), for: .touchUpInside)
