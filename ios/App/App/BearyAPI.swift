@@ -1770,7 +1770,7 @@ final class BearyAPI {
             if let data = data, let resp = try? self.decoder.decode(VerifyResponse.self, from: data) {
                 if resp.pendingDelete == true { completion(.success(resp)); return }
                 if resp.ok == true { completion(.success(resp)); return }
-                let message = resp.message ?? resp.error ?? "Apple 登录失败"
+                let message = resp.message ?? resp.error ?? NSLocalizedString("login.welcome.apple_failed", comment: "")
                 completion(.failure(.server(message, nil)))
                 return
             }
