@@ -698,7 +698,8 @@ private final class BearyFriendCell: UITableViewCell {
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
-        stack.spacing = 1
+        // 展示审计 G6-A12：名字→@handle 间距 1→3pt，大字号下两行不糊。
+        stack.spacing = 3
         stack.alignment = .fill
         return stack
     }()
