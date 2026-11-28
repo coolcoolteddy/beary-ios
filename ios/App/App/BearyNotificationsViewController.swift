@@ -875,7 +875,10 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     @objc private func handleForeground() {
-        guard isNotifPageVisible else { return }
+        // 底栏消息角标离页不更新（F4）：离页时 60 秒轮询停了，回前台是
+        // 不用常驻定时器就能补刷未读的唯一时机；轻量刷新只更新未读数与
+        // 角标（门控见 refreshUnreadCountLightly），不整页重拉、不动列表。
+        // 可见性门控只留给时间标签（refreshVisibleTimeLabels 自带门控）。
         refreshUnreadCountLightly()
         refreshVisibleTimeLabels()
     }
