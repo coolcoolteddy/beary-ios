@@ -293,7 +293,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         // 失败重试现为真实 UIButton：VoiceOver 双击即触发 .touchUpInside，
         // 不再只靠 .button 读法（纯 UILabel 时双击走 accessibilityActivate，
-        // 未实现即无动作，也不会转发给舞台点按手势）；关闭钮为纯图标钮，补“关闭”读法。
+        // 未实现即无动作，也不会转发给舞台点按手势）；关闭钮为纯图标钮，补“返回”读法
+        //（Li 2026-11-23 定：灯箱关闭改左上角返回箭头，见 closeButton 处）。
         // 文案／字号／颜色／位置一字不动，只换承载控件。
         retryButton.isAccessibilityElement = true
         retryButton.accessibilityLabel = "图片加载失败，点按重试"
@@ -339,7 +340,19 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         rebuildDots()
         view.addSubview(dotsStack)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.accessibilityLabel = "关闭"
+        // Li 2026-11-23 定（第三批第 46 题）：灯箱是全屏页，关闭走全屏口径——
+        // 左上角返回箭头（回收站页同款：圆钮 surface2 底与 32 尺寸不动，
+        // 只换 icon_back 18pt；资产缺失时文字“返回”兜底）。
+        if let backImage = BearyIconImages.image(named: "icon_back", pointSize: 18) {
+            closeButton.setImage(backImage, for: .normal)
+        } else {
+            // I14：资产缺失时补文字回退，不留空白热区。
+            closeButton.setTitle("返回", for: .normal)
+            closeButton.setTitleColor(BearyColors.ink, for: .normal)
+            closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+            closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        }
+        closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         view.addSubview(closeButton)
@@ -389,15 +402,15 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             retryButton.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -30),
             counterLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
             counterLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            // 32 清单第 17 项：计数跟随放大后不得压到右上关闭钮之下（文案短，平时不触发；极端字号下宁可截尾不断钮）。
-            counterLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
-            counterLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8),
+            // 32 清单第 17 项：计数跟随放大后不得压到左上返回钮之下（文案短，平时不触发；极端字号下宁可截尾不断钮）。
+            counterLabel.leadingAnchor.constraint(greaterThanOrEqualTo: closeButton.trailingAnchor, constant: 8),
+            counterLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             loadMoreStack.topAnchor.constraint(equalTo: counterLabel.bottomAnchor, constant: 8),
             loadMoreStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             dotsStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
             dotsStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            closeButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
         ])
