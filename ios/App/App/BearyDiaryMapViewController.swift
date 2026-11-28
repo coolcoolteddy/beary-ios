@@ -179,7 +179,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         view.addSubview(tableView)
 
         failureStateView.translatesAutoresizingMaskIntoConstraints = false
-        failureStateView.configure(kind: .error, title: "日记加载失败，请重试", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.didTapRetry() })
+        failureStateView.configure(kind: .error, title: NSLocalizedString("map.load_failed_retry", comment: ""), subtitle: nil, iconName: nil, actionTitle: NSLocalizedString("common.retry", comment: ""), onAction: { [weak self] in self?.didTapRetry() })
         failureStateView.isHidden = true
         view.addSubview(failureStateView)
 
