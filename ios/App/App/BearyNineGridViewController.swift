@@ -173,6 +173,26 @@ enum BearyNineGridPresenter {
                 BearyToast.show(in: viewController.view, message: NSLocalizedString("common.network_unstable", comment: ""))
             } else {
                 let login = BearyLoginSheet.make()
+                login.onLoggedIn = { [weak login, weak viewController] referralText in
+                    // 登录成功后回到九宫格入口：盲盒 loginTapped 同款——成功先解 arm；
+                    // 关登录页、刷新 /me，再按原参数重走一次门控（登录＋Plus 门重算），开网格。
+                    SessionManager.shared.completeAccountAddSession()
+                    login?.dismiss(animated: BearyMotion.animated(true)) {
+                        SessionManager.shared.refreshMe { _ in
+                            DispatchQueue.main.async {
+                                guard let viewController else { return }
+                                BearyNineGridPresenter.present(from: viewController, anchorView: anchorView, imageKeys: imageKeys, liveVideos: liveVideos)
+                                // 邀请绑定反馈：落在最顶层页（刚开的九宫格）上，
+                                // 不直接贴原页——全屏网格会盖住原页的 toast。
+                                if let referralText, !referralText.isEmpty {
+                                    var top = viewController
+                                    while let presented = top.presentedViewController { top = presented }
+                                    BearyToast.show(in: top.view, message: BearyReferralFeedback.toastText(base: referralText, plusUntil: SessionManager.shared.currentUser?.plusUntil))
+                                }
+                            }
+                        }
+                    }
+                }
                 login.onGuestMode = { [weak login] in
                     // 游客入口：关登录页、进游客态（回日记原地，不开九宫格）。
                     login?.dismiss(animated: BearyMotion.animated(true)) {
