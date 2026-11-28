@@ -2604,7 +2604,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             self.lockedQuote = SelectedQuote(entryId: current.entryId, content: current.content, createdAt: current.createdAt, authorName: current.authorName, authorAvatar: current.authorAvatar, authorId: current.authorId, isMine: current.isMine, authorHandle: current.authorHandle, images: current.images, isPublic: true, publishAt: current.publishAt, imgDims: current.imgDims, isDeleted: false, visibility: "public", ephemeralUntil: nil)
                         }
                         self.refreshQuoteSection()
-                        self.showToast(message: "原日记已公开")
                     case .failure:
                         self.showToast(message: "原日记公开失败，请重试")
                     }
