@@ -565,18 +565,18 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
             contentStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        let (maskRow, _) = bearySettingsSwitchContent(title: "隐私遮罩", detail: "在多任务切换界面中隐藏日记内容", isOn: BearyAppLockSettings.isMaskEnabled, target: self, action: #selector(maskSwitchChanged(_:)))
-        let (autoLocationRow, _) = bearySettingsSwitchContent(title: "自动获取定位", detail: "写日记时自动获取当前位置", isOn: BearyAutoFetch.isLocationEnabled, target: self, action: #selector(autoLocationSwitchChanged(_:)))
+        let (maskRow, _) = bearySettingsSwitchContent(title: "隐私遮罩", detail: nil, isOn: BearyAppLockSettings.isMaskEnabled, target: self, action: #selector(maskSwitchChanged(_:)))
+        let (autoLocationRow, _) = bearySettingsSwitchContent(title: "自动获取定位", detail: nil, isOn: BearyAutoFetch.isLocationEnabled, target: self, action: #selector(autoLocationSwitchChanged(_:)))
         let precisionButton = UIButton(type: .custom)
         precisionButton.accessibilityLabel = "定位地址精度"
         precisionButton.addTarget(self, action: #selector(precisionRowTapped), for: .touchUpInside)
         let precisionRow = bearySettingsTappableRow(content: bearySettingsNavContent(title: "定位地址精度", detail: BearyLocationPrecision.current.title), button: precisionButton)
-        let (autoWeatherRow, _) = bearySettingsSwitchContent(title: "自动获取天气", detail: "写日记时自动获取当地天气", isOn: BearyAutoFetch.isWeatherEnabled, target: self, action: #selector(autoWeatherSwitchChanged(_:)))
+        let (autoWeatherRow, _) = bearySettingsSwitchContent(title: "自动获取天气", detail: nil, isOn: BearyAutoFetch.isWeatherEnabled, target: self, action: #selector(autoWeatherSwitchChanged(_:)))
         let blockedButton = UIButton(type: .custom)
         blockedButton.accessibilityLabel = "已拉黑用户"
         blockedButton.addTarget(self, action: #selector(blockedRowTapped), for: .touchUpInside)
         let blockedRow = bearySettingsTappableRow(content: bearySettingsNavContent(title: "已拉黑用户", detail: nil), button: blockedButton)
-        // 私信行：标题＋副标题“你关注的人始终可以给你发私信”，行尾当前档位。
+        // 私信行：标题＋行尾当前档位。
         let dmTitle = UILabel()
         dmTitle.translatesAutoresizingMaskIntoConstraints = false
         dmTitle.font = BearyDynamicType.smallBodyFont()
@@ -584,14 +584,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
         dmTitle.textColor = BearyColors.ink
         dmTitle.numberOfLines = 0
         dmTitle.text = "谁可以私信我"
-        let dmSubtitle = UILabel()
-        dmSubtitle.translatesAutoresizingMaskIntoConstraints = false
-        dmSubtitle.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
-        dmSubtitle.adjustsFontForContentSizeCategory = true
-        dmSubtitle.textColor = BearyColors.gray
-        dmSubtitle.numberOfLines = 0
-        dmSubtitle.text = "你关注的人始终可以给你发私信"
-        let dmTextStack = UIStackView(arrangedSubviews: [dmTitle, dmSubtitle])
+        let dmTextStack = UIStackView(arrangedSubviews: [dmTitle])
         dmTextStack.axis = .vertical
         dmTextStack.spacing = 2
         dmTextStack.alignment = .fill
@@ -828,12 +821,10 @@ final class BearySecuritySettingsViewController: BearySettingsSubpageViewControl
             contentStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        let codeDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        codeDetail.text = "每次登录发送 6 位验证码，无需密码"
         let codeTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         codeTitle.font = BearyDynamicType.smallBodyFont()
         codeTitle.text = "邮箱验证码登录"
-        let codeTextStack = UIStackView(arrangedSubviews: [codeTitle, codeDetail])
+        let codeTextStack = UIStackView(arrangedSubviews: [codeTitle])
         codeTextStack.axis = .vertical
         codeTextStack.spacing = 2
         codeTextStack.alignment = .fill
@@ -867,8 +858,8 @@ final class BearySecuritySettingsViewController: BearySettingsSubpageViewControl
         lockTitle.font = BearyDynamicType.smallBodyFont()
         lockTitle.text = "\(BearyAppLockSettings.biometryName)解锁"
         let lockDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        lockDetail.text = lockAvailability.available ? BearyAppLockSettings.coldStartNote : (BearyAppLockSettings.isEnabled ? "已开启，当前设备未录入生物识别，重新启动 beary 时改用设备密码验证，点按开关可关闭" : (lockAvailability.reason ?? "此设备暂无法使用生物识别"))
-        let lockTextStack = UIStackView(arrangedSubviews: [lockTitle, lockDetail])
+        lockDetail.text = BearyAppLockSettings.isEnabled ? "已开启，当前设备未录入生物识别，重新启动 beary 时改用设备密码验证，点按开关可关闭" : (lockAvailability.reason ?? "此设备暂无法使用生物识别")
+        let lockTextStack = UIStackView(arrangedSubviews: lockAvailability.available ? [lockTitle] : [lockTitle, lockDetail])
         lockTextStack.axis = .vertical
         lockTextStack.spacing = 2
         lockTextStack.alignment = .fill

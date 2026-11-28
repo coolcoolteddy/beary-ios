@@ -3220,9 +3220,7 @@ final class BearySettingsViewController: UIViewController {
         soundSwitchTitle.font = BearyDynamicType.smallBodyFont()
         soundSwitchTitle.text = "音效"
         soundSwitchTitle.numberOfLines = 0 // P1-7：开关行正文标题多行
-        let soundSwitchDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        soundSwitchDetail.text = "点按、发布等操作的提示音"
-        let soundSwitchTextStack = UIStackView(arrangedSubviews: [soundSwitchTitle, soundSwitchDetail])
+        let soundSwitchTextStack = UIStackView(arrangedSubviews: [soundSwitchTitle])
         soundSwitchTextStack.axis = .vertical
         soundSwitchTextStack.spacing = 2
         soundSwitchTextStack.alignment = .fill
