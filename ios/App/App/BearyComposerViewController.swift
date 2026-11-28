@@ -434,11 +434,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var selectedRecipient: SearchUser? {
         didSet { editorEditVersion += 1 }
     }
-    /// 通知对方：iCity @ 提醒无按篇开关——选人面板的开关值不再用于发布，
-    /// 仅作面板初值占位保留，不触发重渲染、不进请求。
-    private var notifyRecipient = true {
-        didSet { editorEditVersion += 1 }
-    }
     /// 新建模式的引用（编辑模式不用它，引用锁定，见 lockedQuote）。
     private var selectedQuote: SelectedQuote? {
         didSet { editorEditVersion += 1 }
@@ -1129,9 +1124,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let recipientChipFallback = UILabel()
     private let recipientChipName = UILabel()
     private let recipientClearButton = BearyHit44Button(type: .system)
-    private let notifyGroup = UIStackView()
-    private let notifyCheckButton = BearyHit44Button(type: .system)
-    private let notifyLabel = UILabel()
     // 顶部 @ 提示行（顶栏下方固定行，写字时始终可见；点按同底部 chip，走 openToolStrip(.recipient)）。
     private let mentionTopRow = UIView()
     private let mentionTopPill = BearyHit44Button(type: .system)
@@ -1252,7 +1244,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         // 深浅切换时 CGColor 只在赋值时解析一次，必须重赋：
-        // 天气 chip 描边、通知复选框描边、草稿 pill 描边、字数圆环轨道色
+        // 天气 chip 描边、草稿 pill 描边、字数圆环轨道色
         // 全走已有刷新函数重算。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshSelectedChips()
@@ -1261,8 +1253,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // （补丁叠加留下的重复调用），已删——一次刷新即含图标与换行重算。
             refreshInlineMoodImages()
             headlineHeightConstraint?.constant = max(28, ceil(headlineFont.lineHeight) + 2)
-            refreshNotifyCheck()
-            notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
             draftPillButton.layer.bearyDynamicBorderColor = BearyColors.line
             charTrackLayer?.strokeColor = BearyColors.line.cgColor
             updateCountLabel()
@@ -2247,21 +2237,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientClearButton.layer.masksToBounds = true
         recipientClearButton.addTarget(self, action: #selector(didTapClearRecipient), for: .touchUpInside)
         recipientClearButton.bearyAddPressFeedback()
-        notifyCheckButton.layer.cornerRadius = 4
-        notifyCheckButton.layer.masksToBounds = true
-        notifyCheckButton.layer.borderWidth = 1
-        notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
-        notifyCheckButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
-        notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
-        notifyCheckButton.bearyAddPressFeedback()
-        notifyLabel.text = "通知对方"
-        notifyLabel.font = UIFont.systemFont(ofSize: 13)
-        notifyLabel.textColor = BearyColors.ink
-        notifyGroup.axis = .horizontal
-        notifyGroup.spacing = 6
-        notifyGroup.alignment = .center
-        notifyGroup.addArrangedSubview(notifyCheckButton)
-        notifyGroup.addArrangedSubview(notifyLabel)
         recipientSection.translatesAutoresizingMaskIntoConstraints = false
         recipientLine.translatesAutoresizingMaskIntoConstraints = false
         recipientChipView.translatesAutoresizingMaskIntoConstraints = false
@@ -2269,11 +2244,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientChipFallback.translatesAutoresizingMaskIntoConstraints = false
         recipientChipName.translatesAutoresizingMaskIntoConstraints = false
         recipientClearButton.translatesAutoresizingMaskIntoConstraints = false
-        notifyCheckButton.translatesAutoresizingMaskIntoConstraints = false
         toolStripStack.addArrangedSubview(recipientSection)
         recipientSection.isHidden = true
         recipientSection.addArrangedSubview(recipientLine)
-        recipientSection.addArrangedSubview(notifyGroup)
         recipientLine.addArrangedSubview(recipientChipView)
         recipientChipView.addSubview(recipientChipAvatar)
         recipientChipView.addSubview(recipientChipFallback)
@@ -2296,18 +2269,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             recipientClearButton.widthAnchor.constraint(equalToConstant: 18),
             recipientClearButton.heightAnchor.constraint(equalToConstant: 18),
             recipientChipView.heightAnchor.constraint(equalToConstant: 30),
-            notifyCheckButton.widthAnchor.constraint(equalToConstant: 16),
-            notifyCheckButton.heightAnchor.constraint(equalToConstant: 16),
         ])
         refreshRecipientRow()
     }
 
     /// @ 行状态：新建未选 → 区内无内容（高度塌为 0）；新建已选 → chip + ×；
     /// 编辑模式 → 可改选可清除：已清除且未重选 → 区内无内容；已改选 → 新 chip + ×；
-    /// 未动 → 原 @ chip + ×；编辑且无 @ → 区内无内容。@ 提醒无按篇开关，通知行一律隐藏。
+    /// 未动 → 原 @ chip + ×；编辑且无 @ → 区内无内容。
     private func refreshRecipientRow() {
         if isEditMode {
-            notifyGroup.isHidden = true
             if editMentionCleared, selectedRecipient == nil {
                 recipientChipView.isHidden = true
             } else if let user = selectedRecipient {
@@ -2365,27 +2335,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             recipientChipName.text = "@" + name
             recipientClearButton.isHidden = false
-            // iCity：@ 提醒无按篇开关，选择条内不显示通知行。
-            notifyGroup.isHidden = true
         } else {
             recipientChipView.isHidden = true
-            notifyGroup.isHidden = true
         }
-        refreshNotifyCheck()
         refreshSelectedChips()
-    }
-
-    /// 通知复选框只改本地状态与自身外观，不重建行（网页版同款规矩）。
-    private func refreshNotifyCheck() {
-        if notifyRecipient {
-            notifyCheckButton.backgroundColor = BearyColors.ink
-            // I6：通知复选改用 icon_check 资产；底是 ink、对勾须取反色 bg（深色下 ink 近白）。
-            notifyCheckButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
-            notifyCheckButton.tintColor = BearyColors.bg
-        } else {
-            notifyCheckButton.backgroundColor = UIColor.clear
-            notifyCheckButton.setImage(nil, for: .normal)
-        }
     }
 
     @objc private func didTapPickRecipient() {
@@ -2398,12 +2351,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // first responder 不发 WillShow，不传则搜索框会被键盘盖住（见选人器
         // applyInitialKeyboardLiftIfNeeded）；键盘没起时传 0，走正常通知路径。
         picker.initialKeyboardHeight = currentKeyboardHeight
-        picker.notifyRecipient = self.notifyRecipient
-        picker.onPick = { [weak self] user, notify in
+        picker.onPick = { [weak self] user in
             guard let self = self else { return }
             self.selectedRecipient = user
-            // iCity：@ 提醒无按篇开关——面板回传的开关值忽略，不进发布请求。
-            _ = notify
             self.editMentionCleared = false
             self.refreshRecipientRow()
             self.updatePublishState()
@@ -2431,13 +2381,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshToolStrip()
         saveDraftNow()
         updatePublishState()
-    }
-
-    @objc private func didTapNotifyCheck() {
-        if isEditMode { return }
-        notifyRecipient.toggle()
-        refreshNotifyCheck()
-        saveDraftNow()
     }
 
     // MARK: - 引用 lite 卡（网页 diaryCardLite：头像 40 + 名 + 正文 + 图片 +
@@ -5636,9 +5579,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteToolButton.isEnabled = !frozen
         recipientChipButton.isEnabled = !frozen
         recipientClearButton.isEnabled = !frozen
-        // 例外：通知复选框编辑态本就禁用（refreshRecipientRow 的编辑锁定），
-        // 冻结恢复时不得误解开；新建态才随冻结恢复。
-        notifyCheckButton.isEnabled = !frozen && !isEditMode
         quoteCardRemoveButton.isEnabled = !frozen
         quoteDeletedRemoveButton.isEnabled = !frozen
         emoteToolButton.isEnabled = !frozen
@@ -8431,7 +8371,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             recipientId: recipientUserId,
             recipientName: recipientNameValue,
             recipientAvatar: selectedRecipient?.avatarUrl,
-            notifyRecipient: notifyRecipient,
             quoteId: selectedQuote?.entryId,
             quoteAuthorName: selectedQuote?.authorName,
             quoteAuthorAvatar: selectedQuote?.authorAvatar,
@@ -8594,7 +8533,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.refreshTagsRow()
                 self.restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
                 self.selectedRecipient = self.restoredRecipient(from: draft)
-                self.notifyRecipient = draft.notifyRecipient
                 self.selectedQuote = self.restoredQuote(from: draft)
                 // 原日记已公开态：同 loadDraftFromBox，只认本篇草稿的持久标记。
                 self.sourceAlreadyPublishedQuoteId = draft.sourcePublished ? draft.quoteId : nil
@@ -9044,7 +8982,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 切空白：上一篇在途自动填天气回包即过期作废，不写进新篇（见 weatherFetchGeneration）。
         weatherFetchGeneration += 1
         selectedRecipient = nil
-        notifyRecipient = true
         selectedQuote = nil
         // 批 E：重置为空白时位置与编辑原快照同清，行随之隐藏。
         selectedLocation = nil
@@ -9152,7 +9089,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshTagsRow()
         restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
         selectedRecipient = restoredRecipient(from: draft)
-        notifyRecipient = draft.notifyRecipient
         selectedQuote = restoredQuote(from: draft)
         // 原日记已公开态：只认本篇草稿的持久标记，引用仍是同一篇原日记
         // 时点发布跳过门禁、只发新篇（见 didTapPublish）。

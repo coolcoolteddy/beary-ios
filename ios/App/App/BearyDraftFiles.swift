@@ -12,7 +12,7 @@ import ImageIO
 // v3 = v2 字段（正文 + 心情 + 图片项数组（本地文件名 / 服务端 key / 上传状态
 // / 实况视频 key / 待传实况视频本地 mov 文件名，见 B1）
 // + clientReq（本篇草稿创建时生成一次，发布重试全程复用，拿到 entry id 才换）
-// + updatedAt）+ weather + recipientId + notifyRecipient + quoteId
+// + updatedAt）+ weather + recipientId + quoteId
 // + 引用展示快照（作者名 / 作者头像 / 日期 / 正文 / 图片 key / 是否公开 / 已删标记）
 // + 写给展示快照（收信人展示名 / 头像路径；只为恢复 chip 显示，不作身份依据）。
 // + 可见性分段 index（0 私密 / 1 公开；老草稿缺本键时按 0 私密解码）。
@@ -114,7 +114,6 @@ struct BearyDraft: Codable {
     var recipientId: Int?
     var recipientName: String?
     var recipientAvatar: String?
-    var notifyRecipient: Bool
     var quoteId: String?
     var quoteAuthorName: String?
     var quoteAuthorAvatar: String?
@@ -1328,7 +1327,6 @@ enum BearyDraftStore {
                 recipientId: nil,
                 recipientName: nil,
                 recipientAvatar: nil,
-                notifyRecipient: true,
                 quoteId: nil,
                 quoteAuthorName: nil,
                 quoteAuthorAvatar: nil,
@@ -1355,7 +1353,6 @@ enum BearyDraftStore {
                 recipientId: nil,
                 recipientName: nil,
                 recipientAvatar: nil,
-                notifyRecipient: true,
                 quoteId: nil,
                 quoteAuthorName: nil,
                 quoteAuthorAvatar: nil,
