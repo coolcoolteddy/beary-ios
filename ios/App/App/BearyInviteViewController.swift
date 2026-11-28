@@ -215,7 +215,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "邀请好友"
-        titleLabel.font = BearyDynamicType.cappedFont(for: BearyDynamicType.serifDesign(for: UIFont.systemFont(ofSize: 21, weight: .heavy)), maximumPointSize: 28)
+        titleLabel.font = BearyDynamicType.pageTitleFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
 
@@ -231,7 +231,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
         codeBox.layer.cornerRadius = 12
         codeLabel.translatesAutoresizingMaskIntoConstraints = false
         codeLabel.text = "—"
-        codeLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 20, weight: .bold), maximumPointSize: 28)
+        codeLabel.font = BearyDynamicType.fieldFont()
         codeLabel.adjustsFontForContentSizeCategory = true
         codeLabel.textColor = BearyColors.ink
         copyButton.translatesAutoresizingMaskIntoConstraints = false
@@ -316,7 +316,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         messageLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         messageLabel.adjustsFontForContentSizeCategory = true
-        messageLabel.textColor = BearyColors.surface3ErrorText
+        messageLabel.textColor = BearyColors.destructiveText
         messageLabel.numberOfLines = 0
         // 第十一轮审计 3：无文案时整行隐藏、不占 18pt + 8pt 间距；有文案时由 showMessage / render 恢复显示（照登录页 showMessage 口径）。
         messageLabel.isHidden = true
@@ -382,7 +382,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
             stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -BearySpace.lg),
             stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             stackView.widthAnchor.constraint(lessThanOrEqualToConstant: 432),
-            codeBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 56),
+            codeBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
             codeLabel.leadingAnchor.constraint(equalTo: codeBox.leadingAnchor, constant: 16),
             codeLabel.centerYAnchor.constraint(equalTo: codeBox.centerYAnchor),
             copyButton.trailingAnchor.constraint(equalTo: codeBox.trailingAnchor, constant: -8),
@@ -465,7 +465,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
     private func showMessage(_ text: String, ok: Bool = false) {
         messageLabel.text = text
         messageLabel.isHidden = text.isEmpty
-        messageLabel.textColor = ok ? BearyColors.deepGreenText : BearyColors.surface3ErrorText
+        messageLabel.textColor = ok ? BearyColors.deepGreenText : BearyColors.destructiveText
         // 审计登录杂项：行内失败时绑定框同步 isError 红边，成功 / 清空时复位。
         bindInputContainer?.isError = !text.isEmpty && !ok
     }
@@ -700,7 +700,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
         // 审计 P2：绑定成功文案先显示——render 清空消息行后，待展示的绑定文案重新落回。
         if let pending = pendingBindMessage {
             messageLabel.text = pending
-            messageLabel.textColor = pendingBindMessageOK ? BearyColors.deepGreenText : BearyColors.surface3ErrorText
+            messageLabel.textColor = pendingBindMessageOK ? BearyColors.deepGreenText : BearyColors.destructiveText
             pendingBindMessage = nil
         }
         // 第十一轮审计 3：render 直接写 text、绕过 showMessage，此处同步显隐——无文案隐藏、有待展示文案显示。
