@@ -1581,13 +1581,11 @@ final class BearyNotificationsViewController: UIViewController {
         return t != "system" && t != "letter" && t != "dm"
     }
 
-    /// 多人通知聚合（2026-11-18 Li 定）：同一动作、同一目标、≥2 人合并一条。
-    /// 分组键：like/bookmark/emote 按（动作＋entry_id）；follow 目标即本人，
-    /// 按动作本身。mention 不聚合（@ 提醒各有各的上下文）；无 entry_id 的
+    /// 多人通知聚合分组键（2026-11-18 Li 定，#1873 口径；详情页复用同一条）：
+    /// like/bookmark/emote 按（动作＋entry_id）；follow 目标即本人，按动作
+    /// 本身。mention 不聚合（@ 提醒各有各的上下文）；无 entry_id 的
     /// like/bookmark/emote 同样不聚合（目标不明，宁单条不错组）。
-    private func notificationGroupKey(for index: Int) -> String? {
-        guard index < items.count else { return nil }
-        let item = items[index]
+    static func groupKey(for item: NotificationItem) -> String? {
         let type = item.type ?? ""
         switch type {
         case "like", "bookmark", "emote":
@@ -1598,6 +1596,12 @@ final class BearyNotificationsViewController: UIViewController {
         default:
             return nil
         }
+    }
+
+    /// 多人通知聚合（2026-11-18 Li 定）：同一动作、同一目标、≥2 人合并一条。
+    private func notificationGroupKey(for index: Int) -> String? {
+        guard index < items.count else { return nil }
+        return Self.groupKey(for: items[index])
     }
 
     /// 互动行分组：槽位按首次出现顺序（即时间倒序）——单条占一槽，一组占一槽，
@@ -4796,7 +4800,7 @@ class BearyNotificationCell: UITableViewCell {
     /// 表情附件（各成员表情可能不同，动词已说明动作）。
     /// 注：后端已在通知里补 e.title（2026-11-18 Li 定），代表条有标题时动词后加《标题》，
     /// 无标题（null/空/旧缓存）仍用现行动词（「赞了你的日记」）。
-    func configureAsGroup(representative: NotificationItem, members: [NotificationItem], nested: Bool, highlight: Bool, expanded: Bool, onToggle: @escaping () -> Void) {
+    func configureAsGroup(representative: NotificationItem, members: [NotificationItem], nested: Bool, highlight: Bool, expanded: Bool, onToggle: @escaping () -> Void, mergedList: Bool = false) {
         hideFollowAction()
         resetAvatarStack()
         cancelAvatarLoad()
@@ -4810,7 +4814,7 @@ class BearyNotificationCell: UITableViewCell {
         popperView.isHidden = true
         kindBadgeView.isHidden = true
         avatarLeadingConstraint?.constant = nested ? 50 : 16
-        separatorLeadingConstraint?.constant = nested ? 30 : 0
+        separatorLeadingConstraint?.constant = mergedList ? 16 : (nested ? 30 : 0)
         nestedLineView.isHidden = !nested
         chevronView.isHidden = true
         applyBodyStackTrailing()
@@ -5439,6 +5443,22 @@ extension BearyNotificationsViewController {
         openNotification(items[index], at: index)
     }
 
+    /// 详情页聚合行点按：按 id 把组员换算成源表下标，走 openGroupNotification
+    /// 同套（follow 组只标代表条已读、进代表条主页；entry 组全标已读、进日记详情）。
+    func openGroupForDetail(members: [NotificationItem]) {
+        let indices = members.compactMap { member in
+            member.id.flatMap { id in items.firstIndex(where: { $0.id == id }) }
+        }
+        guard let first = indices.first else { return }
+        openGroupNotification(NotificationDisplayRow(kind: .actItem, itemIndex: first, groupItemIndices: indices))
+    }
+
+    /// 详情页聚合行已读同步：按 id 取源表该条的已读态（源页 openGroupNotification
+    /// 已按组口径标过，详情页本地拷贝据此同步，不自算口径）。
+    func readStateForDetail(id: Int) -> Bool? {
+        return items.first(where: { $0.id == id })?.read
+    }
+
     /// 详情页高亮判定：与行 cell 同口径（未读且晚于 seen 水印）。
     func highlightForDetail(_ item: NotificationItem) -> Bool {
         return shouldHighlight(item: item)
@@ -5486,6 +5506,16 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
     private let tableView = UITableView(frame: .zero, style: .plain)
     private var items: [NotificationItem]
 
+    /// 详情页展示行（#1873 分组键，见 BearyNotificationsViewController.groupKey）：
+    /// 同类多条并成一组（成员下标指回 items，时间倒序、最新在前），单条仍为一行。
+    private struct DetailDisplayRow {
+        let representativeIndex: Int
+        var memberIndices: [Int]?
+    }
+    private var displayRows: [DetailDisplayRow] = []
+    /// 聚合头像组展开态：按组 key 持有（与子页 expandedGroupKeys 同口径）。
+    private var expandedGroupKeys: Set<String> = []
+
     init(
         card: NotifMergeCardData,
         notifSource: BearyNotificationsViewController,
@@ -5502,8 +5532,48 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         return nil
     }
 
+    /// 详情页行表重建：与子页 groupedActRows 同口径——组按首次出现顺序
+    /// （即时间倒序），组内下标按时间倒序（最新在前）；只出现一次的键仍为单条。
+    private func rebuildDisplayRows() {
+        var rows: [DetailDisplayRow] = []
+        var groupRowPosition: [String: Int] = [:]
+        for index in items.indices {
+            guard let key = BearyNotificationsViewController.groupKey(for: items[index]) else {
+                rows.append(DetailDisplayRow(representativeIndex: index, memberIndices: nil))
+                continue
+            }
+            if let position = groupRowPosition[key] {
+                if var members = rows[position].memberIndices {
+                    members.append(index)
+                    rows[position].memberIndices = members
+                } else {
+                    rows[position].memberIndices = [rows[position].representativeIndex, index]
+                }
+            } else {
+                groupRowPosition[key] = rows.count
+                rows.append(DetailDisplayRow(representativeIndex: index, memberIndices: nil))
+            }
+        }
+        displayRows = rows
+    }
+
+    /// 聚合头像组展开/收起（与子页 toggleGroupExpanded 同口径）：VC 只记 key，
+    /// 行高生长走 begin/endUpdates；栈内圆圈散开由 cell 播。
+    private func toggleGroupExpanded(key: String, cell: BearyNotificationCell) {
+        let expanding = !expandedGroupKeys.contains(key)
+        if expanding {
+            expandedGroupKeys.insert(key)
+        } else {
+            expandedGroupKeys.remove(key)
+        }
+        cell.setGroupExpanded(expanding, animated: true)
+        tableView.beginUpdates()
+        tableView.endUpdates()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+        rebuildDisplayRows()
         view.backgroundColor = BearyColors.bg
 
         let topBar = UIView()
@@ -5573,6 +5643,7 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         // 从上层页返回时补齐翻页追加的新条目；toast 改挂本页。
         if let fresh = notifSource.mergeSnapshot.cards.first(where: { $0.kind == card.kind }) {
             items = fresh.items
+            rebuildDisplayRows()
             tableView.reloadData()
         }
         notifSource.toastOverride = { [weak self] message in
@@ -5603,8 +5674,11 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
     ///（与子页 refreshFollowCardRows 同口径，避免整行闪一下）。
     func refreshFollowButtons(actorId: Int) {
         for path in tableView.indexPathsForVisibleRows ?? [] {
-            guard path.row < items.count else { continue }
-            let item = items[path.row]
+            guard path.row < displayRows.count else { continue }
+            // 聚合行不画回关钮，只刷新单条 follow 行。
+            let row = displayRows[path.row]
+            guard row.memberIndices == nil else { continue }
+            let item = items[row.representativeIndex]
             guard item.type == "follow", item.actorId == actorId,
                   let cell = tableView.cellForRow(at: path) as? BearyNotificationCell else { continue }
             cell.configureFollowCard(state: notifSource.followStateForDetail(actorId: actorId)) { [weak self] in
@@ -5616,14 +5690,20 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
     /// 详情展开过渡的源行：带该 entryId 的通知行可见时返回 cell
     /// （供动画器快照 morph）；行不在视野内时返回 nil（动画器走兜底）。
     func detailSourceView(for entryId: String) -> UIView? {
-        guard let row = items.firstIndex(where: { $0.entryId == entryId }) else { return nil }
+        // 组员在组内时返回组行 cell（组行即该 entry 的可见行）。
+        guard let row = displayRows.firstIndex(where: { displayRow in
+            if let memberIndices = displayRow.memberIndices {
+                return memberIndices.contains(where: { $0 < items.count && items[$0].entryId == entryId })
+            }
+            return items[displayRow.representativeIndex].entryId == entryId
+        }) else { return nil }
         return tableView.cellForRow(at: IndexPath(row: row, section: 0))
     }
 
     // MARK: - Table
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return items.count
+        return displayRows.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -5633,20 +5713,41 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         ) as? BearyNotificationCell else {
             return UITableViewCell()
         }
-        let item = items[indexPath.row]
-        // 详情页行是顶层行（非嵌套）：头像 x=16、分隔线缩进 16、
-        // 行高 72、头像垂直居中、标题／摘要间距 5，与私信行统一（mergedList）。
-        cell.configure(with: item, nested: false, highlight: notifSource.highlightForDetail(item), mergedList: true)
-        if item.type == "follow", let actorId = item.actorId {
-            cell.configureFollowCard(state: notifSource.followStateForDetail(actorId: actorId)) { [weak self] in
-                self?.notifSource.performFollowBackForDetail(actorId: actorId)
+        guard indexPath.row < displayRows.count else { return cell }
+        let row = displayRows[indexPath.row]
+        if let memberIndices = row.memberIndices, memberIndices.count >= 2 {
+            // 聚合行：头像组＋多人标题；聚合 follow 行不画回关钮（与子页 #1873 同口径）。
+            let members = memberIndices.compactMap { $0 < items.count ? items[$0] : nil }
+            let representative = items[row.representativeIndex]
+            let groupKey = BearyNotificationsViewController.groupKey(for: representative) ?? ""
+            cell.configureAsGroup(
+                representative: representative,
+                members: members,
+                nested: false,
+                highlight: members.contains(where: { notifSource.highlightForDetail($0) }),
+                expanded: expandedGroupKeys.contains(groupKey),
+                onToggle: { [weak self, weak cell] in
+                    guard let strongSelf = self, let cell = cell else { return }
+                    strongSelf.toggleGroupExpanded(key: groupKey, cell: cell)
+                },
+                mergedList: true
+            )
+        } else {
+            let item = items[row.representativeIndex]
+            // 详情页行是顶层行（非嵌套）：头像 x=16、分隔线缩进 16、
+            // 行高 72、头像垂直居中、标题／摘要间距 5，与私信行统一（mergedList）。
+            cell.configure(with: item, nested: false, highlight: notifSource.highlightForDetail(item), mergedList: true)
+            if item.type == "follow", let actorId = item.actorId {
+                cell.configureFollowCard(state: notifSource.followStateForDetail(actorId: actorId)) { [weak self] in
+                    self?.notifSource.performFollowBackForDetail(actorId: actorId)
+                }
             }
         }
         return cell
     }
 
     func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
-        guard indexPath.row < items.count else { return }
+        guard indexPath.row < displayRows.count else { return }
         guard let cell = tableView.cellForRow(at: indexPath) else { return }
         BearyIconMotion.rowPressDown(on: cell.contentView)
     }
@@ -5658,12 +5759,22 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
-        guard indexPath.row < items.count else { return }
+        guard indexPath.row < displayRows.count else { return }
+        let row = displayRows[indexPath.row]
+        if let memberIndices = row.memberIndices, memberIndices.count >= 2 {
+            // 聚合行点按：走子页 openGroupNotification 同套（follow 组只标
+            // 代表条已读、进代表条主页；entry 组全标已读、进日记详情），
+            // 再同步本页本地拷贝的已读态（见 applyLocalGroupRead）。
+            let members = memberIndices.compactMap { $0 < items.count ? items[$0] : nil }
+            notifSource.openGroupForDetail(members: members)
+            applyLocalGroupRead(at: indexPath)
+            return
+        }
         // 行点按全走子页原分流（乐观已读＋POST＋导航）：follow 行 → 容器
         // onOpenUser → 个人页（旧行为整行点按即进个人页，这里同口径，
         // 不另给人名／头像加独立按钮）；entry 行 → 日记详情；dm 行 →
         // 会话页；无 entry 的系统／信件行 → 信件模态（挂本页 view）。
-        let tappedItem = items[indexPath.row]
+        let tappedItem = items[row.representativeIndex]
         notifSource.openItemForDetail(tappedItem)
         // 乐观已读就地清点：源页 openNotification 只改源模型＋源表，
         // 本页 items 是 card.items 的值拷贝、源表也不在本页层级，点按后
@@ -5678,15 +5789,38 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
     /// 已读行／无 id 行不做任何事。
     private func applyLocalRead(itemId: Int?, at indexPath: IndexPath) {
         guard let itemId = itemId,
-              indexPath.row < items.count,
-              items[indexPath.row].id == itemId,
-              (items[indexPath.row].read ?? true) == false else { return }
-        items[indexPath.row].read = true
+              indexPath.row < displayRows.count else { return }
+        let row = displayRows[indexPath.row]
+        guard row.memberIndices == nil,
+              items[row.representativeIndex].id == itemId,
+              (items[row.representativeIndex].read ?? true) == false else { return }
+        items[row.representativeIndex].read = true
         guard let cell = tableView.cellForRow(at: indexPath) as? BearyNotificationCell else { return }
-        let item = items[indexPath.row]
+        let item = items[row.representativeIndex]
         let isSystemStyle = item.type == "system" || item.type == "letter"
         // 已读后高亮判定恒 false（shouldHighlight 先判 read），直接灭。
         cell.setReadAppearance(isUnread: false, isSystemStyle: isSystemStyle, highlight: false)
+    }
+
+    /// 详情页聚合行乐观已读就地清点：按源页已标的成员同步本地拷贝
+    ///（follow 组只代表条、entry 组全员；源页没标的成员保持未读），
+    /// 再就地改该行 class（未读点看组内任一成员）。
+    private func applyLocalGroupRead(at indexPath: IndexPath) {
+        guard indexPath.row < displayRows.count else { return }
+        let row = displayRows[indexPath.row]
+        guard let memberIndices = row.memberIndices, memberIndices.count >= 2 else { return }
+        for index in memberIndices where index < items.count {
+            if let id = items[index].id, let read = notifSource.readStateForDetail(id: id) {
+                items[index].read = read
+            }
+        }
+        guard let cell = tableView.cellForRow(at: indexPath) as? BearyNotificationCell else { return }
+        let localMembers = memberIndices.compactMap { $0 < items.count ? items[$0] : nil }
+        let anyUnread = localMembers.contains(where: { ($0.read ?? true) == false })
+        let anyHighlight = localMembers.contains(where: { notifSource.highlightForDetail($0) })
+        let representative = items[row.representativeIndex]
+        let isSystemStyle = (representative.type ?? "") == "system" || (representative.type ?? "") == "letter"
+        cell.setReadAppearance(isUnread: anyUnread, isSystemStyle: isSystemStyle, highlight: anyHighlight)
     }
 
     /// 左滑删除单条通知：只给「删除」一个红色动作（卡片本身不加左滑）。
@@ -5694,12 +5828,17 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
     /// 一并走源页）；服务端失败时源页回滚＋toast，本页按 completion 把行
     /// 插回原位。减动效时行直接消失／出现，不播淡入淡出。
     func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
-        guard indexPath.row < items.count,
-              let notificationId = items[indexPath.row].id else { return nil }
-        let item = items[indexPath.row]
+        guard indexPath.row < displayRows.count else { return nil }
+        // 聚合行不给左滑删除（聚合行不是单条通知；与子页组行无左滑同口径）。
+        let row = displayRows[indexPath.row]
+        guard row.memberIndices == nil,
+              let notificationId = items[row.representativeIndex].id else { return nil }
+        let itemIndex = row.representativeIndex
+        let item = items[itemIndex]
         let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
             guard let self = self else { done(false); return }
-            self.items.remove(at: indexPath.row)
+            self.items.remove(at: itemIndex)
+            self.rebuildDisplayRows()
             tableView.deleteRows(at: [indexPath], with: BearyMotion.animated(true) ? .fade : .none)
             self.notifSource.deleteNotification(id: notificationId) { [weak self] success in
                 guard let self = self else { return }
@@ -5712,7 +5851,19 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
                         || (($0.createdAt ?? 0) == (item.createdAt ?? 0) && ($0.id ?? 0) < notificationId)
                 }) ?? self.items.count
                 self.items.insert(item, at: insertAt)
-                self.tableView.insertRows(at: [IndexPath(row: insertAt, section: 0)], with: BearyMotion.animated(true) ? .fade : .none)
+                self.rebuildDisplayRows()
+                // 插回后该条所在展示行（单条；若恰与同类成组则组行已存在，整表重绘）。
+                guard let displayRow = self.displayRows.firstIndex(where: { displayRow in
+                    if let memberIndices = displayRow.memberIndices {
+                        return memberIndices.contains(where: { $0 < self.items.count && self.items[$0].id == notificationId })
+                    }
+                    return self.items[displayRow.representativeIndex].id == notificationId
+                }) else { return }
+                if self.displayRows[displayRow].memberIndices != nil {
+                    self.tableView.reloadData()
+                } else {
+                    self.tableView.insertRows(at: [IndexPath(row: displayRow, section: 0)], with: BearyMotion.animated(true) ? .fade : .none)
+                }
             }
             done(true)
         }
@@ -5723,12 +5874,28 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
     /// 单条标已读失败回滚：把本地拷贝改回未读并重画该行（只改该行 class，
     /// 不 reloadRows）；行已不在本页列表时不做任何事（回页重读快照为准）。
     private func applyLocalReadRollback(notificationId: Int) {
-        guard let row = items.firstIndex(where: { $0.id == notificationId }),
-              (items[row].read ?? true) == true else { return }
-        items[row].read = false
-        let indexPath = IndexPath(row: row, section: 0)
+        guard let itemIndex = items.firstIndex(where: { $0.id == notificationId }),
+              (items[itemIndex].read ?? true) == true else { return }
+        items[itemIndex].read = false
+        guard let displayRow = displayRows.firstIndex(where: { displayRow in
+            if let memberIndices = displayRow.memberIndices {
+                return memberIndices.contains(itemIndex)
+            }
+            return displayRow.representativeIndex == itemIndex
+        }) else { return }
+        let indexPath = IndexPath(row: displayRow, section: 0)
         guard let cell = tableView.cellForRow(at: indexPath) as? BearyNotificationCell else { return }
-        let item = items[row]
+        let row = displayRows[displayRow]
+        if let memberIndices = row.memberIndices, memberIndices.count >= 2 {
+            let members = memberIndices.compactMap { $0 < items.count ? items[$0] : nil }
+            let anyUnread = members.contains(where: { ($0.read ?? true) == false })
+            let anyHighlight = members.contains(where: { notifSource.highlightForDetail($0) })
+            let representative = items[row.representativeIndex]
+            let isSystemStyle = (representative.type ?? "") == "system" || (representative.type ?? "") == "letter"
+            cell.setReadAppearance(isUnread: anyUnread, isSystemStyle: isSystemStyle, highlight: anyHighlight)
+            return
+        }
+        let item = items[itemIndex]
         let isSystemStyle = item.type == "system" || item.type == "letter"
         cell.setReadAppearance(isUnread: true, isSystemStyle: isSystemStyle, highlight: notifSource.highlightForDetail(item))
     }
