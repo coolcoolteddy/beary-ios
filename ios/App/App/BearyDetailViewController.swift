@@ -778,10 +778,13 @@ final class BearyDetailViewController: UIViewController {
     private var limitedBubbleActive = false
 
     /// 限时倒计时（操作行第一行，紧贴点赞右边；15 semibold，颜色跟随四档状态）。
+    /// 展示审计 G4-11：走 scaledFont＋adjustsFontForContentSizeCategory，
+    /// 与其余行内文字同口径，大字号档位跟随缩放。
     private let limitedCountdownLabel: UILabel = {
         let l = UILabel()
         l.translatesAutoresizingMaskIntoConstraints = false
-        l.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        l.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
+        l.adjustsFontForContentSizeCategory = true
         l.textColor = BearyColors.limitedCalmCountdown
         l.numberOfLines = 1
         l.isHidden = true
