@@ -1087,7 +1087,7 @@ final class BearyOnboardingViewController: UIViewController, UIGestureRecognizer
         switch page {
         case 0: return "下一步"
         case 1, 2: return "继续"
-        default: return SessionManager.shared.isLoggedIn ? "写下第一篇" : "开始写日记"
+        default: return SessionManager.shared.isLoggedIn ? "写下第一篇" : "登录，开始记录"
         }
     }
 
