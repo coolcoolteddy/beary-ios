@@ -6252,7 +6252,6 @@ class BearyProfileViewController: UIViewController {
                 BearyToast.show(in: view, message: "留话暂时读不出来，旧的还留着，等恢复后再写")
                 return
             }
-            BearyToast.show(in: view, message: "这串已留过话，明年见")
             pastSelfReplyingChainId = nil
             pastSelfReplyDrafts[chainId] = nil
             renderPastSelf(visible: pastSelfVisibleEntries())
