@@ -497,11 +497,15 @@ final class BearyLocalNotifications: NSObject {
         chrome.openLocalNotificationTarget(target)
     }
 
-    /// 已排提醒与期望是否一致：触发时刻与正文都相同即视为同一条，
+    /// 已排提醒与期望是否一致：触发时刻、正文与标题都相同即视为同一条，
     /// 不再重复提交。时刻按触发器的日历分量比对——触发器含秒（限时到期
-    /// 保留秒），秒级差异也参与比较。
+    /// 保留秒），秒级差异也参与比较。标题只在限时到期上设（commitDesired
+    /// 只给限时到期写 content.title），其余种类期望标题为空；旧待发送
+    /// 与新期望标题不同即视为不同条、重排。
     private static func isSameReminder(_ request: UNNotificationRequest, as item: DesiredRequest, calendar: Calendar) -> Bool {
+        let expectedTitle = item.kind == .limitedExpiry ? item.kind.title : ""
         guard request.content.body == item.body,
+              request.content.title == expectedTitle,
               let trigger = request.trigger as? UNCalendarNotificationTrigger else { return false }
         let wanted = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: item.fireDate)
         let existing = trigger.dateComponents
