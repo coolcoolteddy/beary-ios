@@ -1067,14 +1067,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var publishVisibilityButtons: [VisibilityChoice: BearyHit44Button] = [:]
     /// 准备发布行高：chip 行 30 ＋上下边距各 6。
     private static let publishVisibilityRowHeight: CGFloat = 42
-    /// 底部元信息行（2026-11-18 定位重做，预览 v2）：内容栈最末（引用卡下方、
-    /// 工具栏上方）：定位钮（图钉＋地名，点按重开选地点面板）＋天气 chip
+    /// 底部元信息行（2026-11-18 定位重做，预览 v2）：引用卡下方、@ chips 行与
+    /// 标签行上方（2026-11-27 起 @ 与标签行挪到内容栈最末）：定位钮（图钉＋地名，点按重开选地点面板）＋天气 chip
     /// （图标＋天气名＋气温，仅展示、不可点）。无地点时天气 chip 在左下角；
     /// 有地点时天气 chip 在定位右边（见 refreshMetaRow）。
     private let metaRowStack = UIStackView()
     private let locationMetaButton = BearyHit44Button(type: .system)
     private let metaRowSpacer = UIView()
-    // C1：已选中项轻量 Chip 行（正文下方）：写给一枚，点 chip 打开对应选择条；
+    // C1：已选中项轻量 Chip 行（内容栈底部，定位行下方）：写给一枚，点 chip 打开对应选择条；
     // 天气已移到底部元信息行（见 buildMetaRow），只展示、不可点。
     private let selectedChipsRow = UIStackView()
     /// 标签完整版（2026-11-18）：标签 chips 横向滚动行（selectedChipsRow 下方），
@@ -1200,7 +1200,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         buildMentionTopRow()
         // 109：内容栈首项为新标题输入区（见 buildHeadlineField），其下为正文。
         buildTextArea()
-        buildSelectedChipsRow()
         buildImageRow()
         buildImageUndoBar()
         buildToolbarRow()
@@ -1208,9 +1207,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         buildRecipientRow()
         buildQuoteSection()
         buildQuotePanel()
-        // 底部元信息行（定位＋天气）进内容栈最末（引用卡下方、工具栏上方，
-        // 见 buildMetaRow），须在 buildQuotePanel 之后建，顺序即栈顺序。
+        // 底部元信息行（定位＋天气）见 buildMetaRow，须在 buildQuotePanel 之后建；
+        // @ chips 行与标签行（见 buildSelectedChipsRow）最后建，进内容栈最末
+        // （定位行下方），顺序即栈顺序（2026-11-27 Li 定：与发布后卡片顺序一致）。
         buildMetaRow()
+        buildSelectedChipsRow()
         // 第三轮审计第 5 项：打开编辑器即绑定原账号（先于 setupEditContent /
         // restoreDraft 记下，检查点读写与编辑 PUT 都认它，不随重登改写；
         // 见 composerOriginAccountId，与 #1009 P0-1 同一绑定）。
@@ -4151,7 +4152,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             tagsStackView.addArrangedSubview(chip)
         }
         tagsScrollView.isHidden = false
-        contentStack.setCustomSpacing(8, after: tagsScrollView)
+        // 标签行现为内容栈最末一行（2026-11-27 @ 与标签行挪到底部），
+        // 有标签时也不留 after 间距，不在滚动区底留尾巴空白。
+        contentStack.setCustomSpacing(0, after: tagsScrollView)
         // 标签行出现改内容栈高，正文高滞留则底部留空（同 refreshQuoteSection）。
         updateTextViewHeight()
         updatePreferredContentSize()
