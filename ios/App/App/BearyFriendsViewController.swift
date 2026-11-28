@@ -633,8 +633,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     }
 
     /// 行内 ⋯ 菜单：取关为红字 destructive；点取关后再弹一次确认框，
-    /// 确认后先发请求、成功再删行（取关列为乐观更新例外，第六轮审计 N5），
-    /// 失败行保留原位＋拒绝反馈＋toast，不插回；
+    /// 确认后行立即删（乐观更新；Li 2026-11-28 定，第六轮审计 N5 例外作废），
+    /// 失败把行插回原位＋拒绝反馈＋toast；
     /// 成功后清缓存并广播，各列表页据此重拉（取关静默解除，不发通知）。
     private func presentFriendMenu(user: BearyAPI.FriendUser, sourceButton: UIButton) {
         guard let userId = user.id else { return }
@@ -643,9 +643,14 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                 guard let self = self else { return }
                 BearyFriends.confirmUnfollowAlert(from: self, displayName: user.displayName ?? "", mutual: true) { [weak self] in
                     guard let self = self else { return }
-                    guard self.friends.contains(where: { $0.id == userId }) else { return }
+                    guard let removedIndex = self.friends.firstIndex(where: { $0.id == userId }) else { return }
                     guard !self.unfollowingUserIds.contains(userId) else { return }
                     self.unfollowingUserIds.insert(userId)
+                    // 乐观更新：点确认行立即删，留一份该行数据＋原 index 供失败回滚。
+                    let removedFriend = self.friends[removedIndex]
+                    self.friends.remove(at: removedIndex)
+                    self.updateTitleAndEmptyState()
+                    self.tableView.deleteRows(at: [IndexPath(row: removedIndex, section: 0)], with: .fade)
                     // r28-4：取关失败回滚只认发起账号。发起时同拍账号 id＋代次
                     //（通知页／引用面板同款口径），切号后到达的旧号失败回包整单丢弃。
                     let requestAccountId = BearyAPI.shared.authAccountId
@@ -656,7 +661,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                             self.unfollowingUserIds.remove(userId)
                             switch result {
                             case .success:
-                                // N5(a)：等成功再删行。请求期间列表可能已重拉，人已不在时不删行。
+                                // 请求期间列表可能已重拉、该行又回来了，成功时仍在就再删一次。
                                 if let currentIndex = self.friends.firstIndex(where: { $0.id == userId }) {
                                     self.friends.remove(at: currentIndex)
                                     self.updateTitleAndEmptyState()
@@ -665,17 +670,24 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                                 BearyFriends.clearDiaryCachesAndNotify()
                             case .failure:
                                 // r28-4：账号或代次已变，说明回包属于旧账号——整单丢弃，
-                                // 不 toast、不抖动，避免把旧账号的反馈给到新账号。
+                                // 不 toast、不抖动、不插回，避免把旧账号的反馈给到新账号。
                                 guard requestAccountId == BearyAPI.shared.authAccountId,
                                       requestEpoch == BearyAPI.shared.authEpoch else { return }
-                                // N5：失败行保留原位，不插回；震动＋拒绝音不依赖 cell 是否可见，
+                                // 失败回滚：行插回原位（重拉已把人带回来时不再重复插），
+                                // 再给震动＋拒绝音＋toast；震动＋拒绝音不依赖 cell 是否可见，
                                 // 只有摇头仍只在行可见时执行。
+                                if !self.friends.contains(where: { $0.id == userId }) {
+                                    let insertIndex = min(removedIndex, self.friends.count)
+                                    self.friends.insert(removedFriend, at: insertIndex)
+                                    self.updateTitleAndEmptyState()
+                                    self.tableView.insertRows(at: [IndexPath(row: insertIndex, section: 0)], with: .fade)
+                                }
                                 BearyIconMotion.playDenyFeedback()
                                 if let currentIndex = self.friends.firstIndex(where: { $0.id == userId }),
                                    let cell = self.tableView.cellForRow(at: IndexPath(row: currentIndex, section: 0)) {
                                     BearyIconMotion.denyShake(on: cell, key: "bearyDenyShake")
                                 }
-                                BearyToast.show(in: self.view, message: "取消关注失败，请重试")
+                                BearyToast.show(in: self.view, message: NSLocalizedString("follow.toast.unfollowFailed", comment: ""))
                             }
                         }
                     }
