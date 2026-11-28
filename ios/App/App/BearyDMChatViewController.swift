@@ -269,8 +269,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         topBar.addSubview(titleLabel)
         // 会话内搜索入口：顶栏右侧放大镜（与返回钮同款 44 热区），点按展开搜索栏。
         searchButton.translatesAutoresizingMaskIntoConstraints = false
-        searchButton.setImage(BearyIconImages.image(named: "icon_search", pointSize: 24), for: .normal)
-        searchButton.tintColor = BearyColors.ink
+        // 展示审计 G6-H6：搜索图标弱化为 20pt 灰（44pt 热区不动）。
+        searchButton.setImage(BearyIconImages.image(named: "icon_search", pointSize: 20), for: .normal)
+        searchButton.tintColor = BearyColors.gray
         searchButton.accessibilityLabel = "搜索聊天记录"
         searchButton.addTarget(self, action: #selector(searchButtonTapped), for: .touchUpInside)
         searchButton.bearyAddPressFeedback()
