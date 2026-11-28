@@ -1231,12 +1231,10 @@ final class BearySettingsViewController: UIViewController {
         plusWrap.addArrangedSubview(plusGroup.card)
     }
 
-    /// 2026-11-19 七组版：存储与数据卡——管理存储／数据用量／数据状态，各点进新页面。
+    /// 2026-11-19 七组版：存储与数据卡——管理存储／数据用量，各点进新页面。
     /// 管理存储页顶部“已使用 / 总容量”＋彩色存储条＋图例，下面带真实大小的
     /// 四行＋红色“清除所有存储”；数据用量页是流量节省程序／高画质图片／
-    /// 自动播放实况；数据状态页是日记与回收站的上次同步时间、草稿与私信的
-    /// 仅本设备说明、失败腿与重试（原 ID 卡同步状态行，七组版随 #1990
-    /// 重组移入本组，见 #1795）。
+    /// 自动播放实况。
     private func buildStorageDataSection() {
         let storageContent = makeRow(title: "管理存储", iconName: "icon_device", showChevron: true)
         let storageButton = UIButton(type: .custom)
@@ -1246,14 +1244,9 @@ final class BearySettingsViewController: UIViewController {
         let dataUsageButton = UIButton(type: .custom)
         dataUsageButton.accessibilityLabel = "数据用量"
         dataUsageButton.addTarget(self, action: #selector(openDataUsageSettingsPage), for: .touchUpInside)
-        let dataStatusContent = makeRow(title: "数据状态", iconName: "icon_info", showChevron: true)
-        let dataStatusButton = UIButton(type: .custom)
-        dataStatusButton.accessibilityLabel = "数据状态"
-        dataStatusButton.addTarget(self, action: #selector(openDataStatusPage), for: .touchUpInside)
         let group = makeGroupCard(title: "存储与数据", rows: [
             makeSettingsTappableRow(content: storageContent, button: storageButton),
             makeSettingsTappableRow(content: dataUsageContent, button: dataUsageButton),
-            makeSettingsTappableRow(content: dataStatusContent, button: dataStatusButton),
         ])
         storageDataWrap.addArrangedSubview(group.card)
     }
@@ -3637,15 +3630,6 @@ final class BearySettingsViewController: UIViewController {
     }
 
 
-    /// 数据状态页：存储与数据组“数据状态”行点开的分项页——日记与回收站（上次
-    /// 同步时间）、草稿与私信（仅保存在本设备）、失败时列失败腿并给重试；
-    /// 与登录设备页同款全屏呈现（presentSettingsPage 统一口）。
-    @objc private func openDataStatusPage() {
-        let vc = BearyDataStatusViewController()
-        vc.modalPresentationStyle = .fullScreen
-        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
-        presentSettingsPage(vc)
-    }
     @objc private func openPrivacyText() {
         presentLegalText(title: "隐私政策", doc: .privacy)
     }
