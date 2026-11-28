@@ -339,18 +339,9 @@ enum BearyBackgroundRefresh {
     /// BearyLocalNotifications.testFire 同款投递方式）。未授权时系统
     /// 静默丢弃，不报错——与现有四种提醒同一口径。
     private static func postPlazaNewNotification() {
-        let content = UNMutableNotificationContent()
-        content.body = "广场有新的日记，打开看看吧。"
-        content.sound = .default
-        let request = UNNotificationRequest(
+        BearyLocalNotifications.shared.fireOneShot(
             identifier: plazaNewIdentifier,
-            content: content,
-            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            body: "广场有新的日记，打开看看吧。"
         )
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                NSLog("[BearyBackgroundRefresh] plaza-new notification failed: %@", error.localizedDescription)
-            }
-        }
     }
 }

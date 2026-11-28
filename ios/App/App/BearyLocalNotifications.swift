@@ -244,6 +244,28 @@ final class BearyLocalNotifications: NSObject {
         }
     }
 
+    /// 一次性提醒（与 testFire 同款投递：1 秒后触发，不走重算、不改排程）。
+    /// 标识刻意不在 beary.local. 前缀下——中央重算的差分清理按该前缀清
+    /// 待发送，收进前缀会被下一轮 refreshAll 当陈旧项删掉、提醒没响就没了
+    /// （见 BearyBackgroundRefresh.plazaNewIdentifier 注释）。
+    /// 固定标识自带去重：同标识重复提交会替换待发送的那条，不会叠加。
+    /// 调用方须先确认已授权（未授权时系统静默丢弃，不报错）。
+    func fireOneShot(identifier: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.body = body
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: identifier,
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                NSLog("[BearyLocalNotifications] one-shot failed id=%@ error=%@", identifier, error.localizedDescription)
+            }
+        }
+    }
+
     // MARK: - 刷新
 
     /// 幂等重算。非强制时 5 分钟内只刷一次（回前台高频触发时不反复读盘）；
