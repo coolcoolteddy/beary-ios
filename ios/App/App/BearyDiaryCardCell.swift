@@ -2422,16 +2422,14 @@ class BearyDiaryCardCell: UITableViewCell {
             return
         }
         for tag in tags {
-            let chip = UIButton(type: .system)
-            chip.translatesAutoresizingMaskIntoConstraints = false
-            chip.setTitle("#" + tag, for: .normal)
-            chip.titleLabel?.font = UIFont.systemFont(ofSize: 13)
-            chip.setTitleColor(BearyColors.ink, for: .normal)
-            chip.backgroundColor = BearyColors.surface2
-            chip.layer.cornerRadius = 14
-            chip.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+            let chip = BearyTagChip.make(
+                tag: tag,
+                cornerRadius: 14,
+                contentInsets: UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10),
+                target: self,
+                action: #selector(tagChipTapped(_:))
+            )
             chip.heightAnchor.constraint(equalToConstant: 28).isActive = true
-            chip.addTarget(self, action: #selector(tagChipTapped(_:)), for: .touchUpInside)
             chip.accessibilityLabel = "标签 \(tag)"
             tagsStack.addArrangedSubview(chip)
         }

@@ -4098,21 +4098,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         for (index, tag) in selectedTags.enumerated() {
-            let chip = BearyHit44Button(type: .system)
-            chip.setTitle("#" + tag + " ×", for: .normal)
-            chip.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+            let chip = BearyTagChip.make(
+                tag: tag,
+                cornerRadius: 999,
+                contentInsets: UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12),
+                titleSuffix: " ×",
+                target: self,
+                action: #selector(didTapTagChip(_:)),
+                makeButton: { BearyHit44Button(type: .system) }
+            )
             chip.titleLabel?.numberOfLines = 1
             chip.titleLabel?.lineBreakMode = .byTruncatingTail
             chip.titleLabel?.adjustsFontSizeToFitWidth = false
-            chip.setTitleColor(BearyColors.ink, for: .normal)
-            chip.backgroundColor = BearyColors.surface2
-            chip.layer.cornerRadius = 999
             chip.layer.masksToBounds = true
-            chip.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
             chip.tag = index
-            chip.addTarget(self, action: #selector(didTapTagChip(_:)), for: .touchUpInside)
             chip.bearyAddPressFeedback()
-            chip.translatesAutoresizingMaskIntoConstraints = false
             chip.accessibilityLabel = "移除标签 " + tag
             tagsStackView.addArrangedSubview(chip)
         }

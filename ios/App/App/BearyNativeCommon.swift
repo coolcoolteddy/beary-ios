@@ -595,6 +595,35 @@ final class BearyHit44SegmentedControl: UISegmentedControl {
     }
 }
 
+// MARK: - 标签 chip 小工厂（卡片与编辑器共用）
+
+/// 标签 chip 基础样式：13pt、ink 字色、surface2 底；
+/// 圆角／内边距／标题后缀／动作为参数，按钮类型由调用方给
+/// （卡片 UIButton、编辑器 BearyHit44Button）。
+/// 卡片 28 高内联尺寸与编辑器按下标移除各留自己的。
+enum BearyTagChip {
+    static func make(
+        tag: String,
+        cornerRadius: CGFloat,
+        contentInsets: UIEdgeInsets,
+        titleSuffix: String = "",
+        target: Any?,
+        action: Selector,
+        makeButton: () -> UIButton = { UIButton(type: .system) }
+    ) -> UIButton {
+        let chip = makeButton()
+        chip.translatesAutoresizingMaskIntoConstraints = false
+        chip.setTitle("#" + tag + titleSuffix, for: .normal)
+        chip.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        chip.setTitleColor(BearyColors.ink, for: .normal)
+        chip.backgroundColor = BearyColors.surface2
+        chip.layer.cornerRadius = cornerRadius
+        chip.contentEdgeInsets = contentInsets
+        chip.addTarget(target, action: action, for: .touchUpInside)
+        return chip
+    }
+}
+
 // MARK: - 图片地址
 
 enum BearyImageURLs {
