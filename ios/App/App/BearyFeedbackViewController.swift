@@ -401,7 +401,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center

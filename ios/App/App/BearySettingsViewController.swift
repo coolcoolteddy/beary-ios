@@ -1050,7 +1050,7 @@ final class BearySettingsViewController: UIViewController {
         closeButton.addTarget(self, action: #selector(closeButtonTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
