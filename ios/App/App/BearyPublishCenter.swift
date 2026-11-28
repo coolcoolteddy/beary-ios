@@ -277,6 +277,9 @@ final class BearyPublishCenter {
         guard running[key] == nil else { return false }
         let runningJob = RunningJob(job: job)
         running[key] = runningJob
+        // 两阶段上传：暂存目录里超过一天的残留原图（上次补传中途被杀 App
+        // 剩下的），起飞时顺手清掉。
+        Self.sweepStaleStagedOriginals()
         // 新一轮发布开始即清旧失败记录与草稿持久标记（失败行与重试入口
         // 随之消失；本轮再失败由 fail() 重写）。只在有记录时写盘，
         // 不给首次发布多一次写盘。
@@ -430,14 +433,12 @@ final class BearyPublishCenter {
                 }
                 return
             }
-            // #46 原图竞态：选原图后立即发布、编辑器侧原图上传仍在途时被
-            // 交接取消，中心此前只读压缩 JPEG。模式为原图且 .orig 在盘时
-            // 读原图（剥 GPS、按实测格式发，共享格式集），任一步失败回落压缩，
-            // 绝不发带 GPS 或格式不明的原图（与编辑器 startOriginalUpload 同口径）。
-            var fullData = prepared.full.data
-            var fullWidth = prepared.full.w
-            var fullHeight = prepared.full.h
-            var fullMimeType = "image/jpeg"
+            // 两阶段上传（2026-11-29 Li 定）：原图档的图先发压缩版、发布立刻
+            // 成功，原图在发布成功后后台补传、换 key（见 succeed 后的
+            // startOriginalSwap）。模式为原图且 .orig 可用（在盘、≤5MB、剥 GPS、
+            // 格式在集内、有尺寸，与旧原图路同口径）时先把它暂存一份到 tmp
+            //（succeed 的清稿会删原 .orig），记入本张的待补传；任一步失败
+            // 沿用旧回落：只发压缩，不补传。
             if image.uploadMode == .original, let originalFile = image.originalFile,
                let rawData = BearyDraftImageStore.originalData(for: originalFile),
                rawData.count <= 5 * 1024 * 1024,
@@ -445,12 +446,14 @@ final class BearyPublishCenter {
                let detectedMime = BearyImagePrep.mimeType(of: strippedData),
                BearyImagePrep.originalUploadMimeTypes.contains(detectedMime),
                let pixelSize = BearyImagePrep.pixelSize(of: strippedData),
-               pixelSize.width > 0, pixelSize.height > 0 {
-                fullData = strippedData
-                fullWidth = pixelSize.width
-                fullHeight = pixelSize.height
-                fullMimeType = detectedMime
+               pixelSize.width > 0, pixelSize.height > 0,
+               let stagedURL = Self.stageOriginalFile(originalFile: originalFile) {
+                runningJob.pendingOriginals[index] = stagedURL
             }
+            let fullData = prepared.full.data
+            let fullWidth = prepared.full.w
+            let fullHeight = prepared.full.h
+            let fullMimeType = "image/jpeg"
             var videoData = image.liveVideoData
             if videoData == nil, let videoFile = image.liveVideoFile {
                 videoData = BearyDraftImageStore.videoData(for: videoFile)
@@ -672,6 +675,165 @@ final class BearyPublishCenter {
             return
         }
         runningJob.job.onPublished?(entryId, runningJob.job.publishToken)
+        // 两阶段上传：发布已成功，原图档的图在后台补传、换 key（静默）。
+        startOriginalSwap(snapshot: snapshot, entryId: entryId, pendingOriginals: runningJob.pendingOriginals, publishedKeys: runningJob.imageKeys, liveVideos: runningJob.liveVideos)
+    }
+
+    // MARK: - 两阶段上传：发布成功后后台补传原图、换 key（2026-11-29 Li 定）
+
+    /// 暂存目录：succeed 的清稿会删原 .orig，补传前先把原图拷一份到这里；
+    /// 换 key 成功／全部失败后删暂存；中途杀 App 的残留由下次发布起飞时清。
+    private static var stagedOriginalsDirectory: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("beary-twostage", isDirectory: true)
+    }
+
+    /// .orig 拷一份到暂存目录（新 UUID 名防串图）；失败返回 nil（只发压缩，不补传）。
+    private static func stageOriginalFile(originalFile: String) -> URL? {
+        guard let source = BearyDraftImageStore.fileURL(for: originalFile) else { return nil }
+        let dir = stagedOriginalsDirectory
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dest = dir.appendingPathComponent(UUID().uuidString + ".orig")
+        do {
+            try FileManager.default.copyItem(at: source, to: dest)
+            return dest
+        } catch {
+            return nil
+        }
+    }
+
+    private static func deleteStagedOriginals(_ pending: [Int: URL]) {
+        for url in pending.values {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    /// 暂存目录里超过一天的残留（上次补传中途被杀 App 剩下的），起飞时顺手清。
+    private static func sweepStaleStagedOriginals() {
+        let dir = stagedOriginalsDirectory
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return }
+        let cutoff = Date().addingTimeInterval(-24 * 3600)
+        for name in names {
+            let url = dir.appendingPathComponent(name)
+            if let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
+               modified < cutoff {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
+    /// 发布成功后：后台补传暂存的原图，传完用 PUT 把对应下标的 key 换成原图。
+    /// 全程静默：任一步失败都留压缩版，不 toast、不重试、不记失败。
+    /// 只在原图档的图上有待补传时调用；调用方在 succeed 末尾（entryId 已定）。
+    private func startOriginalSwap(snapshot: PublishSnapshot, entryId: String, pendingOriginals: [Int: URL], publishedKeys: [String], liveVideos: [String: String]) {
+        guard !pendingOriginals.isEmpty else { return }
+        let indices = pendingOriginals.keys.sorted()
+        var swapped: [Int: String] = [:]
+        // 串行补传：弱网下一次只走一路，不与时间线抢上行；下标顺序传。
+        var step: ((Int) -> Void)!
+        step = { [weak self] pos in
+            guard let self = self else {
+                Self.deleteStagedOriginals(pendingOriginals)
+                return
+            }
+            guard pos < indices.count else {
+                self.finishOriginalSwap(snapshot: snapshot, entryId: entryId, pendingOriginals: pendingOriginals, publishedKeys: publishedKeys, liveVideos: liveVideos, swapped: swapped)
+                return
+            }
+            let index = indices[pos]
+            guard let stagedURL = pendingOriginals[index] else {
+                step(pos + 1)
+                return
+            }
+            self.uploadStagedOriginal(stagedURL: stagedURL) { key in
+                if let key = key {
+                    swapped[index] = key
+                }
+                step(pos + 1)
+            }
+        }
+        step(0)
+    }
+
+    /// 暂存原图走一次现有原图上传（剥 GPS、按实测格式发，与 startOriginalUpload
+    /// 同口径）；视频不重传（实况已随压缩版上过、live key 已定）。
+    /// completion 在主线程回 key（失败回 nil）；调用方只认 key。
+    private func uploadStagedOriginal(stagedURL: URL, completion: @escaping (String?) -> Void) {
+        ioQueue.async { [weak self] in
+            guard let self = self else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            guard let rawData = try? Data(contentsOf: stagedURL),
+                  rawData.count <= 5 * 1024 * 1024,
+                  let stripped = BearyImagePrep.strippedGPSData(rawData),
+                  let mime = BearyImagePrep.mimeType(of: stripped),
+                  BearyImagePrep.originalUploadMimeTypes.contains(mime),
+                  let size = BearyImagePrep.pixelSize(of: stripped),
+                  size.width > 0, size.height > 0,
+                  let image = UIImage(data: stripped),
+                  let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            let dataUrl = BearyImagePrep.dataURL(stripped, mimeType: mime)
+            let thumbDataUrl = BearyImagePrep.dataURL(thumb)
+            _ = BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: size.width, height: size.height, thumbDataUrl: thumbDataUrl) { result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let resp):
+                        completion(resp.key)
+                    case .failure:
+                        completion(nil)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 全部补传 settled：有换成的才发一次 PUT（整组 key 一次换完）；
+    /// 一张都没换成不发请求；PUT 成败都静默（失败留压缩版）。
+    /// 暂存不论成败都删。
+    /// 发 PUT 前先拉一次单篇：发布后用户若已编辑过（updated_at 已置、
+    /// 或图片清单已变），放弃换 key，不覆盖用户的编辑。
+    private func finishOriginalSwap(snapshot: PublishSnapshot, entryId: String, pendingOriginals: [Int: URL], publishedKeys: [String], liveVideos: [String: String], swapped: [Int: String]) {
+        defer { Self.deleteStagedOriginals(pendingOriginals) }
+        guard !swapped.isEmpty else { return }
+        // 切号后不换别人账号的日记。
+        guard let expected = snapshot.originAccountId,
+              BearyAPI.shared.authAccountId == expected else { return }
+        BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard case .success(let entry) = result,
+                      entry.updatedAt == nil,
+                      entry.imageKeys == publishedKeys else { return }
+                var newKeys = publishedKeys
+                for (index, key) in swapped where index < newKeys.count {
+                    newKeys[index] = key
+                }
+                // 实况映射跟新 key 走：旧 key 不在 images 里会被服务端修剪，
+                // 不 remap 会丢实况；无实况时不发本键（服务端原值不动）。
+                var newLive: [String: String] = [:]
+                for (oldKey, liveKey) in liveVideos {
+                    if let idx = publishedKeys.firstIndex(of: oldKey), let nk = swapped[idx] {
+                        newLive[nk] = liveKey
+                    } else {
+                        newLive[oldKey] = liveKey
+                    }
+                }
+                let liveArg: [String: String]? = newLive.isEmpty ? nil : newLive
+                BearyAPI.shared.updateEntry(
+                    id: entryId, content: snapshot.content, images: newKeys,
+                    mood: snapshot.mood, weather: snapshot.weather, quoteId: snapshot.quoteId,
+                    title: snapshot.title, mentionedUserId: snapshot.mentionedUserId,
+                    locationName: snapshot.locationName, locationDistrict: snapshot.locationDistrict,
+                    locationLatitude: snapshot.locationLatitude, locationLongitude: snapshot.locationLongitude,
+                    locationCountry: snapshot.locationCountry, locationRegion: snapshot.locationRegion,
+                    locationCity: snapshot.locationCity, locationStreet: snapshot.locationStreet,
+                    temperature: snapshot.temperature, liveVideos: liveArg, tags: snapshot.tags
+                ) { _ in }
+            }
+        }
     }
 
     /// 失败：停掉任务、草稿保留（交接前已落盘，不再重存）、拒绝震动＋拒绝音、
@@ -684,6 +846,8 @@ final class BearyPublishCenter {
         guard !runningJob.finished else { return }
         runningJob.finished = true
         running.removeValue(forKey: runningJob.key)
+        // 两阶段上传：本次发布失败，不再补传原图，暂存清掉。
+        Self.deleteStagedOriginals(runningJob.pendingOriginals)
         // 拒绝反馈：震动＋拒绝音成对（成功侧 publishSuccess 震动＋回应音同款）；
         // 旧版只有震动没有音，失败与成功不对称。401 路径另见 fail(error:)，
         // 其反馈是登录入口本身，不另补音。
@@ -740,6 +904,8 @@ final class BearyPublishCenter {
             guard !runningJob.finished else { return }
             runningJob.finished = true
             running.removeValue(forKey: runningJob.key)
+            // 两阶段上传：本次发布失败，不再补传原图，暂存清掉。
+            Self.deleteStagedOriginals(runningJob.pendingOriginals)
             if runningJob.pill === currentPill {
                 runningJob.pill?.dismiss()
                 currentPill = nil
@@ -1073,6 +1239,10 @@ final class BearyPublishCenter {
         /// 第 25 轮 18 项：本次失败是否走“打开草稿重试”入口（实况回包缺
         /// live_key 时置位，见 uploadNext；fail() 据此改走带入口的 toast）。
         var openDraftOnFailure = false
+        /// 两阶段上传：原图档的图在发布时先发了压缩版，暂存的原图文件按下标
+        /// 记在这里；succeed 后后台补传、换 key（见 startOriginalSwap）。
+        /// 失败终态时暂存由 fail() 清掉。
+        var pendingOriginals: [Int: URL] = [:]
         var progress = BearyPublishProgress()
         /// 最新上报进度（0...1，展示封顶前的值；pill 状态表读它）。
         var lastProgress: Double = 0
