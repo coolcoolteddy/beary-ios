@@ -182,7 +182,8 @@ final class BearyMessagesViewController: UIViewController {
         staleRetryButton.setTitle("重试", for: .normal)
         staleRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13))
         staleRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        staleRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        // 展示审计 G6-N1：过期横条「重试」蓝色改墨色（蓝色只留未读点／角标／wash）。
+        staleRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         staleRetryButton.accessibilityLabel = "重试刷新未读数"
         staleRetryButton.addTarget(self, action: #selector(staleRetryTapped), for: .touchUpInside)
         staleRetryButton.bearyAddPressFeedback()
