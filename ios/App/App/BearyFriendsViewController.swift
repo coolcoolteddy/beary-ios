@@ -109,8 +109,12 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.backgroundColor = BearyColors.bg
         tableView.separatorStyle = .none
-        tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 72
+        // 行高定死 72（44 头像＋上下各 14，设计定值），不再走
+        // automaticDimension 的拟合：拟合依赖 UIStackView 内在尺寸，
+        // 拟合一旦失败行高可塌成 0，行在数据源里、屏上却没有
+        // （好友 · 1 人零行实证）；本行内容固定单行名＋单行 handle，
+        // 72 即设计高。
+        tableView.rowHeight = 72
         tableView.delegate = self
         tableView.dataSource = self
         tableView.register(BearyFriendCell.self, forCellReuseIdentifier: "friendCell")
@@ -582,6 +586,11 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "friendCell", for: indexPath) as! BearyFriendCell
         let user = friends[indexPath.row]
+        // 复用 cell 永不以不可见态起步：willDisplay 的入场淡入从
+        // alpha 0 起播，prepareForReuse 从不复位 alpha/transform，
+        // 中途打断的淡入会把近 0 的 alpha 带进下一行，行在却看不见。
+        cell.alpha = 1
+        cell.transform = .identity
         cell.configure(user: user) { [weak self] button in
             self?.presentFriendMenu(user: user, sourceButton: button)
         }
@@ -781,14 +790,29 @@ private final class BearyFriendCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        // 复位入场淡入留下的视觉状态：不复位时，中途打断的淡入会把
+        // 近 0 的 alpha / 位移带进下一行，行在数据源里、屏上却看不见。
+        alpha = 1
+        transform = .identity
+        nameLabel.text = nil
         avatarView.reset()
         handleLabel.text = nil
+        handleLabel.isHidden = true
         moreHandler = nil
     }
 
     func configure(user: BearyAPI.FriendUser, onMore: @escaping (UIButton) -> Void) {
         moreHandler = onMore
-        let displayName = (user.displayName?.isEmpty == false) ? user.displayName! : NSLocalizedString("emote.posters.fallback_display_name", comment: "")
+        // 无昵称的账号用 @handle 兜底（服务端 display_name 为空时），
+        // 再无 handle 才走通用「Beary 用户」；行绝不因缺昵称被丢。
+        let displayName: String
+        if let name = user.displayName, !name.isEmpty {
+            displayName = name
+        } else if let handle = user.handle, !handle.isEmpty {
+            displayName = "@\(handle)"
+        } else {
+            displayName = NSLocalizedString("emote.posters.fallback_display_name", comment: "")
+        }
         nameLabel.text = displayName
         if let handle = user.handle, !handle.isEmpty {
             handleLabel.text = "@\(handle)"
