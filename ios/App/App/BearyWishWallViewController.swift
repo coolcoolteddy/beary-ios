@@ -575,7 +575,7 @@ final class BearyWishWallViewController: UIViewController {
         wishEmptyStateView.translatesAutoresizingMaskIntoConstraints = false
         wishEmptyStateView.configure(kind: .empty, title: "还没有愿望", subtitle: "Plus 会员可以发起第一个", iconName: nil, actionTitle: nil)
         wishEmptyStateView.isHidden = true
-        // P2-18：加载/失败两态的文案与重试动作与旧口径一致（“加载中…”/“加载失败”/“重试”），
+        // P2-18：失败态的文案与重试动作与旧口径一致（“加载失败”/“重试”），加载态只留转圈、不配文字；
         // 仅承载体换成 BearyStateView；空态走 wishEmptyStateView（见下），不进本视图。
         wishStateView.translatesAutoresizingMaskIntoConstraints = false
         wishStateView.isHidden = true
@@ -827,8 +827,8 @@ final class BearyWishWallViewController: UIViewController {
         if showingCachedWishes {
             wishStateView.isHidden = true
         } else {
-            // P2-18：加载态走 BearyStateView（转圈 + “加载中…”）；成功/失败回包时统一收起。
-            wishStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
+            // P2-18：加载态走 BearyStateView（只留转圈，不配“加载中…”文字）；成功/失败回包时统一收起。
+            wishStateView.configure(kind: .loading, title: nil, subtitle: nil, iconName: nil, actionTitle: nil)
             showStateViewFaded()
         }
         BearyAPI.shared.fetchWishes { [weak self] result in
