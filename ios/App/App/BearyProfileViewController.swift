@@ -2312,6 +2312,7 @@ class BearyProfileViewController: UIViewController {
         ])
         tableView.tableHeaderView = headerView
         buildStickyHeader()
+        buildModuleDrawer()
         view.bringSubviewToFront(topBarView)
         // iCity：举报/拉黑广播——本页同步清掉对应条目（拉黑本页作者时离页由 onBlockedUser 容器接线）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
@@ -2363,7 +2364,10 @@ class BearyProfileViewController: UIViewController {
     /// 只写 bottom 两处，top 的更新逻辑（applyHeaderTopInset／下拉刷新基线）
     /// 一律不动。变化守卫防布局轮次成环。
     private func updateTableViewBottomInset() {
-        let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
+        // 模块抽屉：封底带占日记层底部 84pt，抽屉可用时底部内边距再加 84，
+        // 免得“更多日记”行被带子盖住；他人页不加，行为与改前一致。
+        let drawerSealExtra: CGFloat = drawerAvailable ? drawerSealBandHeight : 0
+        let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom) + drawerSealExtra
         if tableView.contentInset.bottom != bottom {
             tableView.contentInset.bottom = bottom
         }
@@ -2422,6 +2426,7 @@ class BearyProfileViewController: UIViewController {
         if pullView.frame.width != tableView.bounds.width {
             pullView.frame.size.width = tableView.bounds.width
         }
+        layoutModuleDrawerChrome()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -2520,6 +2525,11 @@ class BearyProfileViewController: UIViewController {
         tableTrailingConstraint.isActive = !desktop
         tableCenterXConstraint.isActive = desktop
         tableWidthConstraint.isActive = desktop
+        // 模块抽屉：模块层与日记层同列宽（iPad 600 居中、窄屏全宽）。
+        moduleLeadingConstraint.isActive = !desktop
+        moduleTrailingConstraint.isActive = !desktop
+        moduleCenterXConstraint.isActive = desktop
+        moduleWidthConstraint.isActive = desktop
         topBarLeadingConstraint.isActive = !desktop
         topBarTrailingConstraint.isActive = !desktop
         topBarCenterXConstraint.isActive = desktop
@@ -2551,6 +2561,7 @@ class BearyProfileViewController: UIViewController {
         layoutHeaderForced(widthValue: headerWidthValue)
         // 上滑 header：modal 页与本人页同套机制，按当前 offset 刷新一次态。
         updateProfileCoverScroll(offsetY: tableView.contentOffset.y, topBaseline: -tableView.contentInset.top)
+        layoutModuleDrawerChrome()
     }
 
     /// 上滑 header 搭建（v22，2026-10-30）：容器钉页顶（通宽、高 = 安全区顶 + 60），层级在 table
@@ -2729,6 +2740,9 @@ class BearyProfileViewController: UIViewController {
     /// 约束常量带变化守卫（不变不赋值），避免布局轮次成环；背景图与文案只在
     /// 变化时同步（同引用 / 同文案不重复赋值），覆盖异步头像 / 封面加载完成态。
     private func updateStickyHeaderLayout() {
+        // 模块抽屉：打开时日记层已滑出屏，吸顶几何不跟移走的表框算，
+        // 收起时 setDrawerOpen 完成回调里重算恢复。
+        guard !drawerIsOpen else { return }
         let safeTop = view.safeAreaInsets.top
         let width = view.bounds.width
         let tableFrame = tableView.frame
@@ -2819,6 +2833,9 @@ class BearyProfileViewController: UIViewController {
     /// 须在顶栏回弹区早退之前跑，否则下拉区 header 藏不住。
     /// modal 态（顶栏自带名字）与加载态（封面区高 0）时 v22 不生效、全部复位自然态。
     private func updateProfileCoverScroll(offsetY y: CGFloat, topBaseline: CGFloat) {
+        // 模块抽屉：打开时日记层已滑出屏，吸顶态冻结在打开前的值，
+        // 收起时 setDrawerOpen 完成回调里按当前 offset 重算恢复。
+        guard !drawerIsOpen else { return }
         // 吸顶显现前必先与当前封面态同步（见 syncStickyHeaderCover），
         // 否则首帧橙底会在上滑时以吸顶形式露出来。
         syncStickyHeaderCover()
@@ -7982,6 +7999,11 @@ class BearyProfileViewController: UIViewController {
             // 行内子视图仍走上面一次激活的约束（按行 bounds 排布）。
             mapEntryRow.translatesAutoresizingMaskIntoConstraints = true
             starEntryRow.translatesAutoresizingMaskIntoConstraints = true
+            // 模块抽屉：本人页时模块组／照片区／地图／星图行改装进模块层，
+            // 脚部只留状态脚部；他人页与抽屉不可用时走原脚部路径一字不动。
+            if drawerAvailable {
+                layoutModuleLayer(photosView: photosView, footerWidth: footerWidth)
+            }
             // 脚部容器复用（见 profileFooterContainerView）：同一容器只改
             // 高度与子视图，不反复重装 tableFooterView；旧子视图本轮
             // 全部重接，先清掉，免得旧状态脚部残留。
@@ -7998,15 +8020,19 @@ class BearyProfileViewController: UIViewController {
             // 进同一容器，模块卡本身不重建；切 tab 时脚部重建、模块组原位不动。
             // 隐藏时不占位（脚部与改前一致）。
             // 模块约束先关掉再重建，免得残留。
-            modulesFooterTopConstraint?.isActive = false
-            modulesFooterLeadingConstraint?.isActive = false
-            modulesFooterWidthConstraint?.isActive = false
-            modulesFooterHeightConstraint?.isActive = false
+            // 模块抽屉：抽屉可用时模块约束已由 layoutModuleLayer 锚到模块层，
+            // 这里不再关掉（关掉会把模块层布局拆掉）。
+            if !drawerAvailable {
+                modulesFooterTopConstraint?.isActive = false
+                modulesFooterLeadingConstraint?.isActive = false
+                modulesFooterWidthConstraint?.isActive = false
+                modulesFooterHeightConstraint?.isActive = false
+            }
             container.subviews.forEach { $0.removeFromSuperview() }
             // 复用容器时 alpha 可能残留上一次淡入的中间值，先归 1，
             // 末尾的空态/照片淡入再按需重播。
             container.alpha = 1
-            if isOwnProfile, !modulesContainer.isHidden {
+            if !drawerAvailable, isOwnProfile, !modulesContainer.isHidden {
                 // 模块组宽度 = 表格行内容列宽：≤820 为屏宽−32（左右各 16）、
                 // ≥821 为 600 居中列（脚部容器本身已被表宽锁 600，故 x=0 贴满列宽）；
                 // 与旧 header 口径（列宽−40、左右各 20）不同，按 2026-10-31 任务口径取内容列宽。
@@ -8035,13 +8061,13 @@ class BearyProfileViewController: UIViewController {
                 modulesContainer.frame = CGRect(x: modulesX, y: 0, width: modulesWidth, height: modulesHeight)
                 totalHeight += modulesHeight
             }
-            if let photosView = photosView {
+            if !drawerAvailable, let photosView = photosView {
                 let photosY = totalHeight > 0 ? totalHeight + 16 : 0
                 photosView.frame = CGRect(x: 0, y: photosY, width: footerWidth, height: photosView.frame.height)
                 container.addSubview(photosView)
                 totalHeight = photosY + photosView.frame.height
             }
-            if isOwnProfile {
+            if !drawerAvailable, isOwnProfile {
                 mapEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
                 container.addSubview(mapEntryRow)
                 totalHeight += 12 + 48
@@ -8075,7 +8101,8 @@ class BearyProfileViewController: UIViewController {
                 let newFooterHeight = container.frame.height
                 let footerTopNew = tableView.contentSize.height - newFooterHeight
                 let newWallBottomInFooter: CGFloat = {
-                    if let photosView = photosView {
+                    // 模块抽屉：墙已搬进模块层，不在脚部，墙底按无墙算（0）。
+                    if !drawerAvailable, let photosView = photosView {
                         return photosView.frame.maxY
                     }
                     let modulesHeight = (isOwnProfile && !modulesContainer.isHidden && modulesContainer.superview === container) ? modulesContainer.frame.height : 0
@@ -8129,6 +8156,9 @@ class BearyProfileViewController: UIViewController {
         if let footer = tableView.tableFooterView {
             footer.transform = CGAffineTransform(translationX: 0, y: profileRowFollowShift)
         }
+        // 模块抽屉：资料解析后 isOwnProfile 才翻 true，抽屉铬显隐不能只等
+        // 布局，脚部每次重建都同步一次（isHidden 不变时是 no-op）。
+        updateDrawerChromeVisibility()
     }
 
     /// 跳动修复（第 8 轮第 2 项）：拖动/减速中跳过的墙底位移补偿，滚动结束
@@ -8158,6 +8188,565 @@ class BearyProfileViewController: UIViewController {
             let minOffsetY = -tableView.adjustedContentInset.top
             let maxOffsetY = max(minOffsetY, tableView.contentSize.height - tableView.bounds.height + tableView.adjustedContentInset.bottom)
             tableView.contentOffset.y = min(max(currentOffsetY + wallShift, minOffsetY), maxOffsetY)
+        }
+    }
+
+    // MARK: - 个人页模块抽屉（2026-11-28，Li 定版）
+
+    /// 模块区是底层、日记层是盖在上面的卡片；收起时日记层盖满全屏、底部
+    /// 盖牢、无露出条。打开时日记层整层上滑（transform，不动 Auto Layout），
+    /// 露出底下的模块层；两态、无多档停靠。
+    /// 封底带（84pt、与日记层同色）是日记层的一部分，随层一起滑走；
+    /// 下箭头只在日记内容滑到底部时出现（淡入），平时隐藏、不占位。
+    /// 模块区顶部有同款向上箭头＋抓手，点按盖回；模块滚到顶再下滑也盖回。
+    /// 首次进个人页日记层轻抬 14pt 又落回一次（持久化标记）；箭头首次出现
+    /// 时轻轻上下浮动两下提示可点，之后不再播；均尊重减动效。
+    /// 他人页无模块，抽屉不可用，脚部走原路径一字不动。
+
+    private let drawerSealBandHeight: CGFloat = 84
+    private let drawerArrowSize: CGFloat = 56
+    private let drawerModuleTopBarHeight: CGFloat = 84
+    private let drawerLiftAmount: CGFloat = 14
+    private let drawerLiftDelay: TimeInterval = 0.9
+    private let drawerLiftShownDefaultsKey = "bearyProfileModuleDrawerLiftShown"
+    private let drawerArrowBobbedDefaultsKey = "bearyProfileModuleDrawerArrowBobbed"
+
+    /// 抽屉可用条件：本人页且未注销（游客／他人页无模块，脚部走原路径）。
+    private var drawerAvailable: Bool {
+        isOwnProfile && !profileDeleted
+    }
+
+    /// 打开位移 = 日记层整层高（整层滑出屏）。
+    private var drawerOpenOffset: CGFloat {
+        tableView.bounds.height
+    }
+
+    private var drawerIsOpen = false
+    /// 当前抽屉位移：0 = 收起，-openOffset = 打开（拖动与吸附的目标值）。
+    private var drawerTranslation: CGFloat = 0
+    /// 首次进页轻抬的临时偏移（0 或 -14），与抽屉位移叠加，不进状态机。
+    private var drawerLiftOffset: CGFloat = 0
+    private var drawerLiftAnimating = false
+    private var drawerLiftWorkItem: DispatchWorkItem?
+    private var drawerPanStartTranslation: CGFloat = 0
+    /// 拖动开始前吸顶的 alpha（打开时按进度淡出；收起后由滚动回调重算）。
+    private var drawerStickyAlphaBeforeDrag: CGFloat = 0
+
+    private var drawerLiftShown: Bool {
+        get { UserDefaults.standard.bool(forKey: drawerLiftShownDefaultsKey) }
+        set { UserDefaults.standard.set(newValue, forKey: drawerLiftShownDefaultsKey) }
+    }
+
+    private var drawerArrowBobbed: Bool {
+        get { UserDefaults.standard.bool(forKey: drawerArrowBobbedDefaultsKey) }
+        set { UserDefaults.standard.set(newValue, forKey: drawerArrowBobbedDefaultsKey) }
+    }
+
+    /// 模块层：与日记层同框、插在日记层之下；内容是模块内容视图
+    /// （模块组／照片区／地图／星图行），由 layoutModuleLayer 装配。
+    private lazy var moduleScrollView: UIScrollView = {
+        let scroll = UIScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.backgroundColor = BearyColors.bg
+        scroll.showsVerticalScrollIndicator = false
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.contentInsetAdjustmentBehavior = .never
+        scroll.delaysContentTouches = false
+        scroll.addSubview(moduleContentView)
+        return scroll
+    }()
+
+    private let moduleContentView = UIView()
+
+    private lazy var moduleLeadingConstraint: NSLayoutConstraint = moduleScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+    private lazy var moduleTrailingConstraint: NSLayoutConstraint = moduleScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+    private lazy var moduleCenterXConstraint: NSLayoutConstraint = moduleScrollView.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+    private lazy var moduleWidthConstraint: NSLayoutConstraint = moduleScrollView.widthAnchor.constraint(equalToConstant: 600)
+
+    /// 模块区顶部固定条（抓手＋向上箭头）：不随模块内容滚动，底色遮住
+    /// 滑到它下面的内容；收起时藏在日记层之后，不可见、不可点。
+    /// 自身走 frame（见 layoutModuleDrawerChrome），子视图走约束。
+    private lazy var moduleTopBarView: BearyDrawerPassthroughView = {
+        let bar = BearyDrawerPassthroughView()
+        bar.backgroundColor = BearyColors.bg
+        bar.addSubview(drawerGrabberButton)
+        bar.addSubview(upArrowButton)
+        bar.interactiveViews = [drawerGrabberButton, upArrowButton]
+        return bar
+    }()
+
+    /// 模块顶部抓手：整条可点（点按盖回）＋可拖（下滑盖回）。
+    private lazy var drawerGrabberButton: UIButton = {
+        let button = UIButton(type: .custom)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.backgroundColor = .clear
+        button.accessibilityLabel = NSLocalizedString("profile.modules.drawer.close", comment: "")
+        button.addSubview(drawerGrabberPill)
+        NSLayoutConstraint.activate([
+            drawerGrabberPill.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+            drawerGrabberPill.topAnchor.constraint(equalTo: button.topAnchor, constant: 8),
+            drawerGrabberPill.widthAnchor.constraint(equalToConstant: 36),
+            drawerGrabberPill.heightAnchor.constraint(equalToConstant: 5),
+        ])
+        return button
+    }()
+
+    private lazy var drawerGrabberPill: UIView = {
+        let pill = UIView()
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pill.backgroundColor = BearyColors.gray.withAlphaComponent(0.35)
+        pill.layer.cornerRadius = 2.5 // beary-lint: allow（抓手 5pt 高胶囊，圆角取高一半，token 表微元素例外）
+        pill.isUserInteractionEnabled = false
+        return pill
+    }()
+
+    /// 封底带：日记层底部 84pt、同色叠层，随日记层一起滑走；只认箭头区。
+    /// 自身走 frame（见 layoutModuleDrawerChrome），子视图走约束。
+    private lazy var sealBandView: BearyDrawerPassthroughView = {
+        let band = BearyDrawerPassthroughView()
+        band.backgroundColor = BearyColors.bg
+        band.addSubview(downArrowButton)
+        band.interactiveViews = [downArrowButton]
+        return band
+    }()
+
+    /// 向下箭头（封底带里，Luma 登录页式：橙渐变圆钮＋白字下箭头）。
+    private lazy var downArrowButton: BearyHit44Button = {
+        let pair = makeDrawerArrowButton(chevronName: "icon_chevron_down", accessibilityKey: "profile.modules.drawer.open")
+        downArrowGradientLayer = pair.gradient
+        return pair.button
+    }()
+
+    /// 向上箭头（模块顶栏里，同款，点按盖回日记）。
+    private lazy var upArrowButton: BearyHit44Button = {
+        let pair = makeDrawerArrowButton(chevronName: "icon_chevron_up", accessibilityKey: "profile.modules.drawer.close")
+        upArrowGradientLayer = pair.gradient
+        return pair.button
+    }()
+
+    private var downArrowGradientLayer: CAGradientLayer?
+    private var upArrowGradientLayer: CAGradientLayer?
+
+    /// 从箭头上拉打开（1:1 跟手）。
+    private lazy var drawerOpenPan: UIPanGestureRecognizer = {
+        UIPanGestureRecognizer(target: self, action: #selector(drawerOpenPanChanged(_:)))
+    }()
+
+    /// 点按箭头打开（须等拖动手势失败才触发，拖完松手不误触）。
+    private lazy var drawerOpenTap: UITapGestureRecognizer = {
+        UITapGestureRecognizer(target: self, action: #selector(drawerArrowTapped))
+    }()
+
+    /// 模块内滚到顶再下滑盖回（1:1 跟手；压住列表自身 pan，免得回弹叠加）。
+    private lazy var moduleClosePan: UIPanGestureRecognizer = {
+        UIPanGestureRecognizer(target: self, action: #selector(drawerClosePanChanged(_:)))
+    }()
+
+    /// 从模块顶部抓手下滑盖回。
+    private lazy var grabberClosePan: UIPanGestureRecognizer = {
+        UIPanGestureRecognizer(target: self, action: #selector(drawerClosePanChanged(_:)))
+    }()
+
+    /// 点按抓手盖回（须等拖动手势失败才触发）。
+    private lazy var grabberCloseTap: UITapGestureRecognizer = {
+        UITapGestureRecognizer(target: self, action: #selector(drawerCloseTapped))
+    }()
+
+    /// 点按向上箭头盖回。
+    private lazy var upArrowTap: UITapGestureRecognizer = {
+        UITapGestureRecognizer(target: self, action: #selector(drawerCloseTapped))
+    }()
+
+    /// 抽屉箭头钮（欢迎页拖钮同款：橙渐变圆钮＋白字箭头，56×56；
+    /// 渐变层由 layoutModuleDrawerChrome 跟按钮 bounds 落位）。
+    private func makeDrawerArrowButton(chevronName: String, accessibilityKey: String) -> (button: BearyHit44Button, gradient: CAGradientLayer) {
+        let button = BearyHit44Button()
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.backgroundColor = .clear
+        button.bearyAddPressFeedback()
+        button.accessibilityLabel = NSLocalizedString(accessibilityKey, comment: "")
+        let gradient = CAGradientLayer()
+        gradient.colors = [
+            UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1).cgColor,
+            UIColor(red: 1.0, green: 0.42, blue: 0.0, alpha: 1).cgColor,
+        ]
+        gradient.startPoint = CGPoint(x: 0.5, y: 0)
+        gradient.endPoint = CGPoint(x: 0.5, y: 1)
+        button.layer.insertSublayer(gradient, at: 0)
+        button.layer.masksToBounds = true
+        let chevron = UIImageView(image: BearyIconImages.image(named: chevronName, pointSize: 22))
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.tintColor = .white
+        chevron.contentMode = .scaleAspectFit
+        chevron.isUserInteractionEnabled = false
+        button.addSubview(chevron)
+        NSLayoutConstraint.activate([
+            chevron.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+            chevron.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: 22),
+            chevron.heightAnchor.constraint(equalToConstant: 22),
+        ])
+        return (button, gradient)
+    }
+
+    /// 抽屉搭建（viewDidLoad 里在 buildStickyHeader 之后调）：
+    /// 模块层插在日记层之下、封底带盖在日记层之上、模块顶栏插在
+    /// 模块层之上／日记层之下；顶栏随后由 bringSubviewToFront 保前。
+    private func buildModuleDrawer() {
+        view.insertSubview(moduleScrollView, belowSubview: tableView)
+        NSLayoutConstraint.activate([
+            moduleScrollView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
+            moduleLeadingConstraint,
+            moduleTrailingConstraint,
+            moduleScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        view.insertSubview(moduleTopBarView, aboveSubview: moduleScrollView)
+        view.insertSubview(sealBandView, aboveSubview: tableView)
+        // 抓手与箭头的约束（顶栏／封底带自身走 frame，见 layoutModuleDrawerChrome）。
+        NSLayoutConstraint.activate([
+            drawerGrabberButton.topAnchor.constraint(equalTo: moduleTopBarView.topAnchor),
+            drawerGrabberButton.leadingAnchor.constraint(equalTo: moduleTopBarView.leadingAnchor),
+            drawerGrabberButton.trailingAnchor.constraint(equalTo: moduleTopBarView.trailingAnchor),
+            drawerGrabberButton.heightAnchor.constraint(equalToConstant: 20),
+            upArrowButton.centerXAnchor.constraint(equalTo: moduleTopBarView.centerXAnchor),
+            upArrowButton.topAnchor.constraint(equalTo: moduleTopBarView.topAnchor, constant: 20),
+            upArrowButton.widthAnchor.constraint(equalToConstant: drawerArrowSize),
+            upArrowButton.heightAnchor.constraint(equalToConstant: drawerArrowSize),
+            downArrowButton.centerXAnchor.constraint(equalTo: sealBandView.centerXAnchor),
+            downArrowButton.centerYAnchor.constraint(equalTo: sealBandView.centerYAnchor),
+            downArrowButton.widthAnchor.constraint(equalToConstant: drawerArrowSize),
+            downArrowButton.heightAnchor.constraint(equalToConstant: drawerArrowSize),
+        ])
+        // 手势：下箭头上拉／点按打开；模块滚到顶下滑／抓手下滑／点按盖回。
+        drawerOpenPan.delegate = self
+        moduleClosePan.delegate = self
+        grabberClosePan.delegate = self
+        drawerOpenTap.require(toFail: drawerOpenPan)
+        grabberCloseTap.require(toFail: grabberClosePan)
+        downArrowButton.addGestureRecognizer(drawerOpenPan)
+        downArrowButton.addGestureRecognizer(drawerOpenTap)
+        moduleScrollView.addGestureRecognizer(moduleClosePan)
+        drawerGrabberButton.addGestureRecognizer(grabberClosePan)
+        drawerGrabberButton.addGestureRecognizer(grabberCloseTap)
+        upArrowButton.addGestureRecognizer(upArrowTap)
+        // 初始态：箭头隐藏（未滑到底不出现），抽屉收起。
+        downArrowButton.alpha = 0
+        updateDrawerChromeVisibility()
+    }
+
+    /// 抽屉铬（viewDidLayoutSubviews 与 updateTopBarVisibility 末尾调）：
+    /// 封底带／模块顶栏按当前列宽与安全区落 frame；渐变层跟按钮 bounds 走
+    /// （欢迎页拖钮同款：frame = bounds、圆角 = 高/2）；模块层内边距跟
+    /// 顶栏与底栏走。
+    private func layoutModuleDrawerChrome() {
+        guard isViewLoaded else { return }
+        updateDrawerChromeVisibility()
+        guard drawerAvailable else { return }
+        // 封底带：与日记层同宽同色，底边贴底栏顶（底栏 58 高、底边在安全区底
+        // -6，即顶在安全区底 +64），高 84；箭头在带内居中。
+        let bandBottomInset = 64 + view.safeAreaInsets.bottom
+        sealBandView.frame = CGRect(
+            x: tableView.frame.minX,
+            y: view.bounds.height - bandBottomInset - drawerSealBandHeight,
+            width: tableView.frame.width,
+            height: drawerSealBandHeight
+        )
+        // 模块顶栏：与模块层同宽，顶贴模块区顶（容器态补安全区顶、modal 态
+        // 已在顶栏之下），高 84（抓手 20＋箭头 56＋底边 8）。
+        let moduleTopPad: CGFloat = isModalTopBar ? 0 : view.safeAreaInsets.top
+        moduleTopBarView.frame = CGRect(
+            x: moduleScrollView.frame.minX,
+            y: moduleScrollView.frame.minY + moduleTopPad,
+            width: moduleScrollView.frame.width,
+            height: drawerModuleTopBarHeight
+        )
+        // 模块层内边距：顶留顶栏高（内容从顶栏下方起），底按底栏＋FAB 口径。
+        let moduleTopInset = moduleTopPad + drawerModuleTopBarHeight
+        let moduleBottomInset = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
+        if moduleScrollView.contentInset.top != moduleTopInset || moduleScrollView.contentInset.bottom != moduleBottomInset {
+            moduleScrollView.contentInset = UIEdgeInsets(top: moduleTopInset, left: 0, bottom: moduleBottomInset, right: 0)
+            moduleScrollView.scrollIndicatorInsets = moduleScrollView.contentInset
+        }
+        // 渐变层跟按钮 bounds（圆钮）。
+        downArrowGradientLayer?.frame = downArrowButton.bounds
+        downArrowGradientLayer?.cornerRadius = downArrowButton.bounds.height / 2
+        upArrowGradientLayer?.frame = upArrowButton.bounds
+        upArrowGradientLayer?.cornerRadius = upArrowButton.bounds.height / 2
+    }
+
+    /// 抽屉铬显隐：抽屉不可用时封底带／模块顶栏／模块层一并隐藏，不盖日记；
+    /// 可用时恢复。抽屉开着时突然不可用（注销态翻转），先收起再隐藏。
+    private func updateDrawerChromeVisibility() {
+        if !drawerAvailable, drawerIsOpen {
+            drawerIsOpen = false
+            drawerTranslation = 0
+            drawerLiftOffset = 0
+            applyDrawerTranslation()
+            updateStickyHeaderLayout()
+            updateProfileCoverScroll(offsetY: tableView.contentOffset.y, topBaseline: -tableView.contentInset.top)
+        }
+        sealBandView.isHidden = !drawerAvailable
+        moduleTopBarView.isHidden = !drawerAvailable
+        moduleScrollView.isHidden = !drawerAvailable
+    }
+
+    /// 模块抽屉·模块层装配（refreshFooter 在抽屉可用时调）：
+    /// 本人页的模块组／照片区／地图／星图行改装进模块层，与脚部同几何
+    /// （模块宽、16 间隔、入口行 12＋48、状态脚部不进模块层）；
+    /// 地图／星图行内约束已由 refreshFooter 在本轮先行激活。
+    private func layoutModuleLayer(photosView: UIView?, footerWidth: CGFloat) {
+        guard drawerAvailable, footerWidth > 0 else { return }
+        // 模块约束先关掉再重建（与脚部同款，免得残留）。
+        modulesFooterTopConstraint?.isActive = false
+        modulesFooterLeadingConstraint?.isActive = false
+        modulesFooterWidthConstraint?.isActive = false
+        modulesFooterHeightConstraint?.isActive = false
+        moduleContentView.subviews.forEach { $0.removeFromSuperview() }
+        var totalHeight: CGFloat = 0
+        if !modulesContainer.isHidden {
+            let modulesWidth = isDesktopColumn ? footerWidth : max(footerWidth - 32, 0)
+            let modulesX = (footerWidth - modulesWidth) / 2
+            moduleContentView.addSubview(modulesContainer)
+            let modulesHeight = modulesContainer.systemLayoutSizeFitting(
+                CGSize(width: modulesWidth, height: 0),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+            modulesFooterTopConstraint = modulesContainer.topAnchor.constraint(equalTo: moduleContentView.topAnchor)
+            modulesFooterLeadingConstraint = modulesContainer.leadingAnchor.constraint(equalTo: moduleContentView.leadingAnchor, constant: modulesX)
+            modulesFooterWidthConstraint = modulesContainer.widthAnchor.constraint(equalToConstant: modulesWidth)
+            modulesFooterHeightConstraint = modulesContainer.heightAnchor.constraint(equalToConstant: modulesHeight)
+            NSLayoutConstraint.activate([
+                modulesFooterTopConstraint!,
+                modulesFooterLeadingConstraint!,
+                modulesFooterWidthConstraint!,
+                modulesFooterHeightConstraint!,
+            ])
+            modulesContainer.frame = CGRect(x: modulesX, y: 0, width: modulesWidth, height: modulesHeight)
+            totalHeight += modulesHeight
+        }
+        if let photosView = photosView {
+            let photosY = totalHeight > 0 ? totalHeight + 16 : 0
+            photosView.frame = CGRect(x: 0, y: photosY, width: footerWidth, height: photosView.frame.height)
+            moduleContentView.addSubview(photosView)
+            totalHeight = photosY + photosView.frame.height
+        }
+        mapEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
+        moduleContentView.addSubview(mapEntryRow)
+        totalHeight += 12 + 48
+        if !BearyForceUpdateCenter.shared.isFeatureDisabled(.starmap) {
+            starEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
+            moduleContentView.addSubview(starEntryRow)
+            totalHeight += 12 + 48
+        }
+        moduleContentView.frame = CGRect(x: 0, y: 0, width: footerWidth, height: totalHeight)
+        moduleScrollView.contentSize = CGSize(width: footerWidth, height: totalHeight + 16)
+    }
+
+    /// 日记是否滑到底（内容底 ≤ 视口底，留 8pt 容差）：到底时下箭头出现。
+    private var isDiaryAtBottom: Bool {
+        guard tableView.contentSize.height > 0 else { return false }
+        let visibleHeight = tableView.bounds.height - tableView.adjustedContentInset.top - tableView.adjustedContentInset.bottom
+        let maxOffsetY = tableView.contentSize.height - visibleHeight
+        return tableView.contentOffset.y >= maxOffsetY - 8
+    }
+
+    /// 下箭头显隐：只在抽屉可用、收起态、日记滑到底时出现（淡入）；
+    /// 滑开或滚离底部时消失。首次出现时轻轻上下浮动两下提示可点。
+    private func updateDrawerArrowVisibility(animated: Bool) {
+        guard drawerAvailable, !drawerIsOpen, isDiaryAtBottom else {
+            if downArrowButton.alpha != 0 {
+                downArrowButton.alpha = 0
+            }
+            return
+        }
+        guard downArrowButton.alpha == 0 else { return }
+        let show = { [weak self] in
+            guard let self = self else { return }
+            self.downArrowButton.alpha = 1
+        }
+        if animated, !UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: BearyMotion.normal, animations: show, completion: { [weak self] _ in
+                self?.runDrawerArrowBobIfNeeded()
+            })
+        } else {
+            show()
+            runDrawerArrowBobIfNeeded()
+        }
+    }
+
+    /// 箭头首次出现时轻轻上下浮动两下（上浮 6pt、0.85 秒一轮、播两轮），
+    /// 之后不再播；减动效时跳过。
+    private func runDrawerArrowBobIfNeeded() {
+        guard !drawerArrowBobbed, !UIAccessibility.isReduceMotionEnabled, downArrowButton.alpha > 0 else { return }
+        drawerArrowBobbed = true
+        UIView.animateKeyframes(withDuration: 1.7, delay: 0, options: [], animations: { // beary-lint: allow（浮动两轮共 1.7s＝0.85s×2，预览定版，不在 BearyMotion 三档内）
+            UIView.addKeyframe(withRelativeStartTime: 0.0, relativeDuration: 0.125) {
+                self.downArrowButton.transform = CGAffineTransform(translationX: 0, y: -6)
+            }
+            UIView.addKeyframe(withRelativeStartTime: 0.125, relativeDuration: 0.125) {
+                self.downArrowButton.transform = .identity
+            }
+            UIView.addKeyframe(withRelativeStartTime: 0.25, relativeDuration: 0.125) {
+                self.downArrowButton.transform = CGAffineTransform(translationX: 0, y: -6)
+            }
+            UIView.addKeyframe(withRelativeStartTime: 0.375, relativeDuration: 0.125) {
+                self.downArrowButton.transform = .identity
+            }
+        }, completion: nil)
+    }
+
+    /// 抽屉位移落位：日记层与封底带同值平移；吸顶按打开进度淡出
+    /// （收起时不动，收起完成回调里由滚动回调重算）。
+    private func applyDrawerTranslation() {
+        let total = drawerTranslation + drawerLiftOffset
+        tableView.transform = CGAffineTransform(translationX: 0, y: total)
+        sealBandView.transform = CGAffineTransform(translationX: 0, y: total)
+        if drawerTranslation < 0 {
+            let progress = drawerOpenOffset > 0 ? min(abs(drawerTranslation) / drawerOpenOffset, 1) : 0
+            stickyHeaderView.alpha = drawerStickyAlphaBeforeDrag * (1 - progress)
+            stickyHeaderView.isHidden = stickyHeaderView.alpha == 0
+        }
+    }
+
+    /// 打开／收起抽屉（弹簧吸附；减动效时直接落位）。
+    private func setDrawerOpen(_ open: Bool, animated: Bool, velocity: CGFloat = 0) {
+        drawerIsOpen = open
+        drawerTranslation = open ? -drawerOpenOffset : 0
+        let animations = { [weak self] in
+            guard let self = self else { return }
+            self.applyDrawerTranslation()
+        }
+        let completion: (Bool) -> Void = { [weak self] _ in
+            guard let self = self else { return }
+            if open {
+                self.stickyHeaderView.alpha = 0
+                self.stickyHeaderView.isHidden = true
+                self.updateDrawerArrowVisibility(animated: false)
+            } else {
+                self.updateStickyHeaderLayout()
+                self.updateProfileCoverScroll(offsetY: self.tableView.contentOffset.y, topBaseline: -self.tableView.contentInset.top)
+                self.updateDrawerArrowVisibility(animated: true)
+            }
+        }
+        if animated, !UIAccessibility.isReduceMotionEnabled {
+            let initialVelocity = min(abs(velocity) / max(drawerOpenOffset, 1), 3)
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: initialVelocity, options: [.allowUserInteraction], animations: animations, completion: completion)
+        } else {
+            animations()
+            completion(true)
+        }
+    }
+
+    /// 拖动收尾：快滑按方向吸附，否则按过半进度吸附。
+    private func drawerDragEnded(velocity: CGFloat) {
+        let progress = drawerOpenOffset > 0 ? abs(drawerTranslation) / drawerOpenOffset : 0
+        let shouldOpen: Bool
+        if velocity < -300 {
+            shouldOpen = true
+        } else if velocity > 300 {
+            shouldOpen = false
+        } else {
+            shouldOpen = progress > 0.5
+        }
+        setDrawerOpen(shouldOpen, animated: true, velocity: velocity)
+    }
+
+    /// 从下箭头上拉打开：1:1 跟手；松手按速度／过半进度吸附。
+    @objc private func drawerOpenPanChanged(_ pan: UIPanGestureRecognizer) {
+        switch pan.state {
+        case .began:
+            cancelDrawerLiftHint()
+            drawerPanStartTranslation = drawerTranslation
+            drawerStickyAlphaBeforeDrag = stickyHeaderView.alpha
+        case .changed:
+            let dy = pan.translation(in: view).y
+            drawerTranslation = min(max(drawerPanStartTranslation + dy, -drawerOpenOffset), 0)
+            applyDrawerTranslation()
+        case .ended, .cancelled:
+            drawerDragEnded(velocity: pan.velocity(in: view).y)
+        default:
+            break
+        }
+    }
+
+    /// 从模块列表／抓手下滑盖回：1:1 跟手；松手按速度／过半进度吸附。
+    @objc private func drawerClosePanChanged(_ pan: UIPanGestureRecognizer) {
+        switch pan.state {
+        case .began:
+            cancelDrawerLiftHint()
+            drawerPanStartTranslation = drawerTranslation
+            moduleScrollView.isScrollEnabled = false
+        case .changed:
+            let dy = pan.translation(in: view).y
+            drawerTranslation = min(max(drawerPanStartTranslation + dy, -drawerOpenOffset), 0)
+            applyDrawerTranslation()
+        case .ended, .cancelled, .failed:
+            moduleScrollView.isScrollEnabled = true
+            drawerDragEnded(velocity: pan.velocity(in: view).y)
+        default:
+            break
+        }
+    }
+
+    @objc private func drawerArrowTapped() {
+        cancelDrawerLiftHint()
+        setDrawerOpen(!drawerIsOpen, animated: true)
+    }
+
+    @objc private func drawerCloseTapped() {
+        setDrawerOpen(false, animated: true)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        scheduleDrawerLiftHintIfNeeded()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        cancelDrawerLiftHint()
+    }
+
+    /// 首次进个人页：0.9 秒后日记层轻抬 14pt 又落回，只做一次；
+    /// 先动手（滚动／拖动／离页）即取消；减动效不跑。
+    private func scheduleDrawerLiftHintIfNeeded() {
+        guard drawerAvailable, !drawerLiftShown, !UIAccessibility.isReduceMotionEnabled else { return }
+        cancelDrawerLiftHint()
+        let work = DispatchWorkItem { [weak self] in
+            self?.runDrawerLiftHint()
+        }
+        drawerLiftWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + drawerLiftDelay, execute: work)
+    }
+
+    private func runDrawerLiftHint() {
+        guard drawerAvailable, !drawerLiftShown, !drawerIsOpen, drawerTranslation == 0,
+              tableView.contentOffset.y <= 0, !UIAccessibility.isReduceMotionEnabled else { return }
+        drawerLiftShown = true
+        drawerLiftAnimating = true
+        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseInOut], animations: {
+            self.drawerLiftOffset = -self.drawerLiftAmount
+            self.applyDrawerTranslation()
+        }, completion: { [weak self] _ in
+            guard let self = self, self.drawerLiftAnimating else { return }
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseInOut], animations: {
+                self.drawerLiftOffset = 0
+                self.applyDrawerTranslation()
+            }, completion: { [weak self] _ in
+                self?.drawerLiftAnimating = false
+            })
+        })
+    }
+
+    /// 取消首次进页轻抬（待跑的延时与进行中的抬起都取消，落回原位）。
+    private func cancelDrawerLiftHint() {
+        drawerLiftWorkItem?.cancel()
+        drawerLiftWorkItem = nil
+        if drawerLiftAnimating {
+            drawerLiftAnimating = false
+            drawerLiftOffset = 0
+            applyDrawerTranslation()
         }
     }
 
@@ -10293,6 +10882,43 @@ final class BearyProfileEmptyPlaceholderCell: UITableViewCell {
     }
 }
 
+/// 透传容器：只认交互子视图（箭头／抓手）区域，其余触摸透传给下层
+/// （封底带不挡日记层滚动；模块顶栏不挡模块列表滚动）。
+/// 隐藏或透明（alpha ≤ 0.01）的交互视图不认，触摸继续透传。
+private final class BearyDrawerPassthroughView: UIView {
+    var interactiveViews: [UIView] = []
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        for interactiveView in interactiveViews {
+            guard !interactiveView.isHidden, interactiveView.alpha > 0.01 else { continue }
+            let converted = convert(point, to: interactiveView)
+            if interactiveView.bounds.contains(converted) { return true }
+        }
+        return false
+    }
+}
+
+extension BearyProfileViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === moduleClosePan {
+            // 抽屉内滚到顶再下滑才关：列表未到顶时不接管，滚动照常。
+            return moduleScrollView.contentOffset.y <= 0
+        }
+        if gestureRecognizer === drawerOpenPan {
+            // 从箭头上拉才开：下滑不接管（点按仍可触发）。
+            return drawerOpenPan.velocity(in: view).y < 0
+        }
+        return true
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // 模块关闭拖动须压住列表自身的 pan，否则列表回弹与抽屉位移叠加。
+        if gestureRecognizer === moduleClosePan, otherGestureRecognizer === moduleScrollView.panGestureRecognizer {
+            return true
+        }
+        return false
+    }
+}
+
 extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         // 加载三件套·骨架屏：tab 首载无行时先出 3 张骨架卡（与真实卡片同布局）。
@@ -11041,6 +11667,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         let y = scrollView.contentOffset.y
         // 下拉刷新图标跟随：消息页同款自定义头（手指行程 ×0.48，见 updateCustomPullIndicator）。
         updateCustomPullIndicator()
+        // 模块抽屉：日记层滑到底时下箭头淡入，滚离底部时淡出。
+        updateDrawerArrowVisibility(animated: true)
         defer { profileLastScrollOffsetY = y }
         // 弹性封面（下拉伸缩 + 模糊）：须在顶栏回弹区早退之前跑，否则下拉区永远量不到。
         updateCoverStretch(offsetY: y, topBaseline: -scrollView.contentInset.top)
@@ -11077,6 +11705,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     /// 下拉拉伸本身的 bounds 驱动重画不受影响，仍跟手。
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
+        // 模块抽屉：先动手即取消首次进页轻抬。
+        cancelDrawerLiftHint()
         profileCoverScrolling = true
         updateFestivalWallpaperVisibility()
         updateProfileCoverVisibility()
