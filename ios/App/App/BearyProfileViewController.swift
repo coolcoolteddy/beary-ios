@@ -4068,10 +4068,10 @@ class BearyProfileViewController: UIViewController {
             }
             // G12：二选一取“保留整套旧头”：已有旧资料时名字/头像/封面/统计一律不动，
             // 仅 toast 说明并以脚部重试/下拉刷新作重试入口；无旧资料时才落到统一失败态。
-            if profile == nil {
-                nameLabel.text = "—"
-                stickyHeaderNameLabel.text = "—"
-            } else {
+            // 弱网顶部三态：无旧资料时不写“—”（“—”只是加载占位，写进失败态
+            // 会让顶部看起来像“没有名字”）；失败态由脚部统一失败态
+            // （makeErrorFooter，带重试）承载，见 refreshFooter 的 error 分支。
+            if profile != nil {
                 BearyToast.show(in: view, message: NSLocalizedString("profile.refresh_failed_showing_previous_content", comment: ""))
             }
             endCustomPullRefresh()
@@ -4151,7 +4151,11 @@ class BearyProfileViewController: UIViewController {
         // 数据回来只改数字 label 本身；数字出现／变化时只淡入数字本身
         // （setLabelTextFaded：alpha 0→1，不弹、不缩放、不重建整行），
         // 同值不赋值不重播。
-        setLabelTextFaded(publicCountLabel, isDeleted ? "—" : (profileValue.diaryCount.map { "\($0)" } ?? "—"))
+        // 弱网顶部三态：篇数取不到时不写“—”，保留旧值（首载时即初始占位）；
+        // 旧口径在刷新回包缺篇数时把已显数字盖成“—”。
+        if let diaryCount = profileValue.diaryCount {
+            setLabelTextFaded(publicCountLabel, isDeleted ? "—" : "\(diaryCount)")
+        }
 
         // 头像：有图盖住首字母位，无图透出首字母（与列表页同款回退）；
         // 有图时的加载与失败回退走 startHeaderAvatarLoad（失败显式恢复首字母 + 出重试图标）。
@@ -7567,7 +7571,7 @@ class BearyProfileViewController: UIViewController {
     /// 他人页恒为假——他人页空 tab 不加占位，脚部模块按现行他人页口径显隐。
     private var showsOwnEmptyPlaceholder: Bool {
         guard isOwnProfile, !tabLoading, !tabError else { return false }
-        if currentTab == .diary && profileLoadFailed && targetHandleValue != nil { return false }
+        if currentTab == .diary && profileLoadFailed { return false }
         return displayedEntries.isEmpty
     }
 
@@ -7628,7 +7632,10 @@ class BearyProfileViewController: UIViewController {
         } else if tabLoading {
             stateView = makeLoadingFooter()
             kind = "loading"
-        } else if tabError || (currentTab == .diary && profileLoadFailed && targetHandleValue != nil) {
+        } else if tabError || (currentTab == .diary && profileLoadFailed) {
+            // 弱网顶部三态：资料失败时不论目标是 handle／id／本人，都落统一
+            // 失败态（带重试）；旧口径只认 handle 目标，本人页失败时脚部
+            // 不出重试，顶部只剩“—”。
             stateView = makeErrorFooter()
             kind = "error"
         } else if displayedEntries.isEmpty && !showsOwnEmptyPlaceholder {
