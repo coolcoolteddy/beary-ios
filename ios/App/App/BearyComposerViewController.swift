@@ -490,7 +490,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 心情/天气旧条带已删（见下），入口只走天气尖角弹出框（心情入口已删），不再走本值；
     /// 旧附加栏三态随双重入口删除而整组拆除，不再有“附加栏撑着显示天气行”的压制状态机。
     private enum ToolStrip {
-        case mood, weather, recipient
+        case recipient
     }
     private var activeToolStrip: ToolStrip?
     /// C11：删图撤销缓冲（单槽，只留最近一次删除）：项本身不改字段（key/localFile/
@@ -802,7 +802,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 后台冲刷失败待提示：保存回调在后台触发时 toast 用户看不到，记下来
     /// 回前台时再提示；只记编辑模式——新建态失败已有失败红字状态行，不重复提示。
     private var backgroundFlushFailed = false
-    private var editTimer: Timer?
     private var imageItems: [ComposerImageItem] = [] {
         didSet { editorEditVersion += 1 }
     }
@@ -1109,7 +1108,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 否则隐藏的 arranged 子项仍被自身 44 最小高撑住、与 stack 的隐藏折叠冲突
     ///（同图片条 96 约束先例）。
     private var pendingUploadBarHeightConstraint: NSLayoutConstraint?
-    private let editTimerLabel = UILabel()
     private let draftStatusGroup = UIStackView()
     private let draftStatusIcon = UIImageView()
     private let draftStatusLabel = UILabel()
@@ -1341,10 +1339,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toolbarBottomToKeyboardConstraint?.isActive = true
             toolbarBottomToSafeAreaConstraint?.isActive = false
         }
-        // 编辑模式回到页面时重调 startEditTimer（只藏倒计时 label + 刷新状态行），
-        // 从选图/弹窗回来后状态行显隐不错位；startEditTimer 本身幂等。
+        // 编辑模式回到页面时重调刷新状态行，从选图/弹窗回来后状态行显隐不错位。
         if isEditMode {
-            startEditTimer()
+            refreshStatusRowVisibility()
         }
     }
 
@@ -1355,12 +1352,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if isBeingDismissed {
             reanchorToolbarForDismiss()
         }
-        // B5-3：编辑计时器（已取消倒计时，见 startEditTimer）在页面关闭/被 modal
-        // 盖住时即失效，不再只靠 deinit；editTimer 现恒为 nil，本处只作对称清理。
         // draftTimer 是 0.4s 一次性防抖，到点自释，不在这里失效（否则会丢
         // 一笔待保存的草稿）；deinit 仍保留作兜底。
-        editTimer?.invalidate()
-        editTimer = nil
     }
 
     /// 关闭退场 B 修法：退场开始时把工具栏底锚从键盘顶换成自身 safeArea 底，
@@ -1413,7 +1406,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     deinit {
         draftTimer?.invalidate()
-        editTimer?.invalidate()
         pendingUndoTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
@@ -2958,7 +2950,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 2026-10-31：限时行已删，原“锚限时行顶”档并入工具栏档（心情/天气旧条带
     /// 已删、入口只走弹出框，不再为其预留行高；新建态滚动区因此下探 48pt）。
     private func updateScrollBottomAnchoring() {
-        let otherStripOpen = activeToolStrip != nil && activeToolStrip != .mood && activeToolStrip != .weather
+        let otherStripOpen = activeToolStrip != nil
         scrollBottomToPublishRowConstraint?.isActive = !otherStripOpen
         scrollBottomToStripConstraint?.isActive = otherStripOpen
         scrollBottomToViewConstraint?.isActive = false
@@ -4897,9 +4889,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 状态行（编辑倒计时 + 草稿状态；字数圆环已移入工具栏右端）
 
     private func buildStatusRow() {
-        editTimerLabel.font = BearyDynamicType.numberFont()
-        editTimerLabel.textColor = BearyColors.gray
-        editTimerLabel.isHidden = true
         // P2-12：工具栏内联状态行同缺陷一并改——captionFont（12 regular scaled，
         // 规范 §11）＋跟随系统字号，宽度不足时换行、不截尾。
         draftStatusLabel.font = BearyDynamicType.captionFont()
@@ -4931,7 +4920,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         statusRow.alignment = .center
         statusRow.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(statusRow)
-        statusRow.addArrangedSubview(editTimerLabel)
         statusRow.addArrangedSubview(statusRowSpacer)
         // v6-6：草稿保存文案组已挪到工具栏右端（buildToolbarRow），不再进状态行；
         // 状态行只留编辑倒计时。组内图标／文案／级别逻辑（updateDraftStatusLabel）一字不动。
@@ -4967,9 +4955,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         charRingView.layer.addSublayer(progress)
         charTrackLayer = track
         charProgressLayer = progress
-        // 窄屏 5 项之 4：建完即按实际内容定显隐与间距——新建模式倒计时隐藏，
-        // 整行直接隐藏＋间距清零，不留 18＋8＝26pt 空白；编辑模式由 startEditTimer
-        // 经本函数恢复（见下）。
+        // 窄屏 5 项之 4：建完即按实际内容定显隐与间距——无实际内容时
+        // 整行直接隐藏＋间距清零，不留 18＋8＝26pt 空白；编辑模式下调用本函数恢复显隐。
         refreshStatusRowVisibility()
     }
 
@@ -5213,17 +5200,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             setDraftStatusBannerVisible(true)
             setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 7 * 24 + 8 + charGroupWidth, containerWidth: width), in: toolRow)
         }
-    }
-
-    // MARK: - 编辑倒计时（已取消：冲突清单第 4 条取消 15 分钟锁，编辑永久可改。
-    // 本函数只剩隐藏倒计时 label + 刷新状态行显隐（调用点不动）；计时器不再启动。
-
-    private func startEditTimer() {
-        editTimer?.invalidate()
-        editTimer = nil
-        editTimerLabel.isHidden = true
-        // 窄屏 5 项之 4：倒计时显隐即状态行显隐，编辑模式这里把整行藏掉。
-        refreshStatusRowVisibility()
     }
 
 
@@ -6168,15 +6144,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.spinner.stopSpinning()
         item.removeButton.accessibilityLabel = "删除图片"
         refreshAttachmentAccessibilityLabels()
-    }
-
-    /// 新模型：本地图就绪（已显示本地图、已落盘）——停转圈、清上传态，
-    /// 发布钮恢复由调用方调 updatePublishState。编辑模式不用本函数
-    ///（上传态由 markUploaded/markFailed 接管）。
-    private func markLocalReady(_ item: ComposerImageItem) {
-        item.uploading = false
-        item.spinner.stopSpinning()
-        item.removeButton.accessibilityLabel = "删除图片"
     }
 
     private func markFailed(_ item: ComposerImageItem) {
@@ -7834,7 +7801,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshQuoteSection()
         refreshToolStrip()
         maybePresentStoredQuotePrompt()
-        startEditTimer()
+        refreshStatusRowVisibility()
         // 2026-11-14（132 真机）：编辑回填按 key 去重后追加——补拉二次调用
         // setupEditContent 时图片回填段无守卫（正文/心情等段有 editQuoteFetchAttempted
         // 守卫），重复回填会把同一张图插两遍，条里看起来像“编辑一次多一张图”；
