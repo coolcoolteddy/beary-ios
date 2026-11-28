@@ -311,9 +311,9 @@ final class BearyPlusPageViewController: UIViewController {
             sectionLabel.bottomAnchor.constraint(equalTo: sectionWrap.bottomAnchor, constant: -8),
         ])
         contentStack.addArrangedSubview(sectionWrap)
-        contentStack.addArrangedSubview(benefitRow(title: "九宫格版式", desc: "单篇 9 张照片以九宫格呈现", isLast: false))
-        contentStack.addArrangedSubview(benefitRow(title: "节日墙纸", desc: "万圣节、春节等节日限定款，领到后永久收藏", isLast: false))
-        contentStack.addArrangedSubview(benefitRow(title: "景深背景", desc: "中国、美国、日本、德国、加拿大、韩国六国封面，跟着手机倾斜动", isLast: false))
+        contentStack.addArrangedSubview(benefitRow(title: "九宫格版式", desc: nil, isLast: false))
+        contentStack.addArrangedSubview(benefitRow(title: "节日墙纸", desc: nil, isLast: false))
+        contentStack.addArrangedSubview(benefitRow(title: "景深背景", desc: nil, isLast: false))
         contentStack.addArrangedSubview(benefitRow(title: "未来节日款优先", desc: nil, isLast: true))
     }
 
