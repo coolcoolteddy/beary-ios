@@ -19,7 +19,7 @@ final class BearyI18nCatalogTests: XCTestCase {
     /// （与 BearyAppLock.swift 里的 NSLocalizedString 调用一一对应；
     /// 新增样板 key 时同步加到这里；中文文案改了只改这里的期望值，不改 key）。
     private static let sampleKeys: [String: String] = [
-        "app_lock.cold_start_note": "冷启动时验证一次；切到别的 App 再回来不重复。",
+        "app_lock.cold_start_note": "打开 App 时验证一次；切到别的 App 再回来不重复。",
         "app_lock.face_id": "面容识别",
         "app_lock.touch_id": "触控 ID",
         "app_lock.biometrics": "生物识别",
