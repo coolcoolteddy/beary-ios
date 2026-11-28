@@ -333,6 +333,15 @@ final class BearyMessagesViewController: UIViewController {
     /// 回包即随通知恢复）。显隐变化时带 0.26s 布局动画（减动效直落终值）。
     private func updateStaleBanner(stale: Bool) {
         staleRetryButton.isEnabled = true
+        // 展示审计 G6-A14：失败行在场或无数据行时不显过期横条——失败行／
+        // 全页失败态已是主反馈，横条只是第二处噪音。
+        let hasFailureRow = mergedRows.contains { row in
+            if case .notifFailure = row { return true }
+            if case .dmFailure = row { return true }
+            return false
+        }
+        let hasDataRows = mergedRows.contains(where: { isDataRow($0) })
+        let stale = stale && hasDataRows && !hasFailureRow
         guard staleBanner.isHidden == stale else { return }
         staleBanner.isHidden = !stale
         staleBannerHeightConstraint?.constant = stale ? 36 : 0
@@ -549,6 +558,9 @@ final class BearyMessagesViewController: UIViewController {
     ///   失败取通知文案，均成功取合并空态），表隐藏。
     private func updateMergedVisibility() {
         let notif = notifChild.mergeSnapshot
+        // 可见态变了重算过期横条（G6-A14：失败行在场或无数据行时横条收起；
+        // 本函数由 applyMergedRows 两路调用，行集变化必经此处）。
+        updateStaleBanner(stale: notifChild.isUnreadCountStale)
         let dm = conversationsChild.mergeSnapshot
         let hasData = mergedRows.contains(where: { isDataRow($0) })
         let anyPending = notif.isFirstPending || dm.isFirstPending

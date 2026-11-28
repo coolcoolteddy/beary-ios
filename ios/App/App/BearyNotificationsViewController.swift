@@ -2039,7 +2039,10 @@ final class BearyNotificationsViewController: UIViewController {
                     // 不产生新行，哨兵留位、滚出再滚回才重触（见 scrollViewDidScroll 重 arm）。
                     // P1-22：失败前先灭卡片动画（见 cancelCardAnimation），摘掉在途快照。
                     strongSelf.loadMoreFailed = true
-                    strongSelf.showToast(message: "加载失败")
+                    // 展示审计 G6-A14：合并模式下翻页失败不 toast——哨兵失败行已是主反馈。
+                    if !strongSelf.isEmbedded {
+                        strongSelf.showToast(message: "加载失败")
+                    }
                     strongSelf.cancelCardAnimation()
                     // 第七轮 12：失败只翻哨兵态，只刷新哨兵行。
                     strongSelf.refreshSentinelRow()
