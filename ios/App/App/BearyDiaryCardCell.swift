@@ -319,8 +319,7 @@ final class BearyEmoteChipView: UIView {
         countLabel.textColor = mine ? BearyColors.ink : BearyColors.gray
         countLabel.text = "\(count)"
         // 无障碍名（v28 §八）：表情名＋总数＋已贴／未贴，如「抱抱，12 只，已贴」。
-        // 名字现行走 BearyText.moodNames（中文）；32 熊脸名尚未进 String Catalog，
-        // X3 批进 Catalog 后再跟进本地化，不要在此另造翻译。
+        // 名字走 BearyText.moodNames（32 熊脸名已进 String Catalog mood.*，跟随系统语言）。
         // 模板与已贴／未贴走 String Catalog（diary_card.emote_chip_a11y 等）。
         // 标签挂在整 chip 的点击层上（可交互元素），计数文本本身不参与读屏。
         let emoteName = BearyText.moodNames[key] ?? key

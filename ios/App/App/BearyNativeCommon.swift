@@ -2651,17 +2651,17 @@ enum BearyText {
         return absoluteDateString(from: date, timeZone: timeZone)
     }
 
-    /// 心情 key → 中文名（32 只熊脸＋节日 200 款；与网页 MOOD_DEFS 的 40 种不同集，
+    /// 心情 key → 名字（32 只熊脸＋8 只物件走 String Catalog mood.*，节日 200 款仍为中文硬编码；与网页 MOOD_DEFS 的 40 种不同集，
     /// 节日款是 App 侧新增、网页暂无同款名，见 bearMoodKeys 注释）。
     static let moodNames: [String: String] = [
-        "agree": "嗯嗯", "happy": "开心", "applause": "为你鼓掌", "cheer": "加油",
-        "comfort": "安慰", "confused": "迷惑", "love": "心动", "determined": "加把劲",
-        "facepalm": "捂脸", "shy": "害羞", "goodnight": "晚安", "hug": "抱抱",
-        "wink": "眨眼", "idea": "灵光一闪", "kiss": "亲一下", "thinking": "思考",
-        "listening": "我在听", "lonely": "孤单", "speechless": "无语", "nope": "不嘛",
-        "surprised": "惊讶", "pat": "摸摸头", "peek": "偷偷看", "sleepy": "困倦",
-        "proud": "骄傲", "shrug": "没办法", "sorry": "对不起", "cry": "想哭",
-        "angry": "生气", "thanks": "谢谢你", "zap": "带电", "wave": "挥挥手",
+        "agree": NSLocalizedString("mood.agree", comment: ""), "happy": NSLocalizedString("mood.happy", comment: ""), "applause": NSLocalizedString("mood.applause", comment: ""), "cheer": NSLocalizedString("mood.cheer", comment: ""),
+        "comfort": NSLocalizedString("mood.comfort", comment: ""), "confused": NSLocalizedString("mood.confused", comment: ""), "love": NSLocalizedString("mood.love", comment: ""), "determined": NSLocalizedString("mood.determined", comment: ""),
+        "facepalm": NSLocalizedString("mood.facepalm", comment: ""), "shy": NSLocalizedString("mood.shy", comment: ""), "goodnight": NSLocalizedString("mood.goodnight", comment: ""), "hug": NSLocalizedString("mood.hug", comment: ""),
+        "wink": NSLocalizedString("mood.wink", comment: ""), "idea": NSLocalizedString("mood.idea", comment: ""), "kiss": NSLocalizedString("mood.kiss", comment: ""), "thinking": NSLocalizedString("mood.thinking", comment: ""),
+        "listening": NSLocalizedString("mood.listening", comment: ""), "lonely": NSLocalizedString("mood.lonely", comment: ""), "speechless": NSLocalizedString("mood.speechless", comment: ""), "nope": NSLocalizedString("mood.nope", comment: ""),
+        "surprised": NSLocalizedString("mood.surprised", comment: ""), "pat": NSLocalizedString("mood.pat", comment: ""), "peek": NSLocalizedString("mood.peek", comment: ""), "sleepy": NSLocalizedString("mood.sleepy", comment: ""),
+        "proud": NSLocalizedString("mood.proud", comment: ""), "shrug": NSLocalizedString("mood.shrug", comment: ""), "sorry": NSLocalizedString("mood.sorry", comment: ""), "cry": NSLocalizedString("mood.cry", comment: ""),
+        "angry": NSLocalizedString("mood.angry", comment: ""), "thanks": NSLocalizedString("mood.thanks", comment: ""), "zap": NSLocalizedString("mood.zap", comment: ""), "wave": NSLocalizedString("mood.wave", comment: ""),
         "candle": NSLocalizedString("mood.candle", comment: ""), "flower": NSLocalizedString("mood.flower", comment: ""), "letter": NSLocalizedString("mood.letter", comment: ""), "paperplane": NSLocalizedString("mood.paperplane", comment: ""),
         "sprout": NSLocalizedString("mood.sprout", comment: ""), "tea": NSLocalizedString("mood.tea", comment: ""), "umbrella": NSLocalizedString("mood.umbrella", comment: ""), "wish": NSLocalizedString("mood.wish", comment: ""),
         "pumpkin": "南瓜灯", "ghost": "小幽灵", "bat": "蝙蝠", "witchhat": "女巫帽",
