@@ -459,6 +459,9 @@ final class BearyLocalNotifications: NSObject {
                     }
                     let content = UNMutableNotificationContent()
                     content.body = item.body
+                    if item.kind == .limitedExpiry {
+                        content.title = item.kind.title
+                    }
                     content.sound = UNNotificationSound(named: UNNotificationSoundName(item.kind.soundFileName))
                     content.userInfo = item.userInfo
                     // 限时到期含秒：保留秒（UNCalendarNotificationTrigger 支持秒级），
