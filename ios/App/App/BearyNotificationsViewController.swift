@@ -3092,7 +3092,7 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         if indexPath.row == displayRows.count {
             // 第七轮 12：哨兵三态同高 56（网页 .more-sentinel 闲置总高 =
-            // min-height 24 + padding 10/22 = 56）；加载中只换行内转圈、
+            // min-height 24 + padding 10/22 = 56）；加载中只换行内三点、
             // 失败只换行内文案，不再 40/56 来回跳；态变只刷新哨兵行。
             return 56
         }
@@ -5238,13 +5238,15 @@ private final class BearyPopperView: UIView {
     }
 }
 
-// MARK: - 哨兵 cell（翻页触发占位：忙时 16px 转圈，闲时不可见，失败时显重试文案）
+// MARK: - 哨兵 cell（翻页触发占位：忙时共享三点跳动，闲时不可见，失败时显重试文案）
 
 class BearyNotificationTrailingCell: UITableViewCell {
 
-    /// 忙时仅 16pt 官方刷新图标转圈（与网页 .more-sentinel 16px 同口径；2026-10-30
-    /// 全 App 统一 icon_refresh，不再用 medium 圈 ×0.8 缩放）。
-    private let spinner = BearyRefreshIconView()
+    /// 忙时仅共享三点跳动（BearyLoadMoreFooterView 的加载态，与广场／时间线／
+    /// 个人页翻页脚部同款；2026-11-22 定：三点只用于列表翻页）。
+    /// 本 cell 只用它的 .loading／.hidden 两态，不用到底／失败态——失败态
+    /// 仍走下面的重试文案（原口径不动）。
+    private let dotsView = BearyLoadMoreFooterView()
 
     /// 112：失败态重试文案。哨兵闲时不可见，若失败态也全隐形，
     /// 用户无从发现可点按重试；只在失败态显形，闲时/到底了态不动。
@@ -5265,13 +5267,14 @@ class BearyNotificationTrailingCell: UITableViewCell {
         selectionStyle = .none
         backgroundColor = BearyColors.bg
         contentView.backgroundColor = BearyColors.bg
-        contentView.addSubview(spinner)
+        contentView.addSubview(dotsView)
         contentView.addSubview(retryLabel)
+        dotsView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            spinner.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            spinner.widthAnchor.constraint(equalToConstant: 16),
-            spinner.heightAnchor.constraint(equalToConstant: 16),
+            dotsView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            dotsView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            dotsView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            dotsView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             retryLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             retryLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             retryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 20),
@@ -5285,33 +5288,30 @@ class BearyNotificationTrailingCell: UITableViewCell {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // 哨兵 cell 已无描边钮，转圈颜色走 UIColor 动态解析，无需重刷。
+        // 哨兵 cell 已无描边钮，三点颜色走 UIColor 动态解析，无需重刷。
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        spinner.stopSpinning()
+        dotsView.setState(.hidden)
         retryLabel.isHidden = true
     }
 
-    /// 忙时仅 16px 转圈；闲时不可见、无按钮、无点击。
+    /// 忙时仅三点跳动；闲时不可见、无按钮、无点击。
     func configureLoading() {
         retryLabel.isHidden = true
-        spinner.isHidden = false
-        spinner.startSpinning()
+        dotsView.setState(.loading)
     }
 
     func configureIdle() {
-        spinner.stopSpinning()
-        spinner.isHidden = true
+        dotsView.setState(.hidden)
         retryLabel.isHidden = true
     }
 
-    /// 112：失败态——藏转圈、显“加载失败，点按重试”，整行点按走
+    /// 112：失败态——藏三点、显“加载失败，点按重试”，整行点按走
     /// didSelectRowAt 的失败重试分支；无更多页时本行不存在。
     func configureFailed() {
-        spinner.stopSpinning()
-        spinner.isHidden = true
+        dotsView.setState(.hidden)
         retryLabel.isHidden = false
     }
 }
