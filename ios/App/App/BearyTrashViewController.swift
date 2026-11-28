@@ -104,7 +104,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private let closeButton = BearyHit44Button(type: .custom)
     private let noteLabel = UILabel()
     private let listStack = UIStackView()
-    private let loadingView = BearyRefreshIconView()
+    /// 首屏骨架（无缓存桶网络首拉时出；有缓存先读本地秒显、再静默重拉，不出骨架）。
+    /// 回收站是 stack 列表、无 tableView，BearySkeletonCell（UITableViewCell）
+    /// 没法直接复用；此处按真实回收站行结构拼骨架行，扫光走共享
+    /// BearySkeletonShimmerView（私信／通知骨架行同款口径）。
+    private let skeletonStack = UIStackView()
     // 空态走 BearyStateView（与失败态 failureStateView 同为 contentStack 的 arranged subview）。
     private let emptyStateView = BearyStateView()
     // B-G14: trash empty-state 40pt top pad (web trashEmptyHtml padding-top:40).
@@ -313,8 +317,15 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         listStack.spacing = 10
         listStack.translatesAutoresizingMaskIntoConstraints = false
 
-        // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
-        loadingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
+        // 首屏骨架：3 行回收站形骨架（间距 10 与 listStack 同），只在无缓存
+        // 网络首拉时出；扫光由各行内 BearySkeletonShimmerView 自起停。
+        skeletonStack.axis = .vertical
+        skeletonStack.spacing = 10
+        skeletonStack.isHidden = true
+        skeletonStack.isUserInteractionEnabled = false
+        for _ in 0..<3 {
+            skeletonStack.addArrangedSubview(BearyTrashSkeletonRowView(frame: .zero))
+        }
         emptyStateView.translatesAutoresizingMaskIntoConstraints = false
         emptyStateView.configure(kind: .empty, title: "回收站是空的", subtitle: nil, iconName: "icon_trash", actionTitle: nil)
         emptyStateView.isHidden = true
@@ -383,7 +394,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         contentStack.addArrangedSubview(headerRow)
         contentStack.addArrangedSubview(noteRow)
         contentStack.addArrangedSubview(listStack)
-        contentStack.addArrangedSubview(loadingView)
+        contentStack.addArrangedSubview(skeletonStack)
         emptyTopSpacer.backgroundColor = .clear
         emptyTopSpacer.translatesAutoresizingMaskIntoConstraints = false
         emptyTopSpacer.heightAnchor.constraint(equalToConstant: 40).isActive = true
@@ -511,7 +522,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashLoadMoreFailed = false
         loadMoreRetryWrap.isHidden = true
         // 回收站同步落盘：桶已存在时先读本地秒显（不转菊花），再静默整桶重拉对齐；
-        // 桶不存在时走现行网络首拉（菊花 + 失败态口径一字不动）。
+        // 桶不存在时走现行网络首拉（骨架 + 失败态口径一字不动）。
         // 开页读改走同步串行后台队列（与恢复/删除写、静默刷新写同一队列，
         // 读到的是写队列已落地的整桶，不会读到恢复在途的半截状态）：
         // 读桶期间不转菊花（旧口径：本地秒显本来就不转菊花），读完回主线程
@@ -550,7 +561,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         loadFirstPageFromNetwork()
     }
 
-    /// 网络首拉（桶不存在/未登录时走这里；菊花 + 失败态口径与旧 loadFirstPage 一字不动）。
+    /// 网络首拉（桶不存在/未登录时走这里；骨架 + 失败态口径与旧 loadFirstPage 一字不动）。
     private func loadFirstPageFromNetwork() {
         trashLoading = true
         trashFirstLoadFailed = false
@@ -836,11 +847,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         let failureWasHidden = failureWrap.isHidden
         let loginWasHidden = loginWrap.isHidden
         let hasItems = trashItems.isEmpty == false
-        loadingView.isHidden = trashLoading == false || hasItems
-        if loadingView.isHidden == false {
-            loadingView.startSpinning()
-        } else {
-            loadingView.stopSpinning()
+        // 首屏骨架：只在网络首拉在途且尚无行时出；有缓存秒显／静默重拉不出。
+        let showSkeleton = trashLoading && hasItems == false
+        skeletonStack.isHidden = showSkeleton == false
+        for row in skeletonStack.arrangedSubviews {
+            (row as? BearyTrashSkeletonRowView)?.setShimmerActive(showSkeleton)
         }
         emptyStateView.isHidden = hasItems || trashLoading || trashFirstLoadFailed || trashLoginEmpty || trashStaleEmpty
         emptyTopSpacer.isHidden = emptyStateView.isHidden
@@ -1738,3 +1749,85 @@ extension TrashItem {
 // TR-3：三个请求调 BearyAPI 的 fetchTrash(before:beforeId:completion:) /
 // restoreTrash(id:completion:) / purgeTrash(id:completion:)，游标 before 为
 // deletedAt 的字符串形式（API 侧签名 before: String?）。
+
+// MARK: - 回收站首屏骨架行
+
+/// 回收站首屏骨架行：与真实回收站行同结构——surface1 卡片内两行摘要条、
+/// 一行 meta 条、底下一行两个按钮条；扫光走共享 BearySkeletonShimmerView，
+/// 与私信／通知骨架行同口径。无文字、不冒充内容，读屏跳过。
+private final class BearyTrashSkeletonRowView: UIView {
+
+    private let summaryBar1 = BearySkeletonShimmerView.bar(height: 16)
+    private let summaryBar2 = BearySkeletonShimmerView.bar(height: 16)
+    private let metaBar = BearySkeletonShimmerView.bar(width: 120, height: 12)
+    private let restoreBar = UIView()
+    private let purgeBar = UIView()
+    private lazy var shimmerView = BearySkeletonShimmerView(blocks: [summaryBar1, summaryBar2, metaBar, restoreBar, purgeBar])
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = BearyColors.surface1
+        layer.cornerRadius = BearyCorners.single
+        isAccessibilityElement = false
+        accessibilityElementsHidden = true
+        isUserInteractionEnabled = false
+        for bar in [restoreBar, purgeBar] {
+            bar.backgroundColor = BearySkeletonShimmerView.baseColor()
+            bar.layer.cornerRadius = BearyCorners.single
+        }
+        let spacerView = UIView()
+        spacerView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let buttonsRow = UIStackView(arrangedSubviews: [restoreBar, spacerView, purgeBar])
+        buttonsRow.axis = .horizontal
+        buttonsRow.alignment = .center
+        buttonsRow.spacing = 8
+        summaryBar1.translatesAutoresizingMaskIntoConstraints = false
+        summaryBar2.translatesAutoresizingMaskIntoConstraints = false
+        metaBar.translatesAutoresizingMaskIntoConstraints = false
+        restoreBar.translatesAutoresizingMaskIntoConstraints = false
+        purgeBar.translatesAutoresizingMaskIntoConstraints = false
+        buttonsRow.translatesAutoresizingMaskIntoConstraints = false
+        shimmerView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(summaryBar1)
+        addSubview(summaryBar2)
+        addSubview(metaBar)
+        addSubview(buttonsRow)
+        addSubview(shimmerView)
+        NSLayoutConstraint.activate([
+            // 与真实行同几何：内边距上 14／下 14、左右 16；摘要两行、meta 行、
+            // 按钮行 44（间距 8／10／10 与 makeRowView 的 6／10 同量级）。
+            summaryBar1.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            summaryBar1.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            summaryBar1.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            summaryBar2.topAnchor.constraint(equalTo: summaryBar1.bottomAnchor, constant: 8),
+            summaryBar2.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            summaryBar2.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.7, constant: -16),
+            metaBar.topAnchor.constraint(equalTo: summaryBar2.bottomAnchor, constant: 10),
+            metaBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            buttonsRow.topAnchor.constraint(equalTo: metaBar.bottomAnchor, constant: 10),
+            buttonsRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            buttonsRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            buttonsRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            restoreBar.widthAnchor.constraint(equalToConstant: 84),
+            restoreBar.heightAnchor.constraint(equalToConstant: 44),
+            purgeBar.widthAnchor.constraint(equalToConstant: 104),
+            purgeBar.heightAnchor.constraint(equalToConstant: 44),
+            shimmerView.topAnchor.constraint(equalTo: topAnchor),
+            shimmerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            shimmerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            shimmerView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// 骨架显隐时由页里显式起停扫光（stack 内隐藏行不离窗口，
+    /// didMoveToWindow 不会补停；显现时若布局未跑完，layoutSubviews 会补起）。
+    func setShimmerActive(_ active: Bool) {
+        if active {
+            shimmerView.startShimmer()
+        } else {
+            shimmerView.stopShimmer()
+        }
+    }
+}
