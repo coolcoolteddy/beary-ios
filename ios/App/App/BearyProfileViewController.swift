@@ -1765,12 +1765,16 @@ class BearyProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("换一篇", for: .normal)
-        buttonValue.setTitleColor(BearyColors.bg, for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.setImage(BearyIconImages.image(named: "icon_shuffle", pointSize: 14), for: .normal)
-        buttonValue.tintColor = BearyColors.bg
+        buttonValue.tintColor = BearyColors.ink
         buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        buttonValue.backgroundColor = BearyColors.ink
+        // 展示审计 G2-08：次要操作改幽灵钮（透明底＋墨字＋细描边），
+        // 不再用实心墨底抢随机日记本身的视觉重心。
+        buttonValue.backgroundColor = .clear
+        buttonValue.layer.borderWidth = 1
+        buttonValue.layer.borderColor = BearyColors.line.cgColor
         buttonValue.layer.cornerRadius = BearyCorners.single
         buttonValue.clipsToBounds = true
         buttonValue.addTarget(self, action: #selector(randomShuffleTapped), for: .touchUpInside)
