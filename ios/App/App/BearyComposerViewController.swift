@@ -2470,9 +2470,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteFetchFailedRow.isHidden = true
         // 引用区放图片块后面（2026-11-27 Li 定：图片是自己的内容在前，引用是外部的在后，
         // 与发布后卡片顺序一致——卡片栈：标题、正文、图片、九宫格、引用卡、定位、标签）。
-        // 以 pendingUploadBar 定位插入点，不依赖固定下标；pendingUploadBar 不在栈内时兜底追加。
-        if let barIndex = contentStack.arrangedSubviews.firstIndex(of: pendingUploadBar) {
-            contentStack.insertArrangedSubview(quoteSection, at: barIndex + 1)
+        // pendingUploadBar 自 #2753 起已移出内容栈、改放浮层 transientBarStack，以它定位恒回 nil；
+        // 改以图片块定位插入点，不依赖固定下标；图片块不在栈内时兜底追加。
+        if let imageIndex = contentStack.arrangedSubviews.firstIndex(of: imageScrollView) {
+            contentStack.insertArrangedSubview(quoteSection, at: imageIndex + 1)
         } else {
             contentStack.addArrangedSubview(quoteSection)
         }
@@ -7328,7 +7329,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 第 20 轮 A4：44 高约束与显隐同步——隐藏时停用，显示时恢复（同图片条先例）。
         pendingUploadBarHeightConstraint?.isActive = shouldShow
         // 藏起来的条不占间距（同 refreshQuoteSection 口径）：显示留 4，隐藏归 0。
-        contentStack.setCustomSpacing(shouldShow ? 4 : 0, after: pendingUploadBar)
         if pendingUploadBar.isHidden != !shouldShow {
             pendingUploadBar.isHidden = !shouldShow
             // 2026-11-27 浮条：条已不在内容栈，显隐不再改内容高，只刷新浮层。
