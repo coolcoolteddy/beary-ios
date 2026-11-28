@@ -726,7 +726,9 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
                 self?.saveDMLevel(option.value)
             }, isSelected: option.value == dmLevel)
         }
-        BearyConfirmSheet.show(from: self, title: "谁可以私信我", message: "你关注的人始终可以给你发私信", actions: actions)
+        // 展示审计 G6-N4：sheet 内去掉与行副标题重复的一句（行内副标题仍在；
+        // 第 3 组会删行内副标题，两处合起来该句消失，是审计本意）。
+        BearyConfirmSheet.show(from: self, title: "谁可以私信我", message: nil, actions: actions)
     }
 
     private func saveDMLevel(_ level: String) {
