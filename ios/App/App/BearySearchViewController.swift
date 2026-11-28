@@ -320,6 +320,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // 不再每次重渲都拆掉全部行重建；翻页改增量追加（见 appendResultRows）。
     private let resultsStack = UIStackView()
 
+    /// 首次搜索骨架行：showLoadingState 建 3 行放进 resultsStack；结果／空态／
+    /// 失败态／离页收尾都经 clearResultRows 或 removeSearchSkeletonRows 摘掉，
+    /// 不进 entryRowById 等结果表、不参与同关键词复用（syncResultRowsReuse
+    /// 按 keep 集拆栈时一并摘除）。
+    private var searchSkeletonRows: [UIView] = []
+
     // 状态区：网页 .addr-state——容器 padding 28/20/20；圆 54、图标 25、标题 15、副文案 12。
     private let stateWrap = UIView()
     private let stateStack = UIStackView()
@@ -738,12 +744,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     /// 审计 26-21：离页收尾——停框内圈与状态区转圈。旧回包凭 searchSeq 守卫丢弃，
     /// 永远走不到 setBoxBusy(false)，不收尾则转圈卡死；离页前正加载则记旗标，
-    /// 返回时由 viewDidAppear 重发查询。
+    /// 返回时由 viewDidAppear 重发查询。骨架态离页同样记中断、摘骨架行：
+    /// 回包已被序号守卫作废，不摘则骨架一直亮着、回来后也不重搜。
     private func stopSearchSpinnersForLeave() {
-        searchInterruptedOnLeave = !boxRingView.isHidden || !stateRingView.isHidden
+        searchInterruptedOnLeave = !boxRingView.isHidden || !stateRingView.isHidden || !searchSkeletonRows.isEmpty
         setBoxBusy(false)
         stateRingView.isHidden = true
         BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
+        removeSearchSkeletonRows()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -833,6 +841,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 偏移漂移时才动，±1pt 内不动；无结果时不做任何事、不重搜。
     /// 容器 showPage 在切回搜索页时调（与个人页 pageDidReturn 同口径）。
     func pageDidReturn() {
+        // 切 tab 离页时正搜首轮：中断旗标由 stopSearchSpinnersForLeave 记下，
+        // 切回时按 viewDidAppear 同口径重发（原先只 viewDidAppear 消费旗标，
+        // 切 tab 回来不重搜、骨架摘掉后内容区空白）。
+        if searchInterruptedOnLeave {
+            searchInterruptedOnLeave = false
+            let query = searchField.text ?? ""
+            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                showInitialState()
+            } else {
+                runSearch(query: query)
+            }
+            return
+        }
         guard showingResults, let savedY = savedResultsOffsetY else { return }
         startLimitedExpiryTimer()
         scrollView.layoutIfNeeded()
@@ -2091,15 +2112,149 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     private func showLoadingState() {
-        // 加载态：圆内转圈 + 登录态一句“你的私密日记只有你自己能搜到”
-        // （网页 srchStateHtml('loading') 同口径）。
-        let sub: String?
-        if SessionManager.shared.isLoggedIn {
-            sub = "你的私密日记只有你自己能搜到"
-        } else {
-            sub = nil
+        // 首次搜索改结果行骨架：状态区圆内转圈＋副文案撤掉，3 行骨架进结果区
+        // （与日记行同几何：meta 条＋标题条＋正文条＋44 缩略图块，扫光同款
+        // BearySkeletonShimmerView）；翻页仍走尾行、失败仍走失败态，不动。
+        // 登录态那句副文案只属于初始态，骨架行无文字、不冒充内容。
+        errorStateWrap.isHidden = true
+        errorStateWrap.alpha = 1
+        showingResults = false
+        stateWrap.isHidden = true
+        stateRingView.isHidden = true
+        BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
+        setSearchFooter(failed: false)
+        recentWrap.isHidden = true
+        clearResultRows()
+        resultsStack.isHidden = false
+        searchSkeletonRows = (0..<3).map { makeSearchSkeletonRow(index: $0) }
+        for row in searchSkeletonRows {
+            resultsStack.addArrangedSubview(row)
         }
-        showState(title: nil, sub: sub, showRetry: false, loading: true)
+    }
+
+    /// 搜索结果行骨架：与 makeEntryRow 同几何——meta 行（日期条＋pill 条）、
+    /// 标题条、正文两条＋右侧 44×44 缩略图块；行内边距 14/16/14、底部分隔线。
+    /// 三行按 index 错开条宽与有无缩略图，不与真实行高差太多。
+    private func makeSearchSkeletonRow(index: Int) -> UIView {
+        let row = UIView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.backgroundColor = BearyColors.bg
+        // 骨架行不进读屏：无文字内容，VoiceOver 直接跳过（DM 行骨架同款）。
+        row.isAccessibilityElement = false
+        row.accessibilityElementsHidden = true
+
+        let metaBar = BearySkeletonShimmerView.bar(width: 72, height: 12)
+        let pillBar = BearySkeletonShimmerView.bar(width: 44, height: 18)
+        // bar() 不设 translatesAutoresizingMaskIntoConstraints（DM 骨架同款，
+        // 调用方逐个设），这里五个条都要设，否则锚点与 autoresizing 约束打架。
+        metaBar.translatesAutoresizingMaskIntoConstraints = false
+        pillBar.translatesAutoresizingMaskIntoConstraints = false
+        // meta 行用普通容器（不用横向栈）：两条都是定宽，栈的 fill 会同时钉
+        // 首尾、与定宽约束打架。
+        let metaRow = UIView()
+        metaRow.translatesAutoresizingMaskIntoConstraints = false
+        metaRow.addSubview(metaBar)
+        metaRow.addSubview(pillBar)
+
+        let titleBar = BearySkeletonShimmerView.bar(height: 16)
+        let bodyBar1 = BearySkeletonShimmerView.bar(height: 12)
+        let bodyBar2 = BearySkeletonShimmerView.bar(height: 12)
+        titleBar.translatesAutoresizingMaskIntoConstraints = false
+        bodyBar1.translatesAutoresizingMaskIntoConstraints = false
+        bodyBar2.translatesAutoresizingMaskIntoConstraints = false
+        // 正文列用普通容器（不用 UIStackView）：条 2 要按条 1 宽度取比例，
+        // 放进纵向栈会与栈的 fill 宽度约束打架。
+        let bodyColumn = UIView()
+        bodyColumn.translatesAutoresizingMaskIntoConstraints = false
+        bodyColumn.addSubview(bodyBar1)
+        bodyColumn.addSubview(bodyBar2)
+
+        let bodyRow = UIStackView(arrangedSubviews: [bodyColumn])
+        bodyRow.translatesAutoresizingMaskIntoConstraints = false
+        bodyRow.axis = .horizontal
+        bodyRow.spacing = 10
+        bodyRow.alignment = .top
+
+        var shimmerBlocks: [UIView] = [metaBar, pillBar, titleBar, bodyBar1, bodyBar2]
+        // 第 0、2 行带缩略图块（真实行有图才拼图，三行里两行有图、错开即可）。
+        var thumbBlock: UIView?
+        if index != 1 {
+            let thumb = UIView()
+            thumb.backgroundColor = BearySkeletonShimmerView.baseColor()
+            thumb.layer.cornerRadius = 12
+            thumb.translatesAutoresizingMaskIntoConstraints = false
+            bodyRow.addArrangedSubview(thumb)
+            thumbBlock = thumb
+            shimmerBlocks.append(thumb)
+        }
+
+        let separator = UIView()
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.backgroundColor = BearyColors.line
+
+        let shimmerView = BearySkeletonShimmerView(blocks: shimmerBlocks)
+        shimmerView.translatesAutoresizingMaskIntoConstraints = false
+
+        row.addSubview(metaRow)
+        row.addSubview(titleBar)
+        row.addSubview(bodyRow)
+        row.addSubview(separator)
+        row.addSubview(shimmerView)
+        // 三行错开条宽：标题 100%／75%／85%，正文第二条 55%／70%／45%。
+        let titleWidthFactor: CGFloat = index == 1 ? 0.75 : (index == 2 ? 0.85 : 1.0)
+        let body2WidthFactor: CGFloat = index == 1 ? 0.7 : (index == 2 ? 0.45 : 0.55)
+        var constraints: [NSLayoutConstraint] = [
+            metaRow.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
+            metaRow.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
+            metaRow.heightAnchor.constraint(equalToConstant: 18),
+            metaBar.centerYAnchor.constraint(equalTo: metaRow.centerYAnchor),
+            metaBar.leadingAnchor.constraint(equalTo: metaRow.leadingAnchor),
+            pillBar.topAnchor.constraint(equalTo: metaRow.topAnchor),
+            pillBar.leadingAnchor.constraint(equalTo: metaBar.trailingAnchor, constant: 7),
+            pillBar.trailingAnchor.constraint(equalTo: metaRow.trailingAnchor),
+            titleBar.topAnchor.constraint(equalTo: metaRow.bottomAnchor, constant: 12),
+            titleBar.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
+            bodyRow.topAnchor.constraint(equalTo: titleBar.bottomAnchor, constant: 6),
+            bodyRow.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
+            bodyRow.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
+            bodyRow.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
+            bodyBar1.topAnchor.constraint(equalTo: bodyColumn.topAnchor),
+            bodyBar1.leadingAnchor.constraint(equalTo: bodyColumn.leadingAnchor),
+            bodyBar1.trailingAnchor.constraint(equalTo: bodyColumn.trailingAnchor),
+            bodyBar2.topAnchor.constraint(equalTo: bodyBar1.bottomAnchor, constant: 6),
+            bodyBar2.leadingAnchor.constraint(equalTo: bodyColumn.leadingAnchor),
+            bodyBar2.widthAnchor.constraint(equalTo: bodyBar1.widthAnchor, multiplier: body2WidthFactor),
+            bodyBar2.bottomAnchor.constraint(equalTo: bodyColumn.bottomAnchor),
+            separator.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            separator.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 1),
+            shimmerView.topAnchor.constraint(equalTo: row.topAnchor),
+            shimmerView.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            shimmerView.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            shimmerView.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+            row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+        ]
+        if titleWidthFactor < 1.0 {
+            constraints.append(titleBar.widthAnchor.constraint(equalTo: row.widthAnchor, multiplier: titleWidthFactor, constant: -32))
+        } else {
+            constraints.append(titleBar.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16))
+        }
+        if let thumb = thumbBlock {
+            constraints.append(thumb.widthAnchor.constraint(equalToConstant: 44))
+            constraints.append(thumb.heightAnchor.constraint(equalToConstant: 44))
+        }
+        NSLayoutConstraint.activate(constraints)
+        return row
+    }
+
+    /// 只摘骨架行（离页收尾用；结果行不动）。
+    private func removeSearchSkeletonRows() {
+        for row in searchSkeletonRows {
+            resultsStack.removeArrangedSubview(row)
+            row.removeFromSuperview()
+        }
+        searchSkeletonRows = []
     }
 
     private func showFailedState() {
@@ -2443,6 +2598,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             resultsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        // 首次搜索骨架行随结果区一并摘掉（视图已在上循环里移除，这里只清表）。
+        searchSkeletonRows = []
         // B2：旧结果提示横幅与部分归档横幅随结果区一并摘掉（视图已在上循环里移除）。
         staleResultsBanner = nil
         partialArchiveBanner = nil
