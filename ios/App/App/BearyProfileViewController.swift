@@ -7135,6 +7135,12 @@ class BearyProfileViewController: UIViewController {
         guard viewerGeneration == self.viewerGeneration else {
             refreshFooter()
             endCustomPullRefresh()
+            // r1-1 同款：代次丢弃时也消费待办——切号翻转期间立的强制刷新
+            // 意愿，否则待办悬空、列表不再补拉。loadTab 入口清标记（在途
+            // 则重立待办），新请求带当前代次，不会被自己的守卫丢弃，不循环。
+            if tabPendingForceReload {
+                loadTab(forceReload: true)
+            }
             return
         }
         // 32 注销口径：在途标签回包直接丢弃，不写进任何 tab 模型；
@@ -7249,9 +7255,10 @@ class BearyProfileViewController: UIViewController {
         // r1-1：守卫期被吞的普通强制刷新在此补拉一次；loadTab 入口
         // 清标记，补触发时守卫已清，不会循环。权限全量已跑起来时
         // 本标记已被清掉，不重复触发。
-        // 边界（与权限标记同口径）：切走后丢弃的回包提前返回分支不
+        // 边界（与权限标记同口径）：切 tab 丢弃的回包提前返回分支不
         // 消费本标记；切走期间的刷新意愿待回到该 tab 后的下一次
-        // 刷新或回填覆盖，不在此处补发错 tab 的请求。
+        // 刷新或回填覆盖，不在此处补发错 tab 的请求。代次丢弃分支
+        // 已在上方自行消费，不与此处混淆。
         if tabPendingForceReload {
             loadTab(forceReload: true)
         }
