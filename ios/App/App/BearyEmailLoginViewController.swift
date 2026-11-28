@@ -159,7 +159,7 @@ final class BearyEmailLoginViewController: UIViewController {
         contentStack.spacing = BearySpace.md
         scrollView.addSubview(contentStack)
         // C7：iPad 600 居中（反馈页同款，含 750 宽度等式防短内容压塌；600 上限只在宽屏激活，见 viewDidLayoutSubviews）。
-        let contentWidthEquality = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
+        let contentWidthEquality = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -(BearySpace.lg * 2))
         contentWidthEquality.priority = UILayoutPriority(750)
         contentWidthCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
         contentWidthCap?.isActive = false
@@ -173,8 +173,8 @@ final class BearyEmailLoginViewController: UIViewController {
             contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 63),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
-            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 20),
-            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -20),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.leadingAnchor, constant: BearySpace.lg),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -BearySpace.lg),
             contentWidthEquality,
         ])
 

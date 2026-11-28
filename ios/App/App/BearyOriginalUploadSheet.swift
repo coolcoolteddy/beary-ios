@@ -132,21 +132,21 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearySyste
 
         NSLayoutConstraint.activate([
             // 顶部留白与旧抓手区等高（列表顶留白 6＋抓手高 4＋标题间距 14）：系统抓手占顶区，标题位置不动；
-            // 一律不要 ×，标题右缘放回内容边 -20。
+            // 一律不要 ×，标题右缘放回内容边 -16。
             titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding + BearySheetChrome.grabberHeight + 14),
-            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: BearySpace.lg),
+            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -BearySpace.lg),
             originalButton.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
-            originalButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            originalButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            originalButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: BearySpace.lg),
+            originalButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -BearySpace.lg),
             originalButton.heightAnchor.constraint(equalToConstant: 64),
             compressedButton.topAnchor.constraint(equalTo: originalButton.bottomAnchor, constant: 12),
-            compressedButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            compressedButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            compressedButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: BearySpace.lg),
+            compressedButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -BearySpace.lg),
             compressedButton.heightAnchor.constraint(equalToConstant: 64),
             footnoteLabel.topAnchor.constraint(equalTo: compressedButton.bottomAnchor, constant: 12),
-            footnoteLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            footnoteLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            footnoteLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: BearySpace.lg),
+            footnoteLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -BearySpace.lg),
         ])
     }
 

@@ -378,8 +378,8 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
             // 栈顶 16：拿掉叉叉后标题顶回到原上边距，不留叉叉行的空档。
             stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
             stackView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -24),
-            stackView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 22),
-            stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -22),
+            stackView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: BearySpace.lg),
+            stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -BearySpace.lg),
             stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             stackView.widthAnchor.constraint(lessThanOrEqualToConstant: 432),
             codeBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 56),
