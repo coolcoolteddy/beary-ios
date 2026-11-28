@@ -773,28 +773,11 @@ final class BearyPlusPageViewController: UIViewController {
             : NSLocalizedString("plus.status.not_subscribed", comment: "")
     }
 
-    /// v32 定版已开通 CTA 置灰色（浅 #ECECEC 底＋#9A9A9A 字／深 #2C2C30 底＋#8E8E93 字）。
-    private static var subscribedButtonBackground: UIColor {
-        UIColor { trait in
-            trait.userInterfaceStyle == .dark
-                ? UIColor(red: 44.0 / 255.0, green: 44.0 / 255.0, blue: 48.0 / 255.0, alpha: 1)
-                : UIColor(red: 236.0 / 255.0, green: 236.0 / 255.0, blue: 236.0 / 255.0, alpha: 1)
-        }
-    }
-
-    private static var subscribedButtonText: UIColor {
-        UIColor { trait in
-            trait.userInterfaceStyle == .dark
-                ? UIColor(red: 142.0 / 255.0, green: 142.0 / 255.0, blue: 147.0 / 255.0, alpha: 1)
-                : UIColor(red: 154.0 / 255.0, green: 154.0 / 255.0, blue: 154.0 / 255.0, alpha: 1)
-        }
-    }
-
     private func applyMainButtonState() {
         if isPlusValue {
             mainButton.setTitle(NSLocalizedString("plus.cta.subscribed", comment: ""), for: .normal)
-            mainButton.setTitleColor(Self.subscribedButtonText, for: .normal)
-            mainButton.backgroundColor = Self.subscribedButtonBackground
+            mainButton.setTitleColor(BearyColors.disabledCTAButtonText, for: .normal)
+            mainButton.backgroundColor = BearyColors.disabledCTAButtonBackground
             mainButton.isEnabled = false
         } else {
             mainButton.setTitle(NSLocalizedString("plus.cta.continue", comment: ""), for: .normal)

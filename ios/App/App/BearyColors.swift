@@ -31,6 +31,9 @@ enum BearyColors {
     /// 点赞填色：亮红 #ff3b30（2026-10-29 Li 定，明显亮于语义红 #e5484d；仅点赞入口用——
     /// 删除按钮走 destructiveText，语义红仍走 red，收藏点亮走 bookmarkGold（2026-11-21 v12），不动）。
     static var likeRed: UIColor { UIColor(red: 1.0, green: 59.0/255.0, blue: 48.0/255.0, alpha: 1) }
+    /// 已开通／禁用 CTA 置灰色（Plus 页已开通态与景深页禁用态共用，v32 定版：浅 #ECECEC 底＋#9A9A9A 字／深 #2C2C30 底＋#8E8E93 字）。
+    static var disabledCTAButtonBackground: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 44.0/255.0, green: 44.0/255.0, blue: 48.0/255.0, alpha: 1) : UIColor(red: 236.0/255.0, green: 236.0/255.0, blue: 236.0/255.0, alpha: 1) } }
+    static var disabledCTAButtonText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 147.0/255.0, alpha: 1) : UIColor(red: 154.0/255.0, green: 154.0/255.0, blue: 154.0/255.0, alpha: 1) } }
     /// 图片上的深色衬底：固定黑色半透明（与 ink 不同——深色下 ink 是近白，白字会看不清）。
     static var scrim: UIColor { UIColor(white: 0, alpha: 0.6) }
     /// 网页 --blue：浅 #007aff / 深 #0a84ff（深色 G 通道精确 132/255，勿再写 0.52）。
@@ -108,6 +111,24 @@ enum BearyColors {
     /// 不得对动态色直接 withAlphaComponent——后者会在生成时固化当前
     /// trait 的解析值，深浅切换后不再跟随。固定色（橙/红/绿）重解后不变，
     /// 同样可走本方法。
+
+    /// 失败横幅底色：底色混 12% 语义红（DM 会话列表与好友列表的刷新失败横幅共用）。
+    static func failureBannerBackground() -> UIColor {
+        UIColor { trait in
+            let base = BearyColors.bg.resolvedColor(with: trait)
+            let tint = BearyColors.red.resolvedColor(with: trait)
+            var baseR: CGFloat = 0, baseG: CGFloat = 0, baseB: CGFloat = 0, baseA: CGFloat = 0
+            var tintR: CGFloat = 0, tintG: CGFloat = 0, tintB: CGFloat = 0, tintA: CGFloat = 0
+            base.getRed(&baseR, green: &baseG, blue: &baseB, alpha: &baseA)
+            tint.getRed(&tintR, green: &tintG, blue: &tintB, alpha: &tintA)
+            let a: CGFloat = 0.12
+            return UIColor(red: tintR * a + baseR * (1 - a),
+                           green: tintG * a + baseG * (1 - a),
+                           blue: tintB * a + baseB * (1 - a),
+                           alpha: 1)
+        }
+    }
+
     static func alpha(_ color: UIColor, _ alpha: CGFloat) -> UIColor {
         return UIColor { trait in
             color.resolvedColor(with: trait).withAlphaComponent(alpha)
