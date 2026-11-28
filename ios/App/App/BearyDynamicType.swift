@@ -187,3 +187,21 @@ extension BearyDynamicType {
         scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .bold))
     }
 }
+
+/// 输入框占位 label 工厂（第九遍扫查第 8 条）：DMChat 与 PastSelf 的占位四行
+/// （15pt scaled＋自适应字号＋灰＋文案）曾逐字相同，现收成一处。
+/// 各留自己的约束；行数与交互开关作参数，不一刀切——DMChat 默认单行，
+/// PastSelf 传 numberOfLines: 0、isUserInteractionEnabled: false。
+enum BearyPlaceholderLabel {
+    static func make(text: String, numberOfLines: Int = 1, isUserInteractionEnabled: Bool = false) -> UILabel {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.text = text
+        label.numberOfLines = numberOfLines
+        label.isUserInteractionEnabled = isUserInteractionEnabled
+        return label
+    }
+}

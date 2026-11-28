@@ -676,7 +676,7 @@ final class PastSelfIconView: UIView {
 
 final class PastSelfComposeView: UIView, UITextViewDelegate {
     let textView = UITextView()
-    private let placeholderLabel = UILabel()
+    private let placeholderLabel: UILabel
     var onTextChange: ((String) -> Void)?
 
     var text: String {
@@ -688,6 +688,7 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
     }
 
     init(placeholder: String) {
+        placeholderLabel = BearyPlaceholderLabel.make(text: placeholder, numberOfLines: 0, isUserInteractionEnabled: false)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         textView.translatesAutoresizingMaskIntoConstraints = false
@@ -703,13 +704,6 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
         // 审计登录杂项：输入框补最大高度 240（触顶后滚动，见 updateScrollState），
         // 不再随 500 字无限撑高、把调用方容器顶穿。
         addSubview(textView)
-        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
-        placeholderLabel.adjustsFontForContentSizeCategory = true
-        placeholderLabel.textColor = BearyColors.gray
-        placeholderLabel.text = placeholder
-        placeholderLabel.numberOfLines = 0
-        placeholderLabel.isUserInteractionEnabled = false
         addSubview(placeholderLabel)
         NSLayoutConstraint.activate([
             textView.topAnchor.constraint(equalTo: topAnchor),
