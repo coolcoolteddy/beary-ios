@@ -7,11 +7,14 @@ import UIKit
 // 对方回关后双方变互关，互关才算好友。仅好友可见与私信只认互关。
 // 后端接口并行施工中：接口未上线前非 200 一律走调用方失败态（toast、不改本地态）。
 //
-// 状态机（状态一律调 GET /friends/state 实时取，不靠本地缓存；任一方向拉黑 /
+// 状态机（状态一律调 GET /friends/state 实时取；任一方向拉黑 /
 // 游客 / 本人 → 隐藏，由调用方先判）：
 //   none（无关系）→ “关注”；following（我关他、未互关）→ “已关注”（点按进取关确认）；
 //   followedBy（他关我、我未关）→ “回关”（点按即关注，成互关）；
 //   mutual（互关）→ “互关”（点按进取关确认；取关后退为对方单向关注我）。
+// 首帧例外（2026-11-28 延迟修）：进页可先画上次确认态的缓存占位
+// （见 BearyFollowStateCache），进页仍并行实时取数重验，回包到达即纠正；
+// 缓存永不代替实时取数，只解决“首帧无态可画”的延迟。
 // 注意：App 只能查到“我拉黑的人”（BearyBlockedStore）；对方拉黑我时无 per-user
 // 接口可查——此时关注按钮按“未拉黑”画出，点关注会被服务端 403，调用方只 toast，
 // 不得把“查不到”说成“可关注”之外的任何保证。
@@ -47,6 +50,39 @@ enum BearyFollowState {
 }
 
 enum BearyFriends {
+
+    /// 关注态首绘缓存（2026-11-28 延迟修）：只解决“首帧无态可画”的延迟，
+    /// 不代替实时取数——每次进页仍并行调 state 接口重验，回包到达即纠正
+    /// （缓存错了也只错一轮网络往返）。按（观看者 id，目标 id）分键，
+    /// 切号即失效（键不同直接 miss，不读旧账号的态）。写点：state 回包
+    /// 成功确认时与关注／取关点按成功确认时（confirmedFollowState 落点处）。
+    enum BearyFollowStateCache {
+        private static func key(viewerId: Int, targetId: Int) -> String {
+            "beary_follow_state_cache_\(viewerId)_\(targetId)"
+        }
+
+        static func load(viewerId: Int, targetId: Int) -> BearyFollowState? {
+            guard let raw = UserDefaults.standard.string(forKey: key(viewerId: viewerId, targetId: targetId)) else { return nil }
+            switch raw {
+            case "following": return .following
+            case "followedBy": return .followedBy
+            case "mutual": return .mutual
+            case "none": return .none
+            default: return nil
+            }
+        }
+
+        static func save(_ state: BearyFollowState, viewerId: Int, targetId: Int) {
+            let raw: String
+            switch state {
+            case .none: raw = "none"
+            case .following: raw = "following"
+            case .followedBy: raw = "followedBy"
+            case .mutual: raw = "mutual"
+            }
+            UserDefaults.standard.set(raw, forKey: key(viewerId: viewerId, targetId: targetId))
+        }
+    }
 
     /// B2：关注变化广播里变动的对方 id 的 userInfo 键——通知页收到后只
     /// 更新那一个人的卡片，不全量重验；无 id 的旧广播仍走全量重验。

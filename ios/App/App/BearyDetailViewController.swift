@@ -123,6 +123,27 @@ final class BearyDetailViewController: UIViewController {
         return containerValue
     }()
 
+    /// 作者关注钮首帧骨架（2026-11-28 延迟修，个人页同款）：状态未到前先
+    /// 占位，不谎报状态、不跳布局。骨架是按钮的子视图、钉满按钮 bounds——
+    /// 按钮尺寸变了自动跟上；随密码框子树走，截屏时同按钮一起被抹掉、
+    /// logo 正常露出；屏幕上不透明，盖住按钮与底下 logo 条。
+    private lazy var followButtonSkeletonView: UIView = {
+        let skeleton = UIView()
+        skeleton.translatesAutoresizingMaskIntoConstraints = false
+        skeleton.backgroundColor = BearyColors.surface2
+        skeleton.layer.cornerRadius = BearyCorners.single
+        skeleton.isUserInteractionEnabled = false
+        skeleton.isHidden = true
+        followButton.addSubview(skeleton)
+        NSLayoutConstraint.activate([
+            skeleton.topAnchor.constraint(equalTo: followButton.topAnchor),
+            skeleton.bottomAnchor.constraint(equalTo: followButton.bottomAnchor),
+            skeleton.leadingAnchor.constraint(equalTo: followButton.leadingAnchor),
+            skeleton.trailingAnchor.constraint(equalTo: followButton.trailingAnchor),
+        ])
+        return skeleton
+    }()
+
     /// 当前作者的关注态（nil = 未拉取；拉取失败时按个人页同款占位处理）。
     private var followState: BearyFollowState?
     private var followStateFirstLoadFailed = false
@@ -825,7 +846,10 @@ final class BearyDetailViewController: UIViewController {
         } else {
             renderAll()
             // 好友第一期：作者关注态随页拉取（占位态不拉，见 refreshFollowState）。
+            // 延迟修：上次确认态有缓存先画、后台重验；无缓存先放骨架占位。
+            applyCachedFollowStateIfNeeded()
             refreshFollowState()
+            updateFollowButtonSkeleton()
             // 单篇快照：进页只记浏览（卡片/已拉数据都算看过的内容），弱网 id 直达
             // 时先显这份旧正文；旧快照的确认时间与正文一字不动。
             markDetailSnapshotViewed()
@@ -882,7 +906,16 @@ final class BearyDetailViewController: UIViewController {
     @objc private func handleUserChangedNotification() {
         guard isViewLoaded, view.window != nil, !locallyHiddenByModeration else { return }
         refreshAuthorActions()
+        // 切号即失效：旧观看者的关注态立即清掉，按新观看者的缓存先画、
+        // 后台重验；代次 +1 让在途旧回包直接丢弃（见 refreshFollowState）。
+        followState = nil
+        confirmedFollowState = nil
+        followStateFirstLoadFailed = false
+        followStateLoading = false
+        followActionSeq += 1
+        applyCachedFollowStateIfNeeded()
         refreshFollowState()
+        updateFollowButtonSkeleton()
         retryFetchDetail()
     }
 
@@ -2698,6 +2731,10 @@ final class BearyDetailViewController: UIViewController {
                     self.followState = newState
                     self.confirmedFollowState = newState
                     self.followStateFirstLoadFailed = false
+                    // 上次确认态缓存：下次进页先画它、后台重验纠正。
+                    if let viewerId = SessionManager.shared.currentUser?.id {
+                        BearyFriends.BearyFollowStateCache.save(newState, viewerId: viewerId, targetId: requestAuthorId)
+                    }
                     self.noteMutualFriend(newState == .mutual, forEntryId: self.entry.id)
                 case .failure:
                     // 首轮失败不再直接藏按钮——立占位标记，applyFollowButton
@@ -2713,6 +2750,70 @@ final class BearyDetailViewController: UIViewController {
                 self.applyFollowButton()
             }
         }
+    }
+
+    /// 上次确认态先画：缓存按（观看者，作者）分键，切号即 miss；有缓存才
+    /// 画，无缓存走骨架；拉黑作者不画缓存（以 refreshFollowState 复核为准）。
+    private func applyCachedFollowStateIfNeeded() {
+        guard followState == nil,
+              !isAuthor,
+              let viewerId = SessionManager.shared.currentUser?.id,
+              entry.placeholder != true,
+              let authorId = entry.authorId,
+              !isDeletedAuthor,
+              !BearyBlockedStore.isBlocked(authorId),
+              let cached = BearyFriends.BearyFollowStateCache.load(viewerId: viewerId, targetId: authorId) else { return }
+        followState = cached
+        confirmedFollowState = cached
+        applyFollowButton()
+    }
+
+    /// 首帧骨架显隐总闸：关注态未到前先占位，到了就 0.26s 淡出真按钮。
+    /// 只在“按钮终将出现、只差一次网络往返”时占位：本人／游客／占位态／
+    /// 无作者／已注销／拉黑／首轮失败占位态一律不占位。
+    private func updateFollowButtonSkeleton() {
+        let showSkeleton = !isAuthor
+            && SessionManager.shared.currentUser?.id != nil
+            && entry.placeholder != true
+            && entry.authorId != nil
+            && !isDeletedAuthor
+            && !followBlockedByMe
+            && followState == nil
+            && !followStateFirstLoadFailed
+        setSkeletonVisible(followButtonSkeletonView, visible: showSkeleton)
+        // 骨架在按钮内部：容器藏着骨架也出不来。骨架要显时把容器先放出来。
+        if showSkeleton {
+            followButtonContainer.isHidden = false
+        } else if followState == nil && !followStateFirstLoadFailed {
+            followButtonContainer.isHidden = true
+        }
+        updateHeaderStackTrailing()
+    }
+
+    /// 骨架显隐：显即刻到位（首帧不能再淡入一次）；隐走 0.26s 淡出，真按钮
+    /// 在骨架下已配好，淡出即淡入。淡出途中又显骨架时 completion 不得把
+    /// 新骨架藏掉（finished／alpha 双守卫＋显时先清在途动画）。
+    private func setSkeletonVisible(_ skeleton: UIView, visible: Bool) {
+        if visible {
+            skeleton.layer.removeAllAnimations()
+            skeleton.alpha = 1
+            skeleton.isHidden = false
+            return
+        }
+        guard !skeleton.isHidden else { return }
+        if skeleton.alpha == 0 {
+            skeleton.isHidden = true
+            skeleton.alpha = 1
+            return
+        }
+        UIView.animate(withDuration: BearyMotion.normal, animations: {
+            skeleton.alpha = 0
+        }, completion: { finished in
+            if finished, skeleton.alpha == 0 {
+                skeleton.isHidden = true
+                skeleton.alpha = 1
+            }
+        })
     }
 
     private func applyFollowButton(animated: Bool = false) {
@@ -2742,6 +2843,7 @@ final class BearyDetailViewController: UIViewController {
             followButtonContainer.isHidden = true
             renderedFollowState = nil
             updateHeaderStackTrailing()
+            updateFollowButtonSkeleton()
             return
         }
         // 只在已可见且态真变时播切换动效：首显、复现、同态重刷一律直设终值。
@@ -2775,6 +2877,7 @@ final class BearyDetailViewController: UIViewController {
         followButton.alpha = 1
         // 占位不记为已渲染态——真实态到达时按首显播切换动效，不按同态直设。
         renderedFollowState = isPlaceholder ? nil : state
+        updateFollowButtonSkeleton()
     }
 
     /// 关注钮两态配色（A 版）：未关注／回关墨底白字，已关注／互关 surface2 底墨字。
@@ -2880,6 +2983,9 @@ final class BearyDetailViewController: UIViewController {
                     switch result {
                     case .success:
                         self.confirmedFollowState = target
+                        if let viewerId = SessionManager.shared.currentUser?.id {
+                            BearyFriends.BearyFollowStateCache.save(target, viewerId: viewerId, targetId: authorId)
+                        }
                         self.noteMutualFriend(target == .mutual, forEntryId: self.entry.id)
                         BearyFriends.clearDiaryCachesAndNotify(userId: authorId)
                     case .failure(let error):
@@ -2924,6 +3030,9 @@ final class BearyDetailViewController: UIViewController {
                         switch result {
                         case .success:
                             self.confirmedFollowState = target
+                            if let viewerId = SessionManager.shared.currentUser?.id {
+                                BearyFriends.BearyFollowStateCache.save(target, viewerId: viewerId, targetId: authorId)
+                            }
                             self.noteMutualFriend(target == .mutual, forEntryId: self.entry.id)
                             BearyFriends.clearDiaryCachesAndNotify(userId: authorId)
                             // 仅好友篇取关后可能不再可见：重走服务端裁决，必要时转占位。
