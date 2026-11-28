@@ -153,6 +153,10 @@ final class BearyDetailViewController: UIViewController {
     /// 失败回滚到它；followActionSeq 为点按代次，过期在途回包一律丢弃。
     private var confirmedFollowState: BearyFollowState?
     private var followActionSeq = 0
+    /// 关注串行（数据同步审阅 #4，点赞 submitLike 同款）：一次只发一个
+    /// 写请求；在途点按只记最新目标态，回包后按最新意图补发一次，抵消时不发。
+    private var followInFlight = false
+    private var pendingFollowTarget: (authorId: Int, target: BearyFollowState)?
     private var renderedFollowState: BearyFollowState?
     private var followButtonContainerWidthConstraint: NSLayoutConstraint?
     private var followButtonWidthConstraint: NSLayoutConstraint?
@@ -190,6 +194,10 @@ final class BearyDetailViewController: UIViewController {
     private var bookmarkState = BearyConfirmedState(confirmed: false)
     private var likeInFlight = false
     private var pendingLikeTarget: Bool?
+    /// 收藏串行（数据同步审阅 #4，点赞 submitLike 同款）：一次只发一个
+    /// 写请求；在途点按只记最新意图，回包后按最新意图补发一次，抵消时不发。
+    private var bookmarkInFlight = false
+    private var pendingBookmarkTarget: Bool?
     private var lastNavigationAt: Date?
     /// 回应快连点代次（2026-11-21 Li 定，点赞串行同款）：写请求一次只发一个，
     /// 在途点按只记最新意图，回包后按最新意图补发；失败回滚到最后确认态。
@@ -2969,38 +2977,17 @@ final class BearyDetailViewController: UIViewController {
             // 对方凭 follow 通知行知道已变互关）。
             // 乐观更新（点赞同款）：点按瞬间即显最终态，服务端只确认；
             // 快连点按最后一次点按的态显示，过期在途回包直接丢弃。
-            let wasFollowedBy = state == .followedBy
-            let target: BearyFollowState = wasFollowedBy ? .mutual : .following
+            let target: BearyFollowState = state == .followedBy ? .mutual : .following
             followActionSeq += 1
             let requestSeq = followActionSeq
             followState = target
             applyFollowButton(animated: true)
-            BearyAPI.shared.followFriend(userId: authorId) { [weak self] result in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    guard requestSeq == self.followActionSeq,
-                          authorId == self.entry.authorId else { return }
-                    switch result {
-                    case .success:
-                        self.confirmedFollowState = target
-                        if let viewerId = SessionManager.shared.currentUser?.id {
-                            BearyFriends.BearyFollowStateCache.save(target, viewerId: viewerId, targetId: authorId)
-                        }
-                        self.noteMutualFriend(target == .mutual, forEntryId: self.entry.id)
-                        BearyFriends.clearDiaryCachesAndNotify(userId: authorId)
-                    case .failure(let error):
-                        // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
-                        self.followState = self.confirmedFollowState
-                        self.applyFollowButton()
-                        if case .unauthorized = error {
-                            self.onRequireLogin?()
-                        } else {
-                            self.playFollowDenyShake()
-                            BearyToast.show(in: self.view, message: wasFollowedBy ? NSLocalizedString("follow.toast.followBackFailed", comment: "") : NSLocalizedString("follow.toast.followFailed", comment: ""))
-                        }
-                    }
-                }
+            // 串行提交（点赞 submitLike 同款）：在途时只记最新意图，不并行发请求。
+            if followInFlight {
+                pendingFollowTarget = (authorId: authorId, target: target)
+                return
             }
+            requestFollow(target: target, authorId: authorId, requestSeq: requestSeq)
         case .following, .mutual:
             let displayName = bearyDeletedAuthorDisplayName(entry.authorName) ?? ""
             // 取关乐观更新：确认取关的瞬间即显最终态（按钮全程在位、不消失、
@@ -3022,40 +3009,95 @@ final class BearyDetailViewController: UIViewController {
                 let requestSeq = self.followActionSeq
                 self.followState = target
                 self.applyFollowButton(animated: true)
-                BearyAPI.shared.unfollowFriend(userId: authorId) { [weak self] result in
-                    DispatchQueue.main.async {
-                        guard let self = self else { return }
-                        guard requestSeq == self.followActionSeq,
-                              authorId == self.entry.authorId else { return }
-                        switch result {
-                        case .success:
-                            self.confirmedFollowState = target
-                            if let viewerId = SessionManager.shared.currentUser?.id {
-                                BearyFriends.BearyFollowStateCache.save(target, viewerId: viewerId, targetId: authorId)
-                            }
-                            self.noteMutualFriend(target == .mutual, forEntryId: self.entry.id)
-                            BearyFriends.clearDiaryCachesAndNotify(userId: authorId)
-                            // 仅好友篇取关后可能不再可见：重走服务端裁决，必要时转占位。
-                            if self.entry.isFriendsOnly {
-                                self.retryFetchDetail()
-                            }
-                        case .failure(let error):
-                            // 失败回滚到最后确认态；401 走登录入口（onRequireLogin），
-                            // 登录后由用户重试取关，不弹失败 toast；其他失败仍走原
-                            // 拒绝动效＋“取关失败”toast。
-                            self.followState = self.confirmedFollowState
-                            self.applyFollowButton()
-                            if case .unauthorized = error {
-                                self.onRequireLogin?()
-                            } else {
-                                self.playFollowDenyShake()
-                                BearyToast.show(in: self.view, message: NSLocalizedString("follow.toast.unfollowFailed", comment: ""))
-                            }
-                        }
-                    }
+                // 串行提交（点赞 submitLike 同款）：在途时只记最新意图，不并行发请求。
+                if self.followInFlight {
+                    self.pendingFollowTarget = (authorId: authorId, target: target)
+                    return
                 }
+                self.requestFollow(target: target, authorId: authorId, requestSeq: requestSeq)
             }
         }
+    }
+
+    /// 发一次关注／取关写请求（串行：调用前须确认无在途请求；目标态定端点，
+    /// .following／.mutual 走 follow，.followedBy／.none 走 unfollow）。
+    /// 回包后若期间有新的点按意图，按最新意图再发一次（取关意图已在点按时
+    /// 过确认 sheet，补发不再弹确认）；意图与已确认态相同（两次点按互相抵消）
+    /// 时不发，只把按钮刷回已确认态。
+    private func requestFollow(target: BearyFollowState, authorId: Int, requestSeq: Int) {
+        followInFlight = true
+        let completion: (Result<BearyAPI.FriendOkResponse, APIError>) -> Void = { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard requestSeq == self.followActionSeq,
+                      authorId == self.entry.authorId else {
+                    self.followInFlight = false
+                    self.drainPendingFollow()
+                    return
+                }
+                switch result {
+                case .success:
+                    self.confirmedFollowState = target
+                    if let viewerId = SessionManager.shared.currentUser?.id {
+                        BearyFriends.BearyFollowStateCache.save(target, viewerId: viewerId, targetId: authorId)
+                    }
+                    self.noteMutualFriend(target == .mutual, forEntryId: self.entry.id)
+                    BearyFriends.clearDiaryCachesAndNotify(userId: authorId)
+                    // 仅好友篇取关后可能不再可见：重走服务端裁决，必要时转占位。
+                    if (target == .followedBy || target == .none), self.entry.isFriendsOnly {
+                        self.retryFetchDetail()
+                    }
+                case .failure(let error):
+                    // 失败回滚到最后确认态；401 走登录入口（onRequireLogin），
+                    // 登录后由用户重试取关，不弹失败 toast；其他失败仍走原
+                    // 拒绝动效＋失败 toast（回关／关注／取关按目标态分流）。
+                    self.followState = self.confirmedFollowState
+                    self.applyFollowButton()
+                    if case .unauthorized = error {
+                        self.onRequireLogin?()
+                    } else {
+                        self.playFollowDenyShake()
+                        let message: String
+                        if target == .mutual {
+                            message = NSLocalizedString("follow.toast.followBackFailed", comment: "")
+                        } else if target == .following {
+                            message = NSLocalizedString("follow.toast.followFailed", comment: "")
+                        } else {
+                            message = NSLocalizedString("follow.toast.unfollowFailed", comment: "")
+                        }
+                        BearyToast.show(in: self.view, message: message)
+                    }
+                }
+                self.followInFlight = false
+                self.drainPendingFollow()
+            }
+        }
+        if target == .following || target == .mutual {
+            BearyAPI.shared.followFriend(userId: authorId, completion: completion)
+        } else {
+            BearyAPI.shared.unfollowFriend(userId: authorId, completion: completion)
+        }
+    }
+
+    /// 补发在途期间记下的最新关注意图（只属于当前作者的才补发；两次点按
+    /// 互相抵消时不发，只把按钮刷回已确认态；先行反馈已在点按时给过，
+    /// 这里只发请求，不重播动效）。
+    private func drainPendingFollow() {
+        guard let pending = pendingFollowTarget, pending.authorId == entry.authorId else {
+            pendingFollowTarget = nil
+            return
+        }
+        pendingFollowTarget = nil
+        guard pending.target != confirmedFollowState else {
+            followState = confirmedFollowState
+            applyFollowButton()
+            return
+        }
+        followActionSeq += 1
+        let requestSeq = followActionSeq
+        followState = pending.target
+        applyFollowButton(animated: true)
+        requestFollow(target: pending.target, authorId: pending.authorId, requestSeq: requestSeq)
     }
 
     /// 首页图片条同款（F5）：高 216、间距 8、圆角 12、槽底色 line、横向滚动、
@@ -4186,16 +4228,34 @@ final class BearyDetailViewController: UIViewController {
         // 收藏音随点按立即播（不等回包）；回包成功不再重播，失败只回滚、不补播。
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
         BearySoundPlayer.play(flipped ? .bookmarkTick : .deleteSwoosh)
+        // 串行提交（点赞 submitLike 同款）：在途时只记最新意图，不并行发请求。
+        if bookmarkInFlight {
+            pendingBookmarkTarget = flipped
+            return
+        }
+        submitBookmark(entryId: entryId, target: flipped)
+    }
+
+    /// 发一次收藏写请求（串行：调用前须确认无在途请求；toggle 接口无目标态
+    /// 参数，补发时只发一次——从已确认态翻一次即到最新意图态）。
+    /// 回包后若期间有更新的点按意图，按最新意图再发一次；意图与已确认态
+    /// 相同（两次点按互相抵消）时不发，只把界面刷回已确认态。
+    private func submitBookmark(entryId: String, target: Bool) {
+        bookmarkInFlight = true
         let reqSeq = bookmarkState.beginRequest()
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // 代次守卫：已有更新点按时，过期回包直接丢弃。
-                guard self.bookmarkState.isCurrent(reqSeq) else { return }
+                guard self.bookmarkState.isCurrent(reqSeq) else {
+                    self.bookmarkInFlight = false
+                    self.drainPendingBookmark()
+                    return
+                }
                 self.bookmarkState.markConfirmed(reqSeq)
                 switch result {
                 case .success(let resp):
-                    let newBookmarked = resp.bookmarked ?? flipped
+                    let newBookmarked = resp.bookmarked ?? target
                     self.entry.bookmarkedByMe = newBookmarked
                     self.bookmarkState.confirm(reqSeq, value: newBookmarked)
                     self.refreshActionRow()
@@ -4213,7 +4273,23 @@ final class BearyDetailViewController: UIViewController {
                         BearyToast.show(in: self.view, message: "操作失败，请重试")
                     }
                 }
+                self.bookmarkInFlight = false
+                self.drainPendingBookmark()
             }
+        }
+    }
+
+    /// 补发在途期间记下的最新点按意图（两次点按互相抵消时不发，只把界面
+    /// 刷回已确认态；先行反馈已在点按时给过，这里只发请求，不重播动效与音效）。
+    private func drainPendingBookmark() {
+        guard let pending = pendingBookmarkTarget else { return }
+        pendingBookmarkTarget = nil
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        if pending != bookmarkState.confirmed {
+            submitBookmark(entryId: entryId, target: pending)
+        } else {
+            entry.bookmarkedByMe = bookmarkState.confirmed
+            refreshActionRow()
         }
     }
 
