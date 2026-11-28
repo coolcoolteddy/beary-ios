@@ -2667,7 +2667,7 @@ final class BearyNotificationsViewController: UIViewController {
                 if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     return
                 }
-                if case .failure = result {
+                if case .failure(let apiError) = result {
                     // 第三轮审计 01：全部已读已成功（操作代次已变）→ 旧单条回滚
                     // 作废，服务端已全部已读，不把清零的未读数加回来。
                     guard operationGen == strongSelf.readOperationGeneration else { return }
@@ -2693,6 +2693,11 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.notifyMergeSnapshotChanged()
                     // 详情页本地拷贝不在源表回滚范围内，另行通知它改回未读。
                     strongSelf.onSingleReadRollback?(notificationId)
+                    // 401 只回滚、不提示、不重拉（与全部已读的 401 处理一致：
+                    // 回滚后直接 return，全局登录处理归容器；摇头＋toast 只给非 401 失败）。
+                    if case APIError.unauthorized = apiError {
+                        return
+                    }
                     // 失败有反馈：摇头＋warning 震动＋拒绝音效＋toast（此前静默
                     // 回滚，用户不知道标已读没成）。
                     strongSelf.playDenyShakeForRow(notificationId: notificationId)
