@@ -478,6 +478,8 @@ final class BearyNotificationsViewController: UIViewController {
     private lazy var stateIconView: UIImageView = {
         let iconView = UIImageView()
         iconView.translatesAutoresizingMaskIntoConstraints = false
+        // 展示审计 G6-T1：空态静态信封图标（动态信封退役，见 applyVisibleState）。
+        iconView.image = BearyIconImages.image(named: "icon_mail", pointSize: 36)
         iconView.tintColor = BearyColors.gray
         iconView.contentMode = .scaleAspectFit
         return iconView
@@ -2952,10 +2954,12 @@ final class BearyNotificationsViewController: UIViewController {
         case .empty:
             centralSpinner.stopSpinning()
             errorStateView.isHidden = true
-            stateIconView.isHidden = true
-            // 网页 .empty svg.nb 是 40x40（其余空态数值已对上，不动）；空态用 NB.mail 动态信封。
-            stateMailView.isHidden = false
-            stateMailView.start()
+            // 展示审计 G6-T1：空态改静态信封图标（动态信封弱化；消息页空态
+            // 本就是静态 BearyStateView，此处与之统一）；动态信封视图保留
+            // 在层级里但不再启动（其余态仍隐藏并停动画）。
+            stateIconView.isHidden = false
+            stateMailView.isHidden = true
+            stateMailView.stop()
             stateTitleLabel.isHidden = false
             stateTitleLabel.text = "还没有消息"
             stateSubtitleLabel.isHidden = false
