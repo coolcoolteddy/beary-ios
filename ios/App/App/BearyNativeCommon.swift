@@ -5394,3 +5394,177 @@ enum BearyCursorPageLoad {
         return out
     }
 }
+
+// MARK: - 在途写落盘（数据同步审阅 #7）
+// 删除与改资料的在途写落盘：确认／保存开始时记一笔，落定（收到服务端
+// 回包）时清掉；被杀或断网时记录留着，下次启动／回前台续传（删除）
+// 或进页恢复填回（改资料）。与 #3 的 outbox 是两套独立存储：删除要
+// 按条续传＋404/409 算成功，改资料是整份文字快照、按基线比对恢复，
+// 两者语义不同；各支基于 main 独立开，合入后可统一，本支不依赖 #3。
+
+/// 磁盘小文件读写（DM 待发文件同款：Application Support 下按账号分文件，
+/// JSON 编解码、原子写；读失败按缺失处理，不抛错）。
+private enum BearyInflightPersistIO {
+    static func fileURL(name: String, accountId: Int) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        if !FileManager.default.fileExists(atPath: base.path) {
+            try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
+        }
+        return base.appendingPathComponent("\(name)_\(accountId).json")
+    }
+
+    static func save<T: Encodable>(_ value: T, name: String, accountId: Int) {
+        guard let url = fileURL(name: name, accountId: accountId),
+              let data = try? JSONEncoder().encode(value) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    static func load<T: Decodable>(_ type: T.Type, name: String, accountId: Int) -> T? {
+        guard let url = fileURL(name: name, accountId: accountId),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
+    static func remove(name: String, accountId: Int) {
+        guard let url = fileURL(name: name, accountId: accountId) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
+/// 删除在途落盘：确认删除即记一笔，收到回包再清。被杀／断网时记录留着，
+/// 下次启动或回前台逐条重发 DELETE；404（.notFound）／409（已在回收站）
+/// 都算删了，清条并做界面清理；传输层失败（.network）／鉴权失效／5xx
+/// 保留记录并停链，等下次再续；其余确定性失败清条（行已回滚，用户在
+/// 界面可重删）。同一账号同时多条按记入顺序串行续传。
+enum BearyPendingDelete {
+    struct Record: Codable {
+        var entryId: String
+        var accountId: Int
+        var atMs: Int
+    }
+
+    private static let fileName = "beary_pending_delete"
+    private static var resuming = false
+
+    static func record(entryId: String, accountId: Int) {
+        var list = load(accountId: accountId)
+        guard !list.contains(where: { $0.entryId == entryId }) else { return }
+        list.append(Record(entryId: entryId, accountId: accountId, atMs: Int(Date().timeIntervalSince1970 * 1000)))
+        BearyInflightPersistIO.save(list, name: fileName, accountId: accountId)
+    }
+
+    static func clear(entryId: String, accountId: Int) {
+        var list = load(accountId: accountId)
+        list.removeAll { $0.entryId == entryId }
+        if list.isEmpty {
+            BearyInflightPersistIO.remove(name: fileName, accountId: accountId)
+        } else {
+            BearyInflightPersistIO.save(list, name: fileName, accountId: accountId)
+        }
+    }
+
+    static func load(accountId: Int) -> [Record] {
+        return BearyInflightPersistIO.load([Record].self, name: fileName, accountId: accountId) ?? []
+    }
+
+    /// 续传：当前账号的未落定删除逐条重发。cleanup 在某条确认删了之后
+    /// 调（调用方按 id 摘行＋清缓存）；主线程调用，链内串行。
+    static func resume(cleanup: @escaping (String) -> Void) {
+        guard !resuming, let accountId = SessionManager.shared.currentUser?.id else { return }
+        let list = load(accountId: accountId)
+        guard !list.isEmpty else { return }
+        resuming = true
+        resumeNext(list, accountId: accountId, cleanup: cleanup)
+    }
+
+    private static func resumeNext(_ remain: [Record], accountId: Int, cleanup: @escaping (String) -> Void) {
+        guard let first = remain.first else {
+            resuming = false
+            return
+        }
+        let rest = Array(remain.dropFirst())
+        BearyAPI.shared.deleteEntry(id: first.entryId) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    clear(entryId: first.entryId, accountId: accountId)
+                    cleanup(first.entryId)
+                    resumeNext(rest, accountId: accountId, cleanup: cleanup)
+                case .failure(let err):
+                    if isAlreadyDeleted(err) {
+                        clear(entryId: first.entryId, accountId: accountId)
+                        cleanup(first.entryId)
+                        resumeNext(rest, accountId: accountId, cleanup: cleanup)
+                    } else if isRetryLater(err) {
+                        resuming = false
+                    } else {
+                        clear(entryId: first.entryId, accountId: accountId)
+                        resumeNext(rest, accountId: accountId, cleanup: cleanup)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 404 不存在／409 已在回收站：服务端态已是“删了”，算成功。
+    private static func isAlreadyDeleted(_ err: APIError) -> Bool {
+        switch err {
+        case .notFound:
+            return true
+        case .http(let status, _):
+            return status == 404 || status == 409
+        case .server(_, let status):
+            return status == 409
+        default:
+            return false
+        }
+    }
+
+    /// 稍后再续：传输层失败、鉴权失效、取消、5xx——记录保留，停链等下次。
+    private static func isRetryLater(_ err: APIError) -> Bool {
+        switch err {
+        case .network, .unauthorized, .authFailure, .cancelled:
+            return true
+        case .http(let status, _):
+            return (500...599).contains(status)
+        case .server(_, let status):
+            return status.map { (500...599).contains($0) } ?? false
+        default:
+            return false
+        }
+    }
+}
+
+/// 改资料在途落盘：保存开始时记一份文字快照（名字／用户名／签名＋改动
+/// 标记＋提交前基线），不记图片 dataURL；只有保存成功才清。进页时若
+/// 服务端基线仍等于记录时的基线，把未同步的文字填回输入框并提示；
+/// 基线已变（别处已改过）则丢弃记录，不覆盖新值。一次只留最新一份。
+enum BearyPendingProfileEdit {
+    struct Record: Codable {
+        var displayName: String
+        var handle: String
+        var signature: String
+        var nameChanged: Bool
+        var handleChanged: Bool
+        var signatureChanged: Bool
+        var baseDisplayName: String
+        var baseHandle: String
+        var baseSignature: String
+        var accountId: Int
+        var atMs: Int
+    }
+
+    private static let fileName = "beary_pending_profile_edit"
+
+    static func record(_ record: Record) {
+        BearyInflightPersistIO.save(record, name: fileName, accountId: record.accountId)
+    }
+
+    static func load(accountId: Int) -> Record? {
+        return BearyInflightPersistIO.load(Record.self, name: fileName, accountId: accountId)
+    }
+
+    static func clear(accountId: Int) {
+        BearyInflightPersistIO.remove(name: fileName, accountId: accountId)
+    }
+}

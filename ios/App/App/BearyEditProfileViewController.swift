@@ -506,6 +506,42 @@ class BearyEditProfileViewController: UIViewController {
             fetchInitialSignature()
             refreshLinkRowFromMe()
         }
+        // 在途改资料恢复（数据同步审阅 #7）：上次保存未落定即被杀时，
+        // 基线未变就把未同步的文字填回并提示；基线已变则丢弃记录。
+        restorePendingProfileEditIfNeeded()
+    }
+
+    /// 在途改资料恢复（数据同步审阅 #7）：有未落定保存记录、且当前已确认
+    /// 的基线（名字／用户名／签名）仍等于记录时的基线时，把记录里的文字
+    /// 填回输入框并提示；基线对不上（别处已改过）则丢弃记录，不覆盖新值。
+    /// 签名基线进页时尚未拉到（initialSignature 为 nil）时不比对签名基线，
+    /// 只按名字／用户名基线恢复；恢复后 signatureEdited 置真，防稍后的
+    /// 签名初值拉取把填回的内容盖掉。恢复后记录保留——保存成功才清，
+    /// 不保存离开、再进页仍会恢复。提示 toast 下一 runloop 再贴（进页
+    /// 时 view 刚建，晚一拍贴才看得见）。
+    private func restorePendingProfileEditIfNeeded() {
+        guard let accountId = fetchedUserId ?? SessionManager.shared.currentUser?.id,
+              let record = BearyPendingProfileEdit.load(accountId: accountId) else { return }
+        guard (committedDisplayName ?? "") == record.baseDisplayName,
+              effectiveHandle == record.baseHandle,
+              initialSignature == nil || (initialSignature ?? "") == record.baseSignature else {
+            BearyPendingProfileEdit.clear(accountId: accountId)
+            return
+        }
+        if record.nameChanged {
+            nameField.text = record.displayName
+        }
+        if record.handleChanged {
+            handleField.text = record.handle
+        }
+        if record.signatureChanged {
+            signatureField.text = record.signature
+            signatureEdited = true
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            BearyToast.show(in: self.view, message: NSLocalizedString("editprofile.toast.unsynced_restored", comment: ""))
+        }
     }
 
     /// F12：/me 刷新链接行（首启与复制重试共用）：成功记 id、失败记
@@ -1261,6 +1297,23 @@ class BearyEditProfileViewController: UIViewController {
             signatureValue: signatureValue,
             signatureChanged: signatureHasChange)
         savingSnapshot = snapshot
+        // 在途改资料落盘（数据同步审阅 #7）：只记文字（不记图片 dataURL），
+        // 仅文字有改动时记；保存成功才清——被杀或断网时下次进页恢复填回。
+        if snapshot.nameChanged || snapshot.handleChanged || snapshot.signatureChanged,
+           let accountId = fetchedUserId ?? SessionManager.shared.currentUser?.id {
+            BearyPendingProfileEdit.record(BearyPendingProfileEdit.Record(
+                displayName: nameValue,
+                handle: handleValue,
+                signature: signatureValue,
+                nameChanged: snapshot.nameChanged,
+                handleChanged: snapshot.handleChanged,
+                signatureChanged: snapshot.signatureChanged,
+                baseDisplayName: committedDisplayName ?? "",
+                baseHandle: effectiveHandle,
+                baseSignature: initialSignature ?? "",
+                accountId: accountId,
+                atMs: Int(Date().timeIntervalSince1970 * 1000)))
+        }
         isSaving = true
         updateSaveButtonState()
         handleRetryUsed = false
@@ -1458,6 +1511,11 @@ class BearyEditProfileViewController: UIViewController {
     }
 
     private func finishSavingSuccess(profileResponse: BearyProfileUpdateResponse?) {
+        // 在途改资料落盘（数据同步审阅 #7）：保存成功即清——签名 echo 未确认
+        // 只是复核问题，PUT 本身已落库，不再恢复填回。
+        if let accountId = fetchedUserId ?? SessionManager.shared.currentUser?.id {
+            BearyPendingProfileEdit.clear(accountId: accountId)
+        }
         // 三件套第 3 项：先把已提交快照写进 SessionManager.currentUser
         // 统一快照（名字 / 用户名 / 头像），再走 onSaved 通知容器刷新个人页
         // 与信息流——下次打开编辑资料的初值即新值，不再是旧值。
