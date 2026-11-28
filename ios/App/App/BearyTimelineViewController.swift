@@ -908,7 +908,7 @@ final class BearyTimelineCell: UITableViewCell {
         v.isUserInteractionEnabled = false
         return v
     }()
-    /// 限时倒计时行（meta 行 pill 之后；仅存活期显示，灰字 12pt）。
+    /// 限时倒计时行（足行，紧贴点赞计数右边；仅存活期显示，灰字 12pt）。
     private let ephemeralLabel: UILabel = {
         let l = UILabel()
         l.translatesAutoresizingMaskIntoConstraints = false
@@ -1687,15 +1687,10 @@ final class BearyTimelineCell: UITableViewCell {
             dotRingView.isHidden = true
         }
         metaStack.addArrangedSubview(pillIconView)
-        // 限时存活期：meta 行追加灰字倒计时（只留这一行，不另加标签）+ 卡片改虚线边框；
-        // 到期或非限时按普通卡（pill/dot 已按有效态走私密分支）。
-        if BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil {
-            ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
-            ephemeralRow.isHidden = false
-            metaStack.addArrangedSubview(ephemeralRow)
-        } else {
-            ephemeralRow.isHidden = true
-        }
+        // 限时存活期：倒计时已移入足行（紧贴点赞计数右边；Li 2026-11-23 定：
+        // 第 40 题按规范改代码），meta 行不再挂倒计时；卡片仍按存活期改虚线边框，
+        // 到期或非限时按普通卡（pill/dot 已按有效态走私密分支）。倒计时显隐由足行段定。
+        ephemeralRow.isHidden = true
         let ephemeralLive = BearyEphemeral.isLive(entry)
         // 对称分割线式：内容列无实线边；虚线层仍按存活期显隐（限时篇只留虚线框）。
         cardView.layer.borderWidth = 0
@@ -1908,6 +1903,16 @@ final class BearyTimelineCell: UITableViewCell {
                 // 纯展示不动：仍无互动入口，只改颜色态。
                 let liked = entry.likedByMe ?? false
                 footItems.append(footItem(iconName: liked ? "icon_heart_fill" : "icon_heart", text: "\(likeCount)", accessibilityName: "点赞", highlighted: liked))
+            }
+            // 第 40 题（Li 2026-11-23 定：按规范改代码）：限时倒计时进足行，
+            // 紧贴点赞计数右边；文案／颜色／12pt 不动。存活期才进足行，
+            // 到期或非限时不挂（行尾 footSpacer 照常兜底，足行显隐口径不变）。
+            if BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil {
+                ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
+                ephemeralRow.isHidden = false
+                footItems.append(ephemeralRow)
+            } else {
+                ephemeralRow.isHidden = true
             }
             var emoteTotal = 0
             for emote in entry.emotes ?? [] {
