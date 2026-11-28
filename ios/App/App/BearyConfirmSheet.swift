@@ -167,6 +167,9 @@ final class BearyConfirmSheetViewController: UIViewController, BearySystemSheetS
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
         buttonStack.axis = .vertical
         buttonStack.spacing = 8
+        // 栈比内容高时多余高度只拉大间距，不拉长按钮：默认 .fill 会把多余高度
+        // 全塞给最后一个按钮（破坏性按钮常垫底，136 上实测被拉到约 74pt，应为 44pt）。
+        buttonStack.distribution = .equalSpacing
         for (index, action) in orderedActions.enumerated() {
             let button: BearyButton
             switch action.style {
