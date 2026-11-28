@@ -57,7 +57,6 @@ final class BearyTagPickerViewController: UIViewController, BearySystemSheetSizi
     private let scrollView = UIScrollView()
     private let scrollContentView = UIView()
     private let titleLabel = UILabel()
-    private let messageLabel = UILabel()
     private let newTagField = UITextField()
     private let addButton = BearyHit44Button(type: .system)
     /// 标签列表区容器：表与空态共用同一块高（表高 = 行数×44，至多 6 行；
@@ -101,13 +100,6 @@ final class BearyTagPickerViewController: UIViewController, BearySystemSheetSizi
         titleLabel.textColor = BearyColors.ink
         titleLabel.numberOfLines = 0
         scrollContentView.addSubview(titleLabel)
-
-        messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.text = "点选已有标签，或输入新标签（最多 10 个，每个最多 20 个字）"
-        messageLabel.font = BearyDynamicType.smallBodyFont()
-        messageLabel.textColor = BearyColors.gray
-        messageLabel.numberOfLines = 0
-        scrollContentView.addSubview(messageLabel)
 
         newTagField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
         newTagField.adjustsFontForContentSizeCategory = true
@@ -188,11 +180,10 @@ final class BearyTagPickerViewController: UIViewController, BearySystemSheetSizi
             titleLabel.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor, constant: 16),
             titleLabel.trailingAnchor.constraint(equalTo: scrollContentView.trailingAnchor, constant: -16),
 
-            messageLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
-            messageLabel.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor, constant: 16),
-            messageLabel.trailingAnchor.constraint(equalTo: scrollContentView.trailingAnchor, constant: -16),
-
-            fieldContainer.topAnchor.constraint(equalTo: messageLabel.bottomAnchor, constant: 16),
+            // 展示审计 G5-13：标题下教学行已删，输入框直接锚标题下方；
+            // 限额（最多 10 个／每个最多 20 字）只在超限时 toast（见 toggleTag／addTapped），
+            // 空态行「还没有用过的标签，在上方输入新建」保留。
+            fieldContainer.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 16),
             fieldContainer.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor, constant: 16),
             fieldContainer.trailingAnchor.constraint(equalTo: addButton.leadingAnchor, constant: -8),
             fieldContainer.bottomAnchor.constraint(equalTo: tagsAreaView.topAnchor, constant: -16),
