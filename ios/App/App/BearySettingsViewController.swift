@@ -2089,37 +2089,37 @@ final class BearySettingsViewController: UIViewController {
 
     /// F8：退出登录（网页 account.html logoutBtn 口径：直接 POST、无二次确认；
     /// App 现有退出逻辑 = BearyAPI.logout + 清本地 cookie + 本地退出）。
+    /// 乐观更新（退出登录失败不回滚）：点按即本地退出——成功分支的本地动作
+    /// （清 cookie、清态、关设置页／弹登录页）原样提前到点按时执行，登出 POST
+    /// 放后台跑；设备侧退出即最终态，服务端会话自行过期，想回来就重登。
+    /// 后台 POST 的成败不改本地结论、不弹提示。
     @objc private func logoutButtonTapped() {
         // 第七轮审计 03：登出回包账号绑定——发起时捕获账号 ID＋authEpoch，
         // 回包先校验；已切号时只定向清发起账号，不碰当前号、不清 cookie、
         // 不关页/弹登录（本次退出对当前会话无事可做）。
+        // 乐观退出把这道校验提前到点按时同步做：点按与清态之间没有异步
+        // 间隙，会话不可能在中间切走；校验失败时沿旧口径只定向清发起账号。
         let accountId = SessionManager.shared.currentUser?.id
         let epoch = BearyAPI.shared.authEpoch
         // 推送登记清理：登出请求发出前删本号在本机的登记行（session 与
         // cookie 仍在）；fire-and-forget，失败不改登出结论。
         BearyPushNotifications.shared.unregisterTokenForCurrentAccount()
-        BearyAPI.shared.logout { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                switch result {
-                case .success:
-                    guard SessionManager.shared.isCurrentAuthSession(accountId: accountId, epoch: epoch) else {
-                        if let accountId = accountId {
-                            SessionManager.shared.purgeLocalState(forAccountId: accountId)
-                        }
-                        return
-                    }
-                    SessionManager.shared.clearLocalCookies()
-                    SessionManager.shared.signOutLocally()
-                    if let handler = self.onLoggedOut {
-                        handler()
-                    } else {
-                        self.onClose?()
-                    }
-                case .failure:
-                    self.showToast("退出失败，请重试")
-                }
+        // 登出 POST 后台跑：任务在调用内同步创建并 resume，请求头／cookie
+        // 已定死在任务里，随后清本地态不影响在途请求；回包直接丢弃，
+        // 失败不回滚、不提示。
+        BearyAPI.shared.logout { _ in }
+        guard SessionManager.shared.isCurrentAuthSession(accountId: accountId, epoch: epoch) else {
+            if let accountId = accountId {
+                SessionManager.shared.purgeLocalState(forAccountId: accountId)
             }
+            return
+        }
+        SessionManager.shared.clearLocalCookies()
+        SessionManager.shared.signOutLocally()
+        if let handler = self.onLoggedOut {
+            handler()
+        } else {
+            self.onClose?()
         }
     }
 
