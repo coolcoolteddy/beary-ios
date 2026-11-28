@@ -6973,14 +6973,9 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         onOpenEntry?(sections[indexPath.section].entries[indexPath.row])
     }
 
-    /// C7 滑动操作资格（iCity）：删除公开/私密均可；冲突清单第 4 条取消
-    /// 15 分钟锁后，编辑只看本人（时间线本就只列本人日记），与可见性无关。
-    /// 触发后只复用 onDeleteEntry/onEditEntry（容器确认/编辑器流程），
-    /// 不另写执行逻辑；不符资格的行返回 nil，即不可滑动。
-    private static func isTimelineSwipeEditUnlocked(entry: Entry) -> Bool {
-        entry.isMine == true
-    }
-
+    /// 展示审计 G1-02：左滑「编辑」已删（行内「编辑」文字钮由 #2070 删，
+    /// 本支删左滑；编辑只留卡片右上角 ••• 菜单「编辑内容」一个入口）。
+    /// 左滑只剩删除（公开／私密均可，容器确认流程不变）。
     func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
         let sections = currentSections()
         guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else { return nil }
@@ -6990,29 +6985,6 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             completion(true)
         }
         return UISwipeActionsConfiguration(actions: [delete])
-    }
-
-    func tableView(_ tableView: UITableView, leadingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
-        let sections = currentSections()
-        guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else { return nil }
-        let entry = sections[indexPath.section].entries[indexPath.row]
-        guard Self.isTimelineSwipeEditUnlocked(entry: entry) else { return nil }
-        let edit = UIContextualAction(style: .normal, title: "编辑") { [weak self] _, _, completion in
-            self?.onEditEntry?(entry)
-            completion(true)
-        }
-        // P3-30 修正（2026-11-14，132 真机）：编辑钮底色不能直接走 ink——
-        // ink 深色下是近白 #F5F5F5，而 UIContextualAction 的标题字固定白色，
-        // 深色下白底白字（对比约 1.1:1）完全看不清（截图实测）。按 trait 分流：
-        // 浅色仍走 ink 黑底（白字对比约 21:1）；深色走 surface3 #18181C 深灰
-        //（白字对比约 17.7:1；与页底 #0B0B0D 只差一档，靠白字认出按钮）。删除钮（destructive
-        // 系统红）本身可读，不动。
-        edit.backgroundColor = UIColor { trait in
-            trait.userInterfaceStyle == .dark
-                ? BearyColors.surface3.resolvedColor(with: trait)
-                : BearyColors.ink.resolvedColor(with: trait)
-        }
-        return UISwipeActionsConfiguration(actions: [edit])
     }
 
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
