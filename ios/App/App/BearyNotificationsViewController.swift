@@ -4161,6 +4161,9 @@ class BearyNotificationCell: UITableViewCell {
     /// 合并页标题栈相对头像垂直居中约束（bodyStack.centerY = 头像 centerY），
     /// 只在合并消息页激活；独立通知页仍走顶锚。
     private var bodyStackCenterYToAvatarConstraint: NSLayoutConstraint?
+    /// 合并页（互动消息）样式标记：applyAvatarVerticalStyle 写入；关注动作区
+    /// 显示时据此把头像改回顶锚（见 configureFollowCard）。
+    private var mergedListStyle = false
 
     /// 聚合头像组：单头像位替换为头像栈；bodyStack 左缘在单头像/栈之间切换。
     private let avatarStackView = BearyAvatarStackView()
@@ -4385,6 +4388,7 @@ class BearyNotificationCell: UITableViewCell {
         unreadBgLeadingConstraint?.constant = 0
         // 复位态三角隐藏：标题栈右缘改钉内容右缘 -16。
         applyBodyStackTrailing()
+        mergedListStyle = false
         // 关注提醒卡动作区不得带到复用行。
         hideFollowAction()
     }
@@ -4502,6 +4506,7 @@ class BearyNotificationCell: UITableViewCell {
     /// 跟首行基线，不用另动；未读点位置不动。
     /// 只由两 configure 方法的 mergedList 分支调；复用复位见 prepareForReuse。
     private func applyAvatarVerticalStyle(mergedList: Bool) {
+        mergedListStyle = mergedList
         if mergedList {
             avatarTopConstraint?.isActive = false
             avatarCenterYConstraint?.isActive = true
@@ -4933,6 +4938,16 @@ class BearyNotificationCell: UITableViewCell {
         followActionStack.isHidden = false
         followActionsTopConstraint?.constant = 10
         followActionsHeightConstraint?.isActive = false
+        // 合并页（互动消息）关注行顶锚：头像垂直居中按整行高（含动作区）取中，
+        // 动作区把行高撑大后头像与标题被压到行中部、顶部留出大段空白（实测约 36pt，
+        // 关注行顶空约 52pt、点赞行约 16pt）。有动作区时改顶锚 14，与独立通知页
+        // 一致；回关按钮仍贴标题区下方、相对位置不动。
+        if mergedListStyle {
+            avatarCenterYConstraint?.isActive = false
+            avatarTopConstraint?.isActive = true
+            bodyStackCenterYToAvatarConstraint?.isActive = false
+            bodyStackTopToAvatarConstraint?.isActive = true
+        }
         // 第十三轮第 7 项：定宽（按“回关”量取，与“关注”同宽），每次重配都按当前字号重算，
         // 加载态无文案占位与有文案态同宽，态变不顶布局、不闪没。
         let titleFont = followBackButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
