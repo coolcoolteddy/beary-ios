@@ -1879,8 +1879,11 @@ final class BearyTimelineCell: UITableViewCell {
                 thumbRetry.heightAnchor.constraint(equalToConstant: 28),
             ])
             // 卡片糊同款：时间线条也是 216 高，直接走全尺寸图（缩略图 480px 在 3× 机上要拉大到 1438px）。
-            if let url = BearyImageURLs.imageURL(key: key, thumb: false) {
-                bearyFeedLoadImage(into: imageView, url: url, retryButton: thumbRetry, downsampleToWidth: strip * UIScreen.main.scale, blurUp: true)
+            // 流量节省程序开、或当前网络是弱网档、或高画质图片设置不允许
+            // 在当前网络拉原图时只加载缩略图；blurUp 也随之关掉（否则
+            // blurUp 会接着拉原图）；「关闭」档点开大图也不拉原图。
+            if let url = BearyImageURLs.imageURL(key: key, thumb: BearyConnectivity.shouldLoadThumbnailOnly) {
+                bearyFeedLoadImage(into: imageView, url: url, retryButton: thumbRetry, downsampleToWidth: strip * UIScreen.main.scale, blurUp: !BearyConnectivity.shouldLoadThumbnailOnly)
             }
         }
         updateNineGridButton(count: imageKeys.count)
