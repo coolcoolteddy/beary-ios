@@ -18,39 +18,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # CI 提速：SPM 包源缓存（lottie-ios、capacitor-swift-pm 等远程包的下载产物，
-      # 只含包源、不含编译产物；仓库未提交 Package.resolved，key 按 pin 住 SPM
-      # 版本的文件哈希，版本变了即失效）。
-      - name: Cache SwiftPM packages
-        uses: actions/cache@v4
+      # 共用前置见 .github/actions/ci-setup（SPM 缓存＋DerivedData 缓存＋
+      # beary-ui 资产校验＋Node 22＋npm ci）。
+      - name: CI setup (shared)
+        uses: ./.github/actions/ci-setup
         with:
-          path: ~/Library/Caches/org.swift.swiftpm
-          key: spm-${{ runner.os }}-${{ hashFiles('ios/App/App.xcodeproj/project.pbxproj', 'ios/App/CapApp-SPM/Package.swift') }}
-          restore-keys: |
-            spm-${{ runner.os }}-
-
-      # CI 提速：DerivedData 增量缓存（只含中间编译产物；xcodebuild 仍对每个源文件
-      # 做增量校验，编不过的源码照样失败，缓存盖不住编译错误；key 按工程与 workflow
-      # 文件哈希，结构变了即失效，命中失败时 restore-key 回落到最近一份）。
-      - name: Cache DerivedData
-        uses: actions/cache@v4
-        with:
-          path: build
-          key: deriveddata-simulator-${{ runner.os }}-${{ hashFiles('ios/App/App.xcodeproj/project.pbxproj', 'ios/App/CapApp-SPM/Package.swift', '.github/workflows/ios.yml') }}
-          restore-keys: |
-            deriveddata-simulator-${{ runner.os }}-
-
-      # 审计三轮第 27 项：官方 beary-ui 资产完整性校验（只读，不改 App 行为）。
-      # 代码引用的官方资产缺失时在此失败并报清缺失项，不靠运行时 SF 回退蒙混。
-      - name: Check official beary-ui assets are complete
-        run: python3 scripts/check-beary-assets.py
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - run: npm ci
+          cache-deriveddata: 'true'
+          deriveddata-key-prefix: deriveddata-simulator-
 
       - name: Build for simulator (unsigned)
         run: >
@@ -76,36 +50,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # CI 提速：SPM 包源缓存（与 simulator job 同口径）。
-      - name: Cache SwiftPM packages
-        uses: actions/cache@v4
+      # 共用前置见 .github/actions/ci-setup（与 simulator job 同口径；
+      # Release 配置单独一 key，不与 Debug 混用）。
+      - name: CI setup (shared)
+        uses: ./.github/actions/ci-setup
         with:
-          path: ~/Library/Caches/org.swift.swiftpm
-          key: spm-${{ runner.os }}-${{ hashFiles('ios/App/App.xcodeproj/project.pbxproj', 'ios/App/CapApp-SPM/Package.swift') }}
-          restore-keys: |
-            spm-${{ runner.os }}-
-
-      # CI 提速：DerivedData 增量缓存（与 simulator job 同口径；Release 配置单独一 key，
-      # 不与 Debug 混用）。
-      - name: Cache DerivedData
-        uses: actions/cache@v4
-        with:
-          path: build
-          key: deriveddata-sideload-${{ runner.os }}-${{ hashFiles('ios/App/App.xcodeproj/project.pbxproj', 'ios/App/CapApp-SPM/Package.swift', '.github/workflows/ios.yml') }}
-          restore-keys: |
-            deriveddata-sideload-${{ runner.os }}-
-
-      # 审计三轮第 27 项：官方 beary-ui 资产完整性校验（只读，不改 App 行为）。
-      # 代码引用的官方资产缺失时在此失败并报清缺失项，不靠运行时 SF 回退蒙混。
-      - name: Check official beary-ui assets are complete
-        run: python3 scripts/check-beary-assets.py
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - run: npm ci
+          cache-deriveddata: 'true'
+          deriveddata-key-prefix: deriveddata-sideload-
 
       - name: Build for device (unsigned)
         run: >
@@ -134,27 +85,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # CI 提速：SPM 包源缓存（与 simulator job 同口径；本 job 不走 -derivedDataPath，
-      # 不缓存 DerivedData）。
-      - name: Cache SwiftPM packages
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/org.swift.swiftpm
-          key: spm-${{ runner.os }}-${{ hashFiles('ios/App/App.xcodeproj/project.pbxproj', 'ios/App/CapApp-SPM/Package.swift') }}
-          restore-keys: |
-            spm-${{ runner.os }}-
-
-      # 审计三轮第 27 项：官方 beary-ui 资产完整性校验（只读，不改 App 行为）。
-      # 代码引用的官方资产缺失时在此失败并报清缺失项，不靠运行时 SF 回退蒙混。
-      - name: Check official beary-ui assets are complete
-        run: python3 scripts/check-beary-assets.py
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - run: npm ci
+      # 共用前置见 .github/actions/ci-setup（与 simulator job 同口径；
+      # 本 job 不走 -derivedDataPath，不缓存 DerivedData）。
+      - name: CI setup (shared)
+        uses: ./.github/actions/ci-setup
 
       - name: Run unit tests (no host app)
         run: |
