@@ -43,12 +43,12 @@ final class BearyPushNotifications {
     }
 
     /// AppDelegate 转发：系统下发 device token（每次启动都可能变，token 刷新也走这里）。
-    /// 只存不发，上报由 syncTokenIfNeeded 统一做（登录态变化时才有意义）。
+    /// 只存不发，上报由 forceSyncToken 统一做（登录态变化时才有意义）。
     func didRegister(deviceToken: Data) {
         let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
         guard !hex.isEmpty else { return }
         UserDefaults.standard.set(hex, forKey: Self.deviceTokenKey)
-        syncTokenIfNeeded()
+        forceSyncToken()
     }
 
     /// AppDelegate 转发：注册失败只记日志，不 toast、不重试（下次启动／回前台重走 registerIfAuthorized）。
@@ -59,16 +59,43 @@ final class BearyPushNotifications {
     // MARK: - Token 上报
 
     /// 有 token 且已登录、且本账号上次上报的 token 不同时，才 POST 上报。
-    /// 调用点：didRegister 后、SceneDelegate onUserChanged（登录／切号）与回前台；
-    /// 未登录时只存 token，等登录回调再发。失败静默（下次回前台／登录再试），
+    /// 调用点：SceneDelegate sceneDidBecomeActive（回前台补报）；
+    /// 未登录时只存 token，等登录回调再发。失败记日志（下次回前台／登录再试），
     /// 不 toast、不阻塞任何流程。
     func syncTokenIfNeeded() {
         guard let token = UserDefaults.standard.string(forKey: Self.deviceTokenKey), !token.isEmpty else { return }
         guard let userId = SessionManager.shared.currentUser?.id else { return }
         guard UserDefaults.standard.string(forKey: Self.lastSentTokenKey(userId: userId)) != token else { return }
+        postToken(token, userId: userId)
+    }
+
+    /// 冷启动必重报：无条件 POST 一次当前 token（服务端 INSERT OR REPLACE，
+    /// 幂等），不看上次上报标记——服务端删行（登出清理、手动清理、APNs 410
+    /// 清理）后本地标记仍以为已上报，syncTokenIfNeeded 会永久跳过，本方法
+    /// 兜底把它报回去。成功才更新 lastSentToken；失败记日志。
+    /// 调用点：SceneDelegate willConnectTo 末尾（冷启动，token 与账号均已从
+    /// 本地恢复时即报）、didRegister（token 刚到／刷新时）、SceneDelegate
+    /// onUserChanged（登录／切号后）。
+    func forceSyncToken() {
+        guard let token = UserDefaults.standard.string(forKey: Self.deviceTokenKey), !token.isEmpty else { return }
+        guard let userId = SessionManager.shared.currentUser?.id else { return }
+        postToken(token, userId: userId)
+    }
+
+    /// 登出／移除账号时清掉该账号的已上报标记（SessionManager 调），使重登
+    /// 后必重报；只清该账号，不碰其他账号。
+    func clearLastSentToken(userId: Int) {
+        UserDefaults.standard.removeObject(forKey: Self.lastSentTokenKey(userId: userId))
+    }
+
+    /// 与 syncTokenIfNeeded／forceSyncToken 共用的单次上报请求。
+    private func postToken(_ token: String, userId: Int) {
         BearyAPI.shared.requestVoid("/beary/api/account/device-token", method: "POST", jsonBody: ["device_token": token]) { result in
-            if case .success = result {
+            switch result {
+            case .success:
                 UserDefaults.standard.set(token, forKey: Self.lastSentTokenKey(userId: userId))
+            case .failure(let error):
+                NSLog("[BearyPush] device token upload failed: %@", String(describing: error))
             }
         }
     }

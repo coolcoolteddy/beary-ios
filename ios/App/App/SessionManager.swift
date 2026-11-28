@@ -390,6 +390,9 @@ final class SessionManager {
             if !BearyAccountVault.shared.remove(userId: id) {
                 _ = BearyAccountVault.shared.markUnrecoverable(userId: id)
             }
+            // 推送登记：登出即清该号的已上报标记（重登后必重报；
+            // 只清本号，不碰其他账号）。
+            BearyPushNotifications.shared.clearLastSentToken(userId: id)
         }
         purgeImageCacheForCurrentAccount()
         purgeLocalSnapshotsForCurrentAccount()
@@ -439,6 +442,8 @@ final class SessionManager {
         purgeLocalSnapshots(forAccountId: id)
         BlindBoxState.shared.clearAccount(accountId: id)
         BearyPlazaFeaturedPicker.clearAccount(accountId: id)
+        // 推送登记：发起账号已登出，清其已上报标记（重登后必重报）。
+        BearyPushNotifications.shared.clearLastSentToken(userId: id)
     }
 
     /// 账号隔离 4 号：显式退出清态时清掉该账号的图片缓存（内存全清 +
@@ -889,6 +894,8 @@ final class SessionManager {
                             completion(.failed)
                             return
                         }
+                        // 推送登记：移除成功即清该号的已上报标记（重登后必重报）。
+                        BearyPushNotifications.shared.clearLastSentToken(userId: userId)
                         completion(.removed)
                     case .failure:
                         // 隔离登出失败：不删保管库项、不动当前 cookie 与

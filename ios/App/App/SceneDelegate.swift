@@ -83,6 +83,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
                 }
             }
         }
+        // 远程推送（2026-11-28，登记失步修）：冷启动必重报一次当前 token。
+        // 此时 chrome 已建窗（viewDidLoad 里 restoreCachedUserFromVault 已立
+        // currentUser、token 上次运行已存 UserDefaults），服务端删行后也能
+        // 报回去；token 还没到／账号还没恢复时由 didRegister 与
+        // onUserChanged 的 forceSyncToken 兜底。
+        BearyPushNotifications.shared.forceSyncToken()
     }
 
     // UNUserNotificationCenterDelegate：前台收到本地通知时也显示横幅并播提示音
@@ -1419,7 +1425,9 @@ final class BearyChromeViewController: UIViewController {
         SessionManager.shared.onUserChanged = { [weak self] user in
             self?.applyLoginState(user)
             // 远程推送（2026-11-25，私信）：登录／切号后把本机 token 上报到新账号名下。
-            BearyPushNotifications.shared.syncTokenIfNeeded()
+            // 必重报（2026-11-28 登记失步修）：服务端删行后旧标记仍以为已上报，
+            // 这里无条件再报一次，不只靠 token 变化触发。
+            BearyPushNotifications.shared.forceSyncToken()
             guard let self = self else { return }
             // P1-1：首个 /me 回包（成功或 401 映射的 nil）即标记已回包；FAB 若在
             // 等回包，待本次回调走完再恢复（defer 到下一 runloop，防重入）。
