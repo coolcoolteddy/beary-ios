@@ -3443,7 +3443,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             }
         }
 
-        // iCity 已举报态：搜索是刻意搜索例外，行保留（不删除），标“已举报”；
+        // iCity 已举报态：搜索是刻意搜索例外，行保留（不删除），标“· 已举报”；
         // 行仍可点进详情重新查看，不置灰（R13 (a) 定版）。
         if BearyReportedStore.isReported(entryId: entryId) {
             let reportedLabel = UILabel()
@@ -3451,7 +3451,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             reportedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
             reportedLabel.adjustsFontForContentSizeCategory = true
             reportedLabel.textColor = BearyColors.gray
-            reportedLabel.text = "已举报"
+            reportedLabel.text = "· 已举报"
             metaStack.addArrangedSubview(reportedLabel)
         }
 
