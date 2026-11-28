@@ -717,8 +717,14 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
 // 未登录只显登录提示，不拉数据、不建目录。
 
 final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
+    /// A2：批量进度轻刷新总开关（默认开）。关掉即回旧口径：每 tick 全量
+    /// render（整表 decode＋整桶枚举＋整页重建）。
+    static var isLightBatchProgressEnabled = true
+
     private var isSaving = false
     private var saveProgressText: String?
+    /// 顶部汇总行（进度文案的落点；轻刷新时只改它，不重建整页）。
+    private var summaryLabel: UILabel?
     /// 当前屏上逐篇行的记录（与移除钮 tag 下标一一对应；每次 render 重建时同步更新）。
     private var currentRecords: [BearyOfflineSaveRecord] = []
 
@@ -745,6 +751,7 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
     }
 
     private func render() {
+        summaryLabel = nil
         for view in contentStack.arrangedSubviews {
             contentStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -767,6 +774,7 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
         } else {
             summary.text = "还没有离线保存的日记"
         }
+        summaryLabel = summary
         contentStack.addArrangedSubview(summary)
 
         let saveAllButton = BearyButton(style: .secondaryOutline(.regular))
@@ -836,6 +844,13 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
         }
     }
 
+    /// A2：批量进度每 tick 只改进度文案，不重建整页、不重读清单、
+    /// 不枚举整桶；逐篇行状态等整批结束的 render 一次刷新。
+    private func updateSaveProgressText() {
+        guard let progress = saveProgressText else { return }
+        summaryLabel?.text = progress
+    }
+
     @objc private func removeTapped(_ sender: UIButton) {
         guard sender.tag >= 0, sender.tag < currentRecords.count else { return }
         let entryId = currentRecords[sender.tag].entryId
@@ -852,7 +867,11 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
         BearyOfflineSaveManager.shared.saveAllOwnEntries(progress: { [weak self] done, total in
             guard let self = self else { return }
             self.saveProgressText = "正在保存 \(done)/\(total)…"
-            self.render()
+            if Self.isLightBatchProgressEnabled {
+                self.updateSaveProgressText()
+            } else {
+                self.render()
+            }
         }, completion: { [weak self] result in
             guard let self = self else { return }
             self.isSaving = false

@@ -80,6 +80,50 @@ final class BearyOfflineSaveStoreTests: XCTestCase {
         XCTAssertEqual(BearyOfflineSaveStore.record(accountId: testAccountId, entryId: "e1")?.failedKeys, ["a/c.jpg"])
     }
 
+    // MARK: - A2：清单内存缓存＋批量落盘
+
+    /// 批量内 upsert 只改内存缓存、不写盘（磁盘清单仍是旧的），
+    /// 但 record/savedRecords 已能读到新记录；end 后一次落盘。
+    func testManifestBatchDefersDiskWriteUntilEnd() {
+        let record = BearyOfflineSaveRecord(entryId: "e1", title: "t", createdAtMs: 1735689600000, savedAt: 1735689600, imageCount: 1, downloadedCount: 1, failedKeys: [], totalBytes: 100, status: "complete")
+        BearyOfflineSaveStore.beginManifestBatch(accountId: testAccountId)
+        defer { _ = BearyOfflineSaveStore.endManifestBatch(accountId: testAccountId) }
+        XCTAssertTrue(BearyOfflineSaveStore.upsertRecord(accountId: testAccountId, record: record))
+        // 缓存已可见，磁盘仍是旧的。
+        XCTAssertEqual(BearyOfflineSaveStore.record(accountId: testAccountId, entryId: "e1")?.status, "complete")
+        XCTAssertEqual(diskManifestEntryCount(accountId: testAccountId), 0)
+        XCTAssertTrue(BearyOfflineSaveStore.endManifestBatch(accountId: testAccountId))
+        // 落盘后磁盘与缓存一致。
+        XCTAssertEqual(diskManifestEntryCount(accountId: testAccountId), 1)
+        XCTAssertEqual(BearyOfflineSaveStore.savedRecords(accountId: testAccountId).count, 1)
+    }
+
+    /// 嵌套 begin/end：只 end 一次仍不落盘，两次都 end 后才落盘。
+    func testManifestBatchNestedDepth() {
+        let record = BearyOfflineSaveRecord(entryId: "e1", title: "t", createdAtMs: 1735689600000, savedAt: 1735689600, imageCount: 0, downloadedCount: 0, failedKeys: [], totalBytes: 100, status: "complete")
+        BearyOfflineSaveStore.beginManifestBatch(accountId: testAccountId)
+        BearyOfflineSaveStore.beginManifestBatch(accountId: testAccountId)
+        defer {
+            _ = BearyOfflineSaveStore.endManifestBatch(accountId: testAccountId)
+            _ = BearyOfflineSaveStore.endManifestBatch(accountId: testAccountId)
+        }
+        XCTAssertTrue(BearyOfflineSaveStore.upsertRecord(accountId: testAccountId, record: record))
+        XCTAssertTrue(BearyOfflineSaveStore.endManifestBatch(accountId: testAccountId))
+        XCTAssertEqual(diskManifestEntryCount(accountId: testAccountId), 0)
+        XCTAssertTrue(BearyOfflineSaveStore.endManifestBatch(accountId: testAccountId))
+        XCTAssertEqual(diskManifestEntryCount(accountId: testAccountId), 1)
+    }
+
+    /// 直读磁盘上的 manifest.json，不走内存缓存；文件不存在即 0 篇。
+    private func diskManifestEntryCount(accountId: Int) -> Int {
+        guard let url = BearyOfflineSaveStore.manifestURL(accountId: accountId),
+              let data = try? Data(contentsOf: url),
+              let manifest = try? JSONDecoder().decode(BearyOfflineSaveManifest.self, from: data) else {
+            return 0
+        }
+        return manifest.entries.count
+    }
+
     func testUsageCountsBytesAndEntries() {
         let entry = BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)
         XCTAssertTrue(BearyOfflineSaveStore.saveEntryJSON(accountId: testAccountId, entry: entry))
