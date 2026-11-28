@@ -2057,6 +2057,10 @@ final class BearyAPI {
         // 无 ID 的旧消息（服务端部署前发出）走原窗口回退。仅服务端行携带，本地
         // 待发行不填本字段（认领时拿待发的 localKey 与服务端行的本字段比对）。
         var clientMessageId: String? = nil
+        // 已读回执（2026-11-29 Li 定）：history 按条下发 read（对方是否已读本条，
+        // 服务端 read_at > 0 即 true）。聊天页只在本人最后一条画状态标（双勾=已读）；
+        // 未下发／旧回包时 nil，按未读处理。
+        var read: Bool? = nil
         // 左滑回复（2026-11-26 Li 定）：被回复消息的 id（reply_to）与 history
         // JOIN 一并下发的引用（是否本人／发送人展示名／正文摘要前 200 字）。
         // 无引用时四字段全 nil；被回复消息已被服务端 7 天 GC 清掉时服务端
