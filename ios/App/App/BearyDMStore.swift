@@ -328,7 +328,7 @@ enum BearyDMStore {
     private static func dmMessages(from stored: [StoredMessage]) -> [BearyAPI.DMMessage] {
         stored.compactMap { m -> BearyAPI.DMMessage? in
             guard let id = m.id, let senderId = m.senderId else { return nil }
-            return BearyAPI.DMMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt, clientMessageId: m.clientMessageId, replyTo: m.replyTo, replyFromMe: m.replyFromMe, replySenderName: m.replySenderName, replyBody: m.replyBody, read: m.read)
+            return BearyAPI.DMMessage(id: id, senderId: senderId, body: m.body ?? "", createdAt: m.createdAt, clientMessageId: m.clientMessageId, read: m.read, replyTo: m.replyTo, replyFromMe: m.replyFromMe, replySenderName: m.replySenderName, replyBody: m.replyBody)
         }.sorted { ($0.id ?? 0) < ($1.id ?? 0) }
     }
 
