@@ -1032,23 +1032,23 @@ class BearyProfileViewController: UIViewController {
         return buttonValue
     }()
 
-    /// 好友第一期（关注/回关模型）：他人主页关注钮（v5 定版：用户名行右缘实心 pill，填充 ink、前景 bg，
-    /// 40 高下限）。定宽＋乐观更新：四态按最宽一态定宽（点按后尺寸恒定，左侧私信钮不被顶）；
+    /// 好友第一期（关注/回关模型）：他人主页关注钮（A 版小 pill，2026-11-28 Li 定：
+    /// 28 高、圆角 single 12 长方形、15pt 纯文字、无图标；未关注／回关墨底白字，
+    /// 已关注／互关 surface2 底墨字，黑只留在需要点的态）。定宽＋乐观更新：
+    /// 四态按最宽一态定宽（点按后尺寸恒定，左侧私信钮不被顶），定宽下限 80
+    /// （截屏 logo 可见内容宽 71.2，见 BearyScreenshotLogoView）；
     /// 点按乐观先行（点赞同款代次＋失败回滚＋拒绝动效），状态切换只走交叉淡入（transform／opacity）。
     /// 状态机（状态一律调 state 接口实时取）：无关系→“关注”；
     /// 我关他未互关→“已关注”（点按进取关确认）；他关我我未关→“回关”（点按即互关）；
     /// 互关→“互关”（点按进取关确认）；任一方向拉黑（我方拉黑可查，对方拉黑我以
-    /// 后端拒绝兜底）/ 游客 / 本人 → 隐藏。图标一律官方包：关注/回关 icon_user_plus、
-    /// 已关注 icon_user_check、互关 icon_users（双人）。
+    /// 后端拒绝兜底）/ 游客 / 本人 → 隐藏。
     private lazy var followButton: UIButton = {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitleColor(BearyColors.bg, for: .normal)
-        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17))
+        buttonValue.titleLabel?.font = BearyDynamicType.smallBodyFont()
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
-        buttonValue.tintColor = BearyColors.bg
-        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpace.lg, bottom: 0, right: BearySpace.lg)
         buttonValue.layer.borderWidth = 0
         buttonValue.backgroundColor = BearyColors.ink
         buttonValue.clipsToBounds = true
@@ -1071,12 +1071,13 @@ class BearyProfileViewController: UIViewController {
         return containerValue
     }()
 
-    /// 私信开放四档：他人主页私信钮（关注钮左侧同中心线、40×40，官方 icon_comment 空气泡）。
+    /// 私信开放四档：他人主页私信钮（关注钮左侧同中心线、30×30，官方 icon_comment 空气泡；
+    /// 视觉 30，BearyHit44Button 命中区仍扩到 44）。
     /// 只属他人主页：本人/游客/拉黑/无权限一律隐藏；可见性由 can 接口决定（见 refreshDMCan）。
     private lazy var dmButton: BearyHit44Button = {
         let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_comment", pointSize: 24), for: .normal)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_comment", pointSize: 19), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.accessibilityLabel = "私信"
         buttonValue.addTarget(self, action: #selector(dmButtonTapped), for: .touchUpInside)
@@ -1108,24 +1109,23 @@ class BearyProfileViewController: UIViewController {
     private var renderedFollowState: BearyFollowState?
     /// 关注钮四态定宽约束：按四态最宽一态定宽，点按后尺寸恒定，左侧私信钮不再被顶。
     /// 宽版截屏 logo：容器宽锚到按钮宽上（widthAnchor = followButton.widthAnchor，
-    /// 只建一次、随动态字号走），默认字号下两者都是约 98：容器 276–374，按钮
-    /// 正好贴满容器；私信钮锚容器左缘外 8pt、右缘 268，与改动前原位一致。
+    /// 只建一次、随动态字号走），默认字号下两者都是约 80：容器 294–374，按钮
+    /// 正好贴满容器；私信钮锚容器左缘外 8pt、右缘 286（容器窄了，私信钮跟着右移）。
     private var followButtonContainerWidthConstraint: NSLayoutConstraint?
     private var followButtonWidthConstraint: NSLayoutConstraint?
     private var followButtonMeasuredCategory: UIContentSizeCategory?
 
-    /// 关注钮四态映射（v5 定版，单源：渲染与定宽测量共用，改一处即两处生效）：
-    /// 关注／回关 icon_user_plus、已关注 icon_user_check、互关 icon_users（双人）。
+    /// 关注钮四态映射（A 版小 pill，单源：渲染与定宽测量共用，改一处即两处生效）：
+    /// 纯文字，无图标。文案走 NSLocalizedString，与详情页同 key（中文与详情页现行值一致）。
     private struct FollowButtonConfig {
-        let imageName: String
         let title: String
         let accessibilityLabel: String
     }
     private static let followButtonConfigs: [BearyFollowState: FollowButtonConfig] = [
-        .none: FollowButtonConfig(imageName: "icon_user_plus", title: "关注", accessibilityLabel: "关注"),
-        .following: FollowButtonConfig(imageName: "icon_user_check", title: "已关注", accessibilityLabel: "已关注，点按取消关注"),
-        .followedBy: FollowButtonConfig(imageName: "icon_user_plus", title: "回关", accessibilityLabel: "回关"),
-        .mutual: FollowButtonConfig(imageName: "icon_users", title: "互关", accessibilityLabel: "互关，点按取消关注"),
+        .none: FollowButtonConfig(title: NSLocalizedString("follow.button.follow", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.follow", comment: "")),
+        .following: FollowButtonConfig(title: NSLocalizedString("follow.button.following", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.following.accessibility", comment: "")),
+        .followedBy: FollowButtonConfig(title: NSLocalizedString("follow.button.followedBy", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.followedBy", comment: "")),
+        .mutual: FollowButtonConfig(title: NSLocalizedString("follow.button.mutual", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.mutual.accessibility", comment: "")),
     ]
 
     private let nameLabel: UILabel = {
@@ -3274,15 +3274,15 @@ class BearyProfileViewController: UIViewController {
             editButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
             editButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
             // 好友钮锚点改为名字行中心（v5 定版）、右缘 -16：本人页隐藏、他人页独占该位。
-            // 截屏 logo 宽版：锚点落容器上；容器宽锚按钮宽，默认字号下 276–374，按钮贴满容器，私信钮右缘 268。
+            // 截屏 logo 宽版：锚点落容器上；容器宽锚按钮宽，默认字号下 294–374，按钮贴满容器，私信钮右缘 286。
             followButtonContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
             followButtonContainer.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            followButtonContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            followButtonContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
             // 私信钮贴关注钮左侧同中心线（隐藏钮仍参与布局，锚点有效，见好友钮注释）。
             dmButton.trailingAnchor.constraint(equalTo: followButtonContainer.leadingAnchor, constant: -8),
             dmButton.centerYAnchor.constraint(equalTo: followButtonContainer.centerYAnchor),
-            dmButton.widthAnchor.constraint(equalToConstant: 40),
-            dmButton.heightAnchor.constraint(equalToConstant: 40),
+            dmButton.widthAnchor.constraint(equalToConstant: 30),
+            dmButton.heightAnchor.constraint(equalToConstant: 30),
             gearButton.trailingAnchor.constraint(equalTo: editButton.leadingAnchor, constant: -8),
             gearButton.centerYAnchor.constraint(equalTo: editButton.centerYAnchor),
             gearButton.widthAnchor.constraint(equalToConstant: 40),
@@ -3682,16 +3682,18 @@ class BearyProfileViewController: UIViewController {
             updateFollowButtonFixedWidth()
         }
         followButtonContainer.isHidden = false
+        // 两态配色（A 版，2026-11-28 Li 定）：未关注／回关墨底白字（要点的态），
+        // 已关注／互关 surface2 底墨字（已成的态）；颜色随态走，创建时默认值只兜底。
+        let isActionState = (state == .none || state == .followedBy)
         let shouldAnimate = animated && wasVisible && stateChanged && !UIAccessibility.isReduceMotionEnabled
-        let image = BearyIconImages.image(named: config.imageName, pointSize: 17)
         if shouldAnimate {
             UIView.transition(with: followButton, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .beginFromCurrentState], animations: {
-                self.followButton.setImage(image, for: .normal)
                 self.followButton.setTitle(config.title, for: .normal)
+                self.applyFollowButtonColors(isActionState: isActionState)
             }, completion: nil)
         } else {
-            followButton.setImage(image, for: .normal)
             followButton.setTitle(config.title, for: .normal)
+            applyFollowButtonColors(isActionState: isActionState)
         }
         followButton.accessibilityLabel = config.accessibilityLabel
         if isPlaceholder {
@@ -3704,25 +3706,32 @@ class BearyProfileViewController: UIViewController {
         renderedFollowState = isPlaceholder ? nil : state
     }
 
-    /// 关注钮四态定宽：四态文案／图标宽度不一，内容自适应宽会在点按后变宽变窄、
-    /// 还会把左侧私信钮往左顶。改为按四态里最宽一态定宽（左内边距＋图标宽＋
-    /// 标题间隙＋标题宽＋右内边距，取四态最大值再 ceil），点按后尺寸恒定；
+    /// 关注钮两态配色（A 版）：未关注／回关墨底白字，已关注／互关 surface2 底墨字。
+    private func applyFollowButtonColors(isActionState: Bool) {
+        followButton.backgroundColor = isActionState ? BearyColors.ink : BearyColors.surface2
+        followButton.setTitleColor(isActionState ? BearyColors.bg : BearyColors.ink, for: .normal)
+    }
+
+    /// 关注钮四态定宽：四态文案宽度不一，内容自适应宽会在点按后变宽变窄、
+    /// 还会把左侧私信钮往左顶。改为按四态里最宽一态定宽（左内边距＋标题宽
+    /// ＋右内边距，取四态最大值再 ceil），点按后尺寸恒定；
     /// 字号档变化时重算（traitCollectionDidChange 钩子＋下次渲染时复核）。
+    /// 定宽下限 80：截屏 logo 可见内容宽 71.2、image view 宽 82.7 右对齐
+    /// （见 BearyScreenshotLogoView）；按钮窄于 77 时 logo 内容左缘会被
+    /// 容器裁掉约 4pt，定宽不得低于 80。
     private func updateFollowButtonFixedWidth() {
         let category = traitCollection.preferredContentSizeCategory
-        let font = followButton.titleLabel?.font ?? UIFont.systemFont(ofSize: 17)
+        let font = followButton.titleLabel?.font ?? BearyDynamicType.smallBodyFont()
         var maxWidth: CGFloat = 0
         for config in Self.followButtonConfigs.values {
-            let imageWidth = BearyIconImages.image(named: config.imageName, pointSize: 17)?.size.width ?? 0
             let titleWidth = (config.title as NSString).size(withAttributes: [.font: font]).width
-            let width = followButton.contentEdgeInsets.left + imageWidth
-                + followButton.titleEdgeInsets.left + titleWidth
+            let width = followButton.contentEdgeInsets.left + titleWidth
                 + followButton.contentEdgeInsets.right
             maxWidth = max(maxWidth, width)
         }
-        let fixedWidth = ceil(maxWidth)
+        let fixedWidth = ceil(max(maxWidth, 80))
         // 容器宽锚按钮宽（只建一次）：按钮定宽随动态字号变时容器跟着变，
-        // 默认字号下两者都是约 98，按钮正好贴满容器；logo 内容 76.8 落在条内、
+        // 默认字号下两者都是约 80，按钮正好贴满容器；logo 内容 71.2 落在条内、
         // 右缘与按钮右缘齐（距页眉边 16）。
         if followButtonContainerWidthConstraint == nil {
             let containerConstraint = followButtonContainer.widthAnchor.constraint(equalTo: followButton.widthAnchor)

@@ -4,7 +4,7 @@ import UIKit
 /// expo-privacy-sensitive 的 iOS 实现）：内容画进 isSecureTextEntry 的
 /// UITextField 内部容器图层，底下垫一张官方 logo。盖住 logo 的不是内容
 /// 本身，而是密码框容器这条不透明的条——本容器就是条（宽 = 内容定宽，
-/// 由调用方把容器宽锚到内容宽上，高 40），条的底色跟容器背后那块页面
+/// 由调用方把容器宽锚到内容宽上，高 28，关注钮 A 版），条的底色跟容器背后那块页面
 /// 底色完全一致（读父视图的 backgroundColor），屏幕上只看到内容、看不出
 /// 条的边；截屏时系统把密码框那层整个抹掉，条连同内容一起消失，截图里
 /// 该位置露出底下的 logo。
@@ -19,7 +19,8 @@ import UIKit
 final class BearyScreenshotLogoView: UIView {
     /// LogoHorizontal 实测（2026-11-25，v6 预览压扁的教训；2026-11-26 新包重测）：文件 310×110 px，
     /// 内容框 267×90 px（在 (21,11)–(288,101)，左右透明边 21/22px、上下各 11px）。
-    /// 目标是内容框正好落到 71.2×24（高 = 容器高 − 2×sm = 24，宽 = 24 × 267/90）：
+    /// 目标是内容框正好落到 71.2×24（按旧 40 高容器推导：高 = 容器高 − 2×sm = 24，宽 = 24 × 267/90；
+    /// 尺寸已固定，不随按钮高缩放——容器改 28 后 image view 29.3 上下各裁 0.65pt 透明边，不可见）：
     /// 整图必须等比放，scale = 24/90，image view = 82.7×29.3（与旧版相同：
     /// 画布 310×110 未变、高度驱动，内容只随新版变窄 76.8→71.2，不变形），竖直居中
     /// 放条里、水平按右对齐算（见 init 的约束），contentMode 用
@@ -120,5 +121,18 @@ final class BearyScreenshotLogoView: UIView {
         // 算 frame——手算 frame 依赖按钮先配好，首布局时按钮未配好会把 logo
         // 算错位且再也不纠正；条 frame 也改走约束贴满容器，不再 strip.frame = bounds。
         secureContainer?.backgroundColor = superview?.backgroundColor ?? BearyColors.bg
+    }
+
+    /// 热区扩到 44（关注钮视觉 28，点按仍按 44 接；token 表 §5「低于 44 的
+    /// 视觉钮优先 Hit44 扩热区」）：条只有 28 高，扩出去的上下 8pt 不经过条，
+    /// 直接落到内容上；条内点按走正常命中测试，一律不动。
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if let hit = super.hitTest(point, with: event) { return hit }
+        guard !isHidden, alpha > 0.01, isUserInteractionEnabled else { return nil }
+        let dy: CGFloat = bounds.height < 44 ? (44 - bounds.height) / 2 : 0
+        let dx: CGFloat = bounds.width < 44 ? (44 - bounds.width) / 2 : 0
+        guard dx > 0 || dy > 0 else { return nil }
+        guard bounds.insetBy(dx: -dx, dy: -dy).contains(point) else { return nil }
+        return contentView
     }
 }

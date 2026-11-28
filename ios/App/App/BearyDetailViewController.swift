@@ -91,8 +91,9 @@ final class BearyDetailViewController: UIViewController {
 
     // MARK: - 好友第一期：详情页作者关注钮（个人页同款）
 
-    /// 详情页作者关注钮：个人页 followButton 同款（17pt 图标＋文字、ink 底＋
-    /// bg 字、四态定宽；点按走同款状态机，见下方的 refresh/apply/tap）。
+    /// 详情页作者关注钮：个人页 followButton 同款（A 版小 pill：28 高、圆角 single 12
+    /// 长方形、15pt 纯文字、无图标；未关注／回关墨底白字，已关注／互关 surface2 底墨字；
+    /// 点按走同款状态机，见下方的 refresh/apply/tap）。
     /// 显隐与个人页同规则：自己的日记、游客（无 viewer）、被我拉黑、作者 id
     /// 缺失／已注销、占位态一律隐藏。截屏 logo 版：显隐走容器（藏按钮会把
     /// 底下 logo 露出来）。
@@ -100,11 +101,9 @@ final class BearyDetailViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitleColor(BearyColors.bg, for: .normal)
-        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17)) // beary-lint: allow（17 regular＝个人页关注钮同款字号，无对应语义入口）
+        buttonValue.titleLabel?.font = BearyDynamicType.smallBodyFont()
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
-        buttonValue.tintColor = BearyColors.bg
-        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpace.md, bottom: 0, right: BearySpace.md)
-        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0) // beary-lint: allow（个人页关注钮同款 6pt 图文间距，无对应 token）
+        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpace.lg, bottom: 0, right: BearySpace.lg)
         buttonValue.layer.borderWidth = 0
         buttonValue.backgroundColor = BearyColors.ink
         buttonValue.clipsToBounds = true
@@ -139,17 +138,16 @@ final class BearyDetailViewController: UIViewController {
     private var followButtonMeasuredCategory: UIContentSizeCategory?
 
     /// 关注钮四态映射：与个人页 BearyProfileViewController.followButtonConfigs
-    /// 同值（图标＋文案）；个人页改文案时此处同步改。
+    /// 同值（文案）；个人页改文案时此处同步改。纯文字，无图标。
     private struct FollowButtonConfig {
-        let imageName: String
         let title: String
         let accessibilityLabel: String
     }
     private static let followButtonConfigs: [BearyFollowState: FollowButtonConfig] = [
-        .none: FollowButtonConfig(imageName: "icon_user_plus", title: NSLocalizedString("follow.button.follow", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.follow", comment: "")),
-        .following: FollowButtonConfig(imageName: "icon_user_check", title: NSLocalizedString("follow.button.following", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.following.accessibility", comment: "")),
-        .followedBy: FollowButtonConfig(imageName: "icon_user_plus", title: NSLocalizedString("follow.button.followedBy", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.followedBy", comment: "")),
-        .mutual: FollowButtonConfig(imageName: "icon_users", title: NSLocalizedString("follow.button.mutual", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.mutual.accessibility", comment: "")),
+        .none: FollowButtonConfig(title: NSLocalizedString("follow.button.follow", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.follow", comment: "")),
+        .following: FollowButtonConfig(title: NSLocalizedString("follow.button.following", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.following.accessibility", comment: "")),
+        .followedBy: FollowButtonConfig(title: NSLocalizedString("follow.button.followedBy", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.followedBy", comment: "")),
+        .mutual: FollowButtonConfig(title: NSLocalizedString("follow.button.mutual", comment: ""), accessibilityLabel: NSLocalizedString("follow.button.mutual.accessibility", comment: "")),
     ]
 
     /// 头行右缩进：作者行右缘上限。按钮显时头行右缘收到按钮左缘外 8pt，
@@ -1280,15 +1278,15 @@ final class BearyDetailViewController: UIViewController {
 
         // 好友第一期：详情页作者关注钮（个人页 #2529 同款截屏 logo 容器）。
         // 容器放内容列当作者行的兄弟视图，不进 authorRow——它是 .firstBaseline
-        // 栈，纯 UIView 的基线即底边，40 高的容器会被钉错位置。trailing 与内容
-        // 列右缘齐平（预览同款：390 屏上按钮 276–374，右缘距屏边 16），centerY
+        // 栈，纯 UIView 的基线即底边，28 高的容器会被钉错位置。trailing 与内容
+        // 列右缘齐平（预览同款：390 屏上按钮 294–374，右缘距屏边 16），centerY
         // 对齐名字；名字／时间在按钮前截断，见 updateHeaderStackTrailing。
         // 容器宽锚按钮宽上（修正版，不用 #2529 旧头的 stripWidth=93 写死值）。
         contentColumnView.addSubview(followButtonContainer)
         NSLayoutConstraint.activate([
             followButtonContainer.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
             followButtonContainer.centerYAnchor.constraint(equalTo: nameButton.centerYAnchor),
-            followButtonContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            followButtonContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
         ])
         // 定宽先算一次：容器宽随即定下，首帧布局不再有歧义宽。
         updateFollowButtonFixedWidth()
@@ -2755,16 +2753,18 @@ final class BearyDetailViewController: UIViewController {
         }
         followButtonContainer.isHidden = false
         updateHeaderStackTrailing()
+        // 两态配色（A 版，2026-11-28 Li 定）：未关注／回关墨底白字（要点的态），
+        // 已关注／互关 surface2 底墨字（已成的态）；颜色随态走，创建时默认值只兜底。
+        let isActionState = (state == .none || state == .followedBy)
         let shouldAnimate = animated && wasVisible && stateChanged && !UIAccessibility.isReduceMotionEnabled
-        let image = BearyIconImages.image(named: config.imageName, pointSize: 17)
         if shouldAnimate {
             UIView.transition(with: followButton, duration: BearyMotion.normal, options: [.transitionCrossDissolve, .beginFromCurrentState], animations: {
-                self.followButton.setImage(image, for: .normal)
                 self.followButton.setTitle(config.title, for: .normal)
+                self.applyFollowButtonColors(isActionState: isActionState)
             }, completion: nil)
         } else {
-            followButton.setImage(image, for: .normal)
             followButton.setTitle(config.title, for: .normal)
+            applyFollowButtonColors(isActionState: isActionState)
         }
         followButton.accessibilityLabel = config.accessibilityLabel
         if isPlaceholder {
@@ -2777,24 +2777,31 @@ final class BearyDetailViewController: UIViewController {
         renderedFollowState = isPlaceholder ? nil : state
     }
 
-    /// 关注钮四态定宽（个人页同款算法）：四态文案／图标宽度不一，内容自适应
-    /// 宽会在点按后变宽变窄。按四态里最宽一态定宽（左内边距＋图标宽＋标题间隙
-    /// ＋标题宽＋右内边距，取四态最大值再 ceil），点按后尺寸恒定；字号档
-    /// 变化时重算。容器宽锚按钮宽上（只建一次）：默认字号下两者都是约 98，
-    /// 按钮正好贴满容器；logo 内容 76.8 落在条内、右缘与按钮右缘齐。
+    /// 关注钮两态配色（A 版）：未关注／回关墨底白字，已关注／互关 surface2 底墨字。
+    private func applyFollowButtonColors(isActionState: Bool) {
+        followButton.backgroundColor = isActionState ? BearyColors.ink : BearyColors.surface2
+        followButton.setTitleColor(isActionState ? BearyColors.bg : BearyColors.ink, for: .normal)
+    }
+
+    /// 关注钮四态定宽（个人页同款算法）：四态文案宽度不一，内容自适应
+    /// 宽会在点按后变宽变窄。按四态里最宽一态定宽（左内边距＋标题宽＋
+    /// 右内边距，取四态最大值再 ceil），点按后尺寸恒定；字号档
+    /// 变化时重算。定宽下限 80：截屏 logo 可见内容宽 71.2、image view 宽
+    /// 82.7 右对齐（见 BearyScreenshotLogoView）；按钮窄于 77 时 logo 内容
+    /// 左缘会被容器裁掉约 4pt，定宽不得低于 80。容器宽锚按钮宽上（只建一次）：
+    /// 默认字号下两者都是约 80，按钮正好贴满容器；logo 内容 71.2 落在条内、
+    /// 右缘与按钮右缘齐。
     private func updateFollowButtonFixedWidth() {
         let category = traitCollection.preferredContentSizeCategory
         guard let font = followButton.titleLabel?.font else { return }
         var maxWidth: CGFloat = 0
         for config in Self.followButtonConfigs.values {
-            let imageWidth = BearyIconImages.image(named: config.imageName, pointSize: 17)?.size.width ?? 0
             let titleWidth = (config.title as NSString).size(withAttributes: [.font: font]).width
-            let width = followButton.contentEdgeInsets.left + imageWidth
-                + followButton.titleEdgeInsets.left + titleWidth
+            let width = followButton.contentEdgeInsets.left + titleWidth
                 + followButton.contentEdgeInsets.right
             maxWidth = max(maxWidth, width)
         }
-        let fixedWidth = ceil(maxWidth)
+        let fixedWidth = ceil(max(maxWidth, 80))
         if followButtonContainerWidthConstraint == nil {
             let containerConstraint = followButtonContainer.widthAnchor.constraint(equalTo: followButton.widthAnchor)
             containerConstraint.isActive = true
