@@ -2159,6 +2159,12 @@ final class BearyChromeViewController: UIViewController {
                 seg.setImage(segmentIcon(named: pair.0, officialFallback: pair.1), forSegmentAt: index)
             }
         }
+        // 数字角标须压在消息段图标右上角：setImage 会让分段器内部重排段视图、
+        // 把段图标画到角标之上（Li 2026-11-27 21:07 截图实测：气泡盖住了角标“4”左下角）；
+        // 每次换图后把角标提回最上层。
+        if let badge = messagesBadgeLabel {
+            seg.bringSubviewToFront(badge)
+        }
     }
 
     /// 底栏选中态：分段器选段与 currentPage 双向同步。当前页不是 tab（搜索 /
@@ -2316,6 +2322,10 @@ final class BearyChromeViewController: UIViewController {
         guard needsVisibilityChange || needsTextChange else { return }
         badge.text = text
         badge.isHidden = !shouldShow
+        // 显出来时也提回最上层：未读数变化不经换图，角标可能仍埋在段图标之下。
+        if shouldShow {
+            bottomSegmented?.bringSubviewToFront(badge)
+        }
     }
 
     /// 未读角标几何跟随系统字号（同会话行 updateUnreadBadgeGeometry 口径）：
