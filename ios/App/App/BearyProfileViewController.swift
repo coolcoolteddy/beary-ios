@@ -6413,7 +6413,6 @@ class BearyProfileViewController: UIViewController {
                     store.markRevokeSynced(id: id)
                     onConfirmed?()
                     if strongSelf.pastSelfPendingRevokeLocalIds.remove(id) != nil, strongSelf.isOwnProfile {
-                        BearyToast.show(in: strongSelf.view, message: "已撤回")
                     }
                 case .failure:
                     // 撤回未获确认：本地撤回仍保留，下次同步再补推；本会话
