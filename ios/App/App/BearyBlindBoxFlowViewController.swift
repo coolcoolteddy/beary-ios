@@ -69,7 +69,7 @@ private final class BlindBoxPoolRowView: UIView {
         checkView.translatesAutoresizingMaskIntoConstraints = false
         checkView.contentMode = .scaleAspectFit
         checkView.tintColor = BearyColors.ink
-        if let check = BearyIconImages.image(named: "icon_check", pointSize: 15) {
+        if let check = BearyIconImages.image(named: "icon_check", pointSize: 16) {
             checkView.image = check
         }
         checkView.isHidden = true
@@ -98,8 +98,8 @@ private final class BlindBoxPoolRowView: UIView {
             row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             pillLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 48),
             pillLabel.heightAnchor.constraint(equalToConstant: 18),
-            checkView.widthAnchor.constraint(equalToConstant: 15),
-            checkView.heightAnchor.constraint(equalToConstant: 15),
+            checkView.widthAnchor.constraint(equalToConstant: 16),
+            checkView.heightAnchor.constraint(equalToConstant: 16),
             tapButton.topAnchor.constraint(equalTo: topAnchor),
             tapButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             tapButton.trailingAnchor.constraint(equalTo: trailingAnchor),
