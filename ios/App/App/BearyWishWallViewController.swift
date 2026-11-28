@@ -45,6 +45,11 @@ private final class WishRowView: UIView {
     private let upButton = BearyButton.make(style: .secondaryOutline(.compact), title: "赞成")
     private let downButton = BearyButton.make(style: .secondaryOutline(.compact), title: "反对")
     private var isDoneRow = false
+    /// 乐观更新·许愿发起：临时行（发送中）标识——行半透明＋票钮禁用＋
+    /// meta 行显示“发送中”而非时间；由 configure(isPending:) 设置。
+    private(set) var isPendingRow = false
+    /// 临时行透明度（与已确认行区分；非字号／间距／圆角／时长，不走样式 token）。
+    static let pendingRowAlpha: CGFloat = 0.6
     /// 审计八轮第 3 项：上次票数——票数淡变只在数值真变时播；只比整数，
     /// 不读按钮标题，与 #1302 的 setVoteTitle（attributed 标题）不冲突。
     private var lastVoteCounts: (up: Int, down: Int)?
@@ -285,7 +290,9 @@ private final class WishRowView: UIView {
     }
 
     /// 只改文案与选中态，不重播入场动效（已有行更新口径）。
-    func configure(item: BearyAPI.WishItem, isAdmin: Bool) {
+    func configure(item: BearyAPI.WishItem, isAdmin: Bool, isPending: Bool = false) {
+        isPendingRow = isPending
+        alpha = isPending ? Self.pendingRowAlpha : 1
         titleLabel.text = item.title ?? ""
         // 29：详情文本变化时展开态复位（投票等仅改文案的 configure 不重置展开态）。
         let newDetail = item.detail ?? ""
@@ -306,7 +313,8 @@ private final class WishRowView: UIView {
         detailLabel.isHidden = newDetail.isEmpty
         let author = item.authorName ?? NSLocalizedString("emote.posters.fallback_display_name", comment: "")
         let time = item.createdAt.map { BearyVisibilityText.diaryTimeString(publishedAtMs: $0) ?? BearyDiaryCardCell.feedTimeString(ms: $0) } ?? ""
-        metaLabel.text = time.isEmpty ? author : "\(author) · \(time)"
+        // 乐观更新·许愿发起：临时行尚未落库，没有可信时间，meta 行显示“发送中”。
+        metaLabel.text = isPending ? "\(author) · \(NSLocalizedString("wish.create.sending", comment: ""))" : (time.isEmpty ? author : "\(author) · \(time)")
         let up = item.upCount ?? 0
         let down = item.downCount ?? 0
         let net = up - down
@@ -331,9 +339,11 @@ private final class WishRowView: UIView {
         voteRow.isHidden = done
         // 扫 bug 定版第 6 项：投票不再有在途禁用——在途时票钮保持可点，
         // configure 只按已完成态禁用，不把在途行提前解开/锁住。
-        upButton.isEnabled = !done
-        downButton.isEnabled = !done
-        doneButton.isHidden = !(isAdmin && !done)
+        // 乐观更新·许愿发起：临时行无服务端 id，票与标记完成都不可点
+        //（误发会打到不存在的 id 上）；确认后重配即恢复。
+        upButton.isEnabled = !done && !isPending
+        downButton.isEnabled = !done && !isPending
+        doneButton.isHidden = !(isAdmin && !done && !isPending)
     }
 
     /// 审计八轮第 3 项（规范 §6）：票数变化时 0.18s opacity 交叉淡变
@@ -423,6 +433,30 @@ final class BearyWishWallViewController: UIViewController {
     private var markDoneGeneration: [Int: Int] = [:]
     /// 审计登录杂项：游客投票时存下的待重放意图（wishId, target），登录成功后补投。
     private var pendingVote: (wishId: Int, target: Int)?
+    /// 乐观更新·许愿发起（2026-11-28 批第 ⑥ 项）：在途提交的本地登记。
+    /// 服务端不接受客户端幂等键（POST /beary/api/wishes 只读 title／detail，
+    /// 见 teddy_beary/worker.js 许愿创建 handler），故 clientId 只作本地
+    /// 关联键——成功回包按它找到待确认的临时行替换，不随请求发送。
+    /// 服务端现有兜底是同作者＋同标题 60 秒窗去重（命中返回既有行），
+    /// 5xx／超时重试一次不会重复落库。
+    /// 临时行用负 id（服务端 id 为正自增，永不碰撞），只在内存里存在，
+    /// 不进磁盘快照；账号切换后旧提交的回包直接丢弃，不写回新账号列表。
+    private struct PendingWishSubmission {
+        var clientId: UUID
+        var tempId: Int
+        var item: BearyAPI.WishItem
+        var title: String
+        var detail: String
+        var accountId: Int?
+        var retryAttempted: Bool
+    }
+    private var pendingWishSubmissions: [UUID: PendingWishSubmission] = [:]
+    /// 在途临时行的 id 集合（renderWishes 判行是否发送中用）。
+    private var pendingTempIds: Set<Int> { Set(pendingWishSubmissions.values.map { $0.tempId }) }
+    /// 下一个临时行 id（负数递减；服务端 id 为正自增，永不碰撞）。
+    private var nextPendingTempId = -1
+    /// 最近一次发起失败后留下的草稿：下次打开新建页时回填，续写再发。
+    private var failedWishDraft: (title: String, detail: String)?
     /// 每条许愿最后服务端确认态（共享协议，见 BearyNativeCommon.BearyConfirmedStatesById，
     /// 点赞确认态同款）：成功回包才刷新；最新一代请求失败时回滚到这里，
     /// 不是回滚到本次点按前的中间态（快连点下中间态早已被更新的点按覆盖，回滚到它即错）。
@@ -631,13 +665,16 @@ final class BearyWishWallViewController: UIViewController {
         wishCreateEdgeDismiss.attach(to: vc)
         vc.transitioningDelegate = wishCreateEdgeDismiss
         self.wishCreateEdgeDismiss = wishCreateEdgeDismiss
-        vc.onCreated = { [weak self] wish in
-            guard let self = self else { return }
-            // 审计登录杂项：新愿望不再 insert(at:0) 永远置顶（与注释“服务端净赞成
-            // 降序、App 不重排”冲突，直到下次重进才纠正）；创建成功后重拉，
-            // 以服务端顺序为准（确认态由 loadWishes 成功分支播种）。
-            self.loadWishes()
-            self.onCreated?(wish)
+        // 乐观更新·许愿发起：新建页只交标题／详情＋客户端许愿 ID，
+        // 由墙页先插“发送中”临时行、持有在途请求；成功／失败由墙页结算。
+        vc.onSubmitWish = { [weak self] title, detail, clientId in
+            self?.submitWish(title: title, detail: detail, clientId: clientId)
+        }
+        // 失败后重开表单续写：上次失败留下的草稿一次消费，回填进新建页。
+        if let draft = failedWishDraft {
+            vc.initialTitle = draft.title
+            vc.initialDetail = draft.detail
+            failedWishDraft = nil
         }
         // 117 终态偏离兜底：新建页无守卫，呈现完成时帧偏离就复位（与设置页 helper 同口径）。
         present(vc, animated: BearyMotion.animated(true)) { [weak vc] in
@@ -650,6 +687,108 @@ final class BearyWishWallViewController: UIViewController {
                 vc.view.layoutIfNeeded()
             }
         }
+    }
+
+    /// 乐观更新·许愿发起：新建页点提交后立即插临时行、关表单，请求由墙页
+    /// 持有（新建页已关，不能再由它持有在途请求）。临时行插墙顶并滚到可见。
+    private func submitWish(title: String, detail: String, clientId: UUID) {
+        let accountId = currentAccountId
+        let me = SessionManager.shared.currentUser
+        let authorName = (me?.displayName?.isEmpty == false ? me?.displayName : nil) ?? me?.handle.map { "@\($0)" }
+        let tempId = nextPendingTempId
+        nextPendingTempId -= 1
+        let pendingItem = BearyAPI.WishItem(
+            id: tempId, authorId: accountId, authorName: authorName, authorAvatar: nil,
+            title: title, detail: detail, status: "open",
+            upCount: 0, downCount: 0, myVote: nil, createdAt: Int(Date().timeIntervalSince1970 * 1000)
+        )
+        pendingWishSubmissions[clientId] = PendingWishSubmission(
+            clientId: clientId, tempId: tempId, item: pendingItem,
+            title: title, detail: detail, accountId: accountId, retryAttempted: false
+        )
+        wishes.insert(pendingItem, at: 0)
+        renderWishes()
+        scrollView.setContentOffset(CGPoint(x: 0, y: -scrollView.contentInset.top), animated: BearyMotion.animated(true))
+        sendWishCreate(title: title, detail: detail, clientId: clientId)
+    }
+
+    /// 乐观更新·许愿发起的结算（只作用于本写点，不改全局 BearyRetryPolicy；
+    /// 请求层对许愿 POST 是 0 次重试，见 BearyRetryPolicy.uploadMaxRetries，
+    /// 故这里的一次重试就是唯一一次，不会与请求层叠加）。
+    /// - 成功：临时行原位换成服务端确认行，再按原口径重拉（以服务端净赞成
+    ///   顺序为准；确认态由 loadWishes 成功分支播种），最后透传 onCreated。
+    /// - 4xx（含 not_plus／rate_limited／bad wish）：立刻回滚——撤临时行、
+    ///   toast、草稿留待重开表单续写。表单已关，字段级错误无法再标框，
+    ///   故 bad wish 也走通用回滚口径，不再按字段归因。
+    /// - 5xx／超时：后台重试一次（同标题 60 秒窗服务端去重兜底，重发不重复
+    ///   落库）；重试仍失败则按 4xx 同款回滚。离线／取消／解析失败不重试。
+    private func sendWishCreate(title: String, detail: String, clientId: UUID) {
+        BearyAPI.shared.createWish(title: title, detail: detail) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self, var submission = self.pendingWishSubmissions[clientId] else { return }
+                // 账号已切换：旧提交的回包不得写回新账号列表，直接丢弃
+                //（临时行已随新账号的重拉被换掉，或在重拉合并时被账号过滤掉）。
+                guard submission.accountId == self.currentAccountId else {
+                    self.pendingWishSubmissions.removeValue(forKey: clientId)
+                    return
+                }
+                switch result {
+                case .success(let wish):
+                    self.pendingWishSubmissions.removeValue(forKey: clientId)
+                    if let index = self.wishes.firstIndex(where: { $0.id == submission.tempId }) {
+                        self.wishes[index] = wish
+                    }
+                    self.renderWishes()
+                    self.loadWishes()
+                    self.onCreated?(wish)
+                case .failure(let err):
+                    if Self.isRetryableWishSubmitError(err), !submission.retryAttempted {
+                        submission.retryAttempted = true
+                        self.pendingWishSubmissions[clientId] = submission
+                        DispatchQueue.main.asyncAfter(deadline: .now() + BearyRetryPolicy.publishBackoffInitialDelay) { [weak self] in
+                            guard let self = self, self.pendingWishSubmissions[clientId] != nil else { return }
+                            self.sendWishCreate(title: title, detail: detail, clientId: clientId)
+                        }
+                        return
+                    }
+                    self.pendingWishSubmissions.removeValue(forKey: clientId)
+                    if let index = self.wishes.firstIndex(where: { $0.id == submission.tempId }) {
+                        self.wishes.remove(at: index)
+                    }
+                    self.failedWishDraft = (title: submission.title, detail: submission.detail)
+                    self.renderWishes()
+                    BearyToast.show(in: self.view, message: Self.wishSubmitFailureMessage(for: err))
+                }
+            }
+        }
+    }
+
+    /// 本乐观写点专用的重试判定：5xx 与超时／连接丢失可重试一次；
+    /// 4xx、离线、取消、解析失败立刻回滚。状态码走 APIError 自带的
+    /// 第二值（.server 的 status／.http 的 status）。
+    private static func isRetryableWishSubmitError(_ error: APIError) -> Bool {
+        switch error {
+        case .server(_, let status):
+            return (status ?? 0) >= 500
+        case .http(let status, _):
+            return status >= 500
+        case .network:
+            return error.isTimeoutOrUnknownResult
+        default:
+            return false
+        }
+    }
+
+    /// 发起失败 toast 文案（not_plus／rate_limited 沿用旧映射，其余通用）；
+    /// 旧三句硬编码中文已迁进 Localizable.xcstrings，不再留字面量。
+    private static func wishSubmitFailureMessage(for error: APIError) -> String {
+        if case .server(let code, _) = error, code == "not_plus" {
+            return NSLocalizedString("wish.create.not_plus", comment: "")
+        }
+        if case .server(let code, _) = error, code == "rate_limited" {
+            return NSLocalizedString("wish.create.rate_limited", comment: "")
+        }
+        return NSLocalizedString("wish.create.submit_failed", comment: "")
     }
 
     /// 116 数据填入动效：状态视图由隐藏变可见时只淡入本身（alpha
@@ -752,6 +891,15 @@ final class BearyWishWallViewController: UIViewController {
                     }
                     self.showingCachedWishes = false
                     self.wishStaleLabel.isHidden = true
+                    // 乐观更新·许愿发起：重拉回包不得吞掉仍在途的临时行——
+                    // 只保留属于当前账号的，插回墙顶（最新在前；服务端
+                    // 列表本身不动，临时行不进磁盘快照）。
+                    let pendingNow = self.pendingWishSubmissions.values
+                        .filter { $0.accountId == self.currentAccountId }
+                        .sorted { $0.tempId < $1.tempId }
+                    for submission in pendingNow {
+                        self.wishes.insert(submission.item, at: 0)
+                    }
                     self.renderWishes(restoring: visibleAnchor)
                     // 确认结果为空时旧快照失效，下次不再先恢复已撤的愿望；非空则落快照。
                     // 审计第 14 轮 4：快照只存服务端确认数据——在途投票的乐观票数
@@ -825,12 +973,13 @@ final class BearyWishWallViewController: UIViewController {
         var orderedRows: [WishRowView] = []
         for item in wishes {
             guard let id = item.id else { continue }
+            let isPending = pendingTempIds.contains(id)
             if let row = oldRows[id] {
-                row.configure(item: item, isAdmin: isAdmin)
+                row.configure(item: item, isAdmin: isAdmin, isPending: isPending)
                 orderedRows.append(row)
             } else {
                 let row = WishRowView()
-                row.configure(item: item, isAdmin: isAdmin)
+                row.configure(item: item, isAdmin: isAdmin, isPending: isPending)
                 row.onUp = { [weak self] in self?.voteTapped(wishId: id, target: 1) }
                 row.onDown = { [weak self] in self?.voteTapped(wishId: id, target: -1) }
                 row.onMarkDone = { [weak self] in self?.markDoneTapped(wishId: id) }
@@ -856,7 +1005,7 @@ final class BearyWishWallViewController: UIViewController {
             row.alpha = 0
             row.transform = CGAffineTransform(translationX: 0, y: 6)
             UIView.animate(withDuration: BearyMotion.normal, delay: min(Double(index) * 0.03, 0.24), options: [.curveEaseOut], animations: {
-                row.alpha = 1
+                row.alpha = row.isPendingRow ? WishRowView.pendingRowAlpha : 1
                 row.transform = .identity
             }, completion: nil)
         }
@@ -922,6 +1071,9 @@ final class BearyWishWallViewController: UIViewController {
             return
         }
         guard let index = indexOfWish(wishId) else { onSettled?(false); return }
+        // 乐观更新·许愿发起：临时行（负 id）在途时票钮已禁用；此守卫防
+        // 行复用等异常路径把票发给不存在的服务端 id。
+        guard !pendingTempIds.contains(wishId) else { onSettled?(false); return }
         let current = wishes[index]
         // 确认态兜底：本条若从未经过列表/新建播种（如行复用路径），
         // 以本次点按前的显示态为确认基线，失败回滚才有可回的态。
@@ -1039,6 +1191,8 @@ final class BearyWishWallViewController: UIViewController {
     /// 已有更新标记请求时旧失败不得覆盖新状态、不得弹 toast。
     private func markDoneTapped(wishId: Int) {
         guard let index = indexOfWish(wishId) else { return }
+        // 乐观更新·许愿发起：临时行无服务端 id，标记完成不可发（票钮同款守卫）。
+        guard !pendingTempIds.contains(wishId) else { return }
         let oldStatus = wishes[index].status
         var next = wishes[index]
         next.status = "done"
@@ -1150,10 +1304,9 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         case form
     }
     private var wishFieldError: WishFieldError = .none
-    /// 11：提交锁——锁期间 titleChanged 不得重新启用提交钮（服务端幂等另有工人做）。
+    /// 11：提交锁——锁期间 titleChanged 不得重新启用提交钮；点提交后新建页
+    /// 即关，锁只防关页前的连点，在途请求由墙页持有。
     private var isSubmitting = false
-    /// 提交在途时关闭钮的引用：提交期间一并禁用，失败后恢复；成功即随页关闭，无需恢复。
-    private var createCloseButton: BearyHit44Button?
     /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；与列表页同款）。
     private var colCapConstraints: [NSLayoutConstraint] = []
     /// 17：当前焦点框（键盘弹出时把它滚到可见区）。
@@ -1161,7 +1314,13 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     /// 117 子页空白守卫：新建页此前无守卫，与列表页同款补上。
     private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private var topBarView: UIView?
-    var onCreated: ((BearyAPI.WishItem) -> Void)?
+    /// 乐观更新·许愿发起：点提交后只把标题／详情＋客户端许愿 ID 交给墙页，
+    /// 由墙页先插临时行、持有在途请求；新建页随即关闭，不再等回包。
+    /// clientId 是本地关联键（服务端不接受客户端幂等键，见墙页注释）。
+    var onSubmitWish: ((String, String, UUID) -> Void)?
+    /// 失败后重开表单续写的回填草稿（墙页在失败时记下、打开时一次消费）。
+    var initialTitle: String?
+    var initialDetail: String?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -1178,7 +1337,6 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         closeButton.accessibilityLabel = "返回"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
-        createCloseButton = closeButton
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "发起许愿"
@@ -1245,6 +1403,13 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         submitButton.addTarget(self, action: #selector(submitTapped), for: .touchUpInside)
         submitButton.isEnabled = false
         submitButton.alpha = 0.4
+        // 失败草稿回填：标题／详情一次消费，计数与提交启用态随 titleChanged 刷新。
+        if let initialTitle { titleField.text = initialTitle }
+        if let initialDetail {
+            detailView.text = initialDetail
+            detailPlaceholder.isHidden = !initialDetail.isEmpty
+        }
+        if initialTitle != nil || initialDetail != nil { titleChanged() }
         titleField.addTarget(self, action: #selector(titleFieldDidBegin), for: .editingDidBegin)
         titleField.addTarget(self, action: #selector(fieldDidEnd), for: .editingDidEnd)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -1438,17 +1603,6 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         refreshDetailBorder()
     }
 
-    /// 11 轮审计第 10 项：服务端 bad wish 归因——服务端只回单一 'bad wish'
-    ///（worker.js:9129），不带字段信息；按服务端口径重算当前两字段：标题
-    /// trim 后判空／>100、详情不 trim／>2000，长度按 JS .length（UTF-16 计，
-    /// 客户端同用 .utf16.count 对齐）；能定位到
-    /// 字段才标该框，都合规时（如入库后回读失败）归表单级错误，不标任一框。
-    private func fieldError(forBadWish title: String, detail: String) -> WishFieldError {
-        if title.isEmpty || title.utf16.count > Self.titleLimit { return .title }
-        if detail.utf16.count > Self.detailLimit { return .detail }
-        return .form
-    }
-
     /// 审计视觉 04/10：输入框边框三态（BearyInputContainer 同款）——仅当错误
     /// 归因到本字段时才画 1pt 红边框并清掉阴影；聚焦走聚焦阴影、边框 0；
     /// 其余态边框 0、无阴影。表单级错误不标任一框。
@@ -1481,8 +1635,8 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     }
 
     /// 30：长度提示唯一刷新点——标题/详情计数与超限变红；超限时提交钮禁用
-    /// （服务端同限，客户端先拦；超长 400 的 bad wish 由 submitTapped 按服务
-    /// 端口径重算归因，能定位字段只标该框，否则只显示表单级错误行）。
+    /// （服务端同限，客户端先拦；超长 400 的 bad wish：表单提交后即关，
+    /// 失败统一走墙页回滚＋toast＋草稿回填，不再按字段标框）。
     /// 计数走 numberFont（12 semibold 等宽数字）；数字变化时 0.18s 交叉淡变
     /// （票数 fadeVoteCount／图片序号 updateCounter 同款口径：
     /// BearyMotion.localStateDuration＋transitionCrossDissolve；文字不变、
@@ -1569,51 +1723,18 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         }
     }
 
+    /// 乐观更新·许愿发起：校验通过即把标题／详情＋客户端许愿 ID 交给墙页，
+    /// 墙页先插“发送中”临时行、持有在途请求；新建页随即关闭，不再等回包。
+    /// 成功／失败由墙页结算：成功临时行原位换确认行；失败撤临时行＋toast、
+    /// 草稿留待重开表单续写。表单已关，失败不再按字段标框（bad wish 同款）。
     @objc private func submitTapped() {
-        guard !isSubmitting else { return }
+        guard !isSubmitting, let onSubmitWish else { return }
         let title = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, title.utf16.count <= Self.titleLimit, detailView.text.utf16.count <= Self.detailLimit else { return }
         let detail = detailView.text ?? ""
         isSubmitting = true
-        setWishFieldError(.none)
-        submitButton.isEnabled = false
-        submitButton.alpha = 0.4
-        createCloseButton?.isEnabled = false
-        createCloseButton?.alpha = 0.4
-        BearyAPI.shared.createWish(title: title, detail: detail) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                switch result {
-                case .success(let wish):
-                    self.onCreated?(wish)
-                    self.dismiss(animated: BearyMotion.animated(true), completion: nil)
-                case .failure(let err):
-                    // 11：解锁后按当前标题重新评估启用态，不再无条件 isEnabled = true
-                    //（提交期间标题被清空时，失败后提交钮仍应保持禁用）。
-                    self.isSubmitting = false
-                    // 失败后表单内容保留：不清空标题／详情，只恢复关闭钮与提交钮启用态，可再提交。
-                    self.createCloseButton?.isEnabled = true
-                    self.createCloseButton?.alpha = 1
-                    self.titleChanged()
-                    // 11 轮审计第 10 项：超长 400 'bad wish' 按服务端口径重算归因——
-                    // 能定位到字段只标该框，无法定位只显示表单级错误行、不标任一框；
-                    // 不弹通用 toast；其余失败映射不变（not_plus / rate_limited / 通用 toast）。
-                    if case .server(let code, _) = err, code == "bad wish" {
-                        self.setWishFieldError(self.fieldError(forBadWish: title, detail: detail))
-                        return
-                    }
-                    let message: String
-                    if case .server(let code, _) = err, code == "not_plus" {
-                        message = "仅 Plus 会员可发起许愿"
-                    } else if case .server(let code, _) = err, code == "rate_limited" {
-                        message = "操作太频繁，请稍后再试"
-                    } else {
-                        message = "发布失败，请重试"
-                    }
-                    BearyToast.show(in: self.view, message: message)
-                }
-            }
-        }
+        onSubmitWish(title, detail, UUID())
+        dismiss(animated: BearyMotion.animated(true), completion: nil)
     }
 }
 
