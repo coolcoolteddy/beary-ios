@@ -720,12 +720,12 @@ final class BearyPublishCenter {
         if runningJob.sourcePublished {
             // 部分成功：原日记已公开，不回滚、不走通用“发布失败”文案。
             if case .unauthorized = error {
-                fail(runningJob, message: "原日记已公开，新篇发布失败，登录已失效，请重新登录后只重试新篇")
+                fail(runningJob, message: "发布失败，引用的日记已公开，登录已失效，请重新登录后只重试新篇")
                 runningJob.job.onRequireLogin?()
             } else if case .network = error {
-                fail(runningJob, message: "原日记已公开，新篇发布失败，网络不可用，已保存为草稿，联网后可只重试新篇")
+                fail(runningJob, message: "发布失败，引用的日记已公开，网络不可用，已保存为草稿，联网后可只重试新篇")
             } else {
-                fail(runningJob, message: "原日记已公开，新篇发布失败，请只重试新篇")
+                fail(runningJob, message: "发布失败，引用的日记已公开，请只重试新篇")
             }
             return
         }
@@ -973,7 +973,7 @@ final class BearyPublishCenter {
     /// 部分成功态（原日记已公开）另加一句。
     private func accountMismatchMessage(sourceAlreadyPublished: Bool) -> String {
         if sourceAlreadyPublished {
-            return "原日记已公开，新篇未发布。账号已变化，请回到原账号后再发布，或丢弃本篇重新开始。"
+            return "发布失败，引用的日记已公开。账号已变化，请回到原账号后再发布，或丢弃本篇重新开始。"
         }
         return "账号已变化，本篇未发布。请回到原账号后再发布，或丢弃本篇重新开始。"
     }
