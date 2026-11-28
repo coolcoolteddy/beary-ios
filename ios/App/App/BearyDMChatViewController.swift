@@ -882,6 +882,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         searchContainerHeight?.isActive = !visible
         searchResultsTableView.isHidden = !visible
         searchEmptyLabel.isHidden = true
+        // 展示审计 G6-T2：搜索提示只在无结果时出现（见 searchFieldChanged），
+        // 开／关搜索栏时先藏起。
+        searchHintLabel.isHidden = true
         if !visible {
             // 代次 +1：在途的搜索回包按代次丢弃，不回填已关掉的结果表。
             searchGeneration += 1
@@ -900,6 +903,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard !trimmed.isEmpty else {
             searchResults = []
             searchEmptyLabel.isHidden = true
+            searchHintLabel.isHidden = true
             searchResultsTableView.reloadData()
             return
         }
@@ -907,6 +911,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             guard let self = self, generation == self.searchGeneration else { return }
             self.searchResults = results
             self.searchEmptyLabel.isHidden = !results.isEmpty
+            // 提示只在无结果时与空态文案一起出现（G6-T2）。
+            self.searchHintLabel.isHidden = !results.isEmpty
             self.searchResultsTableView.reloadData()
         }
     }
