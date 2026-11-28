@@ -551,7 +551,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         failureLabel.textColor = BearyStarMapNight.secondaryText
         failureLabel.textAlignment = .center
         failureLabel.numberOfLines = 0
-        failureLabel.text = "日记加载失败，请重试"
+        failureLabel.text = NSLocalizedString("starmap.load_failed_retry", comment: "")
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
         retryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 15))
