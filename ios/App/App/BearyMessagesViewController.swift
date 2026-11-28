@@ -226,8 +226,8 @@ final class BearyMessagesViewController: UIViewController {
             stateContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             stateView.centerXAnchor.constraint(equalTo: stateContainer.centerXAnchor),
             stateView.centerYAnchor.constraint(equalTo: stateContainer.centerYAnchor),
-            stateView.leadingAnchor.constraint(greaterThanOrEqualTo: stateContainer.leadingAnchor, constant: 32),
-            stateView.trailingAnchor.constraint(lessThanOrEqualTo: stateContainer.trailingAnchor, constant: -32),
+            stateView.leadingAnchor.constraint(greaterThanOrEqualTo: stateContainer.leadingAnchor, constant: BearySpace.xl),
+            stateView.trailingAnchor.constraint(lessThanOrEqualTo: stateContainer.trailingAnchor, constant: -BearySpace.xl),
         ])
 
         // 通知组接线与铃铛页同口径（onSystemNotificationSelected 不接线，
@@ -1206,7 +1206,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
     }
 }
 
-// MARK: - 合并失败行 cell（内含 BearyStateView，上下 12、左右 32 钉住，自动高）
+// MARK: - 合并失败行 cell（内含 BearyStateView，上下 12、左右 20 钉住，自动高）
 
 private final class MergedFailureCell: UITableViewCell {
 
@@ -1222,8 +1222,8 @@ private final class MergedFailureCell: UITableViewCell {
         NSLayoutConstraint.activate([
             stateView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
             stateView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
-            stateView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 32),
-            stateView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -32),
+            stateView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: BearySpace.xl),
+            stateView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -BearySpace.xl),
         ])
     }
 
