@@ -942,15 +942,33 @@ final class BearyTimelineCell: UITableViewCell {
         return v
     }()
     private let weatherLabel = UILabel()
-    /// E3：本行天气图标视图（configure 现建现存；复用/重配即清）与落点
-    /// 天气 Lottie 覆盖层（仅 gotoEntry 落点行创建，其他行恒为 nil）。
+    /// E3：落点天气 Lottie 覆盖层的锚图标（仅 gotoEntry 落点行创建，其他行恒为 nil；
+    /// 展示审计 G1-06 起锚点改为底行天气图标 bottomWeatherIconView，configure 不再逐行播 Lottie）。
     private var weatherIconView: UIImageView?
     private var weatherEmoteView: BearyEmoteView?
-    private let moodLabel = UILabel()
-    /// 2-1：本行天气/心情行视图（configure 现建现存；复用/重配即清），
-    /// 供 layoutSubviews 在窄屏下隐藏天气/心情用（见该函数注释）。
-    private var metaWeatherRow: UIView?
-    private var metaMoodRow: UIView?
+    /// 底行天气图标（展示审计 G1-06：天气从 meta 行并回底行右端；静态图，不播 Lottie）。
+    private let bottomWeatherIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        v.isHidden = true
+        v.setContentHuggingPriority(.required, for: .horizontal)
+        v.setContentCompressionResistancePriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            v.widthAnchor.constraint(equalToConstant: 14),
+            v.heightAnchor.constraint(equalToConstant: 14),
+        ])
+        return v
+    }()
+    /// 底行中段吸宽 spacer（位置左、天气右；无位置时天气仍顶右）。
+    private let bottomWeatherSpacer: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        v.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return v
+    }()
     private let recipientLabel = UILabel()
     private let contentLabel = UILabel()
     /// 审计 P2-12：时间线补标题行（卡片同款 16.5 粗体、单行截断，空标题不占位）。
@@ -985,7 +1003,9 @@ final class BearyTimelineCell: UITableViewCell {
         return lb
     }()
     private lazy var timelineLocationLineRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [timelineLocationIconView, timelineLocationLabel])
+        // 展示审计 G1-06：底行＝位置左＋天气右（规范 v28 §九表）；天气图标＋文案常驻行内，
+        // 有天气才显，无天气整组只剩位置；位置与天气的显隐由 configure／refreshTimelineLocationRow 定。
+        let st = UIStackView(arrangedSubviews: [timelineLocationIconView, timelineLocationLabel, bottomWeatherSpacer, bottomWeatherIconView, weatherLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 4
@@ -1128,21 +1148,17 @@ final class BearyTimelineCell: UITableViewCell {
             pillIconView.heightAnchor.constraint(equalToConstant: 14),
         ])
 
-        // 8-3：天气/心情（正文类）走 scaledFont + adjusts。
+        // 8-3：天气（正文类）走 scaledFont + adjusts。
         weatherLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         weatherLabel.adjustsFontForContentSizeCategory = true
         weatherLabel.textColor = BearyColors.gray
-        // 2026-10-28 Li 定：天气/心情文字一律单行（多行换行会把两字词挤成竖排，
+        // 2026-10-28 Li 定：天气文字一律单行（多行换行会把两字词挤成竖排，
         // 如“心动”上下排）；空间不足时由写给（单行截断）承接挤压，时间与 pill 不动。
         weatherLabel.numberOfLines = 1
         weatherLabel.lineBreakMode = .byTruncatingTail
         weatherLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        moodLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        moodLabel.adjustsFontForContentSizeCategory = true
-        moodLabel.textColor = BearyColors.gray
-        moodLabel.numberOfLines = 1
-        moodLabel.lineBreakMode = .byTruncatingTail
-        moodLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        // 底行天气文案默认隐藏（configure 有天气时才显；见 G1-06）。
+        weatherLabel.isHidden = true
         // 112 视觉扫查：同行时间/天气/心情均已走 scaledFont（见上方 8-3），@ 行此前独漏；
         // 默认档仍为 12 粗体，仅跟随系统字号，170 上限与单行截断口径不动。
         recipientLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
@@ -1311,15 +1327,6 @@ final class BearyTimelineCell: UITableViewCell {
         super.layoutSubviews()
         // 内联 GIF 覆盖层：label 宽变或文本重建后跟帧刷新（签名未变时内部短路，不重载）。
         refreshGIFOverlays()
-        let metaWidth = metaStack.bounds.width
-        guard metaWidth > 0 else { return }
-        let narrow = metaWidth < 260
-        if let weatherRow = metaWeatherRow, weatherRow.isHidden != narrow {
-            weatherRow.isHidden = narrow
-        }
-        if let moodRow = metaMoodRow, moodRow.isHidden != narrow {
-            moodRow.isHidden = narrow
-        }
         // 限时虚线边框不再在此手工重画 path：BearyDashedBorderView 自身按
         // 约束后的 cardView bounds 重画，引用卡进栈后框高自动跟上。
     }
@@ -1477,22 +1484,32 @@ final class BearyTimelineCell: UITableViewCell {
             metaStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
-        metaWeatherRow = nil
-        metaMoodRow = nil
+        // 底行天气复位（G1-06）：图标＋文案默认藏，configure 有天气时才显。
+        bottomWeatherIconView.isHidden = true
+        bottomWeatherIconView.image = nil
+        weatherLabel.isHidden = true
+        weatherLabel.text = nil
     }
 
     /// 批 E 补漏：时间线位置行刷新，卡片 refreshLocationRow 同款口径
     /// （display 返回 nil 时整组隐藏，不留空行；公开篇作者本人也只看区级，不再附提示行；
     /// 非公开篇作者本人看精确名；他人只到区级、无区级不显示）。
+    /// 底行（展示审计 G1-06）：位置左＋天气右；位置与天气的显隐独立——
+    /// 两者皆无才整组隐藏（间距归零），其一在即显示（天气无位置时仍顶右）。
     private func refreshTimelineLocationRow(entry: Entry) {
+        let hasWeather = !bottomWeatherIconView.isHidden
         guard let line = BearyLocationDisplay.display(entry: entry) else {
-            timelineLocationStack.isHidden = true
+            timelineLocationIconView.isHidden = true
+            timelineLocationLabel.isHidden = true
+            timelineLocationLabel.text = nil
+            timelineLocationStack.isHidden = !hasWeather
             // 位置行隐藏时其后间距置 0（与标题行同款口径；不归零会多 14pt，
             // 与 :1144 注释「栈自动塌掉不留空行」相左，以卡片 126 真机实测为准）。
-            cardStackReference?.setCustomSpacing(0, after: timelineLocationStack)
-            timelineLocationLabel.text = nil
+            cardStackReference?.setCustomSpacing(timelineLocationStack.isHidden ? 0 : 14, after: timelineLocationStack)
             return
         }
+        timelineLocationIconView.isHidden = false
+        timelineLocationLabel.isHidden = false
         timelineLocationStack.isHidden = false
         // sweep131-a：可见时恢复 14（#1250 定版、与卡片/详情对齐；#1268
         // 沿用合入前基线旧值 9，漏跟 #1250 的 9→14）。
@@ -1619,8 +1636,6 @@ final class BearyTimelineCell: UITableViewCell {
     func configure(entry: Entry) {
         stopWeatherLottie()
         weatherIconView = nil
-        metaWeatherRow = nil
-        metaMoodRow = nil
         currentEntry = entry
         for arranged in metaStack.arrangedSubviews {
             metaStack.removeArrangedSubview(arranged)
@@ -1700,53 +1715,25 @@ final class BearyTimelineCell: UITableViewCell {
         // 对称分割线式：内容列无实线边；虚线层仍按存活期显隐（限时篇只留虚线框）。
         cardView.layer.borderWidth = 0
         ephemeralBorderView.isHidden = !ephemeralLive
-        // I3：天气用 icon_wx_* 图标、心情用 14px BearyEmoteView（播 Lottie 循环，
-        // 与 Feed/主页心情位静态首帧不同，时间线卡片心情是动的；减动效下只显完成帧）。
+        // 展示审计 G1-06（规范 v28 §九表）：meta 行只留时间＋可见性图标＋•••；
+        // 天气并回底行右端（位置左＋天气右），用静态 icon_wx_* 图，configure 不再播 Lottie
+        //（落点行仍由容器在 gotoEntry 落定后调 playWeatherLottie，锚点即底行图标）；
+        // 心情行整段删除——心情只在正文内联出现，不再单独占一行。
         if let weatherKey = entry.weather, let weatherName = BearyText.weatherNames[weatherKey] {
             weatherLabel.text = weatherName
-            var weatherRowItems: [UIView] = []
             if let weatherImage = BearyIconImages.image(named: "icon_wx_\(BearyText.weatherStaticKey(for: weatherKey))", pointSize: 14) {
-                let weatherIconView = UIImageView(image: weatherImage)
-                weatherIconView.translatesAutoresizingMaskIntoConstraints = false
-                weatherIconView.tintColor = BearyColors.gray
-                weatherIconView.contentMode = .scaleAspectFit
-                NSLayoutConstraint.activate([
-                    weatherIconView.widthAnchor.constraint(equalToConstant: 14),
-                    weatherIconView.heightAnchor.constraint(equalToConstant: 14),
-                ])
-                self.weatherIconView = weatherIconView
-                // 天气标改动态 Lottie（落点行 playWeatherLottie 同款）。
-                playWeatherLottie()
-                weatherRowItems.append(weatherIconView)
+                bottomWeatherIconView.image = weatherImage
+                bottomWeatherIconView.isHidden = false
+                weatherLabel.isHidden = false
+                // 落点 Lottie 仍以本图标为锚（VC 在 gotoEntry 落定后调 playWeatherLottie）。
+                self.weatherIconView = bottomWeatherIconView
+            } else {
+                bottomWeatherIconView.isHidden = true
+                weatherLabel.isHidden = true
             }
-            weatherRowItems.append(weatherLabel)
-            let weatherRow = UIStackView(arrangedSubviews: weatherRowItems)
-            weatherRow.axis = .horizontal
-            weatherRow.spacing = 3
-            weatherRow.alignment = .center
-            weatherRow.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-            // 6A pill 左 packed：天气行横向抗拉伸提到 required，不吸 slack。
-            weatherRow.setContentHuggingPriority(.required, for: .horizontal)
-            metaWeatherRow = weatherRow
-            metaStack.addArrangedSubview(weatherRow)
-        }
-        if let moodKey = entry.mood, let moodName = BearyText.moodNames[moodKey] {
-            moodLabel.text = moodName
-            let emoteView = BearyEmoteView(key: moodKey, animated: true)
-            emoteView.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                emoteView.widthAnchor.constraint(equalToConstant: 14),
-                emoteView.heightAnchor.constraint(equalToConstant: 14),
-            ])
-            let moodRow = UIStackView(arrangedSubviews: [emoteView, moodLabel])
-            moodRow.axis = .horizontal
-            moodRow.spacing = 3
-            moodRow.alignment = .center
-            moodRow.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-            // 6A pill 左 packed：心情行横向抗拉伸提到 required，不吸 slack。
-            moodRow.setContentHuggingPriority(.required, for: .horizontal)
-            metaMoodRow = moodRow
-            metaStack.addArrangedSubview(moodRow)
+        } else {
+            bottomWeatherIconView.isHidden = true
+            weatherLabel.isHidden = true
         }
         if let mentionedName = entry.mentionedName, !mentionedName.isEmpty {
             // 32 注销口径：被 @ 者已注销时显“@用户已注销”。
@@ -6774,6 +6761,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         let hasTitle = !(entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasQuote = entry.quote != nil || entry.quoteId != nil
         let hasLocation = !(entry.locationName ?? "").isEmpty || !(entry.locationDistrict ?? "").isEmpty
+        let hasWeather = (entry.weather).flatMap { BearyText.weatherNames[$0] } != nil
         let likeCount = entry.likeCount ?? 0
         let emoteTotal = (entry.emotes ?? []).reduce(0) { $0 + ($1.count ?? 0) }
         let bookmarkCount = entry.bookmarkCount ?? 0
@@ -6788,7 +6776,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         if hasImages { height += BearyImageStrip.height + 12 }                           // 图片条 + 间距
         if imageKeys.count > 3 { height += 32 + 12 }                  // 九宫格入口 + 间距
         if hasQuote { height += 72 + 12 }                             // 引用卡（近似）+ 间距
-        if hasLocation { height += 18 + 14 }                          // 位置行 + 间距
+        if hasLocation || hasWeather { height += 18 + 14 }             // 底行（位置左＋天气右，G1-06）+ 间距
         if hasFootCounts { height += 17 + 12 }                        // 计数足行 + 间距
         if entry.isMine == true { height += 17 }                      // 编辑行
         height += 6 + 8  // 栈底 + 列底
