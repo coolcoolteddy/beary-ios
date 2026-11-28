@@ -263,7 +263,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
         boundLabel.numberOfLines = 0
         boundCheckIcon.translatesAutoresizingMaskIntoConstraints = false
         boundCheckIcon.image = BearyIconImages.image(named: "icon_check_circle", pointSize: 14)
-        boundCheckIcon.tintColor = BearyColors.green
+        boundCheckIcon.tintColor = BearyColors.ink
         boundCheckIcon.contentMode = .scaleAspectFit
         boundRow.translatesAutoresizingMaskIntoConstraints = false
         boundRow.axis = .horizontal
