@@ -8224,6 +8224,9 @@ class BearyProfileViewController: UIViewController {
         moreButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 2)
         moreButton.addTarget(self, action: #selector(morePhotosButtonTapped), for: .touchUpInside)
         moreButton.bearyAddPressFeedback()
+        // 展示审计 G2-07：照片总数 ≤6 时墙已展示全部，「更多」钮隐藏
+        //（点进全量页看到的与墙上完全一致）；超过 6 张才显示。
+        moreButton.isHidden = totalCount <= 6
         container.addSubview(titleLabel)
         container.addSubview(moreButton)
         // 40 + 16 = 56：左右各 20 边距＋两道 8 间距；footerWidth 已回退且守卫 > 0，备用宽不触发。
