@@ -53,6 +53,8 @@ final class BearyDetailViewController: UIViewController {
     var onAuthorTapped: ((Int) -> Void)?
     /// 引用卡点按 → 容器先关详情再走 gotoEntry（防 modal 叠 modal）。
     var onQuoteTapped: ((String) -> Void)?
+    /// 标签 chip 点按 → 容器先关详情再开标签聚合页（卡片 onTagTapped 同款）。
+    var onTagTapped: ((String) -> Void)?
     /// 可见性切换成功后：容器同步各列表（首页定向刷新 + 时间线重拉 + 我页重载）。
     var onVisibilityChanged: ((Entry) -> Void)?
     /// 点赞／收藏／回应变化后：容器同步首页行（timeline 侧沿用其 onInteractionChanged 口径）。
@@ -694,6 +696,42 @@ final class BearyDetailViewController: UIViewController {
         st.isHidden = true
         return st
     }()
+
+    /// 标签完整版（展示审计 G4-01）：标签 chips 横向滚动行（位置行之后、操作行
+    /// 之前，卡片 tagsStack／tagsScrollView 同款）。横向滚动不换行：标签多时
+    /// 向右滑看全，不撑高详情页；行高固定 28，chip 高 28、圆角 14，点按走
+    /// onTagTapped。无标签时整行隐藏、不占位。
+    private lazy var tagsStack: UIStackView = {
+        let st = UIStackView()
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 8
+        st.alignment = .center
+        return st
+    }()
+
+    /// 标签行可视高度约束（28pt）：只在有标签时启用；无标签时停用，
+    /// 让 bodyStack 把隐藏的整行压为 0。定高不能常驻——隐藏的
+    /// arrangedSubview 若仍带高度约束会被栈重新撑开。
+    private lazy var tagsScrollViewHeightConstraint: NSLayoutConstraint = {
+        tagsScrollView.heightAnchor.constraint(equalToConstant: 28)
+    }()
+
+    private lazy var tagsScrollView: UIScrollView = {
+        let sv = UIScrollView()
+        sv.translatesAutoresizingMaskIntoConstraints = false
+        sv.showsHorizontalScrollIndicator = false
+        sv.isHidden = true
+        sv.addSubview(tagsStack)
+        NSLayoutConstraint.activate([
+            tagsStack.topAnchor.constraint(equalTo: sv.contentLayoutGuide.topAnchor),
+            tagsStack.bottomAnchor.constraint(equalTo: sv.contentLayoutGuide.bottomAnchor),
+            tagsStack.leadingAnchor.constraint(equalTo: sv.contentLayoutGuide.leadingAnchor),
+            tagsStack.trailingAnchor.constraint(equalTo: sv.contentLayoutGuide.trailingAnchor),
+            tagsStack.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        return sv
+    }()
     private let quoteView = BearyQuoteCardView(frame: .zero)
     /// 操作行：首页 actionStack 同款（赞左、收藏紧邻赞右、分享钉右缘，
     /// 点赞—收藏间距 BearySpace.xxl（24，规范 §3）；无回应钮；分享非公开
@@ -1158,6 +1196,7 @@ final class BearyDetailViewController: UIViewController {
         buildImages()
         buildQuote()
         buildLocation()
+        buildTags()
         buildActionRow()
         buildEmoteRow()
         buildPlaceholderState()
@@ -1432,6 +1471,48 @@ final class BearyDetailViewController: UIViewController {
         spacerWidth.isActive = true
     }
 
+    /// 标签行（展示审计 G4-01）：卡片同款——底行后、操作行前，横向滚动、
+    /// 最小 28 高；点按走 onTagTapped（容器接 presentTagPage）。
+    private func buildTags() {
+        bodyStack.addArrangedSubview(tagsScrollView)
+    }
+
+    /// 标签完整版（卡片 refreshTagsRow 同款）：无标签时整行隐藏、不占位；
+    /// 有标签时每枚 chip 显示“#标签”，点按走 onTagTapped。
+    private func refreshTagsRow(entry: Entry) {
+        for view in tagsStack.arrangedSubviews {
+            tagsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        guard let tags = entry.tags, !tags.isEmpty else {
+            tagsScrollView.isHidden = true
+            tagsScrollViewHeightConstraint.isActive = false
+            return
+        }
+        for tag in tags {
+            let chip = UIButton(type: .system)
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            chip.setTitle("#" + tag, for: .normal)
+            chip.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+            chip.setTitleColor(BearyColors.ink, for: .normal)
+            chip.backgroundColor = BearyColors.surface2
+            chip.layer.cornerRadius = 14
+            chip.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+            chip.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            chip.addTarget(self, action: #selector(tagChipTapped(_:)), for: .touchUpInside)
+            chip.accessibilityLabel = "标签 \(tag)"
+            tagsStack.addArrangedSubview(chip)
+        }
+        tagsScrollView.isHidden = false
+        tagsScrollViewHeightConstraint.isActive = true
+    }
+
+    @objc private func tagChipTapped(_ sender: UIButton) {
+        guard let title = sender.title(for: .normal) else { return }
+        let tag = title.hasPrefix("#") ? String(title.dropFirst()) : title
+        onTagTapped?(tag)
+    }
+
     private func buildActionRow() {
         actionStack.translatesAutoresizingMaskIntoConstraints = false
         actionStack.axis = .horizontal
@@ -1552,7 +1633,7 @@ final class BearyDetailViewController: UIViewController {
     /// @→作者 4、作者→限时 4；头行→正文栈 6（紧贴用户名下方，取规范标题→正文档 6；
     /// 原 16 有标题／14 无标题，该槽位改动须走规范同步），由正文栈顶
     /// 两条 required ≥ 约束定（见 buildLayout／buildCardHeader）；标题→正文 6（标题隐藏时 0）、
-    /// 正文→图片 14、图片→引用 12、引用→定位 12、定位→操作行 14、操作行→回应行 12；
+    /// 正文→图片 14、图片→引用 12、引用→定位 12、定位→标签 12、标签→操作行 14、操作行→回应行 12；
     /// 批 E 位置行插在引用卡与操作行之间（无位置时整组隐藏、不留空行）；
     /// 头行顶：@ 行藏时作者行钉头像顶（头行顶约束保持激活、16）、@ 行显时 17。
     private func updateDiaryStackSpacing() {
@@ -1620,8 +1701,9 @@ final class BearyDetailViewController: UIViewController {
         bodyStack.setCustomSpacing(12, after: imagesScrollView)
         bodyStack.setCustomSpacing(12, after: nineGridWrapView)
         bodyStack.setCustomSpacing(12, after: quoteView)
-        // 定位→操作行 14（ChatGPT 间距跟进，#904 为 10）。
-        bodyStack.setCustomSpacing(14, after: detailLocationStack)
+        // 定位→标签行 12、标签行→操作行 14（卡片同款对照表；任一行隐藏时栈自动忽略间距）。
+        bodyStack.setCustomSpacing(12, after: detailLocationStack)
+        bodyStack.setCustomSpacing(14, after: tagsScrollView)
         // 操作行→回应行 12（ChatGPT 间距跟进，#904 为 10）。
         bodyStack.setCustomSpacing(12, after: actionStack)
         bodyStack.setCustomSpacing(12, after: guestPromptButton)
@@ -1946,6 +2028,7 @@ final class BearyDetailViewController: UIViewController {
         renderImages()
         renderLocation()
         renderQuote()
+        refreshTagsRow(entry: entry)
         refreshActionRow()
         renderEmotes()
         updateDiaryStackSpacing()

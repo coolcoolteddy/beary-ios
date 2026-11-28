@@ -4566,6 +4566,13 @@ final class BearyChromeViewController: UIViewController {
                 self?.gotoEntry(entryId: quoteId)
             }
         }
+        // 展示审计 G4-01：详情页标签 chip 点按 → 先关详情再开标签聚合页
+        // （卡片 onTagTapped 同款接线）。
+        detail.onTagTapped = { [weak self, weak detail] tag in
+            detail?.dismiss(animated: BearyMotion.animated(true)) {
+                self?.presentTagPage(tag: tag)
+            }
+        }
         // C4：可见性变化按 id 定向同步各列表（广场/时间线/个人页 + 子页），
         // 不再整页重拉；落盘由本路直接 upsert（旧靠时间线重拉写透）。
         detail.onVisibilityChanged = { [weak self] updated in
