@@ -242,6 +242,13 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
 
     /// 自定义组格数（含首格 ＋ 添加格）。
     private func customItemCount() -> Int { customGifKeys.count + 1 }
+    /// 内容高下限（首帧 collection 内容尺寸为 0 时用）：sectionInset 上下
+    /// ＋一行表情格。行高下限 72 与 sizeForItemAt 一致（自定义组恒 72，
+    /// 内置格 max(72, …)）；只作下限，不参与真实高度计算。
+    private var minimumCollectionContentHeight: CGFloat {
+        let inset = (emoteCollectionView?.collectionViewLayout as? UICollectionViewFlowLayout)?.sectionInset ?? .zero
+        return inset.top + 72 + inset.bottom
+    }
     /// 弹窗高度封顶 480：内容不足 480 时按内容高，超出时封顶、列表内部滚动。
     private let maxSheetHeight: CGFloat = 480
     /// VoiceOver 焦点返回：与通知弹层同口径（BearyNotificationsViewController），
@@ -353,12 +360,16 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     /// 高度按内容算、480 封顶：抓手区（顶 10＋高 4＋间距 16）＋标题行实测高
     /// ＋列表顶距 12＋列表内容实测高＋底安全区；内容超 480 时封顶、列表内部滚动。
+    /// 首帧内容高为 0 时按静态结构写下限高（至少一行表情格），不回退 44% 屏高。
     /// 旧 70% 屏高上限不再单算：系统 detent 本身按 88% 容器高封顶。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         guard let collection = emoteCollectionView else { return }
         collection.layoutIfNeeded()
-        let contentHeight = collection.collectionViewLayout.collectionViewContentSize.height
-        guard contentHeight > 0 else { return }
+        // 内容高为 0 时不直接 return：首帧 collection 还没量出内容尺寸
+        // （自定义组等异步库）就走 detent 的 44% 回退、上下留空；先按
+        // 静态结构写一个下限高，数据回来后 viewDidLayoutSubviews 重算
+        // 真实高度。内置节恒有内容，下限只是首帧占位。
+        let contentHeight = max(collection.collectionViewLayout.collectionViewContentSize.height, minimumCollectionContentHeight)
         let headerHeight: CGFloat = BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16 + titleLabel.intrinsicContentSize.height + 12
         // 胶囊在时预留胶囊高＋底距（内容不足时胶囊落在内容之下、不盖末行）；
         // 内容超高封顶时由底 contentInset 兜底（末行可滚到胶囊上方）。
