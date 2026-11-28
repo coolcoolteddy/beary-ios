@@ -382,6 +382,9 @@ struct SearchUser: Decodable {
     var handle: String?
     var avatarUrl: String?
     var coverUrl: String?
+    /// Plus 会员（/beary/api/search 用户出参 `plus`；服务端未下发时为 nil，
+    /// 行内皇冠只按字段存在才显，不因缺失误亮——见 G3-S1 服务端备件）。
+    var plus: Bool?
 }
 
 struct SearchResult: Decodable {

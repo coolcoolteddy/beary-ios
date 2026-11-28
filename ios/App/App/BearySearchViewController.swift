@@ -2703,6 +2703,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             userDisplayName(user: user),
             user.handle ?? "",
             user.avatarUrl ?? "",
+            // G3-S1：Plus 态进签名——服务端补发字段后旧行不复用错态。
+            user.plus.map { $0 ? "1" : "0" } ?? "",
         ].joined(separator: "\u{1F}")
     }
 
@@ -3193,6 +3195,23 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         nameLabel.textColor = BearyColors.ink
         nameLabel.numberOfLines = 1
         nameLabel.clipsToBounds = true
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        // G3-S1：名字旁 Plus 皇冠（仅服务端下发 plus=true 时亮；卡片作者行
+        // 同款 BearyCrownView 19pt，容器与名字等高、皇冠在容器内居中；
+        // 服务端未下发字段时不亮——防御写法，见 SearchUser.plus 注释）。
+        let crownView = BearyCrownView()
+        crownView.translatesAutoresizingMaskIntoConstraints = false
+        crownView.isHidden = !(user.plus == true)
+        let crownWrapView = UIView()
+        crownWrapView.translatesAutoresizingMaskIntoConstraints = false
+        crownWrapView.isHidden = crownView.isHidden
+        crownWrapView.addSubview(crownView)
+        let nameRowStack = UIStackView(arrangedSubviews: [nameLabel, crownWrapView])
+        nameRowStack.translatesAutoresizingMaskIntoConstraints = false
+        nameRowStack.axis = .horizontal
+        nameRowStack.spacing = 6
+        nameRowStack.alignment = .center
 
         let handleLabel = BearyRoundedMarkLabel()
         handleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -3229,12 +3248,22 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         textStack.axis = .vertical
         textStack.spacing = 1
         textStack.alignment = .fill
-        textStack.addArrangedSubview(nameLabel)
+        textStack.addArrangedSubview(nameRowStack)
         textStack.addArrangedSubview(handleLabel)
 
         row.addSubview(avatarView)
         row.addSubview(textStack)
         row.addSubview(chevron)
+        // G3-S1 修红：withPriority 是 BearyOnboardingViewController.swift 里
+        // private extension 的成员，跨文件不可见；改卡片作者行同款直接设 priority。
+        let crownWidth = crownView.widthAnchor.constraint(equalToConstant: 19)
+        crownWidth.priority = UILayoutPriority(999)
+        let crownHeight = crownView.heightAnchor.constraint(equalToConstant: 19)
+        crownHeight.priority = UILayoutPriority(999)
+        let crownWrapWidth = crownWrapView.widthAnchor.constraint(equalToConstant: 19)
+        crownWrapWidth.priority = UILayoutPriority(999)
+        let crownWrapHeight = crownWrapView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor)
+        crownWrapHeight.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             avatarView.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
             // R6-1：底部改为 ≤，行高不再锁死 72pt；大字号下由文字栈撑高，默认仍 72pt。
@@ -3252,6 +3281,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             chevron.heightAnchor.constraint(equalToConstant: 16),
             // 8-15：用户行最小 44 高约束（现行行高 72，视觉不变，只保热区下限）。
             row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            // G3-S1：皇冠 19pt 固定尺寸用 999（行被栈复用、皇冠隐藏时
+            // 不与栈的零尺寸约束冲突，卡片作者行同款口径）。
+            crownWidth,
+            crownHeight,
+            crownWrapWidth,
+            crownWrapHeight,
+            crownView.centerXAnchor.constraint(equalTo: crownWrapView.centerXAnchor),
+            crownView.centerYAnchor.constraint(equalTo: crownWrapView.centerYAnchor),
         ])
         row.addTarget(self, action: #selector(userRowTapped(_:)), for: .touchUpInside)
         row.bearyAddRowPressFeedback()
@@ -3295,6 +3332,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             userRowByKey[key] = row
             // 审计三轮 06：记下本行内容签名，供同关键词重渲比对复用。
             userRowContentSignatures[key] = userRowContentSignature(user: user)
+        }
+        // G3-S1：Plus 皇冠只在亮时起播（未下发字段时不亮不播）。
+        if user.plus == true {
+            crownView.start()
         }
         return row
     }
