@@ -1881,9 +1881,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
            recentStack.arrangedSubviews.contains(where: { $0 === headerRow }) == false {
             recentStack.insertArrangedSubview(headerRow, at: 0)
         }
-        // R13 (c)：默认只展最近 4 条，展开后看全部；上限 8 条不变，每条仍 44pt。
-        let visibleTerms = isRecentSearchesExpanded ? terms : Array(terms.prefix(4))
-        // 不再显示的词条行摘掉（收起时多出的 4 条、被新搜索顶掉的旧条）。
+        // R13 (c)：默认只展最近 3 条，展开后看全部；上限 8 条不变，每条仍 44pt。
+        let visibleTerms = isRecentSearchesExpanded ? terms : Array(terms.prefix(3))
+        // 不再显示的词条行摘掉（收起时多出的 3 条、被新搜索顶掉的旧条）。
         for (term, button) in recentTermButtons where visibleTerms.contains(term) == false {
             recentStack.removeArrangedSubview(button)
             button.removeFromSuperview()
@@ -1917,8 +1917,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             staggerIndex += 1
         }
         recentButtons = visibleTerms.compactMap({ recentTermButtons[$0] })
-        // R13 (c)：超过 4 条时加展开/收起钮（与词条同款 44pt 行），点按只改展示。
-        if terms.count > 4 {
+        // R13 (c)：超过 3 条时加展开/收起钮（与词条同款 44pt 行），点按只改展示。
+        if terms.count > 3 {
             if recentExpandButton == nil {
                 recentExpandButton = makeRecentExpandButton()
             }
@@ -2034,8 +2034,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private func updateRecentSearchesExpanded() {
         let terms = loadRecentSearches()
         // 行未建好、词条不足、整区隐藏或行数对不上时，回落到全量重建。
-        let expectedCurrentCount = isRecentSearchesExpanded ? 4 : terms.count
-        guard terms.count > 4,
+        let expectedCurrentCount = isRecentSearchesExpanded ? 3 : terms.count
+        guard terms.count > 3,
               !recentWrap.isHidden,
               let expandButton = recentExpandButton,
               let expandIndex = recentStack.arrangedSubviews.firstIndex(of: expandButton),
@@ -2047,19 +2047,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             if self.isRecentSearchesExpanded {
                 // 只补展开后新增的词条，依次插在展开/收起钮之前，顺序不变。
                 var insertIndex = expandIndex
-                for term in terms.dropFirst(4) {
+                for term in terms.dropFirst(3) {
                     let button = self.makeRecentTermButton(term: term)
                     self.recentStack.insertArrangedSubview(button, at: insertIndex)
                     insertIndex += 1
                     self.recentButtons.append(button)
                 }
             } else {
-                // 只摘展开后多出的词条，保留前 4 条与标题行。
-                for button in self.recentButtons.dropFirst(4) {
+                // 只摘展开后多出的词条，保留前 3 条与标题行。
+                for button in self.recentButtons.dropFirst(3) {
                     self.recentStack.removeArrangedSubview(button)
                     button.removeFromSuperview()
                 }
-                self.recentButtons = Array(self.recentButtons.prefix(4))
+                self.recentButtons = Array(self.recentButtons.prefix(3))
             }
             expandButton.setTitle(self.isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索", for: .normal)
             expandButton.accessibilityLabel = self.isRecentSearchesExpanded ? "收起最近搜索" : "展开最近搜索"
