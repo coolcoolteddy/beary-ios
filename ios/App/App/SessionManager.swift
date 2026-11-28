@@ -621,6 +621,10 @@ final class SessionManager {
         case removed
         case removedAndSwitched(MeUser)
         case removedAndLoggedOut
+        /// 设备侧移除已完成、服务端登出失败：调用方不复活行（会话自行过期），只给轻提示。
+        case removedServerLogoutFailed
+        /// 本地删除本身失败（保管库删不掉）：什么都没删，调用方回滚乐观 UI 并报失败。
+        case localDeleteFailed
         case failed
     }
 
@@ -897,37 +901,39 @@ final class SessionManager {
                 completion(.removed)
                 return
             }
+            // 竞态复核（前移）：移除在途时切到了目标号（目标号已是当前号），
+            // 此时删保管库项等于删正在用的当前号，本次移除作废。
+            // 主线程同步段内无交错；UI 侧的审计 39 互斥（切号／移除互锁）
+            // 使本分支正常走不到这里，是最后一道防线。
+            guard currentUser?.id != userId else {
+                completion(.failed)
+                return
+            }
+            // 乐观移除：本地删除立即做，不等服务端登出往返——
+            // 行已在调用方先消失，删不掉才回滚（见 .localDeleteFailed）。
+            // r25-7：保管库删除失败不报“已移除”——标记不可恢复，
+            // 账号留列表、报失败，调用方给 toast 与重试入口。
+            guard vault.remove(userId: userId) else {
+                _ = vault.markUnrecoverable(userId: userId)
+                completion(.localDeleteFailed)
+                return
+            }
+            // 推送登记：移除成功即清该号的已上报标记（重登后必重报）。
+            BearyPushNotifications.shared.clearLastSentToken(userId: userId)
             // 推送登记清理：移除前删目标号在本机的登记行——隔离请求＋目标号
             // 保管库 token（共享 cookie 属于当前号，删不掉目标号的行）。
             // fire-and-forget：失败不改移除结论；已上报标记已清，移除失败
             // 切回该号时可重新上报。
             BearyPushNotifications.shared.unregisterTokenForAccount(userId: userId, sessionToken: target.token)
-            api.logoutWithToken(target.token) { [weak self] result in
-                guard let self = self else { return }
+            // 服务端登出放后台跑：撤掉与否不改移除结论——设备侧移除已是
+            // 最终态，会话没撤掉也无害、自行过期；失败只回轻提示的信号。
+            api.logoutWithToken(target.token) { result in
                 DispatchQueue.main.async {
                     switch result {
                     case .success:
-                        // 竞态复核：移除在途时切到了目标号（目标号已是当前号），
-                        // 此时删保管库项等于删正在用的当前号，本次移除作废。
-                        guard self.currentUser?.id != userId else {
-                            completion(.failed)
-                            return
-                        }
-                        // r25-7：保管库删除失败不报“已移除”——标记不可恢复，
-                        // 账号留列表、报失败，调用方给 toast 与重试入口。
-                        guard vault.remove(userId: userId) else {
-                            _ = vault.markUnrecoverable(userId: userId)
-                            completion(.failed)
-                            return
-                        }
-                        // 推送登记：移除成功即清该号的已上报标记（重登后必重报）。
-                        BearyPushNotifications.shared.clearLastSentToken(userId: userId)
                         completion(.removed)
                     case .failure:
-                        // 隔离登出失败：不删保管库项、不动当前 cookie 与
-                        // currentUser（旧代码失败时也要装回 cookie，本处
-                        // 根本没动过，无需恢复）。
-                        completion(.failed)
+                        completion(.removedServerLogoutFailed)
                     }
                 }
             }
@@ -957,7 +963,7 @@ final class SessionManager {
                     // signOutLocally、不切号），账号留列表、报失败。
                     guard vault.remove(userId: userId) else {
                         _ = vault.markUnrecoverable(userId: userId)
-                        completion(.failed)
+                        completion(.localDeleteFailed)
                         return
                     }
                     self.clearLocalCookies()
@@ -976,7 +982,9 @@ final class SessionManager {
                         completion(.removedAndLoggedOut)
                     }
                 case .failure:
-                    completion(.failed)
+                    // 服务端登出失败：本地什么都没动，但调用方乐观 UI 已切走，
+                    // 按移除语义不切回去（用户重登恢复），只回轻提示的信号。
+                    completion(.removedServerLogoutFailed)
                 }
             }
         }

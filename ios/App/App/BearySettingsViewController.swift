@@ -407,6 +407,14 @@ final class BearySettingsViewController: UIViewController {
     /// 与 isSwitchingAccount / isRemovingAccount 同步置位与清零。
     private var switchingAccountId: Int?
     private var removingAccountId: Int?
+    /// 乐观移除（Li 2026-11-28 定）：点确认后行先消失、服务端收尾放后台。
+    /// 在途移除的账号 id——refreshAccountSwitchSection 先藏这些行；
+    /// 只有本地删除本身失败才回滚、把行恢复回来。
+    private var optimisticallyRemovedAccountIds: Set<Int> = []
+    /// 乐观切号：移除当前号时界面先切到的下一号 id（不等后台登出＋切号回包）。
+    private var optimisticCurrentAccountId: Int?
+    /// 乐观退出：移除当前号且无下一号时已立即走过退出后路径（防回包重复触发）。
+    private var optimisticLoggedOutFired = false
     private var isLoggingOutOthers = false
     private var isDeleting = false
     private var isExporting = false
@@ -1365,6 +1373,8 @@ final class BearySettingsViewController: UIViewController {
             cachedSwitchFingerprint = nil
             return
         }
+        // 乐观移除态：被乐观移除的行先藏；当前号按乐观切号显示；乐观已退出时无当前号。
+        let effectiveCurrentId: Int? = optimisticLoggedOutFired ? nil : (optimisticCurrentAccountId ?? currentUserValue.id)
         SessionManager.shared.snapshotCurrentAccount()
         let vault = BearyAccountVault.shared
         // 扫 bug 第 9 项：钥匙串读结果缓存——代际未变即库内容未变，
@@ -1385,11 +1395,13 @@ final class BearySettingsViewController: UIViewController {
             storedModels = mapped
         }
         var models: [SwitchRowModel] = storedModels
-        if let currentId = currentUserValue.id, !models.contains(where: { $0.userId == currentId }) {
+        models.removeAll { optimisticallyRemovedAccountIds.contains($0.userId) }
+        if let currentId = effectiveCurrentId, currentId == currentUserValue.id,
+           !models.contains(where: { $0.userId == currentId }) {
             models.append(SwitchRowModel(userId: currentId, title: currentUserValue.displayName ?? currentUserValue.email ?? "ID \(currentId)", handle: currentUserValue.handle, email: currentUserValue.email, avatarURL: nil, hasToken: false))
         }
         // 当前账号排首位，其余保持首次保存顺序（sort 稳定性：先按是否当前分两段）。
-        let currentIdValue = currentUserValue.id
+        let currentIdValue = effectiveCurrentId
         models.sort { (first, second) -> Bool in
             let firstIsCurrent = first.userId == currentIdValue
             let secondIsCurrent = second.userId == currentIdValue
@@ -1411,7 +1423,7 @@ final class BearySettingsViewController: UIViewController {
         // 切换/移除/添加的调用点仍调本函数，逻辑本身一字不动。
         let fingerprint = models.map { model in
             "\(model.userId)|\(model.title)|\(model.handle ?? "")|\(model.email ?? "")|\(model.avatarURL ?? "")|\(model.hasToken)|\(model.userId == currentIdValue)|\(model.isExpired)"
-        }.joined(separator: ";")
+        }.joined(separator: ";") + "|removed:\(optimisticallyRemovedAccountIds.sorted())|current:\(effectiveCurrentId.map(String.init) ?? "none")|loggedOut:\(optimisticLoggedOutFired)"
         if switchCardBuilt, fingerprint == cachedSwitchFingerprint {
             return
         }
@@ -1672,6 +1684,8 @@ final class BearySettingsViewController: UIViewController {
             sender.alpha = 1
             switch result {
             case .switched:
+                // 乐观移除在途时切到了别的号：真实切号已落地，乐观当前号让位给现实。
+                self.optimisticCurrentAccountId = nil
                 // 先作废在途旧 /me（并放行 loadAll 的 isLoadingMe 守卫），
                 // 再重拉新账号；否则 loadAll 被守卫丢弃、旧回包随后写回旧账号。
                 self.meLoadGeneration += 1
@@ -1790,24 +1804,66 @@ final class BearySettingsViewController: UIViewController {
                 }
                 self.isRemovingAccount = true
                 self.removingAccountId = accountIdValue
+                // 乐观更新（Li 2026-11-28 定：点按即最终态，失败再回滚）：
+                // 行先消失／界面先切号，不等 1–2 次网络往返；服务端收尾放后台。
+                // 只有本地删除本身失败才回滚；服务端登出失败不复活行。
+                self.optimisticallyRemovedAccountIds.insert(accountIdValue)
+                // 确认前 currentUser 可能已变（弹窗期间切号）：以此刻为准，
+                // 不用弹窗前算好的 isCurrent。
+                if SessionManager.shared.currentUser?.id == accountIdValue {
+                    let nextId = BearyAccountVault.shared.loadAll().first { $0.userId != accountIdValue && !$0.unrecoverable }?.userId
+                    if let nextId = nextId {
+                        self.optimisticCurrentAccountId = nextId
+                        self.refreshAccountSwitchSection()
+                    } else {
+                        self.optimisticLoggedOutFired = true
+                        if let handler = self.onLoggedOut {
+                            handler()
+                        } else {
+                            self.onClose?()
+                        }
+                    }
+                } else {
+                    self.refreshAccountSwitchSection()
+                }
                 SessionManager.shared.removeAccount(userId: accountIdValue) { [weak self] result in
                     guard let self = self else { return }
                     self.isRemovingAccount = false
                     self.removingAccountId = nil
                     switch result {
                     case .removed:
+                        self.optimisticallyRemovedAccountIds.remove(accountIdValue)
+                        self.optimisticCurrentAccountId = nil
                         self.refreshAccountSwitchSection()
                     case .removedAndSwitched:
+                        self.optimisticallyRemovedAccountIds.remove(accountIdValue)
+                        self.optimisticCurrentAccountId = nil
+                        self.optimisticLoggedOutFired = false
                         self.loadAll()
                         self.refreshAccountSwitchSection()
                     case .removedAndLoggedOut:
+                        self.optimisticallyRemovedAccountIds.remove(accountIdValue)
+                        self.optimisticCurrentAccountId = nil
+                        let alreadyFired = self.optimisticLoggedOutFired
+                        self.optimisticLoggedOutFired = false
+                        // 乐观已走过退出路径时不再重复触发（关页＋弹登录页只做一次）。
+                        guard !alreadyFired else { return }
                         if let handler = self.onLoggedOut {
                             handler()
                         } else {
                             self.onClose?()
                         }
-                    case .failed:
-                        self.showToast("退出失败，请重试")
+                    case .removedServerLogoutFailed:
+                        // 服务端登出失败：设备侧移除已是最终态，行不复活；
+                        // 乐观态保留（防下次刷新把行带回来），只给轻提示。
+                        self.showToast(NSLocalizedString("common.network_unstable", comment: ""))
+                    case .localDeleteFailed, .failed:
+                        // 本地删除本身失败／竞态作废：什么都没删，回滚乐观 UI。
+                        self.optimisticallyRemovedAccountIds.remove(accountIdValue)
+                        self.optimisticCurrentAccountId = nil
+                        self.optimisticLoggedOutFired = false
+                        self.refreshAccountSwitchSection()
+                        self.showToast(NSLocalizedString("account.remove.failed", comment: ""))
                     }
                 }
             },
