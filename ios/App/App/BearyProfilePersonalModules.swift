@@ -1423,7 +1423,7 @@ final class BearyYearReviewViewController: UIViewController {
     }
 }
 
-// MARK: - 模块卡片容器（与墙同口径：圆角 14、1px 边线、标题 14 粗体）
+// MARK: - 模块卡片容器（与墙同口径：圆角 12、无描边、标题 14 粗体）
 //
 // 调用方（ProfileVC）只负责把卡片排进 modulesStack 并按显隐开关 isHidden；
 // 卡片自身不决定可见性（可见性由语料口径定，见 renderModules）。
