@@ -3933,7 +3933,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                             // B2：回关确认带上对方 id——通知页只更新此人卡片。
                             BearyFriends.clearDiaryCachesAndNotify(userId: userId)
                         }
-                        BearyToast.show(in: self.view, message: wasFollowedBy ? "已互关" : "已关注")
                     case .failure:
                         // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
                         self.followStates[stateKey] = self.confirmedFollowStates[stateKey] ?? state
