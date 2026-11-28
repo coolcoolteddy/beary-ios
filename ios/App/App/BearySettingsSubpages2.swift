@@ -809,11 +809,7 @@ final class BearySecuritySettingsViewController: BearySettingsSubpageViewControl
                     let list = resp.sessions ?? []
                     self.sessions = list
                     self.sessionsFailed = false
-                    if let active = resp.activeCount {
-                        self.sessionsCountText = "共 \(active) 台设备（活跃）"
-                    } else {
-                        self.sessionsCountText = "共 \(list.count) 台设备"
-                    }
+                    self.sessionsCountText = resp.deviceCountText
                 case .failure:
                     self.sessionsFailed = true
                 }

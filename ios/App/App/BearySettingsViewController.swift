@@ -85,6 +85,17 @@ struct BearyAccountSessionsResponse: Decodable {
     var activeCount: Int?
 }
 
+extension BearyAccountSessionsResponse {
+    /// 设备数文案：activeCount 有则标“（活跃）”；缺失时回落全量计数，
+    /// 此时不标“（活跃）”（回落值含过期行，标活跃会误导）。
+    var deviceCountText: String {
+        if let active = activeCount {
+            return "共 \(active) 台设备（活跃）"
+        }
+        return "共 \((sessions ?? []).count) 台设备"
+    }
+}
+
 struct BearyPlusGrant: Decodable {
     var days: Int?
     var source: String?
@@ -2409,11 +2420,7 @@ final class BearySettingsViewController: UIViewController {
                 // 故计数用 activeCount 并标“（活跃）”，列表仍含过期行（灰化 + “已过期”注，
                 // 用户可见完整登录史，不过滤）；activeCount 缺失时才回落全量计数，此时不标
                 // “（活跃）”（回落值含过期行，标活跃会误导）。
-                if let active = resp.activeCount {
-                    self.setLabelTextFaded(self.deviceCountLabel, "共 \(active) 台设备（活跃）")
-                } else {
-                    self.setLabelTextFaded(self.deviceCountLabel, "共 \(list.count) 台设备")
-                }
+                self.setLabelTextFaded(self.deviceCountLabel, resp.deviceCountText)
                 self.rebuildSessions(sessions: list, failed: false)
             case .failure(let error):
                 if case .unauthorized = error {

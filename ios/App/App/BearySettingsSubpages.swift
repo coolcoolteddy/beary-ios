@@ -379,11 +379,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                     switch result {
                     case .success(let resp):
                         self.sessions = resp.sessions ?? []
-                        if let active = resp.activeCount {
-                            self.countText = "共 \(active) 台设备（活跃）"
-                        } else {
-                            self.countText = "共 \((resp.sessions ?? []).count) 台设备"
-                        }
+                        self.countText = resp.deviceCountText
                         self.loadFailed = false
                     case .failure:
                         self.loadFailed = true
@@ -398,11 +394,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                         switch result {
                         case .success(let resp):
                             self.sessions = resp.sessions ?? []
-                            if let active = resp.activeCount {
-                                self.countText = "共 \(active) 台设备（活跃）"
-                            } else {
-                                self.countText = "共 \((resp.sessions ?? []).count) 台设备"
-                            }
+                            self.countText = resp.deviceCountText
                             self.loadFailed = false
                         case .failure:
                             self.loadFailed = true
@@ -574,11 +566,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                         guard let self = self else { return }
                         guard case .success(let resp) = result else { return }
                         self.sessions = resp.sessions ?? []
-                        if let active = resp.activeCount {
-                            self.countText = "共 \(active) 台设备（活跃）"
-                        } else {
-                            self.countText = "共 \((resp.sessions ?? []).count) 台设备"
-                        }
+                        self.countText = resp.deviceCountText
                         self.loadFailed = false
                         self.render()
                     }
@@ -660,11 +648,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                 guard let self = self else { return }
                 guard case .success(let resp) = result else { return }
                 self.sessions = resp.sessions ?? []
-                if let active = resp.activeCount {
-                    self.countText = "共 \(active) 台设备（活跃）"
-                } else {
-                    self.countText = "共 \((resp.sessions ?? []).count) 台设备"
-                }
+                self.countText = resp.deviceCountText
                 self.loadFailed = false
                 self.render()
             }
@@ -690,11 +674,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                 switch result {
                 case .success(let resp):
                     self.sessions = resp.sessions ?? []
-                    if let active = resp.activeCount {
-                        self.countText = "共 \(active) 台设备（活跃）"
-                    } else {
-                        self.countText = "共 \((resp.sessions ?? []).count) 台设备"
-                    }
+                    self.countText = resp.deviceCountText
                     self.loadFailed = false
                 case .failure:
                     self.loadFailed = true
