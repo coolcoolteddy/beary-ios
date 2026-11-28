@@ -218,23 +218,59 @@ final class BearySnapshotPreviewViewController: UIViewController, BearySystemShe
 
     @objc private func starTapped() {
         guard let snapshotId = snapshot.id, !starRequestInFlight else { return }
+        // 乐观更新（2026-11-28 Li 定）：点按即翻色，不等回包；失败翻回＋toast。
+        // 回滚留旧值：previousStarred 在内存里现成。按钮在途不再禁用（禁用会把
+        // 刚翻过去的星标压暗），二次点按由 starRequestInFlight 挡住。
+        let previousStarred = snapshot.isStarred
+        let targetStarred = !previousStarred
         starRequestInFlight = true
-        starButton.isEnabled = false
+        snapshot.starred = targetStarred ? 1 : 0
+        refreshStarButton()
+        onStarChanged?(snapshotId, targetStarred)
+        requestStarToggle(snapshotId: snapshotId, previousStarred: previousStarred, retriesLeft: 1)
+    }
+
+    /// 星标取反请求：成功以服务端回包的 starred 为准覆盖本地值；
+    /// 4xx／业务错误立刻回滚，5xx／网络／超时后台重试一次（重试仍失败再回滚）。
+    /// 传输层对本 POST 不重试（uploadMaxRetries = 0），这里的一次是唯一一次重试；
+    /// 离线不追试（重试必败）。
+    private func requestStarToggle(snapshotId: Int, previousStarred: Bool, retriesLeft: Int) {
         BearyAPI.shared.toggleSnapshotStar(entryId: entryId, snapshotId: snapshotId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.starRequestInFlight = false
-                self.starButton.isEnabled = true
                 switch result {
                 case .success(let resp):
                     let starred = (resp.starred ?? 0) == 1
                     self.snapshot.starred = starred ? 1 : 0
                     self.refreshStarButton()
                     self.onStarChanged?(snapshotId, starred)
-                case .failure:
+                    self.starRequestInFlight = false
+                case .failure(let error):
+                    if retriesLeft > 0 && self.isRetryableStarError(error) {
+                        self.requestStarToggle(snapshotId: snapshotId, previousStarred: previousStarred, retriesLeft: retriesLeft - 1)
+                        return
+                    }
+                    self.snapshot.starred = previousStarred ? 1 : 0
+                    self.refreshStarButton()
+                    self.onStarChanged?(snapshotId, previousStarred)
+                    self.starRequestInFlight = false
                     BearyToast.show(in: self.view, message: "操作失败，请重试")
                 }
             }
+        }
+    }
+
+    /// 可重试的星标失败：网络／超时（离线除外）与 5xx；4xx 与业务错误立刻回滚。
+    private func isRetryableStarError(_ error: APIError) -> Bool {
+        switch error {
+        case .network:
+            return !error.isOffline
+        case .http(let status, _):
+            return status >= 500
+        case .server(_, let status):
+            return (status ?? 0) >= 500
+        default:
+            return false
         }
     }
 
