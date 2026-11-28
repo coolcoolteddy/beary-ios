@@ -61,7 +61,8 @@ enum BearyOfflineSaveStore {
         if let content = entry.content?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty {
             let firstLine = content.components(separatedBy: .newlines).first ?? content
             let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { return String(trimmed.prefix(24)) }
+            // 截断口落在记号中间时去掉半截记号，不留原文残段。
+            if !trimmed.isEmpty { return BearyInlineToken.stripTrailingPartial(String(trimmed.prefix(24))) }
         }
         return "无标题日记"
     }

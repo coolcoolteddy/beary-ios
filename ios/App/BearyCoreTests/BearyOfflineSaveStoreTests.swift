@@ -38,6 +38,18 @@ final class BearyOfflineSaveStoreTests: XCTestCase {
         XCTAssertEqual(loaded?.images, ["a/b.jpg"])
     }
 
+    // MARK: - 展示标题
+
+    func testDisplayTitleDropsPartialTokenAtCut() {
+        // 24 字截断口落在 [mood:happy] 中间：半截记号去掉，不留原文残段。
+        let content = String(repeating: "啊", count: 20) + "[mood:happy]" + String(repeating: "啊", count: 10)
+        let json = "{\"id\": \"e_tok\", \"created_at\": 1735689600000, \"content\": \"\(content)\"}"
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let entry = try! decoder.decode(Entry.self, from: Data(json.utf8))
+        XCTAssertEqual(BearyOfflineSaveStore.displayTitle(for: entry), String(repeating: "啊", count: 20))
+    }
+
     func testSaveEntryJSONFailsWithoutId() {
         var entry = BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)
         entry.id = nil

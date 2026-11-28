@@ -328,7 +328,8 @@ enum BearyPlazaCarouselText {
             for line in content.components(separatedBy: .newlines) {
                 let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
-                    return String(trimmed.prefix(30))
+                    // 截断口落在记号中间时去掉半截记号，不留原文残段。
+                    return BearyInlineToken.stripTrailingPartial(String(trimmed.prefix(30)))
                 }
             }
         }

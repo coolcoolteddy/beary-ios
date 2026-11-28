@@ -185,10 +185,11 @@ enum BearyStarMap {
     // MARK: - 字数 / 大小 / 亮度
 
     /// 字数 = 标题 + 正文去空白后的字符数（grapheme 计数；中文一字一数，
-    /// 不是分词词数）。无标题无正文的纯图篇为 0，仍成星、取最小半径。
+    /// 不是分词词数）。记号先整段剔掉再数（渲染出来是图，不是字，
+    /// `[mood:happy]` 不占 12 字、也不占 1 字）。无标题无正文的纯图篇为 0，仍成星、取最小半径。
     static func wordCount(_ entry: Entry) -> Int {
         let joined = (entry.title ?? "") + (entry.content ?? "")
-        return joined.filter { !$0.isWhitespace }.count
+        return BearyInlineToken.strippingTokens(joined).filter { !$0.isWhitespace }.count
     }
 
     /// 半径 pt：6 + 字数/40，上限 20（预览：5 + 字数/60、上限 16 的同形映射，
