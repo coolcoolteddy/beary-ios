@@ -252,7 +252,7 @@ final class BearyPlusPageViewController: UIViewController {
         content.translatesAutoresizingMaskIntoConstraints = false
         let check = UIImageView(image: BearyIconImages.image(named: "icon_check", pointSize: 20))
         check.translatesAutoresizingMaskIntoConstraints = false
-        check.tintColor = BearyColors.deepGreenText
+        check.tintColor = BearyColors.ink
         check.contentMode = .scaleAspectFit
         content.addSubview(check)
         let titleLabelValue = UILabel()
