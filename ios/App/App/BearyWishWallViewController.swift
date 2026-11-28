@@ -399,6 +399,18 @@ final class BearyWishWallViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
     private let createButton = BearyButton.make(style: .primaryPill(.ink), title: "发起许愿")
+    /// 非 Plus 轻量入口（Li 2026-11-23 定，第三批第 45 题）：确认非 Plus 时
+    /// 发起钮隐藏，改显这一行文字入口，点按进 Plus 页；Plus 用户与未确认态不显示。
+    private let plusEntryButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("成为 Plus 才能许愿 ›", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        buttonValue.isHidden = true
+        return buttonValue
+    }()
     private let wishEmptyStateView = BearyStateView()
     // P2-18：加载/失败态迁入已有 BearyStateView（不新建组件）；空态走新增的
     // wishEmptyStateView（同样不传 iconName，不强迫空态套同一插图）。
@@ -571,6 +583,8 @@ final class BearyWishWallViewController: UIViewController {
             contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
         ])
         createButton.addTarget(self, action: #selector(createTapped), for: .touchUpInside)
+        plusEntryButton.addTarget(self, action: #selector(plusEntryTapped), for: .touchUpInside)
+        plusEntryButton.bearyAddPressFeedback()
         refreshPlusGate()
         wishEmptyStateView.translatesAutoresizingMaskIntoConstraints = false
         wishEmptyStateView.configure(kind: .empty, title: "还没有愿望", subtitle: "Plus 会员可以发起第一个", iconName: nil, actionTitle: nil)
@@ -580,11 +594,13 @@ final class BearyWishWallViewController: UIViewController {
         wishStateView.translatesAutoresizingMaskIntoConstraints = false
         wishStateView.isHidden = true
         contentStack.addArrangedSubview(createButton)
+        contentStack.addArrangedSubview(plusEntryButton)
         contentStack.addArrangedSubview(wishStaleLabel)
         contentStack.addArrangedSubview(wishStateView)
         contentStack.addArrangedSubview(wishEmptyStateView)
         NSLayoutConstraint.activate([
             createButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.primaryPill(.ink).height),
+            plusEntryButton.heightAnchor.constraint(equalToConstant: 44),
         ])
         // r17-C9：冷开进心愿墙先看到上次确认的首屏，再静默刷新。
         restoreCachedWishesIfNeeded()
@@ -631,19 +647,33 @@ final class BearyWishWallViewController: UIViewController {
 
     /// Plus 门刷新：已确认按结果显隐；未确认时先隐藏发起钮、等一次 /me
     ///（同会话在途时订阅结果，不多发请求），回包后再定。
+    /// 非 Plus 轻量入口与发起钮互斥：只在已确认非 Plus 时显示；Plus 用户、
+    /// 未确认态与游客均不显示。
     private func refreshPlusGate() {
         if let plus = plusState() {
             createButton.isHidden = !plus
+            plusEntryButton.isHidden = plus
             return
         }
         createButton.isHidden = true
+        plusEntryButton.isHidden = true
         guard !isGuest, SessionManager.shared.currentUser != nil else { return }
         SessionManager.shared.refreshMe { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.createButton.isHidden = !(self.plusState() ?? false)
+                let plus = self.plusState() ?? false
+                self.createButton.isHidden = !plus
+                self.plusEntryButton.isHidden = plus
             }
         }
+    }
+
+    /// 非 Plus 轻量入口：进 Plus 页（设置页同款全屏呈现）。
+    @objc private func plusEntryTapped() {
+        let page = BearyPlusPageViewController(isPlus: false)
+        page.modalPresentationStyle = .fullScreen
+        page.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        present(page, animated: BearyMotion.animated(true), completion: nil)
     }
 
     private var isAdmin: Bool { SessionManager.shared.currentUser?.isAdmin == true }
