@@ -567,6 +567,32 @@ final class BearyHit44SegmentedControl: UISegmentedControl {
         if dx == 0 && dy == 0 { return super.point(inside: point, with: event) }
         return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
     }
+
+    /// 底栏填色跟滑块（Li 2026-11-28 定）：手指在栏上拖动时的实时 x（控件坐标），
+    /// 供 SceneDelegate 让填色跟着滑块走；手指离开／取消时回 nil（滑块回到已选段）。
+    /// 只上报位置，不改控件自身的触摸与选中行为（super 照常调）；默认 nil，别的
+    /// 调用点（如首页“广场／正在关注”分段器）不受影响。
+    var trackingXChanged: ((CGFloat?) -> Void)?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        if let x = touches.first?.location(in: self).x { trackingXChanged?(x) }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+        if let x = touches.first?.location(in: self).x { trackingXChanged?(x) }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        trackingXChanged?(nil)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        trackingXChanged?(nil)
+    }
 }
 
 // MARK: - 图片地址

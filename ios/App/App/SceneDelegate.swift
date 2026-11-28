@@ -380,6 +380,20 @@ final class BearyChromeViewController: UIViewController {
     private var bottomFadePad: BearyProgressiveBlurView?
     /// 分段器 touchDown 瞬间记录的旧选段（供重拍手势与 valueChanged 时序竞态判定用）。
     private var segmentIndexAtTouchDown: Int = -1
+    /// 底栏填色跟滑块（Li 2026-11-28 定）：填色段跟着玻璃滑块实时位置走，不再跟
+    /// selectedSegmentIndex 瞬间跳——滑块滑到哪段，哪段填色；滑走了变回描边。
+    /// 手指按着拖时填色跟手指（trackingXChanged 上报的实时 x）；点按／程序化切换时
+    /// 滑块约 0.26s（BearyMotion.normal）滑过去，displayLink 把滑块中心插值到目标段中心，过段中点时换填色。
+    /// 滑块位置不用私有视图探测：分段器四段等宽（apportionsSegmentWidthsByContent=false，
+    /// 栏宽 288 恒定），段中心可直接由段号算出；连续点按从当前位置重开插值，不跳回起点。
+    /// capsuleFillSegment 为当前显示填色的段（nil = 四段全描边，对应 noSegment）；
+    /// 落稳后与 selectedSegmentIndex 一致，与旧终态相同。读屏 .selected 仍以
+    /// selectedSegmentIndex 为准，不跟滑块走（见 BottomSegmentAccessibilityElement）。
+    private var capsuleFillSegment: Int? = 0
+    private var capsuleAnimFrom: Int = 0
+    private var capsuleAnimTo: Int = 0
+    private var capsuleAnimStart: CFTimeInterval = 0
+    private var capsuleDisplayLink: CADisplayLink?
     /// 底栏四段图标名（描边版／填色版一一对应，顺序：时间线、首页、消息、我的）。
     /// 填色版是线条本身颜色的黑色剪影 template 图（tint 跟随主题：浅色黑、深色白），
     /// 外轮廓与描边版一致（首页门洞留空、我的身体涂满；时间线是折线加圆点、
@@ -990,6 +1004,8 @@ final class BearyChromeViewController: UIViewController {
         seg.accessibilityElementsHidden = true
         seg.addTarget(self, action: #selector(bottomSegmentTouchDown), for: .touchDown)
         seg.addTarget(self, action: #selector(bottomSegmentChanged), for: .valueChanged)
+        // 填色跟滑块：手指拖动时分段器实时上报 x，填色跟着手指／滑块走（见 bottomSegmentTrackingChanged）。
+        seg.trackingXChanged = { [weak self] x in self?.bottomSegmentTrackingChanged(x) }
         let retap = UITapGestureRecognizer(target: self, action: #selector(bottomSegmentTapped(_:)))
         retap.cancelsTouchesInView = false
         seg.addGestureRecognizer(retap)
@@ -2136,15 +2152,17 @@ final class BearyChromeViewController: UIViewController {
     /// 52 批：hidden=false 时底栏分段器与 FAB 恢复，header 只在首页恢复（他页恒收起）；hidden=true 时 header 高度塌掉 + 底栏藏起。
     func setChromeHidden(_ hidden: Bool, animated: Bool) { setBarsVisible(!hidden, animated: animated) }
 
-    /// 底栏选中填色（Li 2026-11-22 定）：选中段显填色图、其余段显描边图；
-    /// noSegment 时四段全描边。点按切换（valueChanged）、手指触下（touchDown）、
-    /// 程序化同步（updateTabSelection）三路都调这里实时换图；选中底色、尺寸、
+    /// 底栏选中填色（Li 2026-11-22 定，2026-11-28 改：填色跟滑块实时位置）：
+    /// capsuleFillSegment 段显填色图、其余段显描边图；nil 时四段全描边（noSegment）。
+    /// 点按切换（valueChanged）、手指触下（touchDown）、程序化同步（updateTabSelection）
+    /// 三路都调这里；实际换段的时机由滑块动画／手指拖动决定（见 animateCapsuleFill／
+    /// bottomSegmentTrackingChanged），这里只按当前填色段画图；选中底色、尺寸、
     /// 位置与回顶／刷新手势一律不动。
     private func updateBottomSegmentIcons() {
         guard let seg = bottomSegmented else { return }
-        let selected = seg.selectedSegmentIndex
+        let filled = capsuleFillSegment
         for index in 0..<4 {
-            if index == selected {
+            if index == filled {
                 seg.setImage(segmentIcon(named: tabFilledIcons[index], officialFallback: tabFilledIcons[index]), forSegmentAt: index)
             } else {
                 let pair = tabOutlineIcons[index]
@@ -2156,6 +2174,86 @@ final class BearyChromeViewController: UIViewController {
         // 每次换图后把角标提回最上层。
         if let badge = messagesBadgeLabel {
             seg.bringSubviewToFront(badge)
+        }
+    }
+
+    /// 滑块滑动时让填色跟滑块走：从当前填色段向目标段插值，滑块中心过段中点时换填色。
+    /// 点按／程序化切换都走这里；减动效或栏未布局时直接落到目标段（无滑动，填色也无延迟）。
+    /// 连续点按会从滑块当前位置重开插值，不会跳回起点；to 为 nil 时四段全描边（noSegment）。
+    private func animateCapsuleFill(from: Int?, to: Int?) {
+        capsuleDisplayLink?.invalidate()
+        capsuleDisplayLink = nil
+        guard let to = to else {
+            capsuleFillSegment = nil
+            updateBottomSegmentIcons()
+            return
+        }
+        let fromSegment = from ?? to
+        guard let seg = bottomSegmented, seg.bounds.width > 0,
+              fromSegment != to,
+              !UIAccessibility.isReduceMotionEnabled else {
+            capsuleFillSegment = to
+            updateBottomSegmentIcons()
+            return
+        }
+        capsuleAnimFrom = fromSegment
+        capsuleAnimTo = to
+        capsuleAnimStart = CACurrentMediaTime()
+        let link = CADisplayLink(target: self, selector: #selector(capsuleFillDisplayLinkTick(_:)))
+        link.add(to: .main, forMode: .common)
+        capsuleDisplayLink = link
+    }
+
+    @objc private func capsuleFillDisplayLinkTick(_ link: CADisplayLink) {
+        guard let seg = bottomSegmented, seg.bounds.width > 0 else {
+            link.invalidate()
+            capsuleDisplayLink = nil
+            return
+        }
+        // 滑块滑动走 BearyMotion.normal（0.26s，与系统分段器指示器动画同量级）；
+        // easeInOut 对称，段中点 crossing 在半程，与缓动曲线无关。
+        let duration: CFTimeInterval = BearyMotion.normal
+        let progress = min(1, max(0, (CACurrentMediaTime() - capsuleAnimStart) / duration))
+        let eased = 0.5 - 0.5 * cos(.pi * progress)
+        let segmentWidth = seg.bounds.width / 4
+        let fromX = (CGFloat(capsuleAnimFrom) + 0.5) * segmentWidth
+        let toX = (CGFloat(capsuleAnimTo) + 0.5) * segmentWidth
+        let x = fromX + (toX - fromX) * CGFloat(eased)
+        let current = min(3, max(0, Int(x / segmentWidth)))
+        if current != capsuleFillSegment {
+            capsuleFillSegment = current
+            updateBottomSegmentIcons()
+        }
+        if progress >= 1 {
+            link.invalidate()
+            capsuleDisplayLink = nil
+            if capsuleFillSegment != capsuleAnimTo {
+                capsuleFillSegment = capsuleAnimTo
+                updateBottomSegmentIcons()
+            }
+        }
+    }
+
+    /// 手指在底栏上拖动时填色跟手指走：滑块跟手指，手指过段中点即换填色；
+    /// 手指离开后滑块回到已选段（valueChanged 已发时跟新选段；取消时跟旧选段）。
+    private func bottomSegmentTrackingChanged(_ x: CGFloat?) {
+        guard let seg = bottomSegmented, seg.bounds.width > 0 else { return }
+        guard let x = x else {
+            let committed: Int? = seg.selectedSegmentIndex == UISegmentedControl.noSegment ? nil : seg.selectedSegmentIndex
+            // 若已有向同一目标的滑动在跑，不重开（valueChanged 刚发的滑动即此情形）。
+            if capsuleDisplayLink != nil && capsuleAnimTo == (committed ?? -1) { return }
+            if capsuleFillSegment != committed {
+                animateCapsuleFill(from: capsuleFillSegment, to: committed)
+            }
+            return
+        }
+        capsuleDisplayLink?.invalidate()
+        capsuleDisplayLink = nil
+        let clamped = min(max(x, 0), seg.bounds.width)
+        let current = min(3, max(0, Int(clamped / (seg.bounds.width / 4))))
+        if current != capsuleFillSegment {
+            capsuleFillSegment = current
+            updateBottomSegmentIcons()
         }
     }
 
@@ -2176,7 +2274,7 @@ final class BearyChromeViewController: UIViewController {
         }
         if seg.selectedSegmentIndex != index {
             seg.selectedSegmentIndex = index
-            updateBottomSegmentIcons()
+            animateCapsuleFill(from: capsuleFillSegment, to: index == UISegmentedControl.noSegment ? nil : index)
         }
     }
 
@@ -2292,8 +2390,9 @@ final class BearyChromeViewController: UIViewController {
     /// 底栏分段切换：只在选段变化时触发（点已选段不触发），逐段沿用旧钮的导航调用，
     /// home 走 showPage、其余走 navigator.goTab，与旧钮行为完全一致。
     @objc private func bottomSegmentChanged() {
-        updateBottomSegmentIcons()
-        switch bottomSegmented.selectedSegmentIndex {
+        let selected = bottomSegmented.selectedSegmentIndex
+        animateCapsuleFill(from: capsuleFillSegment, to: selected == UISegmentedControl.noSegment ? nil : selected)
+        switch selected {
         case 0: didTapTimeline()
         case 1: didTapHome()
         case 2: didTapMessages()
