@@ -34,8 +34,26 @@ import UIKit
 /// 旧 toast 挂起的到点闭包只持有旧视图，移除后为空操作，不会误清新 toast。
 enum BearyToast {
 
+    /// 去重合并（数据同步审阅 #5）：同一文案 3 秒内只出一条——失败回滚
+    /// 成串时只给第一条，后面的直接吞掉，不清掉旧 toast、不重置它的显示
+    /// 时长；去重是全局的（跨容器也只一条，跨容器同现多条正是要修的体感）。
+    /// 带动作入口的 toast（撤销等）是用户要点的，不参与去重。
+    /// 只在主线程读写（show 本身就是 UIKit 调用）。
+    private static let dedupWindow: TimeInterval = 3
+    private static var lastShownMessage: String?
+    private static var lastShownAt: Date?
+
     static func show(in container: UIView, message: String,
                      actionTitle: String? = nil, action: (() -> Void)? = nil) {
+        if actionTitle == nil && action == nil {
+            let now = Date()
+            if lastShownMessage == message, let at = lastShownAt,
+               now.timeIntervalSince(at) < Self.dedupWindow {
+                return
+            }
+            lastShownMessage = message
+            lastShownAt = now
+        }
         for oldToast in container.subviews where oldToast is BearyToastView {
             oldToast.removeFromSuperview()
         }
