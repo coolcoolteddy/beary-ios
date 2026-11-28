@@ -61,6 +61,12 @@ import CoreText
 /// 汉字行约 14.8pt，光标高直接取墨水高则数字行看着短一截（133 截图「111」实测）；
 /// 高改取字体度量 ascender − descender（约 19.1pt），顶 = 墨水顶 − (高 − 墨水高)/2，
 /// 上下一样长、居中在文字上，各行光标同高、同一顶。
+/// 光标顶改按基线锚定（本支，2026-11-27 Li 报“空态光标输入后下移”）：#1978 的
+/// 墨水居中只让光标同高，没让光标同顶——墨水框随字形变，小写拉丁（拼音组词态）
+/// 墨水顶比汉字低约 5pt，居中后光标顶跟着字形走，空态（代表字“永”）与落字态
+/// 差约 1.7pt（带降部的字母约 2.5pt），输入瞬间即见下移；基线在三态一致，改按
+/// 基线锚定（顶 = 片段顶 + ascender × (倍数 − 1)，与 #853 公式同值）后空行/
+/// 组词/落字同一顶；墨水探针整段删除，占位顶与光标顶同值，空态两者对齐。
 private final class BearyBodyTextView: UITextView {
     /// 正文编辑器恒定的行高倍数，由 Composer 在 buildTextArea 里与 typingAttributes
     /// 用同一个 bodyParagraph 一并设定；本类只用于正文编辑器，倍数恒定。
@@ -153,21 +159,20 @@ private final class BearyBodyTextView: UITextView {
         guard rect.height > 0, let caretFont = caretFont(at: position), caretFont.lineHeight > 0 else { return rect }
         let multiple = fixedLineHeightMultiple ?? lineHeightMultiple(at: position)
         if let multiple = multiple, multiple > 1.0 {
-            // 光标高与墨水脱钩、并在墨水框上垂直居中（本支）：高取字体度量
-            // ascender − descender（约 19.1pt）；顶 = 墨水顶 − (高 − 墨水高)/2，
-            // 上下一样长、居中在文字上——纯数字行墨水仅约 11.3pt、汉字行约 14.8pt，
-            // 直接取墨水高光标看着短一截；居中后数字／汉字／小写行光标同高、同一顶。
-            // 拉丁度量公式只作取不到墨水框时的回退。
+            // 光标顶改按基线锚定，不再按行内墨水框居中（本支）：墨水框随字形变——
+            // 小写拉丁墨水顶比汉字低约 5pt（x 高约 8.3pt 对汉字 13.2pt），居中后光标顶
+            // 跟着字形走：空态按代表字“永”锚在基线 −15.35pt，拼音组词/小写落字后锚到
+            // 基线 −13.7pt 附近，输入瞬间光标下掉约 1.7pt（带降部的字母约 2.5pt），
+            // 正是本支报的“空态光标输入后下移”；#1978“居中后各行同一顶”的说法只在墨水
+            // 顶相同的行之间成立，跨字形并不成立。基线在三态一致（片段顶 + ascender ×
+            // 倍数，132 截图反推验证），按它锚定则空行/组词/落字同一顶，光标不动。
+            // 高仍取 ascender − descender（约 19.1pt，#1978 口径），各行同高；
+            // 顶 = 基线 − ascender = 片段顶 + ascender × (倍数 − 1)，与占位顶
+            // （ascender × (倍数 − 1)，见 buildTextArea）同值，空态光标与占位对齐。
+            // 墨水探针（inkCaretRect 等）随本支删除，不再使用。
             let height = caretFont.ascender - caretFont.descender
             guard height > 0 else { return rect }
-            if let ink = inkCaretRect(for: position, caretX: rect.origin.x, font: caretFont, multiple: multiple) {
-                rect.origin.y = ink.origin.y - (height - ink.height) / 2
-                rect.size.height = height
-                return rect
-            }
-            // #853 基线公式回退：顶 = 片段顶 + ascender × (倍数 − 1)，
-            // 高 = ascender − descender；super 的 y 不参与。
-            if let fragmentTop = lineFragmentTop(for: position, caretX: rect.origin.x) {
+            if let fragmentTop = currentLineFragmentTop(for: position, caretX: rect.origin.x) {
                 rect.origin.y = fragmentTop + caretFont.ascender * (multiple - 1)
                 rect.size.height = height
                 return rect
@@ -227,159 +232,17 @@ private final class BearyBodyTextView: UITextView {
         return nil
     }
 
-    /// 光标行墨水框（textView 坐标系，调用方取其 y 与高作垂直居中的基准，见 caretRect；
-    /// x 与宽仍取 super）。
-    /// 取不到时返回 nil，调用方回退 #853 基线公式。
-    private func inkCaretRect(for position: UITextPosition, caretX: CGFloat, font: UIFont, multiple: CGFloat) -> CGRect? {
-        guard let probeGlyph = caretLineGlyph(for: position, caretX: caretX) else {
-            return emptyLineInkRect(for: position, font: font, multiple: multiple)
-        }
-        if let ink = inkRectForLine(containingGlyph: probeGlyph, font: font) { return ink }
-        // 本行无墨水（如仅含附件）：复用邻行几何。
-        if let ink = nearestLineInkRect(fromGlyph: probeGlyph, font: font) { return ink }
-        return emptyLineInkRect(for: position, font: font, multiple: multiple)
-    }
-
-    /// 光标所在行的一个字形下标；光标落在空行时返回 nil。
-    /// 折行边界以前后字符的片段顶判定归属：x 贴左缘（行首）归后一行，
-    /// 否则归前一行（同 lineFragmentTop 的口径）。
-    private func caretLineGlyph(for position: UITextPosition, caretX: CGFloat) -> Int? {
-        let text = attributedText ?? NSAttributedString()
-        let offset = self.offset(from: beginningOfDocument, to: position)
-        guard offset >= 0 else { return nil }
-        let nsText = text.string as NSString
-        let prevIsNewline = offset > 0 && offset - 1 < text.length && nsText.character(at: offset - 1) == 0x000A
-        if !prevIsNewline, offset > 0, offset - 1 < text.length {
-            if offset < text.length {
-                let prevGlyph = layoutManager.glyphIndexForCharacter(at: offset - 1)
-                let nextGlyph = layoutManager.glyphIndexForCharacter(at: offset)
-                var prevRange = NSRange(location: 0, length: 0)
-                var nextRange = NSRange(location: 0, length: 0)
-                let prevTop = layoutManager.lineFragmentRect(forGlyphAt: prevGlyph, effectiveRange: &prevRange).origin.y
-                let nextTop = layoutManager.lineFragmentRect(forGlyphAt: nextGlyph, effectiveRange: &nextRange).origin.y
-                if abs(prevTop - nextTop) >= 0.5 {
-                    return caretX <= textContainerInset.left + 2 ? nextGlyph : prevGlyph
-                }
-            }
-            return layoutManager.glyphIndexForCharacter(at: offset - 1)
-        }
-        if offset < text.length, nsText.character(at: offset) != 0x000A {
-            return layoutManager.glyphIndexForCharacter(at: offset)
-        }
-        return nil
-    }
-
-    /// 指定字形所在行的墨水框（textView 坐标系，只取 y 与高）。
-    /// 行内无文字 run（如仅含附件）时返回 nil，调用方复用邻行几何。
-    private func inkRectForLine(containingGlyph glyphIndex: Int, font: UIFont) -> CGRect? {
-        let layoutManager = self.layoutManager
-        guard glyphIndex >= 0, glyphIndex < layoutManager.numberOfGlyphs else { return nil }
-        var effectiveRange = NSRange(location: 0, length: 0)
-        _ = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &effectiveRange)
-        guard effectiveRange.length > 0 else { return nil }
-        let charRange = layoutManager.characterRange(forGlyphRange: effectiveRange, actualGlyphRange: nil)
-        let text = attributedText ?? NSAttributedString()
-        guard charRange.location >= 0, NSMaxRange(charRange) <= text.length, charRange.length > 0 else { return nil }
-        let ctLine = CTLineCreateWithAttributedString(text.attributedSubstring(from: charRange))
-        // 行基线原点（容器坐标）：首字形的绘制原点即基线位置，实测，不经倍数换算。
-        let baselineOrigin = layoutManager.location(forGlyphAt: effectiveRange.location)
-        // 逐 run 取墨水框并取并集；附件 run（心情/GIF 图）跳过，免得图高拉长光标。
-        let runs = (CTLineGetGlyphRuns(ctLine) as NSArray) as? [CTRun] ?? []
-        var ink: CGRect?
-        for run in runs {
-            let attrs = CTRunGetAttributes(run) as NSDictionary
-            // 附件 run（心情/GIF 图）：属性键为 NSAttachment 字符串，跳过。
-            if attrs["NSAttachment"] != nil { continue }
-            let runInk = CTRunGetImageBounds(run, nil, CFRangeMake(0, 0))
-            if runInk.isNull || runInk.height <= 0 { continue }
-            ink = ink == nil ? runInk : ink!.union(runInk)
-        }
-        guard let ink = ink, ink.height > 0 else { return nil }
-        // image bounds 以行原点（基线）为原点、y 向上：墨水顶 = 基线 y − maxY。
-        let top = baselineOrigin.y + textContainerInset.top - ink.maxY
-        return CGRect(x: 0, y: top, width: 0, height: ink.height)
-    }
-
-    /// 复用邻行墨水几何：墨水相对片段顶的偏移只取决于字体与倍数，同文档
-    /// 内各行一致；空行（或仅含附件的行）以前后最近有墨水的行对齐。
-    private func nearestLineInkRect(fromGlyph glyphIndex: Int, font: UIFont) -> CGRect? {
-        let layoutManager = self.layoutManager
-        let glyphCount = layoutManager.numberOfGlyphs
-        guard glyphCount > 0 else { return nil }
-        var myRange = NSRange(location: 0, length: 0)
-        let myFragment = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &myRange)
-        var forward = myRange.location + myRange.length
-        var backward = myRange.location - 1
-        while forward < glyphCount || backward >= 0 {
-            if backward >= 0 {
-                var range = NSRange(location: 0, length: 0)
-                let fragment = layoutManager.lineFragmentRect(forGlyphAt: backward, effectiveRange: &range)
-                if let ink = inkRectForLine(containingGlyph: backward, font: font) {
-                    let offset = ink.origin.y - (fragment.origin.y + textContainerInset.top)
-                    return CGRect(x: 0, y: myFragment.origin.y + textContainerInset.top + offset, width: 0, height: ink.height)
-                }
-                backward = range.location - 1
-            }
-            if forward < glyphCount {
-                var range = NSRange(location: 0, length: 0)
-                let fragment = layoutManager.lineFragmentRect(forGlyphAt: forward, effectiveRange: &range)
-                if let ink = inkRectForLine(containingGlyph: forward, font: font) {
-                    let offset = ink.origin.y - (fragment.origin.y + textContainerInset.top)
-                    return CGRect(x: 0, y: myFragment.origin.y + textContainerInset.top + offset, width: 0, height: ink.height)
-                }
-                forward = range.location + range.length
-            }
-        }
-        return nil
-    }
-
-    /// 空行墨水框：行片段顶 + 代表字墨水框。基线 = 片段顶 + ascender × 倍数
-    /// ——该式已由 132 截图反推验证（基线 − 片段顶 = 25.89pt = SF ascender
-    /// 15.23 × 1.7，与字形墨水位置吻合）；空行与有字行共用同一 ascender
-    /// （SF 0.952em 压过 PingFang typo 0.86em），故落字前后光标不跳。
-    /// 取不到片段时返回 nil，调用方回退 #853 旧口径。
-    private func emptyLineInkRect(for position: UITextPosition, font: UIFont, multiple: CGFloat) -> CGRect? {
-        let layoutManager = self.layoutManager
-        var fragmentTop: CGFloat?
+    /// 当前行片段顶（textView 坐标系）：有字行走 lineFragmentTop 的选区探针；
+    /// 全空文档无字符可探针，走 extra 行片段顶（容器坐标，需加 inset.top 换算
+    /// 成 textView 坐标；lineFragmentTop 给的已是 textView 坐标，不再加）。
+    private func currentLineFragmentTop(for position: UITextPosition, caretX: CGFloat) -> CGFloat? {
+        if let top = lineFragmentTop(for: position, caretX: caretX) { return top }
         if layoutManager.numberOfGlyphs == 0 {
-            fragmentTop = layoutManager.extraLineFragmentRect.origin.y
-        } else {
-            let offset = self.offset(from: beginningOfDocument, to: position)
-            let text = attributedText ?? NSAttributedString()
-            let nsText = text.string as NSString
-            if offset > 0, offset - 1 < text.length {
-                let prevGlyph = layoutManager.glyphIndexForCharacter(at: offset - 1)
-                var range = NSRange(location: 0, length: 0)
-                let fragment = layoutManager.lineFragmentRect(forGlyphAt: prevGlyph, effectiveRange: &range)
-                let prevIsNewline = nsText.character(at: offset - 1) == 0x000A
-                fragmentTop = prevIsNewline ? fragment.origin.y + fragment.height : fragment.origin.y
-            } else if offset < text.length {
-                let nextGlyph = layoutManager.glyphIndexForCharacter(at: offset)
-                var range = NSRange(location: 0, length: 0)
-                fragmentTop = layoutManager.lineFragmentRect(forGlyphAt: nextGlyph, effectiveRange: &range).origin.y
-            } else {
-                fragmentTop = layoutManager.extraLineFragmentRect.origin.y
-            }
+            return layoutManager.extraLineFragmentRect.origin.y + textContainerInset.top
         }
-        guard let fragmentTop = fragmentTop, let cjkInk = representativeCJKInkRect(font: font) else { return nil }
-        // cjkInk 以基线为原点、y 向上：墨水顶 = 基线 y − maxY。
-        let baselineY = fragmentTop + textContainerInset.top + font.ascender * multiple
-        return CGRect(x: 0, y: baselineY - cjkInk.maxY, width: 0, height: cjkInk.height)
+        return nil
     }
 
-    /// 代表字 CJK 墨水框（相对基线，y 向上）：经字体级联拿到实际渲染字形
-    /// 的字体，取“永”的墨水框；16pt PingFang 下约基线上 13.2pt、基线下
-    /// 1.6pt、高 14.8pt。取不到时返回 nil。
-    private func representativeCJKInkRect(font: UIFont) -> CGRect? {
-        let ctFont = CTFontCreateForString(font as CTFont, "永" as CFString, CFRangeMake(0, 0))
-        var glyph = CGGlyph(0)
-        var ch: UniChar = 0x6C38 // 永
-        guard CTFontGetGlyphsForCharacters(ctFont, &ch, &glyph, 1) else { return nil }
-        var boundingRect = CGRect.zero
-        CTFontGetBoundingRectsForGlyphs(ctFont, .horizontal, &glyph, &boundingRect, 1)
-        guard boundingRect.height > 0 else { return nil }
-        return boundingRect
-    }
 }
 
 /// U3：编辑器工具栏六钮专用热区钮（图片／定位／表情／@／引用／标签）。
