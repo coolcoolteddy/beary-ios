@@ -384,8 +384,6 @@ final class BearyChromeViewController: UIViewController {
     private var bottomBlurView: UIVisualEffectView?
     /// 渐进模糊垫（规范 §6，统一 12pt 带）：仅保留底栏上沿带；本体布局／尺寸一字不动。
     private var bottomFadePad: BearyProgressiveBlurView?
-    /// 分段器 touchDown 瞬间记录的旧选段（供重拍手势与 valueChanged 时序竞态判定用）。
-    private var segmentIndexAtTouchDown: Int = -1
     /// 底栏填色跟滑块（Li 2026-11-28 定）：填色段跟着玻璃滑块实时位置走，不再跟
     /// selectedSegmentIndex 瞬间跳——滑块滑到哪段，哪段填色；滑走了变回描边。
     /// 手指按着拖时填色跟手指（trackingXChanged 上报的实时 x）；点按／程序化切换时
@@ -1008,7 +1006,6 @@ final class BearyChromeViewController: UIViewController {
         }
         // 初始 alpha 0（栏藏起），元素同步隐藏，随 setBarsVisible 翻转。
         seg.accessibilityElementsHidden = true
-        seg.addTarget(self, action: #selector(bottomSegmentTouchDown), for: .touchDown)
         seg.addTarget(self, action: #selector(bottomSegmentChanged), for: .valueChanged)
         // 填色跟滑块：手指拖动时分段器实时上报 x，填色跟着手指／滑块走（见 bottomSegmentTrackingChanged）。
         seg.trackingXChanged = { [weak self] x in self?.bottomSegmentTrackingChanged(x) }
@@ -2406,13 +2403,6 @@ final class BearyChromeViewController: UIViewController {
     /// 与首页同口径，不走 navigator.goTab——消息段无旧钮导航可沿用）。
     @objc private func didTapMessages() { showPage(.messages) }
 
-    /// 底栏分段 touchDown：记录旧选段。valueChanged 与点按手势都在 touchUp 时触发、
-    /// 时序不定，故重拍判定不以手势触发时的 selectedSegmentIndex 为准，只认 touchDown 快照。
-    @objc private func bottomSegmentTouchDown() {
-        segmentIndexAtTouchDown = bottomSegmented.selectedSegmentIndex
-        updateBottomSegmentIcons()
-    }
-
     /// 底栏分段切换：只在选段变化时触发（点已选段不触发），逐段沿用旧钮的导航调用，
     /// home 走 showPage、其余走 navigator.goTab，与旧钮行为完全一致。
     @objc private func bottomSegmentChanged() {
@@ -2475,14 +2465,29 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 底栏重拍：UISegmentedControl 点已选段不发 valueChanged，故另加手势补重拍。
-    /// 手势 cancelsTouchesInView=false，不吞控件自身的 valueChanged；点到别的段时
-    /// 因 tapped != touchDown 快照而直接返回，切换只由 valueChanged 处理一次。
-    /// 重拍路径与旧钮完全一致（didTap* → showPage/goTab 的重拍分支：回顶再刷新）。
+    /// 手势 cancelsTouchesInView=false，不吞控件自身的 valueChanged。
+    /// 重拍判定只认“点到的段对照当前页”：手势先于 valueChanged 触发（UIKit 先把触摸
+    /// 交给手势识别器分析，再交给控件），手势触发时 currentPage 仍是点按前的页；
+    /// 点到当前页的段 → 走 didTap* 的重拍分支（回顶／刷新）；点到别的段 → 直接返回，
+    /// 切页只由随后触发的 valueChanged 处理一次。
+    /// 不再用 touchDown 快照：UISegmentedControl 只发 valueChanged、从不发 touchDown，
+    /// 快照恒为初值 -1，旧判定恒失败、重拍自始至终没生效（Li 2026-11-28 真机实证）。
+    /// 好友列表页（.friends）归属消息段：点消息段时按消息页对照，走 showPage(.messages)
+    /// 的切页／重拍口径，与旧行为一致。
     @objc private func bottomSegmentTapped(_ gesture: UITapGestureRecognizer) {
         guard let seg = bottomSegmented, seg.bounds.width > 0 else { return }
         let segmentWidth = seg.bounds.width / 4
         let tapped = min(3, max(0, Int(gesture.location(in: seg).x / segmentWidth)))
-        guard tapped == segmentIndexAtTouchDown else { return }
+        let tappedPage: ContainerPage
+        switch tapped {
+        case 0: tappedPage = .timeline
+        case 1: tappedPage = .home
+        case 2: tappedPage = .messages
+        case 3: tappedPage = .me
+        default: return
+        }
+        let effectiveCurrentPage: ContainerPage? = currentPage == .friends ? .messages : currentPage
+        guard tappedPage == effectiveCurrentPage else { return }
         switch tapped {
         case 0: didTapTimeline()
         case 1: didTapHome()
