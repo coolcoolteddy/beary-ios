@@ -472,6 +472,13 @@ class BearyProfileViewController: UIViewController {
     private var customPullStartTime: Date?
     private var pullEngageTranslation: CGFloat?
     private var customPullEndScheduled = false
+    /// 刷新期保持的封面拉伸快照（触发瞬间取，下限 84 以盖满刷新头 84 高）：
+    /// 触发刷新松手后封面不再复位，一直停在放大态，刷新图标转在放大的
+    /// 封面上；无封面时为 nil，走旧口径。
+    private var refreshHeldCoverStretch: CoverStretchSnapshot?
+    /// 刷新完成共用 spring 进行中：此期间滚动事件不再按拉量写封面，
+    /// 封面与刷新头由完成动画一并带回自然态（同 spring、同曲线）。
+    private var refreshCoverRestoring = false
     /// F1/F2：限时到期 live 复核——他人页日记 tab 的 1 秒 tick（时间线
     /// sweep 同款）；只在有存活限时篇时才跑，到期即整表重载撤行；
     /// 本人页不跑（作者视角到期篇仍按私密显示，不撤）。
@@ -3530,6 +3537,29 @@ class BearyProfileViewController: UIViewController {
         coverLeadingConstraint.constant = snapshot.leading
         coverTrailingConstraint.constant = snapshot.trailing
         setCoverBlurAlpha(snapshot.blurAlpha)
+    }
+
+    /// 刷新保持快照：取触发时拉量，下限 84——刷新头高 84，封面顶伸须
+    /// 至少盖满 84 才不露底色；无封面时返回 nil（无图可保持，走旧口径）。
+    private func clampedRefreshHoldSnapshot(_ snapshot: CoverStretchSnapshot) -> CoverStretchSnapshot? {
+        guard profileShowsCoverArea else { return nil }
+        let pull = max(-snapshot.top, 84)
+        return CoverStretchSnapshot(
+            top: -pull,
+            height: profileCoverHeight + pull,
+            leading: -pull / 2,
+            trailing: pull / 2,
+            blurAlpha: min(pull / 120, 0.85)
+        )
+    }
+
+    /// 封面当前是否已是该拉伸态（保持恢复前的去重守卫，防滚动事件逐帧重写同一常量）。
+    private func isCoverStretch(_ snapshot: CoverStretchSnapshot) -> Bool {
+        coverTopConstraint.constant == snapshot.top
+            && coverHeightConstraint.constant == snapshot.height
+            && coverLeadingConstraint.constant == snapshot.leading
+            && coverTrailingConstraint.constant == snapshot.trailing
+            && coverBlurImageView.alpha == snapshot.blurAlpha
     }
 
     private func layoutHeaderForced(widthValue: CGFloat) {
@@ -9232,7 +9262,7 @@ class BearyProfileViewController: UIViewController {
 
     /// 自定义下拉指示器跟随（消息页同款）：手指行程 ×0.48 阻尼、上限 116。
     private func updateCustomPullIndicator() {
-        if isCustomPullRefreshing {
+        if isCustomPullRefreshing || refreshCoverRestoring {
             return
         }
         if !tableView.isDragging {
@@ -9268,12 +9298,21 @@ class BearyProfileViewController: UIViewController {
         isCustomPullRefreshing = true
         customPullStartTime = Date()
         refreshIconView.startSpinning()
+        // 刷新期指示条透明：封面保持放大盖住刷新区，图标转在放大的封面
+        // 上，不再是单独一条底色带；完成时由 endCustomPullRefresh 恢复。
+        pullView.backgroundColor = .clear
         let baseline = profilePullBaselineTop()
         let pullIn = {
             self.tableView.contentInset.top = baseline + 84
             self.tableView.scrollIndicatorInsets.top = baseline + 84
             self.tableView.contentOffset = CGPoint(x: 0, y: -(baseline + 84))
             self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
+            // 保持快照下限 84 时若触发拉量不足，封面随同一动画补伸到 84
+            //（与 inset/offset 同一动画块，不另起一段）。
+            if let held = self.refreshHeldCoverStretch, !self.isCoverStretch(held) {
+                self.restoreCoverStretch(held)
+                self.view.layoutIfNeeded()
+            }
         }
         if UIAccessibility.isReduceMotionEnabled {
             pullIn()
@@ -9319,6 +9358,11 @@ class BearyProfileViewController: UIViewController {
         // 下拉位 = -(baseline + 84)（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
         let stillAtPullPosition = !self.tableView.isDragging
             && self.tableView.contentOffset.y <= -(baseline + 84) + 8
+        // 刷新完成：封面与刷新头共用同一个 spring 一并恢复（同时长、同阻尼、
+        // 同曲线，2026-11-29 Li 定＋收口）：inset/offset/pullView 帧与封面
+        // 四个约束＋模糊 alpha 写进同一个动画块；滚动事件在此期间不再
+        // 按拉量写封面（见 refreshCoverRestoring），防两处打架。
+        refreshCoverRestoring = true
         let pullOut = {
             self.tableView.contentInset.top = baseline
             self.tableView.scrollIndicatorInsets.top = baseline
@@ -9326,21 +9370,29 @@ class BearyProfileViewController: UIViewController {
                 self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
             }
             self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+            self.applyCoverStretchNaturalForSharedAnimation()
+            self.view.layoutIfNeeded()
+        }
+        // 完成收尾：停转、清保持快照、指示条底色恢复、陀螺仪恢复；
+        // 模糊层在动画结束且 alpha 已为 0 时才藏，动画中途不藏，防一帧闪没。
+        let finishRestore = {
+            self.refreshIconView.stopSpinning()
+            self.refreshHeldCoverStretch = nil
+            self.refreshCoverRestoring = false
+            self.pullView.backgroundColor = BearyColors.bg
+            if self.coverBlurImageView.alpha == 0 {
+                self.coverBlurImageView.isHidden = true
+            }
+            if self.festivalBlurView.alpha == 0 {
+                self.festivalBlurView.isHidden = true
+            }
+            self.resumeCoverGyroAfterRefreshIfSettled()
         }
         if UIAccessibility.isReduceMotionEnabled {
             pullOut()
-            self.refreshIconView.stopSpinning()
-            // 顶端残留修法：pullOut 动画期 inset/offset 不同步时瞬时
-            // 拉量可能又把封面拉伸+模糊，动画结束时不再有滚动事件来
-            // 复位，故此处强制归自然态（无模糊、无放大）。
-            self.resetCoverStretch()
-            self.resumeCoverGyroAfterRefreshIfSettled()
+            finishRestore()
         } else {
-            UIView.animate(withDuration: BearyMotion.normal, animations: pullOut, completion: { _ in
-                self.refreshIconView.stopSpinning()
-                self.resetCoverStretch()
-                self.resumeCoverGyroAfterRefreshIfSettled()
-            })
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: pullOut, completion: { _ in finishRestore() })
         }
     }
 
@@ -11201,23 +11253,28 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     /// 基线取 -contentInset.top（与顶栏判定同口径，收起态为 0 时即 y < 0）。
     /// 须真机验（见本支 PR 说明）。
     private func updateCoverStretch(offsetY y: CGFloat, topBaseline: CGFloat) {
+        // 刷新完成共用 spring 进行中：封面由完成动画一并带回，滚动事件
+        // 不再按拉量写封面，防两处写约束打架。
+        if refreshCoverRestoring {
+            return
+        }
         // 刷新接管期间：滚动事件只来自刷新控件的 offset 动画，不再由手指驱动；
         // 此时若继续按拉量拉伸，会与松手／触发时启动的复位动画打架（约束常量
         // 两处写，封面几何与模糊 alpha 来回跳 = 下拉刷新时背景闪）。刷新期间
-        // 滚动事件不再按拉量拉伸（见下文顶端残留修法：封面一律
-        // 复位自然态）；刷新结束后 offset 回落、isRefreshing 为 false，
-        // 滚动事件恢复 1:1 跟随。
+        // 封面保持触发时的放大态（见 refreshHeldCoverStretch），不再复位自然态；
+        // 刷新结束后由 endCustomPullRefresh 的共用 spring 一并带回，滚动事件恢复 1:1 跟随。
         if isCustomPullRefreshing {
-            // 顶端残留修法（2026-10-30）：刷新期间滚动事件只来自 inset/offset
-            // 动画，旧口径“原样返回”会把刷新触发前的拉伸态（高 180+拉量、
-            // 左右各扩一半、模糊 alpha>0）原封不动留在顶端；刷新期间封面
-            // 本就应为自然态，故一律复位，不再按瞬时拉量拉伸。
-            // 2026-11-22 刷新期运动修法：复位走动画版——无动画的立即复位会
-            // 在 inset/offset 动画还没走完时把封面一帧跳回自然态，周围内容
-            // 却还在滑动，轨迹看起来就是怪的；动画版与刷新动画同为 0.28s
-            // ease-out 且 beginFromCurrentState，封面随内容一起滑回自然态，
-            // 终态仍是自然态，顶端残留修法不动。
-            resetCoverStretchAnimated()
+            // 刷新期保持（2026-11-29 Li 定）：封面停在触发时的放大态，
+            // 刷新图标转在放大的封面上。旧口径（2026-10-30 顶端残留修法／
+            // 2026-11-22 动画版）是刷新期复位自然态，现按 Li 定改为保持；
+            // 无封面时保持快照为 nil，走旧口径复位。
+            if let held = refreshHeldCoverStretch {
+                if !isCoverStretch(held) {
+                    restoreCoverStretch(held)
+                }
+            } else {
+                resetCoverStretchAnimated()
+            }
             return
         }
         let pull = topBaseline - y
@@ -11287,6 +11344,21 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
                 self.festivalBlurView.isHidden = true
             }
         })
+    }
+
+    /// 刷新完成共用 spring 的封面部分：四个约束＋模糊 alpha 由调用方
+    /// 写进同一个动画块（不另起动画）；isHidden 只在完成时按 alpha 收，
+    /// 动画中途不藏，防模糊一帧闪没（收尾口径见 endCustomPullRefresh
+    /// 的 finishRestore，与 resetCoverStretchAnimated 的收尾一致）。
+    private func applyCoverStretchNaturalForSharedAnimation() {
+        coverTopConstraint.constant = 0
+        coverHeightConstraint.constant = profileShowsCoverArea ? profileCoverHeight : 0
+        coverLeadingConstraint.constant = 0
+        coverTrailingConstraint.constant = 0
+        coverBlurImageView.isHidden = false
+        festivalBlurView.isHidden = false
+        coverBlurImageView.alpha = 0
+        festivalBlurView.alpha = 0
     }
 
     private func setCoverBlurAlpha(_ alpha: CGFloat) {
@@ -11725,7 +11797,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             updateFestivalWallpaperVisibility()
             updateProfileCoverVisibility()
         }
-        if scrollView.contentOffset.y <= -scrollView.contentInset.top && !isCustomPullRefreshing {
+        if scrollView.contentOffset.y <= -scrollView.contentInset.top && !isCustomPullRefreshing && !refreshCoverRestoring {
             resetCoverStretch()
         }
         // 跳动修复（第 8 轮第 2 项）：减速结束，补算拖动期间跳过的墙底位移补偿。
@@ -11743,7 +11815,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             updateFestivalWallpaperVisibility()
             updateProfileCoverVisibility()
         }
-        if scrollView.contentOffset.y <= -scrollView.contentInset.top && !isCustomPullRefreshing {
+        if scrollView.contentOffset.y <= -scrollView.contentInset.top && !isCustomPullRefreshing && !refreshCoverRestoring {
             resetCoverStretch()
         }
         // 弱网滑动卡顿修复：程序化滚动结束也算停稳，顺带 flush 记脏的脚部
@@ -11753,10 +11825,12 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         guard scrollView === tableView else { return }
-        // 下拉刷新已接管时（松手后表被自定义头钉住、不再回弹），滚动事件不再跟手，
-        // 复位改走动画，防一帧闪回；未触发刷新时回弹由滚动事件 1:1 跟随，不另起动画打架。
+        // 下拉刷新已接管时（松手后表被自定义头钉住、不再回弹），滚动事件不再跟手；
+        // 刷新期封面仍停在保持的放大态，不复位。
         if isCustomPullRefreshing {
-            resetCoverStretchAnimated()
+            if let held = refreshHeldCoverStretch, !isCoverStretch(held) {
+                restoreCoverStretch(held)
+            }
         }
         // 自定义下拉触发（消息页同款）：手指原始行程满 140pt 松手才刷新。
         // P1-11：gated 页（targetUserIdValue 与 targetHandleValue 双空）无请求可发，
@@ -11767,9 +11841,9 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         if fingerRaw >= 140 && !isCustomPullRefreshing
             && !(targetUserIdValue == nil && targetHandleValue == nil) {
             BearyHaptics.press()
-            // 刷新触发即启动封面复位动画：刷新期间滚动事件不再拉伸（见 updateCoverStretch），
-            // 故此次动画不会被打架，封面一次平滑回自然态。
-            resetCoverStretchAnimated()
+            // 刷新触发即取保持快照（触发时拉量，下限 84 盖满刷新头）：
+            // 刷新期封面不再复位，一直停在放大态，刷新图标转在放大的封面上。
+            refreshHeldCoverStretch = clampedRefreshHoldSnapshot(coverStretchSnapshot())
             beginCustomPullRefresh()
         }
         // 不减速即停稳：陀螺仪重画恢复（带子可见时才开）；减速时继续停，
