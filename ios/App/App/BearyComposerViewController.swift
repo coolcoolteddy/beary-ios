@@ -977,6 +977,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let pendingUploadBar = UIButton(type: .custom)
     private let pendingUploadBarLabel = UILabel()
     private let pendingUploadBarChevron = UIImageView()
+    /// 浮条容器：待上传条与撤销条的浮层（2026-11-27 Li 定：不占内容栈，浮在工具栏上方）。
+    /// 底边与工具栏顶边之间留 12pt（Li 定：跟工具栏图标顶到分割线的 toolRowTopToSeparator 12pt 一致；约束定死；键盘升起时随工具栏一起抬，间隙不变）。
+    private let transientBarContainer = UIView()
+    private let transientBarStack = UIStackView()
     // C1：工具栏贴键盘上方（见 buildLayout：底锚 keyboardLayoutGuide.topAnchor），
     // 不随正文滚动；选择条（toolStripStack）贴在它上方，引用面板打开时两者同藏，
     // scrollView 底锚随之在准备发布行/选择条/整页三档切换（见 updateScrollBottomAnchoring）。
@@ -1088,7 +1092,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var toolStripTransitionGeneration = 0
     private let weatherChipButton = BearyHit44Button(type: .system)
     private let recipientChipButton = BearyHit44Button(type: .system)
-    // C11：删图撤销条（图片条下方）：文案 + 撤销钮，10 秒到期自动消失并提交删除。
+    // C11：删图撤销条（浮在工具栏上方，2026-11-27 改）：文案 + 撤销钮，10 秒到期自动消失并提交删除。
     private let imageUndoBar = UIView()
     private let imageUndoLabel = UILabel()
     private let imageUndoButton = BearyHit44Button(type: .system)
@@ -1447,6 +1451,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         view.addSubview(toolStripStack)
         view.addSubview(mentionTopRow)
         view.addSubview(scrollView)
+        view.addSubview(transientBarContainer)
         scrollView.addSubview(contentView)
         contentView.addSubview(contentStack)
         // C1：正文从顶栏下方直接开始（scrollView 顶锚顶栏）；工具栏贴键盘上方，
@@ -1468,6 +1473,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolStripStack.spacing = 0
         toolStripStack.alignment = .fill
         toolStripStack.translatesAutoresizingMaskIntoConstraints = false
+        // 浮条容器：竖栈装两条，间距 8；初始全藏、不占位。
+        transientBarContainer.translatesAutoresizingMaskIntoConstraints = false
+        transientBarStack.axis = .vertical
+        transientBarStack.spacing = BearySpace.sm
+        transientBarStack.alignment = .fill
+        transientBarStack.translatesAutoresizingMaskIntoConstraints = false
+        transientBarContainer.addSubview(transientBarStack)
+        transientBarContainer.isHidden = true
         // 92 包整页列宽：贴边约束与居中约束二选一，由 updateColumnConstraints 按宽切换
         //（个人主页同款：lazy 式成对约束、状态变化时才切换）。居中约束初始不激活。
         // 窄屏分支：左右锚横向安全区（非 view 边缘）——竖屏安全区左右 inset 为 0，
@@ -1518,6 +1531,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toolStripStack.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             // 选择条底贴准备发布行顶（行高 0 时即工具栏顶；2026-11-22 随行移到底部改锚，原直接贴工具栏顶）。
             toolStripStack.bottomAnchor.constraint(equalTo: publishVisibilityRow.topAnchor),
+            // 浮条容器：左右跟工具栏同宽；底边与工具栏顶边留 12pt
+            //（2026-11-27 Li 定：跟 toolRowTopToSeparator 的 12pt 一致，约束定死；工具栏底锚键盘顶，键盘升起时浮条一起抬，间隙不变）。
+            transientBarContainer.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            transientBarContainer.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
+            transientBarContainer.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -BearySpace.md),
+            transientBarStack.topAnchor.constraint(equalTo: transientBarContainer.topAnchor),
+            transientBarStack.leadingAnchor.constraint(equalTo: transientBarContainer.leadingAnchor),
+            transientBarStack.trailingAnchor.constraint(equalTo: transientBarContainer.trailingAnchor),
+            transientBarStack.bottomAnchor.constraint(equalTo: transientBarContainer.bottomAnchor),
             toolbarLeadingConstraint!,
             toolbarTrailingConstraint!,
             scrollLeadingConstraint!,
@@ -3833,7 +3855,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshImageStripVisibility()
         // 图片条无图时隐藏，写死的 4pt 间距照算；藏起来归 0（refreshImageStripVisibility 内已同步写，此处同口径）。
         contentStack.setCustomSpacing(imageScrollView.isHidden ? 0 : 4, after: imageScrollView)
-        // 原图确认待确认条：插在图片条下方，默认隐藏；有未确认项时显示
+        // 原图确认待确认条：浮在工具栏上方（2026-11-27 改，不再插图片条下方），默认隐藏；有未确认项时显示
         //「N 张照片待确认上传方式」，点按重开确认弹窗（见 refreshPendingUploadBar）。
         pendingUploadBar.backgroundColor = BearyColors.surface2
         pendingUploadBar.layer.cornerRadius = 12
@@ -3854,7 +3876,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         pendingUploadBarChevron.contentMode = .scaleAspectFit
         pendingUploadBarChevron.translatesAutoresizingMaskIntoConstraints = false
         pendingUploadBar.addSubview(pendingUploadBarChevron)
-        contentStack.addArrangedSubview(pendingUploadBar)
+        // 2026-11-27 浮条：待确认条不再进内容栈，改放浮层容器（见 transientBarContainer）。
+        transientBarStack.addArrangedSubview(pendingUploadBar)
         // 第 20 轮 A4：最小高约束（≥44）单独存引用——隐藏整条时停用它（同图片条先例）。
         let pendingUploadBarHeight = pendingUploadBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         pendingUploadBarHeightConstraint = pendingUploadBarHeight
@@ -3868,8 +3891,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             pendingUploadBarChevron.widthAnchor.constraint(equalToConstant: 14),
             pendingUploadBarChevron.heightAnchor.constraint(equalToConstant: 14),
         ])
-        // 待确认条默认隐藏，写死的 4pt 间距照算；藏起来归 0（refreshPendingUploadBar 内已同步写，此处同口径）。
-        contentStack.setCustomSpacing(pendingUploadBar.isHidden ? 0 : 4, after: pendingUploadBar)
     }
 
     /// 图片条显隐：有图才显示（网页 img-preview 空时 display:none）。
@@ -4755,7 +4776,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageUndoBar.translatesAutoresizingMaskIntoConstraints = false
         imageUndoLabel.translatesAutoresizingMaskIntoConstraints = false
         imageUndoButton.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(imageUndoBar)
+        // 2026-11-27 浮条：撤销条不再进内容栈，改放浮层容器（见 transientBarContainer）。
+        transientBarStack.addArrangedSubview(imageUndoBar)
         imageUndoBar.addSubview(imageUndoLabel)
         imageUndoBar.addSubview(imageUndoButton)
         NSLayoutConstraint.activate([
@@ -4767,7 +4789,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             imageUndoButton.leadingAnchor.constraint(greaterThanOrEqualTo: imageUndoLabel.trailingAnchor, constant: 8),
         ])
         imageUndoBar.isHidden = true
-        contentStack.setCustomSpacing(0, after: imageUndoBar)
     }
 
     @objc private func didTapEmoteTool() {
@@ -6451,9 +6472,47 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func refreshImageUndoBar() {
         let visible = pendingRemovedImage != nil
         imageUndoBar.isHidden = !visible
-        contentStack.setCustomSpacing(visible ? 8 : 0, after: imageUndoBar)
-        // 撤销条显隐改内容栈高，正文高滞留则底部留空（同 refreshQuoteSection）。
-        updateTextViewHeight()
+        refreshTransientBarContainer()
+    }
+
+    /// 浮层容器显隐：两条全藏时容器藏起；任一条出现时淡入＋上滑
+    ///（减动效或未进窗口时直设终值；条已不在内容栈，不再改内容高）。
+    private func refreshTransientBarContainer() {
+        guard isViewLoaded else { return }
+        let visible = !pendingUploadBar.isHidden || !imageUndoBar.isHidden
+        if visible {
+            guard transientBarContainer.isHidden || transientBarContainer.alpha < 1 else { return }
+            transientBarContainer.layer.removeAllAnimations()
+            transientBarContainer.isHidden = false
+            if UIAccessibility.isReduceMotionEnabled || transientBarContainer.window == nil {
+                transientBarContainer.alpha = 1
+                transientBarContainer.transform = .identity
+            } else {
+                transientBarContainer.alpha = 0
+                transientBarContainer.transform = CGAffineTransform(translationX: 0, y: 8)
+                UIView.animate(withDuration: BearyMotion.localStateDuration, animations: {
+                    self.transientBarContainer.alpha = 1
+                    self.transientBarContainer.transform = .identity
+                })
+            }
+        } else {
+            guard !transientBarContainer.isHidden else { return }
+            transientBarContainer.layer.removeAllAnimations()
+            if UIAccessibility.isReduceMotionEnabled || transientBarContainer.window == nil {
+                transientBarContainer.alpha = 0
+                transientBarContainer.isHidden = true
+            } else {
+                UIView.animate(withDuration: BearyMotion.localStateDuration, animations: {
+                    self.transientBarContainer.alpha = 0
+                    self.transientBarContainer.transform = CGAffineTransform(translationX: 0, y: 8)
+                }, completion: { _ in
+                    // 动画期间若又有条要显示，不抢藏。
+                    if self.pendingUploadBar.isHidden && self.imageUndoBar.isHidden {
+                        self.transientBarContainer.isHidden = true
+                    }
+                })
+            }
+        }
     }
 
     @objc private func didTapRemoveImage(_ sender: UIButton) {
@@ -7332,9 +7391,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(shouldShow ? 4 : 0, after: pendingUploadBar)
         if pendingUploadBar.isHidden != !shouldShow {
             pendingUploadBar.isHidden = !shouldShow
-            updatePreferredContentSize()
-            // 待确认条显隐改内容栈高，正文高滞留则底部留空（同 refreshQuoteSection）。
-            updateTextViewHeight()
+            // 2026-11-27 浮条：条已不在内容栈，显隐不再改内容高，只刷新浮层。
+            refreshTransientBarContainer()
         }
     }
 
