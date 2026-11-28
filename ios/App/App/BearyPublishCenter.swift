@@ -806,7 +806,7 @@ final class BearyPublishCenter {
                 guard let self = self else { return }
                 guard case .success(let entry) = result,
                       entry.updatedAt == nil,
-                      entry.imageKeys == publishedKeys else { return }
+                      entry.images == publishedKeys else { return }
                 var newKeys = publishedKeys
                 for (index, key) in swapped where index < newKeys.count {
                     newKeys[index] = key
