@@ -1209,14 +1209,6 @@ class BearyEditProfileViewController: UIViewController {
         present(picker, animated: BearyMotion.animated(true), completion: nil)
     }
 
-    private func presentSimpleAlert(message: String) {
-        // 原 UIAlertController(.alert) 单「知道了」钮，改走共享底部弹窗
-        // （无标题确认框同款做法：标题传空，只显说明＋按钮）。
-        BearyConfirmSheet.show(from: self, title: "", message: message, actions: [
-            BearyConfirmSheet.Action(title: "知道了", style: .default),
-        ])
-    }
-
     // MARK: - 保存（网页 edSaveAll 顺序：先 handle、后 profile）
 
     @objc private func saveButtonTapped() {

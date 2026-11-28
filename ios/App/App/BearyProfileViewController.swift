@@ -4561,14 +4561,6 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    private func presentSimpleAlert(message: String) {
-        // 底部弹窗迁移：原 UIAlertController(.alert)，无标题、message 原样、
-        // 单个「知道了」钮——文案与语义不变，只换呈现容器。
-        BearyConfirmSheet.show(from: self, title: "", message: message, actions: [
-            BearyConfirmSheet.Action(title: "知道了", style: .default),
-        ])
-    }
-
     // MARK: - 批 D：个性化模块（签名 / 月历 / 统计 / 那年今日 / 随机漫步 / 年度回顾）
     //
     // 语料策略（防「半截语料撒谎」）：模块不用日记 tab 已加载的分页（那只是前 50 篇），

@@ -298,3 +298,14 @@ final class BearyConfirmSheetViewController: UIViewController, BearySystemSheetS
         onDismissWithoutAction?()
     }
 }
+
+extension UIViewController {
+    /// 无标题＋说明＋单个「知道了」钮的底部确认弹窗。
+    /// （编辑资料页与个人页两处逐字相同的 presentSimpleAlert 收敛到此；
+    /// 文案与按钮样式不变。）
+    func presentSimpleAlert(message: String) {
+        BearyConfirmSheet.show(from: self, title: "", message: message, actions: [
+            BearyConfirmSheet.Action(title: "知道了", style: .default),
+        ])
+    }
+}
