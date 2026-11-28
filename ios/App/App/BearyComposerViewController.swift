@@ -1960,18 +1960,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshHeadlineChrome()
     }
 
-    /// 扫查组（#433，适配 #421 后的 attributed 标题模型）：标题长度按
-    /// 服务端口径计——服务端 normalizeEntryTitle 用 JS `[...t].length`
-    /// （码点数），Swift `.count` 是字素簇数，两者对 ZWJ 组合表情
-    /// （如 👨‍👩‍👧‍👦 计 1 簇、7 码点）、结合符不一致：30 簇内含组合表情时
-    /// 客户端放行、服务端 400 title too long，发布只剩一句通用失败。
-    /// 故此处按送往服务端的序列化串（headlineText：附件已还原为记号）
-    /// 的 unicodeScalars（= 码点数）计量；截断按簇从尾删，永不拆散一个
-    /// 组合表情（prefix(30) 按簇截同样会漏码点，不可用）；若截断点落在
-    /// 末尾心情记号内，整条记号一起删，免得记号被截成半截 literal 文本。
+    /// 标题长度按字素簇计（Li 2026-11-23 定：规范口径就是字素簇，用户数
+    /// 的是“字”——一个表情计 1 字；Swift `.count` 即字素簇数）。
+    /// 注意：服务端 normalizeEntryTitle 仍用 JS `[...t].length`（码点数）
+    /// 校验，30 簇内含多个 ZWJ 组合表情时码点数可能超 30，发布会被服务端
+    /// 400 title too long 拒掉——这是字素簇口径留下的已知缺口，服务端
+    /// 校验口径另核，本支只改 App 侧计数与截断。截断按簇从尾删，永不拆散
+    /// 一个组合表情；若截断点落在末尾心情记号内，整条记号一起删，免得记号
+    /// 被截成半截 literal 文本。
     private static func truncatedHeadline(_ text: String) -> String {
         var result = text
-        while result.unicodeScalars.count > headlineMaxLength {
+        while result.count > headlineMaxLength {
             if let range = result.range(of: #"\[mood:[a-z_]+\]$|\[gif:[a-z0-9]+\]$"#, options: .regularExpression) {
                 result.removeSubrange(range)
             } else {
@@ -1990,12 +1989,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 否则中文输入法组词会被打断。
         if headlineField.markedTextRange == nil {
             let plain = BearyText.inlinePlainText(from: headlineField.attributedText)
-            if plain.unicodeScalars.count > Self.headlineMaxLength {
+            if plain.count > Self.headlineMaxLength {
                 setHeadlineText(Self.truncatedHeadline(plain))
                 headlineField.selectedRange = NSRange(location: headlineField.attributedText?.length ?? 0, length: 0)
                 // 112：此前超长直接取 prefix(30) 是静默截断；本轮首次截断给一次 toast。
                 showHeadlineLimitToastIfNeeded()
-            } else if plain.unicodeScalars.count < Self.headlineMaxLength {
+            } else if plain.count < Self.headlineMaxLength {
                 // 注意是严格 < 30 才重置：截断落点正好 30 不算回落，见标记处注释。
                 headlineLimitToastShown = false
             }
