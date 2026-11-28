@@ -206,25 +206,6 @@ final class BearyDepthBackgroundViewController: UIViewController {
         return buttonValue
     }()
 
-    /// 已应用态禁用 CTA 置灰色：照 Plus 页 v32 定版已开通 CTA（BearyPlusPageViewController
-    /// subscribedButtonBackground／subscribedButtonText）：浅 #ECECEC 底＋#9A9A9A 字／
-    /// 深 #2C2C30 底＋#8E8E93 字。.custom 按钮禁用后不自动置灰，须随 isEnabled 一起显式换色。
-    private static var disabledButtonBackground: UIColor {
-        UIColor { trait in
-            trait.userInterfaceStyle == .dark
-                ? UIColor(red: 44.0 / 255.0, green: 44.0 / 255.0, blue: 48.0 / 255.0, alpha: 1)
-                : UIColor(red: 236.0 / 255.0, green: 236.0 / 255.0, blue: 236.0 / 255.0, alpha: 1)
-        }
-    }
-
-    private static var disabledButtonText: UIColor {
-        UIColor { trait in
-            trait.userInterfaceStyle == .dark
-                ? UIColor(red: 142.0 / 255.0, green: 142.0 / 255.0, blue: 147.0 / 255.0, alpha: 1)
-                : UIColor(red: 154.0 / 255.0, green: 154.0 / 255.0, blue: 154.0 / 255.0, alpha: 1)
-        }
-    }
-
     private lazy var plusFooterLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
@@ -321,7 +302,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
             thumbnailStack.bottomAnchor.constraint(equalTo: thumbnailScrollView.contentLayoutGuide.bottomAnchor),
             thumbnailStack.heightAnchor.constraint(equalTo: thumbnailScrollView.frameLayoutGuide.heightAnchor),
             thumbnailScrollView.heightAnchor.constraint(equalToConstant: 44),
-            applyButton.heightAnchor.constraint(equalToConstant: 50),
+            applyButton.heightAnchor.constraint(equalToConstant: 44),
         ])
         // 进页预热：只解当前已应用主题（个人页封面已在用，多半已缓存）；
         // 其余页由滑动按需建页，不再十六张一次全幅解码
@@ -517,8 +498,8 @@ final class BearyDepthBackgroundViewController: UIViewController {
             // .custom 禁用后不自动置灰：背景与标题色随 isEnabled 一起换成置灰值。
             applyButton.setTitle(NSLocalizedString("depth_picker.apply_cover", comment: ""), for: .normal)
             applyButton.isEnabled = false
-            applyButton.backgroundColor = Self.disabledButtonBackground
-            applyButton.setTitleColor(Self.disabledButtonText, for: .normal)
+            applyButton.backgroundColor = BearyColors.disabledCTAButtonBackground
+            applyButton.setTitleColor(BearyColors.disabledCTAButtonText, for: .normal)
         } else if theme != .none && !isPlusValue {
             applyButton.setTitle(NSLocalizedString("depth_picker.plus_only", comment: ""), for: .normal)
             applyButton.isEnabled = true

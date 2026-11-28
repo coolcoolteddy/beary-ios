@@ -174,19 +174,19 @@ final class BearyHeatmapView: UIView {
         let gridHeight = gridArea.heightAnchor.constraint(equalToConstant: 0)
         gridAreaHeightConstraint = gridHeight
         NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 14),
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             gridArea.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
-            gridArea.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            gridArea.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            gridArea.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            gridArea.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             gridHeight,
             legendStack.topAnchor.constraint(equalTo: gridArea.bottomAnchor, constant: 8),
-            legendStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            legendStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             hintLabel.topAnchor.constraint(equalTo: legendStack.bottomAnchor, constant: 6),
-            hintLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            hintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            hintLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            hintLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            hintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            hintLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
         ])
     }
 

@@ -36,7 +36,7 @@ enum BearyBurstParticles {
     /// 点赞红液滴：7 滴、2–4pt、9–19pt、480–620ms、沿飞行方向拉伸 1.3、不旋转。
     /// 颜色只用点按后填色本体（likeRed #ff3b30，单色），不配浅色渐变。
     private static let likeStyle = Style(
-        colors: [UIColor(red: 1, green: 59.0 / 255.0, blue: 48.0 / 255.0, alpha: 1)],
+        colors: [BearyColors.likeRed],
         count: 7, sizeMin: 2, sizeMax: 4, distMin: 9, distMax: 19,
         durMin: 0.48, durMax: 0.62, spin: false, stretch: 1.3)
 

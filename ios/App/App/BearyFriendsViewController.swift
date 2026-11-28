@@ -127,19 +127,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         // 叠 12% 语义红，与旧“red 0.12 透在 bg 上”的观感一致（深浅模式各自
         // 按当前 trait 混合）。
         refreshFailedBanner.translatesAutoresizingMaskIntoConstraints = false
-        refreshFailedBanner.backgroundColor = UIColor { trait in
-            let base = BearyColors.bg.resolvedColor(with: trait)
-            let tint = BearyColors.red.resolvedColor(with: trait)
-            var baseR: CGFloat = 0, baseG: CGFloat = 0, baseB: CGFloat = 0, baseA: CGFloat = 0
-            var tintR: CGFloat = 0, tintG: CGFloat = 0, tintB: CGFloat = 0, tintA: CGFloat = 0
-            base.getRed(&baseR, green: &baseG, blue: &baseB, alpha: &baseA)
-            tint.getRed(&tintR, green: &tintG, blue: &tintB, alpha: &tintA)
-            let a: CGFloat = 0.12
-            return UIColor(red: tintR * a + baseR * (1 - a),
-                           green: tintG * a + baseG * (1 - a),
-                           blue: tintB * a + baseB * (1 - a),
-                           alpha: 1)
-        }
+        refreshFailedBanner.backgroundColor = BearyColors.failureBannerBackground()
         refreshFailedBanner.isHidden = true
         refreshFailedBanner.alpha = 0
         view.addSubview(refreshFailedBanner)
