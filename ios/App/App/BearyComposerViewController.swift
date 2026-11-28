@@ -3913,7 +3913,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateTextViewHeight()
     }
 
-    // MARK: - 工具栏（C1：左 [图片][定位][表情][@][引用][标签]、右 [字数圆环]；
+    // MARK: - 工具栏（C1：左 [图片][引用][定位][@][标签][表情]、右 [字数圆环]；
     // 草稿 pill 已随编辑器改版（2026-10-29）移到顶栏发布钮左边，不再在此处；
     // 容器贴键盘上方、不在内容栈里，见 buildLayout；本函数只布容器内部，
     // 分隔线 + 工具行约束不变，工具行左右仍与内容栈边距同宽 16）
@@ -3938,7 +3938,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageToolButton.tintColor = BearyColors.ink
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
         imageToolButton.bearyAddPressFeedback()
-        // 批 E：定位钮插在图片钮右边、表情钮之前（左组顺序：图片 → 定位 → 表情 → @ → 引用 → #；天气钮已删，天气自动显示在底部元信息行）。
+        // 左组顺序：图片 → 引用 → 定位 → @ → 标签 → 表情（2026-11-27 Li 定：工具栏按内容顺序排，表情无对应内容区、放最后；天气钮已删，天气自动显示在底部元信息行）。
         locationToolButton.setImage(BearyLocationIcon.image(pointSize: 24), for: .normal)
         locationToolButton.accessibilityLabel = "添加位置"
         locationToolButton.tintColor = BearyColors.ink
@@ -3967,7 +3967,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
-        for button in [imageToolButton, locationToolButton, emoteToolButton, recipientToolButton, quoteToolButton, tagToolButton] {
+        for button in [imageToolButton, quoteToolButton, locationToolButton, recipientToolButton, tagToolButton, emoteToolButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -4013,13 +4013,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.addSubview(draftStatusBanner)
         toolbarContainer.addSubview(toolRow)
         toolRow.addArrangedSubview(imageToolButton)
-        toolRow.addArrangedSubview(locationToolButton)
-        toolRow.addArrangedSubview(emoteToolButton)
-        toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(quoteToolButton)
+        toolRow.addArrangedSubview(locationToolButton)
+        toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(tagToolButton)
+        toolRow.addArrangedSubview(emoteToolButton)
         // v6-5：字数圆环并进左侧图标组——不再被 spacer 顶到右端；圆环本身不是按钮，
-        // 与标签钮之间无热区重叠问题，故标签→圆环用自定义间距 8（见下方 setCustomSpacing），
+        // 与表情钮之间无热区重叠问题，故表情→圆环用自定义间距 8（见下方 setCustomSpacing），
         // 不占 toolRow.spacing 的 20；数字已隐藏，只留圆环。
         // v6-6：正文区草稿保存文案组（draftStatusGroup，图标＋文案＋级别逻辑全在 buildStatusRow/
         // updateDraftStatusLabel）挪到工具栏右端（spacer 之后）；109：已保存态文案优先保全、
@@ -4040,11 +4040,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolRow.addArrangedSubview(draftStatusGroup)
         // 第 7 轮属实项 4：只有 6 段工具钮之间的间距参与热区重叠，正常为 20（toolRow.spacing）。
         // 其余 3 段不夹两个热区，可收窄以保窄屏装得下，spacer 本身吸 slack：
-        // 标签→圆环 8（圆环不可点），圆环→spacer 0、spacer→草稿组 0。
+        // 表情→圆环 8（圆环不可点），圆环→spacer 0、spacer→草稿组 0。
         // 按此算：320 宽容器 288 时只留对勾态、字数未超限总宽 = 7×24 + 6×20 + 8 + 18 + 15 = 329 > 288，
         // 间距自适应收到约 13.2 装下；字数超限（圆环组约 59）时只留对勾也约 322 > 288，
         // 草稿状态改走独立行（见 applyDraftStatusToolbarFit）。
-        toolRow.setCustomSpacing(8, after: tagToolButton)
+        toolRow.setCustomSpacing(8, after: emoteToolButton)
         toolRow.setCustomSpacing(0, after: charGroupStack)
         toolRow.setCustomSpacing(0, after: spacer)
         toolbarToolRow = toolRow
@@ -5096,7 +5096,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// D4：工具行间距自适应。fixedWidth 是工具行里除 6 段工具间距外的固定总宽
-    /// （7×24 图标 + 标签→圆环 8 + 圆环组 + 尾部草稿组）；containerWidth 是容器宽。
+    /// （7×24 图标 + 表情→圆环 8 + 圆环组 + 尾部草稿组）；containerWidth 是容器宽。
     /// 20 间距装得下就返回 20；装不下时收窄到刚好装下，下限 12——320 宽、字数超限
     /// （圆环组约 59）只留对勾态时固定部分约 250，(288−250)/6 ≈ 6.3 < 12，装不下，
     /// 走独立行兜底（见 applyDraftStatusToolbarFit）。
@@ -5122,7 +5122,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func setToolbarToolRowSpacing(_ spacing: CGFloat, in toolRow: UIStackView) {
         if toolRow.spacing != spacing { toolRow.spacing = spacing }
         let cap = max(0, spacing / 2)
-        for button in [imageToolButton, locationToolButton, emoteToolButton, recipientToolButton, quoteToolButton] {
+        // 热区 cap 只给除末钮外的 5 个钮：末钮右侧是字数圆环（不可点），左侧邻钮已 cap，两边都不叠。
+        for button in [imageToolButton, quoteToolButton, locationToolButton, recipientToolButton, tagToolButton] {
             button.maxSideExpansion = cap
         }
     }
@@ -5130,7 +5131,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 109：草稿状态在工具栏里的宽度适配（只动 lvl2 文案显隐，不动图标与圆环）。
     /// D4：工具间距正常 20；仅当 20 间距下装不下容器时自适应收窄（下限 12），
     /// 字数环本身永不隐藏；窄屏仍由文案显隐兜底。
-    /// 390 宽：容器 358，7×24 图标 + 6 段工具间距 20 + 标签→圆环 8 + 圆环 18
+    /// 390 宽：容器 358，7×24 图标 + 6 段工具间距 20 + 表情→圆环 8 + 圆环 18
     /// + 状态组（对勾 15 + gap 5 + 文案约 39）= 约 373，20 间距下装不下，
     /// 间距自适应收到约 17.5，完整排下「✓ 已保存」。
     /// 320 宽：容器 288，只留对勾态、字数未超限 = 7×24 + 6×12 + 8 + 18 + 15 = 281 ≤ 288，
@@ -5197,7 +5198,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // level 2：文案显隐与分流按最小间距 12 判定——12 下装得下文案就显文案、
         // 间距自适应收窄兜底；只留对勾在 12 下仍装不下时，草稿状态改走独立行。
         let labelWidth = draftStatusLabel.intrinsicContentSize.width
-        // 只留对勾态在最小间距下的定宽：7×24 图标 + 6 段工具间距 12 + 标签→圆环 8
+        // 只留对勾态在最小间距下的定宽：7×24 图标 + 6 段工具间距 12 + 表情→圆环 8
         // + 圆环组 + 对勾 15；spacer 两侧自定义间距为 0、spacer 本身吸 slack，不进算式。
         let withoutLabel: CGFloat = 7 * 24 + 6 * 12 + 8 + charGroupWidth + 15
         if width >= withoutLabel + 5 + labelWidth {
