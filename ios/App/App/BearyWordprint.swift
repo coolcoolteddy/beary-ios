@@ -257,8 +257,10 @@ final class BearyWordprintView: UIView {
         wordLabel.textColor = BearyColors.ink
         wordLabel.text = item.word
         // 审计 N3：词语字号跟随系统字号（scaledFont，底数不变，默认外观一点不改）。
+        // 展示审计 G2-13：统计卡内（紧凑版）词字改统一小字号，不再按占比放大，
+        // 免得最大词比统计数字还大、在卡内争视觉；年报页全尺寸版仍按占比放大。
         if mode == .compact {
-            wordLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13 + 4 * ratio, weight: .semibold))
+            wordLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
         } else {
             wordLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15 + 7 * ratio, weight: .semibold))
         }
