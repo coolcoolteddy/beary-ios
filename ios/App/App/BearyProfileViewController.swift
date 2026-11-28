@@ -9360,7 +9360,6 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.updateEntryInAllTabs(entry: updated)
                     BearyDiaryPin.notePinResult(entryId: entryId, pinned: updated.isPinned)
                     strongSelf.tableView.reloadData()
-                    BearyToast.show(in: strongSelf.view, message: pinning ? "已置顶" : "已取消置顶")
                 case .failure(let err):
                     strongSelf.updateEntryInAllTabs(entry: originalTarget)
                     if let prev = originalPrevious {
