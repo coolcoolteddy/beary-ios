@@ -6,9 +6,12 @@ import Foundation
 /// 一律调 `canUsePlusFeature` 判断；以后要收 Plus 时只改 `isOpenForAll` 这一处，
 /// 各调用方不用动。
 ///
-/// 真实 Plus 口径（唯一）：/me 下发的 plus 为 true，或 plusUntil 未过期
-///（许愿墙旧口径：永久阈值 4102444800000，即 2100-01-01；plusFree 服务端
-/// 下发但 App 无人读，暂不纳入——以后服务端明确口径后再并进来）。
+/// 真实 Plus 口径（唯一）：与服务端 isPlusEffective 同口径
+/// max(plus_until, plus_free_until) > now——/me 下发的 plus 为 true，
+/// 或 plusUntil 未过期，或 plusFree 为 true（限免期内）。
+///（许愿墙旧口径：永久阈值 4102444800000，即 2100-01-01；/me 的
+/// plus_until 本身已是 max 后的有效值，plusFree 是限免期是否在期内的
+/// 布尔值，并进来与服务端同口径。）
 ///
 /// TF 本地 Plus（2026-11-26 Li 定）：测试版上买 Plus 只在本地生效；购买
 /// 完成仍发一次 plus-verify 只记账（服务端先记账、沙盒非白名单不发权益），
@@ -44,9 +47,11 @@ enum BearyPlusGate {
     }
 
     /// 真实 Plus（三态）：true 已确认是 Plus；false 已确认不是；
-    /// nil 未确认——plus 与 plusUntil 两个字段都缺失，调用方不得直接判非 Plus。
+    /// nil 未确认——plus、plusUntil 与 plusFree 三个字段都缺失，
+    /// 调用方不得直接判非 Plus。
     static func realPlusState(user: MeUser?) -> Bool? {
         if user?.plus == true { return true }
+        if user?.plusFree == true { return true }
         if let until = user?.plusUntil {
             let now = Int(Date().timeIntervalSince1970 * 1000)
             return until >= 4102444800000 || until > now
