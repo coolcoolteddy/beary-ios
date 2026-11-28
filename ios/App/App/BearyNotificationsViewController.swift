@@ -136,7 +136,6 @@ final class BearyNotificationsViewController: UIViewController {
     private let maxRefreshLimit = 200
 
     private enum VisibleState {
-        case loading
         case list
         case empty
         case error
@@ -267,7 +266,8 @@ final class BearyNotificationsViewController: UIViewController {
     private var lastFullLoadLatestId: Int?
     private var pollTimer: Timer?
     private var loginPromptShown = false
-    private var visibleState: VisibleState = .loading
+    // 展示审计 G6-A15：首屏口径与消息页统一——首拉未落定先空表，不转圈。
+    private var visibleState: VisibleState = .list
     private var hasDisplayedPage = false
     /// 审计四轮增量 02：通知快照回填代次——切号／401 清场即 +1，在途旧号
     /// 快照回包凭此丢弃（只比账号不够——切走又切回同一账号时 uid 相同，
@@ -2899,9 +2899,8 @@ final class BearyNotificationsViewController: UIViewController {
     // MARK: - 态与提示
 
     private func refreshVisibleState() {
-        if isLoadingFirstPage && items.isEmpty && !hasDisplayedPage {
-            visibleState = .loading
-        } else if firstLoadFailed && items.isEmpty {
+        // 首拉未落定先按 .list（空表，与消息页同口径），不走 .loading 转圈。
+        if firstLoadFailed && items.isEmpty {
             visibleState = .error
         } else if items.isEmpty {
             visibleState = .empty
@@ -2940,15 +2939,6 @@ final class BearyNotificationsViewController: UIViewController {
             return
         }
         switch visibleState {
-        case .loading:
-            centralSpinner.startSpinning()
-            errorStateView.isHidden = true
-            stateIconView.isHidden = true
-            stateMailView.isHidden = true
-            stateMailView.stop()
-            stateTitleLabel.isHidden = true
-            stateSubtitleLabel.isHidden = true
-            stateButton.isHidden = true
         case .empty:
             centralSpinner.stopSpinning()
             errorStateView.isHidden = true
