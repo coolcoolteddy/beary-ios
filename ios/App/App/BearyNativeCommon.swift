@@ -5012,7 +5012,35 @@ enum BearyReportFlow {
 }
 
 /// 拉黑流程（他人主页“更多”共用）：确认 → 提交 → 成功后广播，调用方据此清理条目与离场。
+/// 乐观更新（2026-11-28 Li 定做）：点按即最终态——先翻本地标记＋广播，调用方
+/// 据此立即清条目；服务端回包只作确认，失败时撤标记＋toast，调用方可重试。
+/// 只乐观翻标记，不乐观清条目：清条目仍走既有的 .bearyDidBlockUser 广播，
+/// 本处不另写清行代码；失败时已清掉的行不再逐行插回（无反向广播），
+/// 下次拉取时服务端真相（未拉黑）会把它们带回来。
 enum BearyBlockFlow {
+    /// 在途拉黑（userId 集）：替代旧 BearyFlowBusy 拦截层的防重入作用——
+    /// 乐观更新后发起页不再转圈拦触摸，在途二次点按直接忽略，等首发终结。
+    /// 全程主线程访问（点按动作与回包处理都在主线程）。
+    private static var inFlight = Set<Int>()
+
+    /// 可重试的失败：网络错误（未达／超时）与 5xx／408／429。
+    /// 口径与 BearyAPI.isTransientPublishError 同款，另补 .server 的状态位
+    /// （拉黑走 requestVoid，5xx 带标准错误体时会落 .server(code, status)）。
+    /// 其余（4xx 业务错误、401／404、解析失败、取消）立刻回滚，不重试。
+    private static func isRetryableBlockError(_ error: APIError) -> Bool {
+        switch error {
+        case .network:
+            return true
+        case .http(let status, _):
+            return status >= 500 || status == 408 || status == 429
+        case .server(_, let status):
+            guard let status = status else { return false }
+            return status >= 500 || status == 408 || status == 429
+        case .decoding, .unauthorized, .authFailure, .notFound, .cancelled:
+            return false
+        }
+    }
+
     static func block(from vc: UIViewController, userId: Int, userName: String?, onDone: ((Bool) -> Void)? = nil) {
         // 审计 2026-11-02 弹窗组：present 前统一守卫；守卫未过即未执行拉黑，
         // 按失败回调调用方（调用方只在 success 时清理，false 为空操作）。
@@ -5020,31 +5048,64 @@ enum BearyBlockFlow {
         let name = (userName ?? "").isEmpty ? "这位用户" : userName!
         BearyConfirmSheet.show(from: vc, title: "拉黑\(name)？", message: "拉黑后将不再看到 TA 的日记，可在设置页「已拉黑用户」里解除。", actions: [
             BearyConfirmSheet.Action(title: "拉黑", style: .destructive) {
-                let busy = BearyFlowBusy.show(in: vc.view)
-                // 第六轮审计 02：发起时拍身份快照，成功回包先校验——旧账号的
+                // 在途二次点按直接忽略，等首发终结再放行（防重复发请求）。
+                guard !inFlight.contains(userId) else { return }
+                inFlight.insert(userId)
+                // 第六轮审计 02：发起时拍身份快照，回包先校验——旧账号的
                 // 拉黑回包不得写进新账号的拉黑缓存、不得发广播、不得弹提示；
                 // 身份已变时按未完成回调调用方（调用方只在 success 时清理）。
                 let identity = BearyIdentityGuard.capture()
-                BearyAPI.shared.blockUser(userId: userId) { result in
-                    DispatchQueue.main.async {
-                        BearyFlowBusy.hide(busy)
-                        switch result {
-                        case .success:
-                            guard BearyIdentityGuard.stillValid(identity) else { onDone?(false); return }
-                            BearyBlockedStore.markBlocked(userId)
-                            // 跳动审计第 6 条：拉黑即断互关，该作者的仅好友引用验证标记同清。
-                            BearyDiaryCardCell.invalidateQuoteMutualAccess(forAuthorId: userId)
-                            // v15：仅好友回应互关验证结论同清。
-                            BearyDiaryCardCell.invalidateEmoteMutualAccess(forAuthorId: userId)
-                            NotificationCenter.default.post(name: .bearyDidBlockUser, object: userId)
-                            BearyToast.show(in: vc.view, message: "已拉黑")
-                            onDone?(true)
-                        case .failure:
-                            BearyToast.show(in: vc.view, message: "拉黑失败，请重试")
-                            onDone?(false)
+                // 乐观更新：先写新值——翻本地标记、清互关验证缓存、发广播，
+                // 调用方据此立即清条目；再发请求等服务端确认。失败回滚时
+                // 只撤标记（见 finish），不补发反向广播。
+                // 已是拉黑态的人再点拉黑是空操作：标记本就存在，失败不撤标记。
+                let wasAlreadyBlocked = BearyBlockedStore.isBlocked(userId)
+                BearyBlockedStore.markBlocked(userId)
+                // 跳动审计第 6 条：拉黑即断互关，该作者的仅好友引用验证标记同清。
+                BearyDiaryCardCell.invalidateQuoteMutualAccess(forAuthorId: userId)
+                // v15：仅好友回应互关验证结论同清。
+                BearyDiaryCardCell.invalidateEmoteMutualAccess(forAuthorId: userId)
+                NotificationCenter.default.post(name: .bearyDidBlockUser, object: userId)
+                BearyToast.show(in: vc.view, message: NSLocalizedString("block.toast.blocked", comment: ""))
+                // 终结：成功调 onDone(true)；失败回滚标记＋toast＋onDone(false)。
+                // onDone(true) 只在服务端确认后调——其唯一调用方（私信页）
+                // 据此离场，乐观离场会把失败 toast 扔在已关的页面上、原地无法重试。
+                let finish: (Bool) -> Void = { success in
+                    _ = inFlight.remove(userId)
+                    guard BearyIdentityGuard.stillValid(identity) else { onDone?(false); return }
+                    if success {
+                        onDone?(true)
+                    } else {
+                        // 失败回滚：只撤本次乐观翻的标记；已是拉黑态的不动。
+                        // 撤标记自带一次 refresh 向服务端对齐（见 removeBlocked
+                        // 注释），在途旧刷新由代次守门，不会把刚撤的标记再写回来。
+                        if !wasAlreadyBlocked {
+                            BearyBlockedStore.removeBlocked(userId)
+                        }
+                        BearyToast.show(in: vc.view, message: NSLocalizedString("block.toast.blockFailed", comment: ""))
+                        onDone?(false)
+                    }
+                }
+                // 后台重试一次：网络／5xx／408／429 才重发（立即重发，无退避，
+                // 与 GET 读请求口径一致）；其余失败立刻终结回滚。
+                // 重发前重比身份快照——期间切号即停，不拿新号 cookie 重发旧号请求。
+                func attempt(retried: Bool) {
+                    BearyAPI.shared.blockUser(userId: userId) { result in
+                        DispatchQueue.main.async {
+                            switch result {
+                            case .success:
+                                finish(true)
+                            case .failure(let error):
+                                if !retried, isRetryableBlockError(error), BearyIdentityGuard.stillValid(identity) {
+                                    attempt(retried: true)
+                                } else {
+                                    finish(false)
+                                }
+                            }
                         }
                     }
                 }
+                attempt(retried: false)
             },
         ])
     }
