@@ -4102,7 +4102,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             chip.setTitle("#" + tag + " ×", for: .normal)
             chip.titleLabel?.font = UIFont.systemFont(ofSize: 13)
             chip.titleLabel?.numberOfLines = 1
-            chip.titleLabel?.lineBreakMode = .byTruncatingTail
+            // 展示审计 G5-16：单个标签不截断——本行横向滚动、chip 按内容宽，
+            // 不设尾部截断模式（原 byTruncatingTail 是留后患的口径，与规范不一致）。
             chip.titleLabel?.adjustsFontSizeToFitWidth = false
             chip.setTitleColor(BearyColors.ink, for: .normal)
             chip.backgroundColor = BearyColors.surface2
