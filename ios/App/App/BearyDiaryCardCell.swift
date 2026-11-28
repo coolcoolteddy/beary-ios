@@ -3926,6 +3926,19 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 不再重播填充淡入）；失败按原模型回滚 + 拒绝动效 + 通用提示。
     /// 取消点赞双向即时（2026-10-29 定版，覆盖 pre-unlike 只改视图旧口径）：
     /// 抬起确认时立即褪色、计数 -1，失败同样回滚。
+    /// 离线已排队提示：卡片是 cell，toast 挂自己身上会被裁剪；
+    /// 沿响应链找宿主 VC，挂它 view 上（与详情页 toast 同款落点）。
+    private func showOfflineQueuedToast() {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let vc = current as? UIViewController {
+                BearyToast.show(in: vc.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                return
+            }
+            responder = current.next
+        }
+    }
+
     private func feedLikeTapped() {
         // 按下已给过先行反馈时抬起不再重播（否则震动来两次）；
         // 守卫失败时把按下预览复原（按下与抬起之间状态几乎不可能变，纯防御）。
@@ -3981,6 +3994,13 @@ class BearyDiaryCardCell: UITableViewCell {
             clearLikeBurst()
         }
         BearySoundPlayer.play(targetLiked ? .likePop : .unlikeSoft)
+        if BearyConnectivity.isOffline && !likeInFlight {
+            // 无网且无在途请求：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+            // 有在途请求时不落盘，只在内存记最新意图，等在途回包时再落盘。
+            BearyOfflineOutbox.enqueueLike(entryId: entryIdValue, liked: targetLiked)
+            showOfflineQueuedToast()
+            return
+        }
         // 串行提交（详情页 submitLike 同款）：在途时只记最新意图，不并行发请求。
         if likeInFlight {
             pendingLikeTarget = (entryId: entryIdValue, target: targetLiked)
@@ -4021,18 +4041,33 @@ class BearyDiaryCardCell: UITableViewCell {
                     // 会再炸一次）；取消点赞不炸。
                     strongSelf.onInteractionChanged?(entryId, strongSelf.currentEntry?.likeCount, newLiked, nil)
                 case .failure(let err):
-                    // 失败回滚到最后服务端确认态（不是本次点按前的中间态），
-                    // 再走既有失败路径（拒绝动效 + 通用提示），不另起一套。
-                    strongSelf.currentEntry?.likedByMe = strongSelf.likeState.confirmed.liked
-                    strongSelf.currentEntry?.likeCount = strongSelf.likeState.confirmed.count
-                    strongSelf.updateLikeButton()
-                    // 回滚到未填色：在飞的点赞微粒一并清掉，屏幕只反映最新点按态。
-                    strongSelf.clearLikeBurst()
-                    if case .unauthorized = err {
-                        strongSelf.onRequireLogin?()
+                    if case .network = err {
+                        // 在途中断网：意图落盘排队，不回滚，先行态保留；
+                        // 有更新的点按意图时落盘该意图（更新的优先），否则落盘在途目标。
+                        // 联网后补发最后一次。
+                        if let pending = strongSelf.pendingLikeTarget, pending.entryId == entryId {
+                            strongSelf.pendingLikeTarget = nil
+                            BearyOfflineOutbox.enqueueLike(entryId: pending.entryId, liked: pending.target)
+                        } else {
+                            BearyOfflineOutbox.enqueueLike(entryId: entryId, liked: targetLiked)
+                        }
+                        strongSelf.showOfflineQueuedToast()
+                        strongSelf.likeInFlight = false
+                        return
                     } else {
-                        strongSelf.playDenyShake(on: strongSelf.likeButton)
-                        strongSelf.onActionFailed?()
+                        // 失败回滚到最后服务端确认态（不是本次点按前的中间态），
+                        // 再走既有失败路径（拒绝动效 + 通用提示），不另起一套。
+                        strongSelf.currentEntry?.likedByMe = strongSelf.likeState.confirmed.liked
+                        strongSelf.currentEntry?.likeCount = strongSelf.likeState.confirmed.count
+                        strongSelf.updateLikeButton()
+                        // 回滚到未填色：在飞的点赞微粒一并清掉，屏幕只反映最新点按态。
+                        strongSelf.clearLikeBurst()
+                        if case .unauthorized = err {
+                            strongSelf.onRequireLogin?()
+                        } else {
+                            strongSelf.playDenyShake(on: strongSelf.likeButton)
+                            strongSelf.onActionFailed?()
+                        }
                     }
                 }
                 strongSelf.likeInFlight = false
@@ -4088,6 +4123,13 @@ class BearyDiaryCardCell: UITableViewCell {
         // 收藏音随点按立即播（不等回包）；回包成功不再重播，失败只回滚、不补播。
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
         BearySoundPlayer.play(flipped ? .bookmarkTick : .deleteSwoosh)
+        if BearyConnectivity.isOffline && !bookmarkInFlight {
+            // 无网且无在途请求：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+            // 有在途请求时不落盘，只在内存记最新意图，等在途回包时再落盘。
+            BearyOfflineOutbox.enqueueBookmark(entryId: entryIdValue, bookmarked: flipped)
+            showOfflineQueuedToast()
+            return
+        }
         // 串行提交（点赞 submitLike 同款）：在途时只记最新意图，不并行发请求。
         if bookmarkInFlight {
             pendingBookmarkTarget = (entryId: entryIdValue, target: flipped)
@@ -4123,17 +4165,32 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.updateActionInteractivity()
                     strongSelf.onInteractionChanged?(entryId, nil, nil, newBookmarked)
                 case .failure(let err):
-                    // 失败回滚到最后服务端确认态，再走既有失败路径。
-                    strongSelf.currentEntry?.bookmarkedByMe = strongSelf.bookmarkState.confirmed
-                    strongSelf.updateBookmarkButton()
-                    // 回滚到未填色：在飞的收藏微粒一并清掉。
-                    BearyBurstParticles.clear(from: strongSelf.bookmarkButton)
-                    strongSelf.updateActionInteractivity()
-                    if case .unauthorized = err {
-                        strongSelf.onRequireLogin?()
+                    if case .network = err {
+                        // 在途中断网：意图落盘排队，不回滚，先行态保留；
+                        // 有更新的点按意图时落盘该意图（更新的优先），否则落盘在途目标。
+                        // 联网后补发最后一次。
+                        if let pending = strongSelf.pendingBookmarkTarget, pending.entryId == entryId {
+                            strongSelf.pendingBookmarkTarget = nil
+                            BearyOfflineOutbox.enqueueBookmark(entryId: pending.entryId, bookmarked: pending.target)
+                        } else {
+                            BearyOfflineOutbox.enqueueBookmark(entryId: entryId, bookmarked: target)
+                        }
+                        strongSelf.showOfflineQueuedToast()
+                        strongSelf.bookmarkInFlight = false
+                        return
                     } else {
-                        strongSelf.playDenyShake(on: strongSelf.bookmarkButton)
-                        strongSelf.onActionFailed?()
+                        // 失败回滚到最后服务端确认态，再走既有失败路径。
+                        strongSelf.currentEntry?.bookmarkedByMe = strongSelf.bookmarkState.confirmed
+                        strongSelf.updateBookmarkButton()
+                        // 回滚到未填色：在飞的收藏微粒一并清掉。
+                        BearyBurstParticles.clear(from: strongSelf.bookmarkButton)
+                        strongSelf.updateActionInteractivity()
+                        if case .unauthorized = err {
+                            strongSelf.onRequireLogin?()
+                        } else {
+                            strongSelf.playDenyShake(on: strongSelf.bookmarkButton)
+                            strongSelf.onActionFailed?()
+                        }
                     }
                 }
                 strongSelf.bookmarkInFlight = false

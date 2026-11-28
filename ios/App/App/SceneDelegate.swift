@@ -23,6 +23,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         // 远程推送（2026-11-25，私信）：授权已给时注册取 device token；
         // 未授权时不弹框，等现有本地通知流程授权后再补注册（见 BearyPushNotifications）。
         BearyPushNotifications.shared.registerIfAuthorized()
+        // 离线 outbox（审阅 #3）：冷启动起连接监控，离线→在线自动补发排队意图。
+        BearyOfflineOutbox.start()
         // 临时诊断（81 包，定根因后删除）：冷启动先记一行 launch，供下次启动判断上次是否卡在打开流程。
         DiagFile.mark("launch")
         // 反馈日志：生命周期只记固定事件名（不含任何用户内容）。
@@ -231,6 +233,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
         // fixall-sync 5-27 集成接线：被守卫挡下的同步在回前台时重跑（内部去重已覆盖已同步/在途）。
         BearyEntrySync.shared.kickForCurrentUser()
+        // 离线 outbox（审阅 #3）：回前台补发排队意图（在线变化已自动补发，
+        // 这里兜底监控首报未到、或补发中途又断网的队）。
+        BearyOfflineOutbox.flush()
     }
 
     /// 栏显隐查找（#47 修正）：setChromeHidden 在容器 VC 上，不在 SceneDelegate 上；
@@ -3048,6 +3053,12 @@ final class BearyChromeViewController: UIViewController {
         // 审计 P2-23：删除是作者动作——非作者不弹确认（服务端同样校验作者，客户端先拦）。
         let viewerId = SessionManager.shared.currentUser?.id
         guard entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId) else { return }
+        // 非幂等不进队（审阅 #3）：无网直接 toast，不弹确认、不改界面；
+        // 联网后用户再点一次删除。
+        if BearyConnectivity.isOffline {
+            showToast(message: NSLocalizedString("offline.toast.no_network", comment: ""))
+            return
+        }
         // 审计 r16 第 16 项：删除确认改走共享确认底 sheet（原系统 UIAlertController
         // .alert，标题/正文/按钮文案一字不动；行顺序按底 sheet 口径：删除行在上、
         // 取消行单独在下）。叉叉/遮罩/下滑关闭与点“取消”同义（不发请求）。

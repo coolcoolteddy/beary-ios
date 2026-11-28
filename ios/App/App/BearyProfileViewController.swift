@@ -3955,6 +3955,13 @@ class BearyProfileViewController: UIViewController {
             let requestSeq = followActionSeq
             followState = target
             applyFollowButton(animated: true)
+            if BearyConnectivity.isOffline && !followInFlight {
+                // 无网且无在途请求：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+                // 有在途请求时不落盘，只在内存记最新意图，等在途回包时再落盘。
+                BearyOfflineOutbox.enqueueFollow(userId: targetId, target: target)
+                BearyToast.show(in: view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                return
+            }
             // 串行提交（详情页 submitLike 同款）：在途时只记最新意图，不并行发请求。
             if followInFlight {
                 pendingFollowTarget = (authorId: targetId, target: target)
@@ -3981,6 +3988,13 @@ class BearyProfileViewController: UIViewController {
                 let requestSeq = self.followActionSeq
                 self.followState = target
                 self.applyFollowButton(animated: true)
+                if BearyConnectivity.isOffline && !self.followInFlight {
+                    // 无网且无在途请求：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+                    // 有在途请求时不落盘，只在内存记最新意图，等在途回包时再落盘。
+                    BearyOfflineOutbox.enqueueFollow(userId: targetId, target: target)
+                    BearyToast.show(in: self.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                    return
+                }
                 // 串行提交（详情页 submitLike 同款）：在途时只记最新意图，不并行发请求。
                 if self.followInFlight {
                     self.pendingFollowTarget = (authorId: targetId, target: target)
@@ -4025,6 +4039,19 @@ class BearyProfileViewController: UIViewController {
                         self.reloadProfile()
                     }
                 case .failure(let error):
+                    if case .network = error {
+                        // 在途中断网：意图落盘排队，不回滚，先行态保留。
+                        // 有更新的点按意图时落盘该意图（更新的优先），否则落盘在途目标。
+                        if let pending = self.pendingFollowTarget {
+                            self.pendingFollowTarget = nil
+                            BearyOfflineOutbox.enqueueFollow(userId: pending.authorId, target: pending.target)
+                        } else {
+                            BearyOfflineOutbox.enqueueFollow(userId: authorId, target: target)
+                        }
+                        BearyToast.show(in: self.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                        self.followInFlight = false
+                        return
+                    }
                     // 失败回滚到最后确认态；401 与关注分支同款走登录入口
                     // （onRequireLogin），登录后由用户重试取关，不弹失败 toast；
                     // 其他失败仍走原拒绝动效＋失败 toast（回关／关注／取关按目标态分流）。
@@ -9976,6 +10003,15 @@ class BearyProfileViewController: UIViewController {
             updateEntryInAllTabs(entry: cleared)
         }
         tableView.reloadData()
+        if BearyConnectivity.isOffline {
+            // 无网：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+            // pinBusy 复位，否则置顶钮永久卡住。旧置顶篇的清除由服务端
+            // 单槽位语义兜底（新置顶成功即旧篇失置顶），不另排一条。
+            pinBusy = false
+            BearyOfflineOutbox.enqueuePin(entryId: entryId, pinned: pinning)
+            BearyToast.show(in: view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+            return
+        }
         let completion: (Result<BearyAPI.PinResponse, APIError>) -> Void = { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -9997,22 +10033,29 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.tableView.reloadData()
                     BearyToast.show(in: strongSelf.view, message: pinning ? "已置顶" : "已取消置顶")
                 case .failure(let err):
-                    strongSelf.updateEntryInAllTabs(entry: originalTarget)
-                    if let prev = originalPrevious {
-                        strongSelf.updateEntryInAllTabs(entry: prev)
-                    }
-                    strongSelf.tableView.reloadData()
-                    if case .unauthorized = err {
-                        // 401 对齐通用规则（数据同步审阅 c）：只回滚，不弹 toast、
-                        // 不摇头——全局 onUnauthorized 已清态并走统一登录门。
+                    if case .network = err {
+                        // 在途中断网：意图落盘排队，不回滚，先行态保留；
+                        // 联网后补发最后一次。
+                        BearyOfflineOutbox.enqueuePin(entryId: entryId, pinned: pinning)
+                        BearyToast.show(in: strongSelf.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
                     } else {
-                        BearyToast.show(in: strongSelf.view, message: BearyDiaryPin.errorMessage(for: err, pinning: pinning))
-                        // reloadData 后布局未必已落定，下一 runloop 再取可见行摇头。
-                        DispatchQueue.main.async {
-                            guard let row = strongSelf.displayedEntries.firstIndex(where: { $0.id == entryId }),
-                                  let cell = strongSelf.tableView.cellForRow(at: IndexPath(row: row, section: 0)) as? BearyDiaryCardCell,
-                                  cell.cellEntryId == entryId else { return }
-                            cell.playPublishDenyShake()
+                        strongSelf.updateEntryInAllTabs(entry: originalTarget)
+                        if let prev = originalPrevious {
+                            strongSelf.updateEntryInAllTabs(entry: prev)
+                        }
+                        strongSelf.tableView.reloadData()
+                        if case .unauthorized = err {
+                            // 401 对齐通用规则（数据同步审阅 c）：只回滚，不弹 toast、
+                            // 不摇头——全局 onUnauthorized 已清态并走统一登录门。
+                        } else {
+                            BearyToast.show(in: strongSelf.view, message: BearyDiaryPin.errorMessage(for: err, pinning: pinning))
+                            // reloadData 后布局未必已落定，下一 runloop 再取可见行摇头。
+                            DispatchQueue.main.async {
+                                guard let row = strongSelf.displayedEntries.firstIndex(where: { $0.id == entryId }),
+                                      let cell = strongSelf.tableView.cellForRow(at: IndexPath(row: row, section: 0)) as? BearyDiaryCardCell,
+                                      cell.cellEntryId == entryId else { return }
+                                cell.playPublishDenyShake()
+                            }
                         }
                     }
                 }

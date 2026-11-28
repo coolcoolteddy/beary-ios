@@ -595,6 +595,238 @@ final class BearyHit44SegmentedControl: UISegmentedControl {
     }
 }
 
+// MARK: - 离线连接状态与离线 outbox（数据同步审阅 #3）
+// 幂等开关类（赞／藏／关注／置顶）在无网时落盘排队、联网后只发最后一次；
+// 非幂等（删除／改资料）不进队，调用点直接 toast「无网络」且不改界面。
+// 预检（isOffline）只是快路：监控首报到达前、或在途中断网时，
+// 仍由各写点失败分支的 .network 分流兜底进队。
+
+/// NWPathMonitor 驱动的在线状态：只在主线程读写；首次 path 回调前按在线算
+/// （监控通常立即回第一次 path；误判由在途 .network 分流兜底）。
+enum BearyConnectivity {
+    private static let monitor = NWPathMonitor()
+    private static var started = false
+    private static var offline = false
+    /// 离线→在线时回调一次（供 outbox 补发）；在线→离线不回调。
+    static var onBecameOnline: (() -> Void)?
+
+    static var isOffline: Bool {
+        startIfNeeded()
+        return offline
+    }
+
+    static func startIfNeeded() {
+        guard !started else { return }
+        started = true
+        monitor.pathUpdateHandler = { path in
+            DispatchQueue.main.async {
+                let nowOffline = path.status != .satisfied
+                let wasOffline = offline
+                offline = nowOffline
+                if wasOffline && !nowOffline {
+                    onBecameOnline?()
+                }
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "beary.connectivity"))
+    }
+}
+
+/// 离线 outbox：幂等开关类写意图的持久队列。
+/// 文件 beary_offline_outbox_<accountId>.json，Application Support 目录，
+/// DM 待发同款落盘口径（整文件 JSON、原子写）；同键只留最后一次
+/// （key = kind + entryId／userId）。文件损坏时丢弃旧队、不阻塞。
+/// 补发：在线变化或回前台时触发；逐条串行；收到任何服务端回包（成功或
+/// HTTP／业务失败）即删条、继续下一条——服务端已裁决，重试无意义，
+/// 界面以下次拉取为准对齐；只有传输层失败（.network）才保留并停链等下次。
+enum BearyOfflineOutbox {
+    struct QueuedWrite: Codable {
+        var kind: String // like / bookmark / follow / pin
+        var entryId: String?
+        var userId: Int?
+        var liked: Bool?
+        var bookmarked: Bool?
+        var followTarget: String? // following / mutual / followedBy / none
+        var pinned: Bool?
+        var enqueuedAtMs: Int
+    }
+
+    private enum FlushOutcome {
+        case drop // 删条，继续下一条
+        case keepStop // 保留，停链
+    }
+
+    private static var flushing = false
+
+    /// 冷启动接线（SceneDelegate willConnectTo 调一次）：起监控，
+    /// 离线→在线时自动补发。
+    static func start() {
+        BearyConnectivity.onBecameOnline = { BearyOfflineOutbox.flush() }
+        BearyConnectivity.startIfNeeded()
+    }
+
+    static func enqueueLike(entryId: String, liked: Bool) {
+        enqueue(QueuedWrite(kind: "like", entryId: entryId, userId: nil, liked: liked, bookmarked: nil, followTarget: nil, pinned: nil, enqueuedAtMs: nowMs()))
+    }
+
+    static func enqueueBookmark(entryId: String, bookmarked: Bool) {
+        enqueue(QueuedWrite(kind: "bookmark", entryId: entryId, userId: nil, liked: nil, bookmarked: bookmarked, followTarget: nil, pinned: nil, enqueuedAtMs: nowMs()))
+    }
+
+    static func enqueueFollow(userId: Int, target: BearyFollowState) {
+        let raw: String
+        switch target {
+        case .following: raw = "following"
+        case .mutual: raw = "mutual"
+        case .followedBy: raw = "followedBy"
+        case .none: raw = "none"
+        }
+        enqueue(QueuedWrite(kind: "follow", entryId: nil, userId: userId, liked: nil, bookmarked: nil, followTarget: raw, pinned: nil, enqueuedAtMs: nowMs()))
+    }
+
+    static func enqueuePin(entryId: String, pinned: Bool) {
+        enqueue(QueuedWrite(kind: "pin", entryId: entryId, userId: nil, liked: nil, bookmarked: nil, followTarget: nil, pinned: pinned, enqueuedAtMs: nowMs()))
+    }
+
+    static func flush() {
+        guard !flushing else { return }
+        guard !BearyConnectivity.isOffline,
+              let accountId = SessionManager.shared.currentUser?.id else { return }
+        let list = load(accountId: accountId)
+        guard !list.isEmpty else { return }
+        flushing = true
+        flushNext(list, accountId: accountId)
+    }
+
+    // MARK: - 内部
+
+    private static func nowMs() -> Int {
+        Int(Date().timeIntervalSince1970 * 1000)
+    }
+
+    private static func key(of write: QueuedWrite) -> String {
+        if let entryId = write.entryId { return write.kind + ":" + entryId }
+        if let userId = write.userId { return write.kind + ":u\(userId)" }
+        return write.kind
+    }
+
+    private static func fileURL(accountId: Int) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        if !FileManager.default.fileExists(atPath: base.path) {
+            try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
+        }
+        return base.appendingPathComponent("beary_offline_outbox_\(accountId).json")
+    }
+
+    private static func load(accountId: Int) -> [QueuedWrite] {
+        guard let url = fileURL(accountId: accountId),
+              let data = try? Data(contentsOf: url),
+              let list = try? JSONDecoder().decode([QueuedWrite].self, from: data) else { return [] }
+        return list
+    }
+
+    private static func save(_ list: [QueuedWrite], accountId: Int) {
+        guard let url = fileURL(accountId: accountId),
+              let data = try? JSONEncoder().encode(list) else { return }
+        let tmp = url.appendingPathExtension("tmp")
+        do {
+            try data.write(to: tmp, options: .atomic)
+            if FileManager.default.fileExists(atPath: url.path) {
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
+            } else {
+                try FileManager.default.moveItem(at: tmp, to: url)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: tmp)
+        }
+    }
+
+    private static func enqueue(_ write: QueuedWrite) {
+        guard let accountId = SessionManager.shared.currentUser?.id else { return }
+        var list = load(accountId: accountId)
+        list.removeAll(where: { key(of: $0) == key(of: write) })
+        list.append(write)
+        save(list, accountId: accountId)
+    }
+
+    private static func remove(_ write: QueuedWrite, accountId: Int) {
+        var list = load(accountId: accountId)
+        list.removeAll(where: { key(of: $0) == key(of: write) })
+        save(list, accountId: accountId)
+    }
+
+    /// 逐条串行补发：remain 按入队时间排序。
+    private static func flushNext(_ remain: [QueuedWrite], accountId: Int) {
+        guard let first = remain.first else {
+            flushing = false
+            return
+        }
+        let rest = Array(remain.dropFirst())
+        send(first) { outcome in
+            DispatchQueue.main.async {
+                switch outcome {
+                case .drop:
+                    remove(first, accountId: accountId)
+                    flushNext(rest, accountId: accountId)
+                case .keepStop:
+                    flushing = false
+                }
+            }
+        }
+    }
+
+    /// 发一条：任何服务端回包（成功或 HTTP／业务失败）都算已裁决→删条；
+    /// 只有传输层失败（.network）保留→停链等下次。
+    private static func send(_ write: QueuedWrite, completion: @escaping (FlushOutcome) -> Void) {
+        switch write.kind {
+        case "like":
+            guard let entryId = write.entryId, let liked = write.liked else { completion(.drop); return }
+            BearyAPI.shared.toggleLike(id: entryId, liked: liked) { result in
+                completion(outcome(of: result))
+            }
+        case "bookmark":
+            guard let entryId = write.entryId, let target = write.bookmarked else { completion(.drop); return }
+            // 收藏是盲 toggle：先拉一次当前态，已是目标态即不用发。
+            BearyAPI.shared.fetchEntry(id: entryId) { fetch in
+                switch fetch {
+                case .success(let entry):
+                    if entry.bookmarkedByMe == target { completion(.drop); return }
+                    BearyAPI.shared.toggleBookmark(id: entryId) { result in
+                        completion(outcome(of: result))
+                    }
+                case .failure(let err):
+                    completion(outcome(of: Result<Entry, APIError>.failure(err)))
+                }
+            }
+        case "follow":
+            guard let userId = write.userId, let raw = write.followTarget else { completion(.drop); return }
+            if raw == "following" || raw == "mutual" {
+                BearyAPI.shared.followFriend(userId: userId) { result in completion(outcome(of: result)) }
+            } else {
+                BearyAPI.shared.unfollowFriend(userId: userId) { result in completion(outcome(of: result)) }
+            }
+        case "pin":
+            guard let entryId = write.entryId, let pinned = write.pinned else { completion(.drop); return }
+            if pinned {
+                BearyAPI.shared.pinEntry(id: entryId) { result in completion(outcome(of: result)) }
+            } else {
+                BearyAPI.shared.unpinEntry(id: entryId) { result in completion(outcome(of: result)) }
+            }
+        default:
+            completion(.drop)
+        }
+    }
+
+    private static func outcome<T>(of result: Result<T, APIError>) -> FlushOutcome {
+        switch result {
+        case .success: return .drop
+        case .failure(let err):
+            if case .network = err { return .keepStop }
+            return .drop
+        }
+    }
+}
+
 // MARK: - 图片地址
 
 enum BearyImageURLs {
