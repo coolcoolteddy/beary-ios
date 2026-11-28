@@ -3975,11 +3975,19 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         BearySoundPlayer.play(targetLiked ? .likePop : .unlikeSoft)
         let reqSeq = likeState.beginRequest()
+        // 超 800ms 未确认才给轻量待定态（图标变淡）；800ms 内回包则延迟
+        // 根本没触发过，点按瞬间仍是最终态。
+        BearyPendingVisual.begin(for: likeButton)
         BearyAPI.shared.toggleLike(id: entryIdValue, liked: targetLiked) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // 代次守卫：复用换条或已有更新点按时，过期回包直接丢弃。
-                guard strongSelf.cellEntryId == entryIdValue, strongSelf.likeState.isCurrent(reqSeq) else { return }
+                guard strongSelf.cellEntryId == entryIdValue, strongSelf.likeState.isCurrent(reqSeq) else {
+                    // 过期回包丢弃：本次请求已死，待定态也结束（可能另有在途
+                    // 请求仍在计数，引用计数守住不提前恢复）。
+                    BearyPendingVisual.end(for: strongSelf.likeButton)
+                    return
+                }
                 strongSelf.likeState.markConfirmed(reqSeq)
                 BearyIconMotion.animateIconScale(on: strongSelf.likeButton, to: 1)
                 strongSelf.updateActionInteractivity()
@@ -4010,6 +4018,8 @@ class BearyDiaryCardCell: UITableViewCell {
                         strongSelf.onActionFailed?()
                     }
                 }
+                // 结算即结束待定态。
+                BearyPendingVisual.end(for: strongSelf.likeButton)
             }
         }
     }
@@ -4043,11 +4053,15 @@ class BearyDiaryCardCell: UITableViewCell {
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
         BearySoundPlayer.play(flipped ? .bookmarkTick : .deleteSwoosh)
         let reqSeq = bookmarkState.beginRequest()
+        BearyPendingVisual.begin(for: bookmarkButton)
         BearyAPI.shared.toggleBookmark(id: entryIdValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // 代次守卫：复用换条或已有更新点按时，过期回包直接丢弃。
-                guard strongSelf.cellEntryId == entryIdValue, strongSelf.bookmarkState.isCurrent(reqSeq) else { return }
+                guard strongSelf.cellEntryId == entryIdValue, strongSelf.bookmarkState.isCurrent(reqSeq) else {
+                    BearyPendingVisual.end(for: strongSelf.bookmarkButton)
+                    return
+                }
                 strongSelf.bookmarkState.markConfirmed(reqSeq)
                 switch result {
                 case .success(let resp):
@@ -4071,6 +4085,8 @@ class BearyDiaryCardCell: UITableViewCell {
                         strongSelf.onActionFailed?()
                     }
                 }
+                // 结算即结束待定态。
+                BearyPendingVisual.end(for: strongSelf.bookmarkButton)
             }
         }
     }

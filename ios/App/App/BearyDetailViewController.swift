@@ -2975,11 +2975,15 @@ final class BearyDetailViewController: UIViewController {
             let requestSeq = followActionSeq
             followState = target
             applyFollowButton(animated: true)
+            BearyPendingVisual.begin(for: followButton)
             BearyAPI.shared.followFriend(userId: authorId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     guard requestSeq == self.followActionSeq,
-                          authorId == self.entry.authorId else { return }
+                          authorId == self.entry.authorId else {
+                        BearyPendingVisual.end(for: self.followButton)
+                        return
+                    }
                     switch result {
                     case .success:
                         self.confirmedFollowState = target
@@ -2999,6 +3003,8 @@ final class BearyDetailViewController: UIViewController {
                             BearyToast.show(in: self.view, message: wasFollowedBy ? NSLocalizedString("follow.toast.followBackFailed", comment: "") : NSLocalizedString("follow.toast.followFailed", comment: ""))
                         }
                     }
+                    // 结算即结束待定态。
+                    BearyPendingVisual.end(for: self.followButton)
                 }
             }
         case .following, .mutual:
@@ -3022,11 +3028,15 @@ final class BearyDetailViewController: UIViewController {
                 let requestSeq = self.followActionSeq
                 self.followState = target
                 self.applyFollowButton(animated: true)
+                BearyPendingVisual.begin(for: self.followButton)
                 BearyAPI.shared.unfollowFriend(userId: authorId) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         guard requestSeq == self.followActionSeq,
-                              authorId == self.entry.authorId else { return }
+                              authorId == self.entry.authorId else {
+                            BearyPendingVisual.end(for: self.followButton)
+                            return
+                        }
                         switch result {
                         case .success:
                             self.confirmedFollowState = target
@@ -3052,6 +3062,8 @@ final class BearyDetailViewController: UIViewController {
                                 BearyToast.show(in: self.view, message: NSLocalizedString("follow.toast.unfollowFailed", comment: ""))
                             }
                         }
+                        // 结算即结束待定态。
+                        BearyPendingVisual.end(for: self.followButton)
                     }
                 }
             }
@@ -4110,11 +4122,15 @@ final class BearyDetailViewController: UIViewController {
     private func submitLike(entryId: String, targetLiked: Bool) {
         let reqSeq = likeState.beginRequest()
         likeInFlight = true
+        BearyPendingVisual.begin(for: likeButton)
         BearyAPI.shared.toggleLike(id: entryId, liked: targetLiked) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // 代次守卫：已有更新点按时，过期回包直接丢弃。
-                guard self.likeState.isCurrent(reqSeq) else { return }
+                guard self.likeState.isCurrent(reqSeq) else {
+                    BearyPendingVisual.end(for: self.likeButton)
+                    return
+                }
                 self.likeState.markConfirmed(reqSeq)
                 BearyIconMotion.animateIconScale(on: self.likeButton, to: 1)
                 switch result {
@@ -4143,6 +4159,9 @@ final class BearyDetailViewController: UIViewController {
                         BearyToast.show(in: self.view, message: "操作失败，请重试")
                     }
                 }
+                // 结算即结束待定态——放在补发之前，补发会重新 begin，
+                // 不被本次的 end 取消。
+                BearyPendingVisual.end(for: self.likeButton)
                 self.likeInFlight = false
                 if let pending = self.pendingLikeTarget {
                     self.pendingLikeTarget = nil
@@ -4187,11 +4206,15 @@ final class BearyDetailViewController: UIViewController {
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
         BearySoundPlayer.play(flipped ? .bookmarkTick : .deleteSwoosh)
         let reqSeq = bookmarkState.beginRequest()
+        BearyPendingVisual.begin(for: bookmarkButton)
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // 代次守卫：已有更新点按时，过期回包直接丢弃。
-                guard self.bookmarkState.isCurrent(reqSeq) else { return }
+                guard self.bookmarkState.isCurrent(reqSeq) else {
+                    BearyPendingVisual.end(for: self.bookmarkButton)
+                    return
+                }
                 self.bookmarkState.markConfirmed(reqSeq)
                 switch result {
                 case .success(let resp):
@@ -4213,6 +4236,8 @@ final class BearyDetailViewController: UIViewController {
                         BearyToast.show(in: self.view, message: "操作失败，请重试")
                     }
                 }
+                // 结算即结束待定态。
+                BearyPendingVisual.end(for: self.bookmarkButton)
             }
         }
     }
