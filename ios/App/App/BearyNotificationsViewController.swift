@@ -4069,9 +4069,10 @@ class BearyNotificationCell: UITableViewCell {
         label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
         label.textColor = BearyColors.ink
         label.adjustsFontForContentSizeCategory = true
-        label.numberOfLines = 0
-        // 通知标题改完整显示：多行换行不截断；横向低压缩先缩标题，timeLabel 保持 required 不被挤。
-        label.lineBreakMode = .byCharWrapping
+        // 展示审计 G6-A13：标题行数上限 2 行，超了截断（原 0 行完整显示，
+        // 极端长标题会把单行撑得很高）；横向低压缩先缩标题，timeLabel 保持 required 不被挤。
+        label.numberOfLines = 2
+        label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return label
     }()
@@ -4562,7 +4563,7 @@ class BearyNotificationCell: UITableViewCell {
         avatarFallbackLabel.isHidden = true
         kindBadgeView.isHidden = true
         nestedLineView.isHidden = true
-        titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
+        titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byTruncatingTail, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         excerptLabel.attributedText = BearyNotificationCell.moodLineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: mergedList ? 12 : 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         lastTimeMs = timeMs
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
@@ -4720,7 +4721,7 @@ class BearyNotificationCell: UITableViewCell {
             }
             avatarFallbackLabel.isHidden = true
             kindBadgeView.isHidden = true
-            titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
+            titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byTruncatingTail, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         } else {
             // 互动行：42 圆头像（无图回退首字母 15/700 灰）+ 右下角 19 号类型角标。
             avatarImageView.backgroundColor = BearyColors.line
@@ -4792,7 +4793,7 @@ class BearyNotificationCell: UITableViewCell {
             }
             let titleParagraph = NSMutableParagraphStyle()
             titleParagraph.lineHeightMultiple = mergedList ? 1.0 : 1.5
-            titleParagraph.lineBreakMode = .byCharWrapping
+            titleParagraph.lineBreakMode = .byTruncatingTail
             title.addAttribute(.paragraphStyle, value: titleParagraph, range: NSRange(location: 0, length: title.length))
             titleLabel.attributedText = title
         }
