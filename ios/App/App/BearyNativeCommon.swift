@@ -3473,7 +3473,7 @@ extension BearyAPI {
     /// 可见性只走 visibility 接口，不可经此接口改。
     /// 成功只返回 {ok: true}，调用方成功后自行重拉单篇。
     /// 图片须归属本人且存在，否则 400 'invalid image ownership' / 409 'image unavailable'。
-    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, locationLatitude: Double? = nil, locationLongitude: Double? = nil, clearLocationCoords: Bool = false, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, clearLocationDetail: Bool = false, temperature: Int? = nil, liveVideos: [String: String]? = nil, tags: [String]? = nil, completion: @escaping (Result<Void, APIError>) -> Void) {
+    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, locationLatitude: Double? = nil, locationLongitude: Double? = nil, clearLocationCoords: Bool = false, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, clearLocationDetail: Bool = false, temperature: Int? = nil, liveVideos: [String: String]? = nil, tags: [String]? = nil, baselineUpdatedAt: Int? = nil, force: Bool = false, completion: @escaping (Result<Void, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         var body: [String: Any] = ["content": content, "images": images]
         // 实况：调用方算清后才传——非空发映射；显式空映射 = 清掉原实况（删图/
@@ -3513,6 +3513,11 @@ extension BearyAPI {
         // 标签完整版（2026-11-18）：非 nil 即整组替换（空数组 = 清掉全部标签）；
         // nil = 省略不传、服务端保留原值。编辑调用方只在标签改动时传值。
         if let tags = tags { body["tags"] = tags }
+        // 编辑冲突（另一台设备先改过）：调用方传打开时记下的基线 updated_at
+        // （毫秒）；服务端比对不上回 409 edit_conflict。缺基线（旧数据无值）
+        // 即不发、服务端不比对；force 只由冲突提示里的“用这台的覆盖”带，绕过比对。
+        if let baseline = baselineUpdatedAt { body["expected_updated_at"] = baseline }
+        if force { body["force"] = true }
         requestVoid("/beary/api/entries/\(safe)", method: "PUT", jsonBody: body, completion: completion)
     }
 

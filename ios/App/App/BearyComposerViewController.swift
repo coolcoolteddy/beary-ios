@@ -301,6 +301,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 非 nil 即编辑模式：回填正文/心情/天气/图片/@；引用可改可删。
     private var editingEntry: Entry?
+    /// 编辑冲突基线：打开编辑器时服务端返回的 updated_at（毫秒）；保存时原样带上，
+    /// 服务端比对不上即回 409。补拉／看另一版后以新版值刷新；缺值（旧数据无值）即不比对。
+    private var editBaselineUpdatedAt: Int?
+    /// 冲突后已把当前版存进编辑检查点：回填后防抖／退出无改动时须留住它（不清检查点），
+    /// 下次打开才能经恢复提示找回；成功保存／明确丢弃时复位。
+    private var editConflictCheckpointKept = false
     private var isEditMode: Bool { editingEntry != nil }
     /// 快照恢复进编辑器：详情快照预览点「恢复到编辑器」时由容器置入；
     /// setupEditContent 首次回填后以快照文字（标题＋正文）覆盖回填，
@@ -314,6 +320,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     init(entry: Entry) {
         self.editingEntry = entry
+        self.editBaselineUpdatedAt = entry.updatedAt
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -7888,6 +7895,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 case .success(let fetched):
                     self.editQuoteFetchFailed = false
                     self.editingEntry = fetched
+                    self.editBaselineUpdatedAt = fetched.updatedAt
                     self.setupEditContent()
                 case .failure:
                     self.editQuoteFetchFailed = true
@@ -9271,7 +9279,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         guard isEditDirtyVsOriginal() else {
-            BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: editCheckpointAccountId())
+            // 冲突后留住检查点（见 editConflictCheckpointKept）：当前版已存盘，
+            // 回填后现场与新版一致即判不脏，旧口径会清掉刚存的版。
+            if !editConflictCheckpointKept {
+                BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: editCheckpointAccountId())
+            }
             completion?(true)
             return
         }
@@ -9653,7 +9665,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             guard isEditDirtyVsOriginal() else {
                 commitPendingRemoval()
                 deleteEditLocalFiles()
-                if let entryId = editingEntry?.id, !entryId.isEmpty {
+                // 冲突后留住检查点（见 editConflictCheckpointKept）：看完另一版
+                // 直接退出时不删刚存的当前版，下次打开经恢复提示找回。
+                if let entryId = editingEntry?.id, !entryId.isEmpty, !editConflictCheckpointKept {
                     BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: editCheckpointAccountId())
                 }
                 onCancelled?()
@@ -9666,6 +9680,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     guard let self = self else { return }
                     self.commitPendingRemoval()
                     self.deleteEditLocalFiles()
+                    self.editConflictCheckpointKept = false
                     if let entryId = self.editingEntry?.id, !entryId.isEmpty {
                         BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: self.editCheckpointAccountId())
                     }
@@ -10130,7 +10145,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 编辑保存（PUT；编辑永久可改，App 只展示与转文案）
 
-    private func performUpdate(trimmed: String) {
+    private func performUpdate(trimmed: String, force: Bool = false) {
         guard let entryId = editingEntry?.id, !entryId.isEmpty else {
             showAlert(message: "找不到要编辑的日记")
             return
@@ -10162,7 +10177,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let editLiveVideos: [String: String]? = uploadedLiveVideos().isEmpty
             ? ((editingEntry?.liveVideos?.isEmpty == false) ? [:] : nil)
             : uploadedLiveVideos()
-                BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, locationLatitude: locationChanged ? selectedLocation?.latitude : nil, locationLongitude: locationChanged ? selectedLocation?.longitude : nil, clearLocationCoords: locationChanged && selectedLocation?.latitude == nil, locationCountry: locationChanged ? selectedLocation?.country : nil, locationRegion: locationChanged ? selectedLocation?.region : nil, locationCity: locationChanged ? selectedLocation?.city : nil, locationStreet: locationChanged ? selectedLocation?.street : nil, clearLocationDetail: locationChanged, temperature: selectedTemperature, liveVideos: editLiveVideos, tags: tagsChanged ? selectedTags : nil) { [weak self] result in
+                BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, locationLatitude: locationChanged ? selectedLocation?.latitude : nil, locationLongitude: locationChanged ? selectedLocation?.longitude : nil, clearLocationCoords: locationChanged && selectedLocation?.latitude == nil, locationCountry: locationChanged ? selectedLocation?.country : nil, locationRegion: locationChanged ? selectedLocation?.region : nil, locationCity: locationChanged ? selectedLocation?.city : nil, locationStreet: locationChanged ? selectedLocation?.street : nil, clearLocationDetail: locationChanged, temperature: selectedTemperature, liveVideos: editLiveVideos, tags: tagsChanged ? selectedTags : nil, baselineUpdatedAt: editBaselineUpdatedAt, force: force) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -10173,6 +10188,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.commitPendingRemoval()
                     // 审计四轮增量 09：提交成功，检查点已无意义，清掉。第三轮审计
                     // 第 5 项：按发出 PUT 时的原账号清，不按回包时刻的当前账号。
+                    self.editConflictCheckpointKept = false
                     BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: requestOriginAccountId)
                     // 在途切号：PUT 已按原账号落盘，不把结果回传给容器（当前账号
                     // 已不是原账号），冻结编辑器并提示切回原账号查看。
@@ -10187,6 +10203,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 冲突清单第 4 条：编辑成功即本地记一笔编辑时刻（服务端 PUT 同步写
                         // updated_at；列表行不靠重拉即显「编辑于 X」，重拉后以服务端值为准）。
                         updated.updatedAt = Int(Date().timeIntervalSince1970 * 1000)
+                        // 编辑冲突基线随成功同步刷新：同一会话内再保存时按新版比对。
+                        self.editBaselineUpdatedAt = updated.updatedAt
                         // 109：本地副本跟随输入框标题（空 = nil，与服务端归一化一致）。
                         updated.title = self.headlineText.isEmpty ? nil : self.headlineText
                         updated.images = self.uploadedImageKeys()
@@ -10237,6 +10255,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         self.onUpdated?(updated)
                     }
                 case .failure(let error):
+                    // 编辑冲突先分流（见 presentEditConflictSheet）：409 edit_conflict
+                    // 弹底 sheet 让用户选，不走通用「保存失败」。
+                    if Self.isEditConflict(error) {
+                        self.presentEditConflictSheet()
+                        return
+                    }
                     if case .unauthorized = error {
                         self.onRequireLogin?()
                     } else if case .network = error {
@@ -10266,6 +10290,92 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         return "保存失败，请重试"
+    }
+
+    // MARK: - 编辑冲突（另一台设备先改过）
+
+    /// 服务端 409 edit_conflict：保存时基线 updated_at 已与服务端不一致，
+    /// 说明另一台设备先改过本篇。服务端未上线前不回本码，平时走不到；
+    /// 其他 409（如 update failed／image unavailable）不进这里。
+    private static func isEditConflict(_ error: APIError) -> Bool {
+        switch error {
+        case .server(let code, _):
+            return code == "edit_conflict"
+        case .http(let status, let snippet):
+            return status == 409 && (snippet?.contains("edit_conflict") == true)
+        default:
+            return false
+        }
+    }
+
+    /// 409 冲突底 sheet：标题即提示，两个钮——覆盖（带 force 重发本台版本；
+    /// 服务端写新版前会把另一版文字存为快照）／看另一版（当前版先存检查点，
+    /// 再拉新版重填；当前版下次打开经恢复提示找回）。
+    private func presentEditConflictSheet() {
+        BearyConfirmSheet.show(from: self, title: NSLocalizedString("composer.edit_conflict.title", comment: ""), message: nil, actions: [
+            BearyConfirmSheet.Action(title: NSLocalizedString("composer.edit_conflict.overwrite", comment: ""), style: .default, handler: { [weak self] in
+                guard let self = self else { return }
+                self.performUpdate(trimmed: self.trimmedContent(), force: true)
+            }),
+            BearyConfirmSheet.Action(title: NSLocalizedString("composer.edit_conflict.view_other", comment: ""), style: .default, handler: { [weak self] in
+                guard let self = self else { return }
+                self.viewOtherVersionAfterConflict()
+            }),
+        ])
+    }
+
+    /// “先看看另一版”：有改动时先把当前版存进编辑检查点（防抖同款），
+    /// 再拉服务端新版重填；无改动时没有可存的版，直接拉。
+    private func viewOtherVersionAfterConflict() {
+        guard let entryId = editingEntry?.id, !entryId.isEmpty else { return }
+        guard isEditDirtyVsOriginal() else {
+            fetchOtherVersion(entryId: entryId)
+            return
+        }
+        saveEditCheckpointNow { [weak self] ok in
+            guard let self = self else { return }
+            if ok { self.editConflictCheckpointKept = true }
+            self.fetchOtherVersion(entryId: entryId)
+        }
+    }
+
+    private func fetchOtherVersion(entryId: String) {
+        BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let fetched):
+                    self.editingEntry = fetched
+                    self.editBaselineUpdatedAt = fetched.updatedAt
+                    self.refillWithOtherVersion()
+                case .failure:
+                    self.showToast(message: NSLocalizedString("composer.edit_conflict.load_failed", comment: ""))
+                }
+            }
+        }
+    }
+
+    /// 以另一版重填编辑器：先清图片条（只拆视图、不删本地文件——当前版的图
+    /// 随检查点留盘，恢复时还要用），再把 @／引用／首填旗标复位到新版，
+    /// 最后走正常回填（回填会重拍原快照、重算脏检查）。
+    /// 恢复提示只弹一次：本实例打开时已查过检查点，此处直接置旗标，
+    /// 免得回填末尾的检查点钩子就地弹出恢复框、盖住刚换上的另一版。
+    private func refillWithOtherVersion() {
+        for item in imageItems {
+            cancelUpload(for: item)
+            imageStackView.removeArrangedSubview(item.container)
+            item.container.removeFromSuperview()
+        }
+        imageItems = []
+        selectedRecipient = nil
+        editMentionCleared = false
+        lockedQuote = nil
+        inlineGifKeys = []
+        editQuoteFetchAttempted = false
+        editQuoteFetchFailed = false
+        editQuoteFetchInFlight = false
+        editCheckpointPromptShown = true
+        setupEditContent()
     }
 
     // MARK: - 键盘
