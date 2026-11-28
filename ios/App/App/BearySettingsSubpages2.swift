@@ -1014,7 +1014,22 @@ final class BearyNotificationSettingsViewController: BearySettingsSubpageViewCon
     private func refreshHintRow() {
         BearyLocalNotifications.shared.fetchAuthorizationStatus { [weak self] status in
             DispatchQueue.main.async { [weak self] in
-                self?.hintRow?.isHidden = (status != .denied)
+                guard let self, let hintRow = self.hintRow else { return }
+                let showHint = (status == .denied)
+                hintRow.isHidden = !showHint
+                // makeGroupCard 把每行包在 wrap 里、分隔线是独立的 arrangedSubview，
+                // 只藏行本身不塌高度：行高＋上下 14 留白与两条分隔线全留着，就是
+                // 截图里「私信未读」与底部说明之间那块带线的空白。连同 wrap 与
+                // 它前面一条分隔线一起藏，UIStackView 才会把整行塌掉；权限被拒
+                // 时三处一起恢复，行回到原来的位置。
+                if let wrap = hintRow.superview,
+                   let stack = wrap.superview as? UIStackView,
+                   let index = stack.arrangedSubviews.firstIndex(of: wrap) {
+                    wrap.isHidden = !showHint
+                    if index > 0 {
+                        stack.arrangedSubviews[index - 1].isHidden = !showHint
+                    }
+                }
             }
         }
     }
