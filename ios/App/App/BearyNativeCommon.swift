@@ -3316,6 +3316,51 @@ struct UploadResponse: Decodable {
     /// 直接回了原来那个 key，没再存一份；客户端据此 toast“已经添加过了”）。
     var duplicate: Bool?
 }
+/// 单图一次上传尝试（编辑器 `uploadPrepared` 与发布中心 `uploadOne` 共用）：
+/// 备三件套 dataURL → 调 `uploadImage` → 校验回包。
+/// 校验口径（两处原先逐字一致）：key 缺失按失败；附带实况视频时 liveKey 缺失／
+/// 空串也按失败，绝不把实况静默降级为静态。网络失败原样透传。
+/// 不含：令牌代次／账号门控、实况超限提示、进度估算、并发泵、成功后写回草稿
+/// 与编辑器 UI 态——各调用方留自己的。
+enum BearyImageUploadAttempt {
+    /// 网络失败原样透传；key 缺失与实况 liveKey 缺失各是一类失败，
+    /// 调用方按原有文案分别处理。
+    enum Failure: Error {
+        case network(APIError)
+        case missingKey
+        case missingLiveKey
+    }
+
+    struct Success {
+        let key: String
+        let liveKey: String?
+    }
+
+    /// 返回上传任务句柄（编辑器用它做取消）；completion 不保证在主线程，
+    /// 调用方自行回主线程更新 UI。
+    @discardableResult
+    static func upload(full: (data: Data, w: Int, h: Int), thumbData: Data, liveVideoData: Data? = nil, mimeType: String = "image/jpeg", uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<Success, Failure>) -> Void) -> URLSessionDataTask? {
+        let dataUrl = BearyImagePrep.dataURL(full.data, mimeType: mimeType)
+        let thumbDataUrl = BearyImagePrep.dataURL(thumbData)
+        let videoDataUrl = liveVideoData.map { BearyLivePhoto.videoDataURL($0) }
+        return BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: full.w, height: full.h, thumbDataUrl: thumbDataUrl, videoDataUrl: videoDataUrl, uploadProgress: uploadProgress) { result in
+            switch result {
+            case .success(let resp):
+                guard let key = resp.key else {
+                    completion(.failure(.missingKey))
+                    return
+                }
+                if liveVideoData != nil, resp.liveKey == nil || resp.liveKey?.isEmpty == true {
+                    completion(.failure(.missingLiveKey))
+                    return
+                }
+                completion(.success(Success(key: key, liveKey: resp.liveKey)))
+            case .failure(let error):
+                completion(.failure(.network(error)))
+            }
+        }
+    }
+}
 
 /// 个人 GIF 库列表回包（GET /beary/api/gif-library）。
 struct GIFLibraryListResponse: Decodable {

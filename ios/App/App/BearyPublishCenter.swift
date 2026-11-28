@@ -462,9 +462,8 @@ final class BearyPublishCenter {
                     return
                 }
             }
-            let dataUrl = BearyImagePrep.dataURL(fullData, mimeType: fullMimeType)
-            let thumbDataUrl = BearyImagePrep.dataURL(prepared.thumb)
-            let videoDataUrl = videoData.map { BearyLivePhoto.videoDataURL($0) }
+            // dataURL 三件套的备齐见下文 BearyImageUploadAttempt.upload；
+            // 进度估算仍留本处（helper 不知字节估算口径）。
             let estimate = Self.base64Length(fullData.count) + 23
                 + Self.base64Length(prepared.thumb.count) + 23
                 + (videoData.map { Self.base64Length($0.count) + 27 } ?? 0) + 100
@@ -476,42 +475,41 @@ final class BearyPublishCenter {
                     self.reportProgress(runningJob, value: value)
                 }
             }
-            BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: fullWidth, height: fullHeight, thumbDataUrl: thumbDataUrl, videoDataUrl: videoDataUrl, uploadProgress: progressHandler) { [weak self, weak runningJob] result in
+            BearyImageUploadAttempt.upload(full: (data: fullData, w: fullWidth, h: fullHeight), thumbData: prepared.thumb, liveVideoData: videoData, mimeType: fullMimeType, uploadProgress: progressHandler) { [weak self, weak runningJob] result in
                 DispatchQueue.main.async {
                     guard let self = self, let runningJob = runningJob, !runningJob.finished else { return }
                     runningJob.uploadInFlight -= 1
                     let value = runningJob.progress.complete(step: step)
                     self.reportProgress(runningJob, value: value)
                     switch result {
-                    case .success(let resp):
-                        guard let key = resp.key else {
-                            self.fail(runningJob, message: "发布失败，请重试")
-                            return
-                        }
-                        // 实况回包缺 live_key = 视频没落下：按失败处理，
-                        // 不把实况当静态图发出（与编辑器 uploadPrepared 同口径）。
-                        if videoData != nil, resp.liveKey == nil || resp.liveKey?.isEmpty == true {
-                            // 第 25 轮 18 项：编辑器已退场、pill 不可点，“请点图重试”
-                            // 无处可点——改提示打开草稿重试，并经 fail() 的草稿入口
-                            // 呈现（见 openDraftOnFailure）。
-                            runningJob.openDraftOnFailure = true
-                            self.fail(runningJob, message: "实况视频上传失败，已保存为草稿，请打开草稿重试")
-                            return
-                        }
-                        runningJob.uploadResults[index] = key
-                        if let liveKey = resp.liveKey {
+                    case .success(let uploaded):
+                        // 回包校验已在 BearyImageUploadAttempt 内完成（key 缺失／
+                        // 附带实况时 liveKey 缺失按失败，见 .failure 分支）。
+                        runningJob.uploadResults[index] = uploaded.key
+                        if let liveKey = uploaded.liveKey {
                             runningJob.uploadLiveResults[index] = liveKey
                         }
                         runningJob.uploadFinished += 1
                         // #52：成功即把 key 写回草稿（见 persistUploadedKey），
                         // 失败重试从草稿重建任务时这张图直接跳过，不再重传。
-                        self.persistUploadedKey(runningJob, index: index, image: image, key: key, liveKey: resp.liveKey)
+                        self.persistUploadedKey(runningJob, index: index, image: image, key: uploaded.key, liveKey: uploaded.liveKey)
                         self.pumpUploads(runningJob)
                         if runningJob.uploadFinished >= runningJob.job.images.count {
                             self.finishUploadsAndPost(runningJob)
                         }
-                    case .failure(let error):
-                        self.fail(runningJob, error: error)
+                    case .failure(let failure):
+                        switch failure {
+                        case .missingKey:
+                            self.fail(runningJob, message: "发布失败，请重试")
+                        case .missingLiveKey:
+                            // 第 25 轮 18 项：编辑器已退场、pill 不可点，“请点图重试”
+                            // 无处可点——改提示打开草稿重试，并经 fail() 的草稿入口
+                            // 呈现（见 openDraftOnFailure）。
+                            runningJob.openDraftOnFailure = true
+                            self.fail(runningJob, message: "实况视频上传失败，已保存为草稿，请打开草稿重试")
+                        case .network(let error):
+                            self.fail(runningJob, error: error)
+                        }
                     }
                 }
             }

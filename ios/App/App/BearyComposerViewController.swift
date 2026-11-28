@@ -7079,9 +7079,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// （issueUploadToken），此处不再递增。
     private func uploadPrepared(for item: ComposerImageItem?, token: (generation: Int, accountId: Int?), full: (data: Data, w: Int, h: Int), thumbData: Data, image: UIImage, liveVideoData: Data? = nil, mimeType: String = "image/jpeg") {
         guard let item = item else { return }
-        let dataUrl = BearyImagePrep.dataURL(full.data, mimeType: mimeType)
-        let thumbDataUrl = BearyImagePrep.dataURL(thumbData)
-        let videoDataUrl = liveVideoData.map { BearyLivePhoto.videoDataURL($0) }
+        // dataURL 三件套的备齐见下文 BearyImageUploadAttempt.upload。
         // 门控 + 建任务原子段：锁内校验令牌与当前鉴权账号，通过才建任务
         // 并持有句柄；取消（同锁内作废令牌 + cancel 任务）无法插进校验与
         // 建任务之间，故删图后编码完成必不发起上传。实况超限口径在门控
@@ -7123,7 +7121,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         let uploadGeneration = token.generation
-        item.uploadTask = BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: full.w, height: full.h, thumbDataUrl: thumbDataUrl, videoDataUrl: videoDataUrl) { [weak self, weak item] result in
+        item.uploadTask = BearyImageUploadAttempt.upload(full: full, thumbData: thumbData, liveVideoData: liveVideoData, mimeType: mimeType) { [weak self, weak item] result in
             DispatchQueue.main.async {
                 guard let self = self, let item = item else { return }
                 var stillThere = false
@@ -7141,42 +7139,31 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 self.lockedClearUploadTask(of: item)
                 switch result {
-                case .success(let resp):
-                    if let key = resp.key {
-                        // 实况回包缺 live_key = 视频没落下：按失败处理（见函数头），
-                        // 不 markUploaded、不进草稿、不让发布把这张当静态图发出。
-                        if liveVideoData != nil, resp.liveKey == nil || resp.liveKey?.isEmpty == true {
-                            self.markFailed(item)
-                            self.saveDraftNow()
-                            self.updatePublishState()
-                        } else {
-                            self.markUploaded(item, key: key)
-                            item.liveVideoKey = resp.liveKey
-                            item.liveVideoData = nil
-                            // B1：视频已在服务端，本地 mov 不再需要，随即删掉；
-                            // 草稿随 scheduleDraftSave 重存为 liveVideoKey、
-                            // 不再引用该文件。重存恰好失败又杀 App 的极窄
-                            // 窗口里，旧版草稿仍指已删的 mov，恢复时按
-                            // “视频已丢”提示重新选择，不静默变静态。
-                            if let videoFile = item.liveVideoFile {
-                                item.liveVideoFile = nil
-                                BearyDraftImageStore.deleteVideo(videoFile)
-                            }
-                            // 原图已在服务端，本地 .orig 不再需要，随即删掉；
-                            // 草稿随 scheduleDraftSave 重存，不再引用该文件。
-                            if let originalFile = item.originalFile {
-                                item.originalFile = nil
-                                BearyDraftImageStore.deleteOriginal(originalFile)
-                            }
-                            item.imageView.image = image
-                            self.scheduleDraftSave()
-                            self.updatePublishState()
-                        }
-                    } else {
-                        self.markFailed(item)
-                        self.saveDraftNow()
-                        self.updatePublishState()
+                case .success(let uploaded):
+                    // 回包校验已在 BearyImageUploadAttempt 内完成：key 缺失、
+                    // 附带实况时 liveKey 缺失都走 .failure（见函数头），
+                    // 到这里 key 在、实况已落下，直接记成功态。
+                    self.markUploaded(item, key: uploaded.key)
+                    item.liveVideoKey = uploaded.liveKey
+                    item.liveVideoData = nil
+                    // B1：视频已在服务端，本地 mov 不再需要，随即删掉；
+                    // 草稿随 scheduleDraftSave 重存为 liveVideoKey、
+                    // 不再引用该文件。重存恰好失败又杀 App 的极窄
+                    // 窗口里，旧版草稿仍指已删的 mov，恢复时按
+                    // “视频已丢”提示重新选择，不静默变静态。
+                    if let videoFile = item.liveVideoFile {
+                        item.liveVideoFile = nil
+                        BearyDraftImageStore.deleteVideo(videoFile)
                     }
+                    // 原图已在服务端，本地 .orig 不再需要，随即删掉；
+                    // 草稿随 scheduleDraftSave 重存，不再引用该文件。
+                    if let originalFile = item.originalFile {
+                        item.originalFile = nil
+                        BearyDraftImageStore.deleteOriginal(originalFile)
+                    }
+                    item.imageView.image = image
+                    self.scheduleDraftSave()
+                    self.updatePublishState()
                 case .failure:
                     // 失败只亮重试态：图留在条里，点图重试；不弹全局框、不删项。
                     // 实况与静态同口径——图上重试块已明说失败（发布时失败图拦截 toast 仍在）。
