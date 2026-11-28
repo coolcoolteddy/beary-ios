@@ -7,6 +7,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   simulator:
     runs-on: macos-latest
@@ -38,6 +42,8 @@ jobs:
           path: build/Build/Products/Debug-iphonesimulator/App.app
 
   sideload:
+    # sideload 成品只在 push 到 main 时才需要；PR 上只跑 simulator + test。
+    if: ${{ github.event_name == 'push' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
