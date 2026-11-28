@@ -1982,17 +1982,6 @@ final class BearySettingsViewController: UIViewController {
         accountDisclosure = accountDisclosureValue
         accountDisclosureValue.card.translatesAutoresizingMaskIntoConstraints = false
         accountActionWrap.addSubview(accountDisclosureValue.card)
-        // 审计 P2-22：退出后本机残留明示——日记/回收站/图片缓存随退出清除，
-        // 未发布草稿仍保存在本设备（按账号分桶，换号不可见），登录同一账号可继续编辑。
-        let logoutFootnote = UILabel()
-        logoutFootnote.translatesAutoresizingMaskIntoConstraints = false
-        // P1-7：账号操作组脚注辅助文案走动态字体（已是 0 行）。
-        logoutFootnote.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        logoutFootnote.adjustsFontForContentSizeCategory = true
-        logoutFootnote.textColor = BearyColors.gray
-        logoutFootnote.numberOfLines = 0
-        logoutFootnote.text = "退出登录后，已同步的日记与回收站缓存会从本设备清除；未发布的草稿仍保留，登录同一账号后可继续编辑。"
-        accountActionWrap.addSubview(logoutFootnote)
         NSLayoutConstraint.activate([
             group.card.topAnchor.constraint(equalTo: accountActionWrap.topAnchor),
             group.card.leadingAnchor.constraint(equalTo: accountActionWrap.leadingAnchor),
@@ -2000,10 +1989,7 @@ final class BearySettingsViewController: UIViewController {
             accountDisclosureValue.card.topAnchor.constraint(equalTo: group.card.bottomAnchor, constant: 20),
             accountDisclosureValue.card.leadingAnchor.constraint(equalTo: accountActionWrap.leadingAnchor),
             accountDisclosureValue.card.trailingAnchor.constraint(equalTo: accountActionWrap.trailingAnchor),
-            logoutFootnote.topAnchor.constraint(equalTo: accountDisclosureValue.card.bottomAnchor, constant: 8),
-            logoutFootnote.leadingAnchor.constraint(equalTo: accountActionWrap.leadingAnchor, constant: 16),
-            logoutFootnote.trailingAnchor.constraint(equalTo: accountActionWrap.trailingAnchor, constant: -16),
-            logoutFootnote.bottomAnchor.constraint(equalTo: accountActionWrap.bottomAnchor),
+            accountDisclosureValue.card.bottomAnchor.constraint(equalTo: accountActionWrap.bottomAnchor),
         ])
     }
 
@@ -2087,10 +2073,13 @@ final class BearySettingsViewController: UIViewController {
         onShowTutorial?()
     }
 
-    /// F8：退出登录（网页 account.html logoutBtn 口径：直接 POST、无二次确认；
+    /// F8：退出登录（点按先弹确认，脚注文案入弹窗；确认后 POST；
     /// App 现有退出逻辑 = BearyAPI.logout + 清本地 cookie + 本地退出）。
     @objc private func logoutButtonTapped() {
-        // 第七轮审计 03：登出回包账号绑定——发起时捕获账号 ID＋authEpoch，
+        BearyConfirmSheet.show(from: self, title: "退出登录", message: "退出登录后，已同步的日记与回收站缓存会从本设备清除；未发布的草稿仍保留，登录同一账号后可继续编辑。", actions: [
+            BearyConfirmSheet.Action(title: "退出登录", style: .destructive) { [weak self] in
+                guard let self = self else { return }
+                // 第七轮审计 03：登出回包账号绑定——发起时捕获账号 ID＋authEpoch，
         // 回包先校验；已切号时只定向清发起账号，不碰当前号、不清 cookie、
         // 不关页/弹登录（本次退出对当前会话无事可做）。
         let accountId = SessionManager.shared.currentUser?.id
@@ -2121,6 +2110,9 @@ final class BearySettingsViewController: UIViewController {
                 }
             }
         }
+            },
+            BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: nil),
+        ])
     }
 
     // MARK: - 加载
