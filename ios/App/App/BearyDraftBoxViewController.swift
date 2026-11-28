@@ -812,12 +812,15 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
             topRow.addArrangedSubview(imageRow)
         }
         // 卡片操作钮（网页 .df-trash 同款）：删除钮本地删卡；打开只走整卡点按。
+        // 展示审计 G5-10：删除钮由红色弱化为灰色——每卡顶行常驻红色钮是全卡
+        // 最抢眼的元素，喧宾夺主；左滑删除已存在，弱化后仍保留常驻钮（44 热区
+        // 与无障碍名不动），不只留左滑。
         let deleteButton = UIButton(type: .custom)
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 24) {
             deleteButton.setImage(trashImage, for: .normal)
         }
         deleteButton.imageView?.contentMode = .scaleAspectFit
-        deleteButton.tintColor = BearyColors.destructiveText
+        deleteButton.tintColor = BearyColors.gray
         // 无障碍：照抄回收站口径，把草稿标题拼进按钮名（“删除草稿，标题”）；
         // 无标题草稿用时间文案兜底，不读出空名；删除行为本身不动。
         let draftName = (draftValue.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
