@@ -2025,6 +2025,9 @@ final class BearySettingsViewController: UIViewController {
         // 不关页/弹登录（本次退出对当前会话无事可做）。
         let accountId = SessionManager.shared.currentUser?.id
         let epoch = BearyAPI.shared.authEpoch
+        // 推送登记清理：登出请求发出前删本号在本机的登记行（session 与
+        // cookie 仍在）；fire-and-forget，失败不改登出结论。
+        BearyPushNotifications.shared.unregisterTokenForCurrentAccount()
         BearyAPI.shared.logout { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }

@@ -866,6 +866,11 @@ final class SessionManager {
                 completion(.removed)
                 return
             }
+            // 推送登记清理：移除前删目标号在本机的登记行——隔离请求＋目标号
+            // 保管库 token（共享 cookie 属于当前号，删不掉目标号的行）。
+            // fire-and-forget：失败不改移除结论；已上报标记已清，移除失败
+            // 切回该号时可重新上报。
+            BearyPushNotifications.shared.unregisterTokenForAccount(userId: userId, sessionToken: target.token)
             api.logoutWithToken(target.token) { [weak self] result in
                 guard let self = self else { return }
                 DispatchQueue.main.async {
@@ -895,6 +900,9 @@ final class SessionManager {
             }
             return
         }
+        // 推送登记清理：登出请求发出前删本号在本机的登记行（session 与
+        // cookie 仍在）；fire-and-forget，失败不改移除结论。
+        BearyPushNotifications.shared.unregisterTokenForCurrentAccount()
         api.logout { [weak self] result in
             guard let self = self else { return }
             // 当前账号登出回包先回主线程：后续 clearLocalCookies +

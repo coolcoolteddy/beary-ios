@@ -73,6 +73,31 @@ final class BearyPushNotifications {
         }
     }
 
+    // MARK: - Token 注销
+
+    /// 登出／移除账号时删服务端登记：只删（当前账号，本机 token）这一行。
+    /// 调用点：登出请求发出前、session 与 cookie 仍在时（SessionManager
+    /// removeAccount 当前分支、设置页 logoutButtonTapped）。fire-and-forget：
+    /// 失败静默、不阻塞登出／移除、不 toast、不重试；同时清该账号的已上报
+    /// 标记——登出失败账号还在时，下次回前台 syncTokenIfNeeded 可重新上报。
+    /// 顺序：本请求先于登出请求发出，服务端正常先收到注销、后收到登出。
+    func unregisterTokenForCurrentAccount() {
+        guard let token = UserDefaults.standard.string(forKey: Self.deviceTokenKey), !token.isEmpty else { return }
+        guard let userId = SessionManager.shared.currentUser?.id else { return }
+        UserDefaults.standard.removeObject(forKey: Self.lastSentTokenKey(userId: userId))
+        BearyAPI.shared.requestVoid("/beary/api/account/device-token", method: "DELETE", jsonBody: ["device_token": token]) { _ in }
+    }
+
+    /// 非当前账号移除时删服务端登记：凭据用该账号的保管库 token，走隔离请求
+    /// （共享 cookie 属于当前账号，删不掉目标号的行）。只删（目标账号，
+    /// 本机 token）这一行；其余口径与 unregisterTokenForCurrentAccount 相同。
+    /// 调用点：SessionManager.removeAccount 非当前分支、logoutWithToken 发出前。
+    func unregisterTokenForAccount(userId: Int, sessionToken: String) {
+        guard let token = UserDefaults.standard.string(forKey: Self.deviceTokenKey), !token.isEmpty else { return }
+        UserDefaults.standard.removeObject(forKey: Self.lastSentTokenKey(userId: userId))
+        BearyAPI.shared.deleteDeviceTokenWithToken(sessionToken, deviceToken: token)
+    }
+
     // MARK: - 远端私信推送识别
 
     /// 远端推送的判定：带 aps 字典且 type == "dm"。本地通知不带 aps，不会误判。
