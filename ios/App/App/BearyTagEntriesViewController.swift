@@ -130,8 +130,8 @@ final class BearyTagEntriesViewController: UIViewController {
 
             stateLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             stateLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            stateLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            stateLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
+            stateLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: BearySpace.xl),
+            stateLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -BearySpace.xl),
         ])
 
         loadMoreFooterView.onRetry = { [weak self] in self?.retryLoadMore() }

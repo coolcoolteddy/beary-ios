@@ -648,8 +648,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
             emptyLabel.leadingAnchor.constraint(equalTo: emptyView.leadingAnchor),
             emptyLabel.trailingAnchor.constraint(equalTo: emptyView.trailingAnchor),
             emptySubLabel.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 8),
-            emptySubLabel.leadingAnchor.constraint(equalTo: emptyView.leadingAnchor, constant: 24),
-            emptySubLabel.trailingAnchor.constraint(equalTo: emptyView.trailingAnchor, constant: -24),
+            emptySubLabel.leadingAnchor.constraint(equalTo: emptyView.leadingAnchor, constant: BearySpace.xl),
+            emptySubLabel.trailingAnchor.constraint(equalTo: emptyView.trailingAnchor, constant: -BearySpace.xl),
 
             failureView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
             failureView.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
@@ -657,8 +657,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
             failureView.heightAnchor.constraint(equalToConstant: 200),
             failureLabel.centerXAnchor.constraint(equalTo: failureView.centerXAnchor),
             failureLabel.centerYAnchor.constraint(equalTo: failureView.centerYAnchor, constant: -20),
-            failureLabel.leadingAnchor.constraint(equalTo: failureView.leadingAnchor, constant: 24),
-            failureLabel.trailingAnchor.constraint(equalTo: failureView.trailingAnchor, constant: -24),
+            failureLabel.leadingAnchor.constraint(equalTo: failureView.leadingAnchor, constant: BearySpace.xl),
+            failureLabel.trailingAnchor.constraint(equalTo: failureView.trailingAnchor, constant: -BearySpace.xl),
             retryButton.topAnchor.constraint(equalTo: failureLabel.bottomAnchor, constant: 16),
             retryButton.centerXAnchor.constraint(equalTo: failureView.centerXAnchor),
         ])
