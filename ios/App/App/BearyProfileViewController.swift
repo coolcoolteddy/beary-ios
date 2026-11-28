@@ -1089,6 +1089,48 @@ class BearyProfileViewController: UIViewController {
     /// 私信钮 can 结果（nil = 未查到/查失败，按钮保持隐藏，不把失败画成可私信）。
     private var dmCan: Bool?
     private var dmCanLoading = false
+    /// can 首轮查失败标记——失败后骨架不再占位（按钮按既有口径隐藏）；
+    /// 下一次重查开始时清掉，骨架在重查往返里重新占位。
+    private var dmCanLoadFailed = false
+
+    /// 关注／私信钮首帧骨架（2026-11-28 延迟修）：状态未到前先占位，不谎报
+    /// 状态、不跳布局。骨架是按钮的子视图、钉满按钮 bounds——按钮尺寸
+    /// （样式支改 28／30 后）变了骨架自动跟上，不写死任何一档；骨架在按钮
+    /// 内部，随密码框子树走，截屏时同按钮一起被抹掉、logo 正常露出；
+    /// 屏幕上骨架不透明，盖住按钮与底下 logo 条，不复发 logo 漏出。
+    private lazy var followButtonSkeletonView: UIView = {
+        let skeleton = UIView()
+        skeleton.translatesAutoresizingMaskIntoConstraints = false
+        skeleton.backgroundColor = BearyColors.surface2
+        skeleton.layer.cornerRadius = BearyCorners.single
+        skeleton.isUserInteractionEnabled = false
+        skeleton.isHidden = true
+        followButton.addSubview(skeleton)
+        NSLayoutConstraint.activate([
+            skeleton.topAnchor.constraint(equalTo: followButton.topAnchor),
+            skeleton.bottomAnchor.constraint(equalTo: followButton.bottomAnchor),
+            skeleton.leadingAnchor.constraint(equalTo: followButton.leadingAnchor),
+            skeleton.trailingAnchor.constraint(equalTo: followButton.trailingAnchor),
+        ])
+        return skeleton
+    }()
+
+    private lazy var dmButtonSkeletonView: UIView = {
+        let skeleton = UIView()
+        skeleton.translatesAutoresizingMaskIntoConstraints = false
+        skeleton.backgroundColor = BearyColors.surface2
+        skeleton.layer.cornerRadius = BearyCorners.single
+        skeleton.isUserInteractionEnabled = false
+        skeleton.isHidden = true
+        dmButton.addSubview(skeleton)
+        NSLayoutConstraint.activate([
+            skeleton.topAnchor.constraint(equalTo: dmButton.topAnchor),
+            skeleton.bottomAnchor.constraint(equalTo: dmButton.bottomAnchor),
+            skeleton.leadingAnchor.constraint(equalTo: dmButton.leadingAnchor),
+            skeleton.trailingAnchor.constraint(equalTo: dmButton.trailingAnchor),
+        ])
+        return skeleton
+    }()
 
     /// 好友第一期：当前目标用户的关注态（nil = 未拉取；拉取失败时按钮保持隐藏，
     /// 不把“未拉到”画成“可关注”）。目标 id 以 profile 解析值为准（handle 目标
@@ -2297,6 +2339,8 @@ class BearyProfileViewController: UIViewController {
             return
         }
         applyMode()
+        // 首帧提速：关注态／can 不等资料头，先并行发；有缓存先画、无缓存放骨架。
+        prepareFollowButtonsEarly()
         loadProfile()
         loadProfileSnapshot()
         // r17-C7：冷开个人页先显上次的统计数字（语料未到齐前的快照首屏）。
@@ -3609,6 +3653,7 @@ class BearyProfileViewController: UIViewController {
               let targetId = profile?.profileIdValue ?? targetUserIdValue,
               !followStateLoading else {
             if isOwnProfile || viewerUserIdValue == nil { followButtonContainer.isHidden = true }
+            updateButtonSkeletons()
             return
         }
         followStateLoading = true
@@ -3636,6 +3681,10 @@ class BearyProfileViewController: UIViewController {
                     let newState = BearyFollowState(response: state)
                     self.followState = newState
                     self.confirmedFollowState = newState
+                    // 上次确认态缓存：下次进页先画它、后台重验纠正。
+                    if let viewerId = self.viewerUserIdValue {
+                        BearyFriends.BearyFollowStateCache.save(newState, viewerId: viewerId, targetId: targetId)
+                    }
                     // 第三轮第 6 项：成功到达即清占位标记。
                     self.followStateFirstLoadFailed = false
                     let newMutual: Bool
@@ -3665,6 +3714,91 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// 首帧提速（2026-11-28 延迟修）：资料回包前就把关注态／can 两路并行
+    /// 发出去，不等资料头解析；定宽是纯量算，先算一次让容器与骨架首帧
+    /// 就是最终尺寸；上次确认态有缓存先画、后台重验纠正。
+    private func prepareFollowButtonsEarly() {
+        updateFollowButtonFixedWidth()
+        applyCachedFollowStateIfNeeded()
+        refreshFollowState()
+        refreshDMCan()
+        updateButtonSkeletons()
+    }
+
+    /// 上次确认态先画：缓存按（观看者，目标）分键，切号即 miss；有缓存才
+    /// 画，无缓存走骨架；拉黑目标不画缓存（以 refreshFollowState 复核为准）。
+    private func applyCachedFollowStateIfNeeded() {
+        guard followState == nil,
+              !isOwnProfile,
+              let viewerId = viewerUserIdValue,
+              let targetId = profile?.profileIdValue ?? targetUserIdValue,
+              !BearyBlockedStore.isBlocked(targetId),
+              let cached = BearyFriends.BearyFollowStateCache.load(viewerId: viewerId, targetId: targetId) else { return }
+        followState = cached
+        confirmedFollowState = cached
+        applyFollowButton()
+    }
+
+    /// 首帧骨架显隐总闸：关注态／can 未到前先占位，到了就 0.26s 淡出真按钮。
+    /// 骨架只在“按钮终将出现、只差一次网络往返”时出现：本人／游客／拉黑／
+    /// 已注销／远程关 dm 时不占位；首轮失败占位态（applyFollowButton 已显
+    /// “关注”重试）不占位；can 查失败后不占位（按钮按既有口径隐藏）。
+    private func updateButtonSkeletons() {
+        let showFollowSkeleton = !isOwnProfile
+            && viewerUserIdValue != nil
+            && !followBlockedByMe
+            && !profileDeleted
+            && followState == nil
+            && !followStateFirstLoadFailed
+        let showDMSkeleton = !isOwnProfile
+            && viewerUserIdValue != nil
+            && !followBlockedByMe
+            && !profileDeleted
+            && dmCan == nil
+            && !dmCanLoadFailed
+            && !BearyForceUpdateCenter.shared.isFeatureDisabled(.dm)
+        setSkeletonVisible(followButtonSkeletonView, visible: showFollowSkeleton)
+        setSkeletonVisible(dmButtonSkeletonView, visible: showDMSkeleton)
+        // 骨架在按钮内部：容器／私信钮藏着骨架也出不来。骨架要显时把容器与
+        // 私信钮先放出来（骨架不透明盖住图标与 logo 条，屏幕上只见灰 pill）。
+        if showFollowSkeleton {
+            followButtonContainer.isHidden = false
+        } else if followState == nil && !followStateFirstLoadFailed {
+            followButtonContainer.isHidden = true
+        }
+        if showDMSkeleton {
+            dmButton.isHidden = false
+        } else if dmCan != true {
+            dmButton.isHidden = true
+        }
+    }
+
+    /// 骨架显隐：显即刻到位（首帧不能再淡入一次）；隐走 0.26s 淡出，真按钮
+    /// 在骨架下已配好，淡出即淡入。淡出途中又显骨架时 completion 不得把
+    /// 新骨架藏掉（finished／alpha 双守卫＋显时先清在途动画）。
+    private func setSkeletonVisible(_ skeleton: UIView, visible: Bool) {
+        if visible {
+            skeleton.layer.removeAllAnimations()
+            skeleton.alpha = 1
+            skeleton.isHidden = false
+            return
+        }
+        guard !skeleton.isHidden else { return }
+        if skeleton.alpha == 0 {
+            skeleton.isHidden = true
+            skeleton.alpha = 1
+            return
+        }
+        UIView.animate(withDuration: BearyMotion.normal, animations: {
+            skeleton.alpha = 0
+        }, completion: { finished in
+            if finished, skeleton.alpha == 0 {
+                skeleton.isHidden = true
+                skeleton.alpha = 1
+            }
+        })
+    }
+
     private func applyFollowButton(animated: Bool = false) {
         // 第三轮第 6 项：首轮失败占位——无确认态但有失败标记时按未关注态显位，
         // 标题仍是“关注”，点按走重试（见 followButtonTapped 占位分支）。
@@ -3687,6 +3821,7 @@ class BearyProfileViewController: UIViewController {
               let config = Self.followButtonConfigs[state] else {
             followButtonContainer.isHidden = true
             renderedFollowState = nil
+            updateButtonSkeletons()
             return
         }
         // 只在已可见且态真变时播切换动效：首显、复现、同态重刷一律直设终值。
@@ -3719,6 +3854,7 @@ class BearyProfileViewController: UIViewController {
         followButton.alpha = 1
         // 占位不记为已渲染态——真实态到达时按首显播切换动效，不按同态直设。
         renderedFollowState = isPlaceholder ? nil : state
+        updateButtonSkeletons()
     }
 
     /// 关注钮两态配色（A 版）：未关注／回关墨底白字，已关注／互关 surface2 底墨字。
@@ -3802,6 +3938,9 @@ class BearyProfileViewController: UIViewController {
                     switch result {
                     case .success:
                         self.confirmedFollowState = target
+                        if let viewerId = self.viewerUserIdValue {
+                            BearyFriends.BearyFollowStateCache.save(target, viewerId: viewerId, targetId: targetId)
+                        }
                         if wasFollowedBy {
                             // B2：回关确认带上对方 id——通知页只更新此人卡片。
                             BearyFriends.clearDiaryCachesAndNotify(userId: targetId)
@@ -3848,6 +3987,9 @@ class BearyProfileViewController: UIViewController {
                         switch result {
                         case .success:
                             self.confirmedFollowState = target
+                            if let viewerId = self.viewerUserIdValue {
+                                BearyFriends.BearyFollowStateCache.save(target, viewerId: viewerId, targetId: targetId)
+                            }
                             // B2：取关确认带上对方 id——通知页只更新此人卡片。
                             BearyFriends.clearDiaryCachesAndNotify(userId: targetId)
                             self.reloadProfile()
@@ -4084,6 +4226,9 @@ class BearyProfileViewController: UIViewController {
             loadProfileSnapshot()
             applyMode()
             // 好友第一期：资料解析出目标 id 后才拉关注态（handle 目标此前无 id）。
+            // handle 目标有缓存先画、后台重验（id 目标在 viewDidLoad 已画过，
+            // 本调用因 followState 已有而空转）。
+            applyCachedFollowStateIfNeeded()
             refreshFollowState()
             // 私信钮 can 同点查（目标 id 已知；失败一律隐藏）。
             refreshDMCan()
@@ -6697,10 +6842,22 @@ class BearyProfileViewController: UIViewController {
         if !wasOwn {
             dmCan = nil
             dmCanLoading = false
+            dmCanLoadFailed = false
             updateDMButton()
             if SessionManager.shared.currentUser != nil {
                 refreshDMCan()
             }
+            // 关注态同款：旧观看者的态立即失效，按新观看者的缓存先画、
+            // 后台重验；在途旧回包凭观看者代次丢弃（见 refreshFollowState）。
+            followState = nil
+            confirmedFollowState = nil
+            followStateFirstLoadFailed = false
+            followStateLoading = false
+            applyCachedFollowStateIfNeeded()
+            if SessionManager.shared.currentUser != nil {
+                refreshFollowState()
+            }
+            updateButtonSkeletons()
         }
     }
 
@@ -9291,6 +9448,7 @@ class BearyProfileViewController: UIViewController {
         let can = BearyDevPreviewState.dmCanOverride ?? dmCan
         // 远程开关：dm 关掉时私信钮隐藏（入口关闭）；点按拦截仍在 presentDMChat 兜底。
         dmButton.isHidden = isOwnProfile || viewerUserIdValue == nil || followBlockedByMe || can != true || BearyForceUpdateCenter.shared.isFeatureDisabled(.dm)
+        updateButtonSkeletons()
     }
 
     /// can 重查：目标 id 已知才查；我方拉黑直接隐藏不发请求；查不到/失败一律隐藏。
@@ -9308,6 +9466,7 @@ class BearyProfileViewController: UIViewController {
         }
         guard !dmCanLoading else { return }
         dmCanLoading = true
+        dmCanLoadFailed = false
         // 审计 r7 ⑥：can 请求记观看者代次——切号后旧回包丢弃，不把旧
         // 账号的档位结果写回新账号的私信钮。
         let requestViewerGeneration = viewerGeneration
@@ -9322,8 +9481,10 @@ class BearyProfileViewController: UIViewController {
                 switch result {
                 case .success(let can):
                     self.dmCan = can.allowed ?? false
+                    self.dmCanLoadFailed = false
                 case .failure:
                     self.dmCan = nil
+                    self.dmCanLoadFailed = true
                 }
                 self.updateDMButton()
             }
