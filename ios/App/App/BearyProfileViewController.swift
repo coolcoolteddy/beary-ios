@@ -2791,8 +2791,12 @@ class BearyProfileViewController: UIViewController {
         // 锁定点（上滑量口径）：跟踪图底贴 header 底边时 = 自然顶 + 封面高 - header 高；
         // 容器态自然顶为 0 时退化为 coverH - headerH（任务公式）；modal 态已在守卫外。
         let lockUp = max(stickyHeaderBgNaturalTop + profileCoverHeight - headerHeight, 1)
-        let rampStart = lockUp / 2
-        let rampEnd = lockUp
+        // 头像缩小 ramp（2026-11-28 Li 定：头像先缩到位、header 后成型；
+        // 旧窗口 [lockUp/2, lockUp] 下头像进 header 带子时（约 33pt）还 83pt、
+        // 缩到 70 与 header 锁定同在 61pt、同时到位没有先后；新窗口 [0, lockUp*0.7]，
+        // 一上手就缩，70% 收缩量时已是 70pt，进带子时约 73pt，锁定时已是 70）。
+        let rampStart: CGFloat = 0
+        let rampEnd = lockUp * 0.7
         let rampProgress: CGFloat
         if up <= rampStart {
             rampProgress = 0
@@ -2839,8 +2843,19 @@ class BearyProfileViewController: UIViewController {
         avatarLetterLabel.transform = CGAffineTransform(translationX: 0, y: avatarBottomHold).scaledBy(x: avatarScale, y: avatarScale)
         applyProfileBelowShift(0)
         currentBelowShift = 0
-        // 吸顶 wordmark：后半段内 1→0 淡出。
-        stickyWordmarkView.alpha = 1 - rampProgress
+        // 吸顶 wordmark：后半段内 1→0 淡出（与头像缩小解耦：头像 ramp 已提前，
+        // wordmark 沿用旧窗口 [lockUp/2, lockUp]，时序与改前一字不差）。
+        let wordmarkStart = lockUp / 2
+        let wordmarkEnd = lockUp
+        let wordmarkProgress: CGFloat
+        if up <= wordmarkStart {
+            wordmarkProgress = 0
+        } else if up >= wordmarkEnd {
+            wordmarkProgress = 1
+        } else {
+            wordmarkProgress = (up - wordmarkStart) / (wordmarkEnd - wordmarkStart)
+        }
+        stickyWordmarkView.alpha = 1 - wordmarkProgress
         // 跟踪图：1:1 跟随、锁定后顶冻结（底贴 header 底边）；下拉区（up≤0）header 整体隐藏。
         let bgTop = max(stickyHeaderBgNaturalTop - up - stickyHeaderTrackTopInset, headerHeight - stickyHeaderTrackHeight)
         if stickyHeaderBgTopConstraint.constant != bgTop {
