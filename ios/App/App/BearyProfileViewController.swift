@@ -1410,6 +1410,10 @@ class BearyProfileViewController: UIViewController {
     /// 写作统计 2×2 网格的两行：超大字号时改单列（见 updateStatsGridLayout）。
     private var statsGridRowTop: UIStackView?
     private var statsGridRowBottom: UIStackView?
+    /// 写作统计网格分隔线：横竖各一根 0.5pt 细线（BearyColors.line）；超大字号
+    /// 单列时竖线隐藏、横线仍隔开上下两组（见 updateStatsGridLayout）。
+    private var statsGridVerticalDivider: UIView?
+    private var statsGridHorizontalDivider: UIView?
 
     /// 写作统计卡内词汇指纹紧凑版：当年 top 4 + 口径徽标行（只本人可见）。
     /// 词行本身不点——整卡点按进年度回顾，避免词行手势与整卡手势双触发；
@@ -4380,13 +4384,11 @@ class BearyProfileViewController: UIViewController {
     // 切账号 / 换目标：modulesProfileId 变化时语料、随机上一次 id、月历月份、展开态全复位。
 
     private func buildPersonalModuleCards() {
-        // —— 写作统计：2×2 小数字格 + 最常用心情 / 天气行。
+        // —— 写作统计：2×2 数字 + 最常用心情 / 天气行（数字直接排在卡底，
+        // 横竖各一根 0.5pt 细线隔开，不再用 surface2 小方块）。
         func makeStatTile(valueLabel: UILabel, keyText: String) -> UIView {
             let tile = UIView()
             tile.translatesAutoresizingMaskIntoConstraints = false
-            tile.backgroundColor = BearyColors.surface2
-            tile.layer.cornerRadius = 12
-            tile.clipsToBounds = true
             let stack = UIStackView(arrangedSubviews: [valueLabel, BearyProfilePersonalModulesCard.statKeyLabel(text: keyText)])
             stack.translatesAutoresizingMaskIntoConstraints = false
             stack.axis = .vertical
@@ -4416,8 +4418,36 @@ class BearyProfileViewController: UIViewController {
         statsRowBottom.distribution = .fillEqually
         statsRowBottom.spacing = 10
         statsGridRowBottom = statsRowBottom
-        statsCard.contentStack.addArrangedSubview(statsRowTop)
-        statsCard.contentStack.addArrangedSubview(statsRowBottom)
+        // 网格分隔线：横线夹在两行之间、竖线居中纵贯整格，均为 0.5pt 细线
+        //（BearyColors.line，系统设置式）；数字直接排在卡底（surface1）上。
+        let statsHorizontalDivider = UIView()
+        statsHorizontalDivider.translatesAutoresizingMaskIntoConstraints = false
+        statsHorizontalDivider.backgroundColor = BearyColors.line
+        statsHorizontalDivider.heightAnchor.constraint(equalToConstant: 0.5).isActive = true
+        statsGridHorizontalDivider = statsHorizontalDivider
+        let statsVerticalDivider = UIView()
+        statsVerticalDivider.translatesAutoresizingMaskIntoConstraints = false
+        statsVerticalDivider.backgroundColor = BearyColors.line
+        statsGridVerticalDivider = statsVerticalDivider
+        let statsGridStack = UIStackView(arrangedSubviews: [statsRowTop, statsHorizontalDivider, statsRowBottom])
+        statsGridStack.axis = .vertical
+        statsGridStack.spacing = 0
+        statsGridStack.translatesAutoresizingMaskIntoConstraints = false
+        let statsGridContainer = UIView()
+        statsGridContainer.translatesAutoresizingMaskIntoConstraints = false
+        statsGridContainer.addSubview(statsGridStack)
+        statsGridContainer.addSubview(statsVerticalDivider)
+        NSLayoutConstraint.activate([
+            statsGridStack.topAnchor.constraint(equalTo: statsGridContainer.topAnchor),
+            statsGridStack.leadingAnchor.constraint(equalTo: statsGridContainer.leadingAnchor),
+            statsGridStack.trailingAnchor.constraint(equalTo: statsGridContainer.trailingAnchor),
+            statsGridStack.bottomAnchor.constraint(equalTo: statsGridContainer.bottomAnchor),
+            statsVerticalDivider.topAnchor.constraint(equalTo: statsGridContainer.topAnchor),
+            statsVerticalDivider.bottomAnchor.constraint(equalTo: statsGridContainer.bottomAnchor),
+            statsVerticalDivider.centerXAnchor.constraint(equalTo: statsGridContainer.centerXAnchor),
+            statsVerticalDivider.widthAnchor.constraint(equalToConstant: 0.5),
+        ])
+        statsCard.contentStack.addArrangedSubview(statsGridContainer)
         statsCard.contentStack.addArrangedSubview(statsMoodWeatherLabel)
         statsCard.contentStack.addArrangedSubview(statsWordprintView)
         statsCard.contentStack.addArrangedSubview(statsEnterRow)
@@ -4516,8 +4546,8 @@ class BearyProfileViewController: UIViewController {
 
     /// 超大字号单列：辅助功能字号档（accessibility sizes）下 2×2 网格改单列，
     /// 每格全宽、上下排布；常规字号档恢复两行 fillEqually。信息顺序（总篇数／
-    /// 总字数／最常写时段／当前连续写作）与 12pt 格圆角一字不动——圆角在
-    /// makeStatTile 里定，本函数只改两行 stack 的 axis / distribution。
+    /// 总字数／最常写时段／当前连续写作）一字不动；单列时竖分隔线隐藏、横线
+    /// 仍隔开上下两组。本函数只改两行 stack 的 axis / distribution 与分隔线显隐。
     /// 字号档变化时由 traitCollectionDidChange 复核（见该函数内调用）。
     private func updateStatsGridLayout() {
         guard let top = statsGridRowTop, let bottom = statsGridRowBottom else { return }
@@ -4527,6 +4557,9 @@ class BearyProfileViewController: UIViewController {
             // 纵向时不用 fillEqually：各格按内容定高，字大换行不被等高裁掉。
             row.distribution = singleColumn ? .fill : .fillEqually
         }
+        // 单列时竖线无意义（格子上下排布），隐藏；横线仍隔开上下两组。
+        statsGridVerticalDivider?.isHidden = singleColumn
+        statsGridHorizontalDivider?.isHidden = false
     }
 
     /// 主题氛围开关点：默认墨色现行（= 现行底色，视觉零变化）；三档色值见
