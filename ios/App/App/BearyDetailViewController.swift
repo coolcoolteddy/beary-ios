@@ -1233,7 +1233,8 @@ final class BearyDetailViewController: UIViewController {
         // 建在此处：authorRow 已入栈、avatarButton 已入内容列，两端已同属内容列层级。
         authorRowTopConstraint = authorRow.topAnchor.constraint(equalTo: avatarButton.topAnchor)
 
-        nameButton.titleLabel?.font = BearyDynamicType.cardTitleFont()
+        // 展示审计 G4-05：作者名 15 semibold（见 authorNameFont），与标题 16.5 bold 拉开层级。
+        nameButton.titleLabel?.font = BearyDynamicType.authorNameFont()
         nameButton.titleLabel?.adjustsFontForContentSizeCategory = true
         nameButton.titleLabel?.numberOfLines = 1
         nameButton.titleLabel?.lineBreakMode = .byTruncatingTail

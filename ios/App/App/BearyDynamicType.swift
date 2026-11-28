@@ -34,10 +34,14 @@ enum BearyDynamicType {
         scaledFont(for: UIFont.systemFont(ofSize: 16))
     }
 
-    /// 卡片标题 16.5pt 粗体（Feed/Profile 卡片作者名行）。
+    /// 日记标题 16.5pt 粗体（卡片／详情日记标题；其余页面的名字行亦用本入口）。
     static func cardTitleFont() -> UIFont {
         scaledFont(for: UIFont.boldSystemFont(ofSize: 16.5))
     }
+
+    /// 作者名 15pt semibold（展示审计 G4-05：作者名降级，与日记标题 16.5pt 粗体
+    /// 拉开层级，标题为每篇的第一视觉落点；只用于日记卡片／详情页作者行，
+    /// 其余页面的名字仍走 cardTitleFont，不动）。
 
     /// 固定高度容器用：先缩放、超上限则截断到上限（withSize 保留原字重）。
     static func cappedFont(for base: UIFont, maximumPointSize: CGFloat = fixedContainerMaxPointSize) -> UIFont {

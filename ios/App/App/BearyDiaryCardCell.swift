@@ -963,7 +963,8 @@ class BearyDiaryCardCell: UITableViewCell {
     private let nameLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.cardTitleFont()
+        // 展示审计 G4-05：作者名 15 semibold（见 authorNameFont），与标题 16.5 bold 拉开层级。
+        lb.font = BearyDynamicType.authorNameFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
         lb.numberOfLines = 1
