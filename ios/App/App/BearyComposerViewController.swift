@@ -2502,10 +2502,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteFetchFailedRow.addArrangedSubview(fetchFailedSpacer)
         quoteFetchFailedRow.addArrangedSubview(quoteFetchFailedRetryButton)
         quoteFetchFailedRow.isHidden = true
-        // 引用卡置顶：插到标题下方、正文上方（原在内容栈末尾，须下滑才完整可见）。
-        // 以 textView 定位插入点，不依赖固定下标；textView 不在栈内时兜底追加。
-        if let textIndex = contentStack.arrangedSubviews.firstIndex(of: textView) {
-            contentStack.insertArrangedSubview(quoteSection, at: textIndex)
+        // 引用区放图片块后面（2026-11-27 Li 定：图片是自己的内容在前，引用是外部的在后，
+        // 与发布后卡片顺序一致——卡片栈：标题、正文、图片、九宫格、引用卡、定位、标签）。
+        // 以 pendingUploadBar 定位插入点，不依赖固定下标；pendingUploadBar 不在栈内时兜底追加。
+        if let barIndex = contentStack.arrangedSubviews.firstIndex(of: pendingUploadBar) {
+            contentStack.insertArrangedSubview(quoteSection, at: barIndex + 1)
         } else {
             contentStack.addArrangedSubview(quoteSection)
         }
@@ -2538,10 +2539,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 共享卡口径变化（相对原自绘卡）：正文 13.5 且最多 3 行（原不限行 16.5）、
     /// 图条 42（原 118）、日期走共享卡 feedTimeString（原 BearyText.timeString）。
     private func refreshQuoteSection() {
-        // 2026-11-22 纵向位置修（问题 A）：引用区插在标题与正文之间（见 buildQuoteSection），
+        // 2026-11-22 纵向位置修（问题 A）：引用区插在图片块后面（见 buildQuoteSection），
         // 无引用时四行全藏、区高塌为 0，但 setCustomSpacing(12, after: quoteSection) 的 12pt
-        // 仍与标题后的间距叠加——UIStackView 里塌掉的 arranged 子项两侧间距照算，
-        // 正文被多顶下 12pt（134 实测：标题分隔线→正文首行 36pt，设计值约 24pt）。
+        // 仍照算——UIStackView 里塌掉的 arranged 子项两侧间距照算，下面的内容被多顶下 12pt
+        // （旧位置 134 实测：标题分隔线→正文首行 36pt，设计值约 24pt）。
         // 故区空时间距归 0、有内容时才留 12；defer 使四条返回路径都走同一口径。
         defer {
             let sectionVisible = !quoteCardWrap.isHidden || !quoteDeletedRow.isHidden || !quoteUnavailableRow.isHidden || !quoteFetchFailedRow.isHidden
