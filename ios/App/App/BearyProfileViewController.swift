@@ -40,8 +40,9 @@ import CoreImage
 //   onShowTutorial / onLogout 回调保留作容器兼容，
 //   齿轮路径不再触发它们；行内互动成功后走
 //   onInteractionChanged（与详情页同款签名：id、点赞数、已赞、已收藏、回应聚合）。
-// - 小熊回应墙：标题“小熊回应”+ 横滑表情 × 计数 + “共收到 N 只”，
-//   emotes_total > 0 且仅本人页才显示，数据直接用 profile 下发的 emotes_received /
+// - 小熊回应墙（弱化版，Li 2026-11-23 定）：单行静态汇总——标题“小熊回应”
+//   + “共收到 N 只”，无横滑表情行；emotes_total > 0 且仅本人页才显示，
+//   数据直接用 profile 下发的 emotes_received /
 //   emotes_total（profilePayload，不另拉 /api/stats）。
 // - C2：齿轮直达设置页，退出登录改走设置页独立按钮（仍是 BearyAPI.logout，
 //   /api/account/logout，见文末注记；设置页内逻辑一字不动）。
@@ -1361,27 +1362,13 @@ class BearyProfileViewController: UIViewController {
     private let wallTitleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
+        // 弱化版（Li 2026-11-23 定）：标题降一档字重（bold→semibold），
+        // 字号 14 不动（token 表回应墙标题 14 bold 定版的字号口径）。
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.text = "小熊回应"
         return labelValue
-    }()
-
-    private let wallScrollView: UIScrollView = {
-        let scrollViewValue = UIScrollView()
-        scrollViewValue.translatesAutoresizingMaskIntoConstraints = false
-        scrollViewValue.showsHorizontalScrollIndicator = false
-        return scrollViewValue
-    }()
-
-    private let wallStack: UIStackView = {
-        let stackValue = UIStackView()
-        stackValue.translatesAutoresizingMaskIntoConstraints = false
-        stackValue.axis = .horizontal
-        stackValue.spacing = 8
-        stackValue.alignment = .center
-        return stackValue
     }()
 
     private let wallTotalLabel: UILabel = {
@@ -3100,7 +3087,6 @@ class BearyProfileViewController: UIViewController {
             tabsContainer.transform = fullShift
             modulesContainer.transform = .identity  // #257 脚部模块不跟 header 位移
             wallTitleLabel.transform = .identity
-            wallScrollView.transform = .identity
             wallTotalLabel.transform = .identity
             publicCountLabel.transform = fullShift
             publicTextLabel?.transform = fullShift
@@ -3111,7 +3097,6 @@ class BearyProfileViewController: UIViewController {
             modulesContainer.transform = .identity  // #257 脚部模块不跟 header 位移
             wallContainer.transform = fullShift
             wallTitleLabel.transform = .identity
-            wallScrollView.transform = .identity
             wallTotalLabel.transform = .identity
         }
         // 行跟移与名字以下整段位移同值（见函数头）；复位路径（shift = 0）亦经此归零。
@@ -3264,9 +3249,7 @@ class BearyProfileViewController: UIViewController {
         // 脚部重建只换容器、不重建模块卡。
         modulesContainer.addSubview(modulesStack)
         wallContainer.addSubview(wallTitleLabel)
-        wallContainer.addSubview(wallScrollView)
         wallContainer.addSubview(wallTotalLabel)
-        wallScrollView.addSubview(wallStack)
         tabsContainer.addSubview(diaryTabButton)
         tabsContainer.addSubview(likedTabButton)
         tabsContainer.addSubview(savedTabButton)
@@ -3392,19 +3375,11 @@ class BearyProfileViewController: UIViewController {
             wallContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: BearySpace.lg),
             wallContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -BearySpace.lg),
             wallTopConstraint,
-            // 网页移动端两行卡片：第一行标题左、总数右；第二行表情条独占整行横滑、右端截断。
+            // 弱化版（Li 2026-11-23 定）：单行静态汇总——标题左、总数右，
+            // 无横滑表情行；容器底贴标题底 +12。
             wallTitleLabel.leadingAnchor.constraint(equalTo: wallContainer.leadingAnchor, constant: 14),
             wallTitleLabel.topAnchor.constraint(equalTo: wallContainer.topAnchor, constant: 12),
-            wallScrollView.leadingAnchor.constraint(equalTo: wallContainer.leadingAnchor, constant: 14),
-            wallScrollView.trailingAnchor.constraint(equalTo: wallContainer.trailingAnchor, constant: -14),
-            wallScrollView.topAnchor.constraint(equalTo: wallTitleLabel.bottomAnchor, constant: 8),
-            wallScrollView.bottomAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: -12),
-            wallScrollView.heightAnchor.constraint(equalToConstant: 28),
-            wallStack.topAnchor.constraint(equalTo: wallScrollView.topAnchor),
-            wallStack.leadingAnchor.constraint(equalTo: wallScrollView.leadingAnchor),
-            wallStack.trailingAnchor.constraint(equalTo: wallScrollView.trailingAnchor),
-            wallStack.bottomAnchor.constraint(equalTo: wallScrollView.bottomAnchor),
-            wallStack.heightAnchor.constraint(equalTo: wallScrollView.heightAnchor),
+            wallContainer.bottomAnchor.constraint(equalTo: wallTitleLabel.bottomAnchor, constant: 12),
             wallTotalLabel.trailingAnchor.constraint(equalTo: wallContainer.trailingAnchor, constant: -14),
             wallTotalLabel.centerYAnchor.constraint(equalTo: wallTitleLabel.centerYAnchor),
 
@@ -4508,32 +4483,8 @@ class BearyProfileViewController: UIViewController {
             layoutHeaderForced(widthValue: headerWidthValue)
             return
         }
-        for arrangedView in wallStack.arrangedSubviews {
-            wallStack.removeArrangedSubview(arrangedView)
-            arrangedView.removeFromSuperview()
-        }
-        for item in received {
-            guard let key = item.emote, !key.isEmpty else { continue }
-            let chip = UIStackView()
-            chip.axis = .horizontal
-            chip.spacing = 4
-            chip.alignment = .center
-            // 52 批：回应墙改动态（与卡片内回应一致；网页端墙上表情是 SVG 自带循环、本身就是动的，
-            // App 静态反而与网页不一致，故上一批“汇总展示保持静态”的理由撤回；减动效首帧逻辑在播放器内，不动）。
-            let imageViewValue = BearyEmoteView(key: key, animated: true)
-            imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-            let countLabel = UILabel()
-            countLabel.font = BearyDynamicType.numberFont()
-            countLabel.textColor = BearyColors.gray
-            countLabel.text = "×\(item.count ?? 0)"
-            chip.addArrangedSubview(imageViewValue)
-            chip.addArrangedSubview(countLabel)
-            NSLayoutConstraint.activate([
-                imageViewValue.widthAnchor.constraint(equalToConstant: 20),
-                imageViewValue.heightAnchor.constraint(equalToConstant: 20),
-            ])
-            wallStack.addArrangedSubview(chip)
-        }
+        // 弱化版（Li 2026-11-23 定）：横滑表情行去掉，墙只剩一行静态汇总
+        // （标题＋“共收到 N 只”）；各表情明细不再逐只展示，只计总数。
         // 总数按过滤后的熊脸合计，行与总数一致（不用服务端 emotesTotal，那是过滤前总数）。
         let total = received.reduce(0) { $0 + ($1.count ?? 0) }
         wallTotalLabel.text = "共收到 \(total) 只"
