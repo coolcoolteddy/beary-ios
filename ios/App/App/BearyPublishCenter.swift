@@ -22,6 +22,10 @@ struct PublishSnapshot {
     /// 标签完整版（2026-11-18）：新建时选中的标签列；空组不发 tags 键。
     let tags: [String]?
     var ephemeral: Int?
+    /// 写一笔写选中日期：YYYY-MM-DD（今天或过去），nil = 今天（旧口径，
+    /// 服务端按发布时间盖戳）。发布中心经 publishEntry 原样透传给服务端；
+    /// 编辑器快照不填本字段，行为一字不变。
+    var date: String? = nil
     let locationName: String?
     let locationDistrict: String?
     /// 发布快照里的地点经纬度（2026-11-14 Li 定改存经纬度，随文本一起发）。
@@ -597,6 +601,7 @@ final class BearyPublishCenter {
             liveVideos: runningJob.liveVideos.isEmpty ? nil : runningJob.liveVideos,
             visibility: snapshot.visibility,
             tags: snapshot.tags,
+            date: snapshot.date,
             timeZoneName: snapshot.tzName,
             uploadProgress: progressHandler
         ) { [weak self, weak runningJob] result in

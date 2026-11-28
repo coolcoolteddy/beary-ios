@@ -142,6 +142,28 @@ enum BearyBeijingDay {
         return (y, m, d)
     }
 
+    /// 每周首日按 locale 取（#2092 日期本地化同口径）：时区仍是北京
+    /// （GMT+8），只换每周首日；周一起始的 mondayOf 不动（星图仍用周一）。
+    /// 异常值回落周一（2）。
+    static var localeFirstWeekday: Int {
+        let fw = Calendar.current.firstWeekday
+        return (1...7).contains(fw) ? fw : 2
+    }
+
+    /// 按 locale 首日算的本周首日（北京日界）：与 mondayOf 同形，
+    /// 只是首日取 localeFirstWeekday 而非固定周一。
+    static func weekStartOf(year: Int, month: Int, day: Int) -> (year: Int, month: Int, day: Int)? {
+        guard let date = date(year: year, month: month, day: day) else { return nil }
+        var cal = calendar
+        cal.firstWeekday = localeFirstWeekday
+        let weekday = cal.component(.weekday, from: date)
+        let back = (weekday - cal.firstWeekday + 7) % 7
+        guard let start = cal.date(byAdding: .day, value: -back, to: date) else { return nil }
+        let comps = cal.dateComponents([.year, .month, .day], from: start)
+        guard let y = comps.year, let m = comps.month, let d = comps.day else { return nil }
+        return (y, m, d)
+    }
+
     static func shifted(year: Int, month: Int, day: Int, byDays delta: Int) -> (year: Int, month: Int, day: Int)? {
         guard let date = date(year: year, month: month, day: day) else { return nil }
         guard let moved = calendar.date(byAdding: .day, value: delta, to: date) else { return nil }
