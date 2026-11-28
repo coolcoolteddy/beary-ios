@@ -1439,7 +1439,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.spacing = 0
         contentStack.alignment = .fill
         contentStack.isLayoutMarginsRelativeArrangement = true
-        contentStack.layoutMargins = UIEdgeInsets(top: BearySpace.lg, left: BearySpace.lg, bottom: BearySpace.lg, right: BearySpace.lg)
+        contentStack.layoutMargins = UIEdgeInsets(top: BearySpace.lg, left: BearySpace.lg, bottom: BearySpace.md, right: BearySpace.lg)
         view.addSubview(topBar)
         view.addSubview(publishVisibilityRow)
         view.addSubview(toolbarContainer)
@@ -2547,6 +2547,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         defer {
             let sectionVisible = !quoteCardWrap.isHidden || !quoteDeletedRow.isHidden || !quoteUnavailableRow.isHidden || !quoteFetchFailedRow.isHidden
             contentStack.setCustomSpacing(sectionVisible ? 12 : 0, after: quoteSection)
+            // 引用卡/状态行显隐改内容栈高（选引用、清引用、删引用、验权回包都走这里）：
+            // 正文高按旧 othersHeight 滞留，底部留空；defer 使四条返回路径都重算。
+            updateTextViewHeight()
         }
         let quote = isEditMode ? lockedQuote : selectedQuote
         // C6：编辑模式引用可改可删（有引用露共享卡 + ×，无引用则本区塌掉）；
@@ -2788,7 +2791,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 现在面板全幅展开，不再是内缩容器；tab 条仍为独立控制行、未动）。
         quotePanel.backgroundColor = BearyColors.surface1
         quotePanel.isHidden = true
-        contentStack.setCustomSpacing(16, after: quotePanel)
+        // 面板关着（isHidden）时 16pt 间距照算，底部多一段空；藏起来归 0（同 refreshQuoteSection 口径）。
+        contentStack.setCustomSpacing(quotePanel.isHidden ? 0 : 16, after: quotePanel)
     }
 
     /// 审计 R9 A：状态容器与行栈互斥撑高——任一状态可见时状态容器参与
@@ -2942,7 +2946,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanel.removeFromSuperview()
         quotePanel.isHidden = true
         contentStack.insertArrangedSubview(quotePanel, at: min(quotePanelStackIndex, contentStack.arrangedSubviews.count))
-        contentStack.setCustomSpacing(16, after: quotePanel)
+        // 面板已关回栈里仍是隐藏态，16pt 间距照算即底部多一段空；藏起来归 0（同 buildQuotePanel）。
+        contentStack.setCustomSpacing(quotePanel.isHidden ? 0 : 16, after: quotePanel)
     }
 
     /// C1：scrollView 底锚两档切换——选择条展开时锚选择条顶（条不盖住正文尾部）；
@@ -3825,7 +3830,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             imageStackView.trailingAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.trailingAnchor),
         ])
         refreshImageStripVisibility()
-        contentStack.setCustomSpacing(4, after: imageScrollView)
+        // 图片条无图时隐藏，写死的 4pt 间距照算；藏起来归 0（refreshImageStripVisibility 内已同步写，此处同口径）。
+        contentStack.setCustomSpacing(imageScrollView.isHidden ? 0 : 4, after: imageScrollView)
         // 原图确认待确认条：插在图片条下方，默认隐藏；有未确认项时显示
         //「N 张照片待确认上传方式」，点按重开确认弹窗（见 refreshPendingUploadBar）。
         pendingUploadBar.backgroundColor = BearyColors.surface2
@@ -3861,7 +3867,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             pendingUploadBarChevron.widthAnchor.constraint(equalToConstant: 14),
             pendingUploadBarChevron.heightAnchor.constraint(equalToConstant: 14),
         ])
-        contentStack.setCustomSpacing(4, after: pendingUploadBar)
+        // 待确认条默认隐藏，写死的 4pt 间距照算；藏起来归 0（refreshPendingUploadBar 内已同步写，此处同口径）。
+        contentStack.setCustomSpacing(pendingUploadBar.isHidden ? 0 : 4, after: pendingUploadBar)
     }
 
     /// 图片条显隐：有图才显示（网页 img-preview 空时 display:none）。
@@ -3869,6 +3876,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// arranged 子项仍被自身必需高撑住、与 stack 的隐藏折叠冲突（UISV-hiding）。
     private func refreshImageStripVisibility() {
         let shouldShow = !imageItems.isEmpty
+        // 藏起来的条不占间距（同 refreshQuoteSection 口径）：有图留 4，无图归 0；
+        // 放函数头、无条件写，动画中途的早返也不留旧间距。
+        contentStack.setCustomSpacing(shouldShow ? 4 : 0, after: imageScrollView)
         let heightActive = imageStripHeightConstraint?.isActive ?? false
         // 减弱动效开启时不做动画，直接落到终态。
         let duration = UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal
@@ -3897,6 +3907,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
             })
         }
+        // 图片条显隐改内容栈高（96 高约束启停）：正文高滞留则底部留空；
+        // 插图/删图/撤销恢复都走本函数，一处重算全覆盖（insert/remove 两处另有直调）。
+        updateTextViewHeight()
     }
 
     // MARK: - 工具栏（C1：左 [图片][定位][表情][@][引用][标签]、右 [字数圆环]；
@@ -4113,6 +4126,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard !selectedTags.isEmpty else {
             tagsScrollView.isHidden = true
             contentStack.setCustomSpacing(0, after: tagsScrollView)
+            // 标签行塌掉改内容栈高，正文高滞留则底部留空（同 refreshQuoteSection）。
+            updateTextViewHeight()
             updatePreferredContentSize()
             return
         }
@@ -4137,6 +4152,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         tagsScrollView.isHidden = false
         contentStack.setCustomSpacing(8, after: tagsScrollView)
+        // 标签行出现改内容栈高，正文高滞留则底部留空（同 refreshQuoteSection）。
+        updateTextViewHeight()
         updatePreferredContentSize()
     }
 
@@ -4657,6 +4674,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshMentionTopRow()
         let anyChipVisible = !recipientChipButton.isHidden || !selectedTags.isEmpty
         contentStack.setCustomSpacing(anyChipVisible ? 8 : 0, after: selectedChipsRow)
+        // @ chip 行显隐改内容栈高，正文高滞留则底部留空（同 refreshQuoteSection）。
+        updateTextViewHeight()
     }
 
     private func buildSelectedChipsRow() {
@@ -6254,6 +6273,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshImageStripVisibility()
         updatePublishState()
         updatePreferredContentSize()
+        // 加图改内容栈高（图片条 96 高出现）：只调 updatePreferredContentSize
+        // 不重算正文高，正文还按加图前的高度撑着，底部留空；与 refreshMetaRow 同病。
+        updateTextViewHeight()
     }
 
 
@@ -6297,6 +6319,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updatePublishState()
         scheduleDraftSave()
         updatePreferredContentSize()
+        // 删图改内容栈高（图片条塌掉）：同 insertImageItem，正文高须同步重算。
+        updateTextViewHeight()
     }
 
     /// C11：删图不再弹确认：先入单槽缓冲、条内即时消失、撤销条可见 10 秒。
@@ -6424,6 +6448,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let visible = pendingRemovedImage != nil
         imageUndoBar.isHidden = !visible
         contentStack.setCustomSpacing(visible ? 8 : 0, after: imageUndoBar)
+        // 撤销条显隐改内容栈高，正文高滞留则底部留空（同 refreshQuoteSection）。
+        updateTextViewHeight()
     }
 
     @objc private func didTapRemoveImage(_ sender: UIButton) {
@@ -7298,9 +7324,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         pendingUploadBar.accessibilityLabel = "\(count) 张照片待确认上传方式，点按选择上传方式"
         // 第 20 轮 A4：44 高约束与显隐同步——隐藏时停用，显示时恢复（同图片条先例）。
         pendingUploadBarHeightConstraint?.isActive = shouldShow
+        // 藏起来的条不占间距（同 refreshQuoteSection 口径）：显示留 4，隐藏归 0。
+        contentStack.setCustomSpacing(shouldShow ? 4 : 0, after: pendingUploadBar)
         if pendingUploadBar.isHidden != !shouldShow {
             pendingUploadBar.isHidden = !shouldShow
             updatePreferredContentSize()
+            // 待确认条显隐改内容栈高，正文高滞留则底部留空（同 refreshQuoteSection）。
+            updateTextViewHeight()
         }
     }
 
