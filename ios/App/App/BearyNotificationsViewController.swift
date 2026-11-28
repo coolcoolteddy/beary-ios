@@ -4480,13 +4480,14 @@ class BearyNotificationCell: UITableViewCell {
         unreadDotView.isHidden = !isUnread
     }
 
-    /// 卡面类别色（第十轮 #13／#15）：系统卡一律橙底＋深橙图标（已读也不退，
-    /// 橙色类别标记不动；浅色图标走 deepOrangeText）；互动卡未读时蓝底＋蓝图标，
-    /// 已读退回灰底＋墨图标，蓝色只剩未读点／未读背景承担。
+    /// 卡面类别色（第十轮 #13／#15）：系统卡一律灰底＋墨图标（已读也不退；
+    /// 展示审计 G6-H8：橙底橙图标退役）；互动卡未读时灰底＋墨图标（G6-N2：
+    /// 蓝底蓝图标退役），蓝色只剩未读点／未读背景／wash 承担。
     private func applyCardCategoryColors(isSystem: Bool, anyUnread: Bool) {
         if isSystem {
-            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.14)
-            avatarIconView.tintColor = BearyColors.deepOrangeText
+            // 展示审计 G6-H8：系统信头像橙改墨／灰（橙色只留未读点／角标／wash）。
+            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.gray, 0.12)
+            avatarIconView.tintColor = BearyColors.ink
         } else if anyUnread {
             avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.12)
             avatarIconView.tintColor = BearyColors.blue
@@ -4698,10 +4699,9 @@ class BearyNotificationCell: UITableViewCell {
             avatarRetryButton.isHidden = true
             // system 行标题含“成就/徽章”时用 popper（礼花）图，否则 mail 图；
             // letter 行恒为 mail 图（网页 ntOne 两分支同口径）。
-            // 第十轮 #13：系统图标浅色走 deepOrangeText（#C2410C，淡橙底上约 5.18:1；
-            // 原 orange 亮橙仅约 2.20:1），深色与 orange 同值不变；底仍保留淡橙 14%。
-            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.14)
-            avatarIconView.tintColor = BearyColors.deepOrangeText
+            // 展示审计 G6-H8：系统图标改墨／灰底（原 deepOrangeText 淡橙底口径退役）。
+            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.gray, 0.12)
+            avatarIconView.tintColor = BearyColors.ink
             // C-G2：同上，空串标题回退（网页 || 语义）。
             let rawTitle = item.title ?? ""
             let titleText = rawTitle.isEmpty ? (itemType == "letter" ? "消息" : "通知") : rawTitle
