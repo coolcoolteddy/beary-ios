@@ -953,14 +953,15 @@ final class BearyTimelineCell: UITableViewCell {
     private var metaMoodRow: UIView?
     private let recipientLabel = UILabel()
     private let contentLabel = UILabel()
-    /// 审计 P2-12：时间线补标题行（卡片同款 16.5 粗体、单行截断，空标题不占位）。
+    /// 审计 P2-12：时间线补标题行（卡片同款 16.5 粗体、空标题不占位）。
+    /// 展示审计 G1-10：与卡片一致放宽到 2 行截断（规范 v28 §九表：时间线标题 2 行截断）。
     private let titleLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
         lb.font = BearyDynamicType.cardTitleFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
-        lb.numberOfLines = 1
+        lb.numberOfLines = 2
         lb.lineBreakMode = .byTruncatingTail
         lb.isHidden = true
         return lb
@@ -6782,7 +6783,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         var height: CGFloat = 6 + 14  // 列顶 + 栈顶
         height += 28   // meta 行（⋯钮 28）
         height += 12   // meta→正文
-        if hasTitle { height += 20 + 6 }                              // 标题行 + 间距
+        if hasTitle { height += 40 + 6 }                          // 标题行（最多 2 行，G1-10）+ 间距
         height += textHeight
         height += 14   // 正文→下行
         if hasImages { height += BearyImageStrip.height + 12 }                           // 图片条 + 间距
