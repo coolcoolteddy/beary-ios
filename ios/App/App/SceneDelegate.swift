@@ -1414,6 +1414,15 @@ final class BearyChromeViewController: UIViewController {
             BearyDraftStore.setAccount(cachedUser.id)
             BearyImageLoader.shared.setAccount(cachedUser.id)
         }
+        // 添加账号守卫落盘恢复（2026-11-28）：App 死在添加账号登录页期间，
+        // 内存守卫已丢；落盘份存在且无新会话时按抓拍恢复原会话（游客态、
+        // 已有登录态、token 过期时不恢复，见 SessionManager）。
+        if let restoredUser = SessionManager.shared.restorePendingAccountAddSessionIfNeeded() {
+            loginButton.isHidden = true
+            loginButton.alpha = 0
+            BearyDraftStore.setAccount(restoredUser.id)
+            BearyImageLoader.shared.setAccount(restoredUser.id)
+        }
         // 秒开-启动瘦身：先注册首屏信号观察再亮首页——Feed 在 showPage 建页时即可能
         // 走缓存渲染、其静默首拉终结后发信号，观察者必须先于建页存在，否则信号会漏接。
         scheduleDeferredStartupMe()
