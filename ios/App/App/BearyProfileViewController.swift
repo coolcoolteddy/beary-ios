@@ -8463,8 +8463,10 @@ class BearyProfileViewController: UIViewController {
             graphicView = heartView
         case .saved:
             // 网页 beary.html:2692 的 nb-static 口径：仅描边轮廓，无动画。
+            // Li 2026-11-23 定（第三批第 44 题）：副文案删掉——标题“还没有
+            // 收藏的日记”已自解释；副文案是教学段落，按前端第一原则不堆说明文字。
             titleText = "还没有收藏的日记"
-            subtitleText = "看到喜欢的日记，点书签存到这里，只有你能看到"
+            subtitleText = ""
             let bookmarkView = BearyBookmarkView()
             bookmarkView.strokeColor = BearyColors.gray
             graphicView = bookmarkView
