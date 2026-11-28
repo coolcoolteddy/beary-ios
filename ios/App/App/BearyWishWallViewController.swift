@@ -8,7 +8,7 @@ import UIKit
 // 对齐，失败回滚 + 摇头 + toast + warning 震动（与 10-29 即时性总口径同款）。
 // 界面：全屏 modal + fadeRise（同反馈页）；左上文字「关闭」15pt 墨字、标题 17；
 // iPad 内容列 600 居中（顶栏与内容列同宽，P2-17 口径）；动效只走 transform /
-// opacity，新行入场错峰、已有行不重播；无骨架屏（已删口径）；组件走 iOS 系统
+// opacity，新行入场错峰、已有行不重播；首载走骨架行（第 9 题）；组件走 iOS 系统
 // 组件，图标只用官方包（本页无主图标，状态 pill 纯文字）。
 // 后端状态：本文件对应接口（GET /beary/api/wishes、POST /beary/api/wishes、
 // POST /beary/api/wishes/:id/vote、POST /beary/api/wishes/:id/status）已于
@@ -400,9 +400,14 @@ final class BearyWishWallViewController: UIViewController {
     private let contentStack = UIStackView()
     private let createButton = BearyButton.make(style: .primaryPill(.ink), title: "发起许愿")
     private let wishEmptyStateView = BearyStateView()
-    // P2-18：加载/失败态迁入已有 BearyStateView（不新建组件）；空态走新增的
+    // P2-18：失败态迁入已有 BearyStateView（不新建组件）；空态走新增的
     // wishEmptyStateView（同样不传 iconName，不强迫空态套同一插图）。
+    // 首载加载态改骨架行（第 9 题，见 wishSkeletonRows），不再走 StateView 转圈。
     private let wishStateView = BearyStateView()
+
+    /// 首载骨架行：showWishSkeletonRows 建 3 行放进 contentStack 末尾（与真实行同位）；
+    /// 成功／失败／快照回填都经 removeWishSkeletonRows 摘掉，不进 rowViews。
+    private var wishSkeletonRows: [UIView] = []
     /// r17-C9：快照态提示行——有旧结果且刷新失败时“显示的是上次的数据”；
     /// 确认结果为空时不显、只显空态。
     private let wishStaleLabel: UILabel = {
@@ -807,6 +812,95 @@ final class BearyWishWallViewController: UIViewController {
         })
     }
 
+    /// 首载骨架行进栈：先摘旧行再建 3 行放进 contentStack 末尾（与真实行同位）；
+    /// 重复调用不叠加（代次丢弃后重拉、重试都走这里）。
+    private func showWishSkeletonRows() {
+        removeWishSkeletonRows()
+        wishSkeletonRows = (0..<3).map { makeWishSkeletonRow(index: $0) }
+        for row in wishSkeletonRows {
+            contentStack.addArrangedSubview(row)
+        }
+    }
+
+    /// 首载骨架行出栈：成功／失败／快照回填都经这里摘掉；无骨架时是空操作。
+    private func removeWishSkeletonRows() {
+        guard !wishSkeletonRows.isEmpty else { return }
+        for row in wishSkeletonRows {
+            row.removeFromSuperview()
+        }
+        wishSkeletonRows = []
+    }
+
+    /// 愿望卡骨架行：与 WishRowView 同几何——surface1 卡片、圆角 single、
+    /// 内边距 14/16/14、行距 8：标题条、详情两条、作者时间条、两票钮块＋
+    /// 净赞成条；三行按 index 错开条宽。扫光走站内同款 BearySkeletonShimmerView。
+    /// 无文字、不冒充真实愿望；骨架行不进读屏（搜索骨架行同款）。
+    private func makeWishSkeletonRow(index: Int) -> UIView {
+        let card = UIView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = BearyColors.surface1
+        card.layer.cornerRadius = BearyCorners.single
+        card.isAccessibilityElement = false
+        card.accessibilityElementsHidden = true
+
+        let titleBar = BearySkeletonShimmerView.bar(height: 16)
+        let detailBar1 = BearySkeletonShimmerView.bar(height: 12)
+        let detailBar2 = BearySkeletonShimmerView.bar(height: 12)
+        let metaBar = BearySkeletonShimmerView.bar(width: 100, height: 12)
+        let netBar = BearySkeletonShimmerView.bar(width: 72, height: 12)
+        // 两票钮块：与 compact 描边钮同高 36、同圆角 single（BearyButtonStyle 高表）。
+        let upBlock = UIView()
+        upBlock.backgroundColor = BearySkeletonShimmerView.baseColor()
+        upBlock.layer.cornerRadius = BearyCorners.single
+        let downBlock = UIView()
+        downBlock.backgroundColor = BearySkeletonShimmerView.baseColor()
+        downBlock.layer.cornerRadius = BearyCorners.single
+        for v in [titleBar, detailBar1, detailBar2, metaBar, netBar, upBlock, downBlock] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+        }
+        let titleFractions: [CGFloat] = [0.55, 0.4, 0.65]
+        let detailFractions: [CGFloat] = [0.7, 0.5, 0.6]
+        let shimmerView = BearySkeletonShimmerView(blocks: [titleBar, detailBar1, detailBar2, metaBar, netBar, upBlock, downBlock])
+        shimmerView.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(titleBar)
+        card.addSubview(detailBar1)
+        card.addSubview(detailBar2)
+        card.addSubview(metaBar)
+        card.addSubview(upBlock)
+        card.addSubview(downBlock)
+        card.addSubview(netBar)
+        card.addSubview(shimmerView)
+        NSLayoutConstraint.activate([
+            titleBar.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
+            titleBar.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            titleBar.widthAnchor.constraint(equalTo: card.widthAnchor, multiplier: titleFractions[index % 3], constant: -32),
+            detailBar1.topAnchor.constraint(equalTo: titleBar.bottomAnchor, constant: 8),
+            detailBar1.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            detailBar1.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            detailBar2.topAnchor.constraint(equalTo: detailBar1.bottomAnchor, constant: 8),
+            detailBar2.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            detailBar2.widthAnchor.constraint(equalTo: card.widthAnchor, multiplier: detailFractions[index % 3], constant: -32),
+            metaBar.topAnchor.constraint(equalTo: detailBar2.bottomAnchor, constant: 8),
+            metaBar.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            upBlock.topAnchor.constraint(equalTo: metaBar.bottomAnchor, constant: 8),
+            upBlock.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            upBlock.widthAnchor.constraint(equalToConstant: 64),
+            upBlock.heightAnchor.constraint(equalToConstant: 36),
+            downBlock.topAnchor.constraint(equalTo: upBlock.topAnchor),
+            downBlock.leadingAnchor.constraint(equalTo: upBlock.trailingAnchor, constant: 8),
+            downBlock.widthAnchor.constraint(equalToConstant: 64),
+            downBlock.heightAnchor.constraint(equalToConstant: 36),
+            netBar.centerYAnchor.constraint(equalTo: upBlock.centerYAnchor),
+            netBar.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            upBlock.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -14),
+            shimmerView.topAnchor.constraint(equalTo: card.topAnchor),
+            shimmerView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            shimmerView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            shimmerView.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+        ])
+        return card
+    }
+
     private func loadWishes() {
         guard !isLoading else {
             // 第八轮审计 07：加载在途时不丢弃本次刷新请求，记下来等旧请求
@@ -826,8 +920,14 @@ final class BearyWishWallViewController: UIViewController {
         // 重试时先收起旧失败态（失败回包会重显），不让它在刷新期间继续占位。
         if showingCachedWishes {
             wishStateView.isHidden = true
+        } else if wishes.isEmpty {
+            // 首载改骨架行：无快照首拉出 3 行愿望卡骨架（与真实行同几何，扫光同款
+            // BearySkeletonShimmerView）；成功／失败回包时统一摘掉。失败态仍走
+            // wishStateView（“加载失败”＋“重试”），不进骨架。
+            wishStateView.isHidden = true
+            showWishSkeletonRows()
         } else {
-            // P2-18：加载态走 BearyStateView（转圈 + “加载中…”）；成功/失败回包时统一收起。
+            // 已有内容时的后台重拉：仍走原有 StateView 加载态（非首载，不动）。
             wishStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
             showStateViewFaded()
         }
@@ -850,6 +950,7 @@ final class BearyWishWallViewController: UIViewController {
                 switch result {
                 case .success(let resp):
                     self.wishStateView.isHidden = true
+                    self.removeWishSkeletonRows()
                     self.wishesFreshConfirmed = true
                     // 审计登录杂项：与 viewWillAppear 同款，列表成功回包时也刷新 Plus 门。
                     self.refreshPlusGate()
@@ -913,6 +1014,8 @@ final class BearyWishWallViewController: UIViewController {
                         }
                     }
                 case .failure:
+                    // 首载失败：骨架先摘，失败态（重试入口）再接上；有快照时列表仍保留。
+                    self.removeWishSkeletonRows()
                     // r17-C9：有旧结果且刷新失败时保留快照列表、标“显示的是上次的数据”；
                     // 失败态仍给重试入口（置于快照列表上方），不盖住已有行；无快照时走原有失败态。
                     if self.showingCachedWishes {
@@ -948,6 +1051,7 @@ final class BearyWishWallViewController: UIViewController {
             }
             self.showingCachedWishes = true
             self.wishStateView.isHidden = true
+            self.removeWishSkeletonRows()
             self.renderWishes()
         }
     }
