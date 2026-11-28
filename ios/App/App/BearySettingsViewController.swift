@@ -5122,7 +5122,6 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
                     self.blockedIds.removeAll { $0 == userId }
                     self.updateBlockedEmptyState()
                     self.tableView.reloadData()
-                    BearyToast.show(in: self.view, message: "已解除拉黑")
                 case .failure:
                     BearyToast.show(in: self.view, message: "解除失败，请重试")
                     self.tableView.reloadData()
