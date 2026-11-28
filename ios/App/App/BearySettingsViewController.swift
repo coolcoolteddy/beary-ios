@@ -1231,7 +1231,7 @@ final class BearySettingsViewController: UIViewController {
         plusWrap.addArrangedSubview(plusGroup.card)
     }
 
-    /// 2026-11-19 七组版：存储与数据卡——管理存储／数据用量／数据状态，各点进新页面。
+    /// 2026-11-19 七组版：存储与数据卡——管理存储／数据用量／离线保存／数据状态，各点进新页面。
     /// 管理存储页顶部“已使用 / 总容量”＋彩色存储条＋图例，下面带真实大小的
     /// 四行＋红色“清除所有存储”；数据用量页是流量节省程序／高画质图片／
     /// 自动播放实况；数据状态页是日记与回收站的上次同步时间、草稿与私信的
@@ -1246,6 +1246,16 @@ final class BearySettingsViewController: UIViewController {
         let dataUsageButton = UIButton(type: .custom)
         dataUsageButton.accessibilityLabel = "数据用量"
         dataUsageButton.addTarget(self, action: #selector(openDataUsageSettingsPage), for: .touchUpInside)
+        offlineSaveDetailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        offlineSaveDetailLabel.adjustsFontForContentSizeCategory = true
+        offlineSaveDetailLabel.textColor = BearyColors.gray
+        offlineSaveDetailLabel.numberOfLines = 0
+        offlineSaveDetailLabel.textAlignment = .right
+        let offlineSaveContent = makeRow(title: "离线保存", detailLabel: offlineSaveDetailLabel, iconName: "icon_download", showChevron: true)
+        let offlineSaveButton = UIButton(type: .custom)
+        offlineSaveButton.accessibilityLabel = "离线保存"
+        offlineSaveButton.addTarget(self, action: #selector(openOfflineSavePage), for: .touchUpInside)
+        offlineSaveButton.bearyAddPressFeedback()
         let dataStatusContent = makeRow(title: "数据状态", iconName: "icon_info", showChevron: true)
         let dataStatusButton = UIButton(type: .custom)
         dataStatusButton.accessibilityLabel = "数据状态"
@@ -1253,6 +1263,7 @@ final class BearySettingsViewController: UIViewController {
         let group = makeGroupCard(title: "存储与数据", rows: [
             makeSettingsTappableRow(content: storageContent, button: storageButton),
             makeSettingsTappableRow(content: dataUsageContent, button: dataUsageButton),
+            makeSettingsTappableRow(content: offlineSaveContent, button: offlineSaveButton),
             makeSettingsTappableRow(content: dataStatusContent, button: dataStatusButton),
         ])
         storageDataWrap.addArrangedSubview(group.card)
@@ -3529,22 +3540,7 @@ final class BearySettingsViewController: UIViewController {
         rows.append(devRow)
         let group = makeGroupCard(title: "反馈与建议", rows: rows)
         dataFeedbackWrap.addArrangedSubview(group.card)
-        // 第二批体验检查第 6 项：离线保存独立组（与反馈组并列，不混进反馈组标题下）。
-        // 行尾只显本账号占用（篇数 · 字节），逐篇状态与清除在子页里。
-        offlineSaveDetailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        offlineSaveDetailLabel.adjustsFontForContentSizeCategory = true
-        offlineSaveDetailLabel.textColor = BearyColors.gray
-        offlineSaveDetailLabel.numberOfLines = 0
-        offlineSaveDetailLabel.textAlignment = .right
-        let offlineSaveContent = makeRow(title: "离线保存", detailLabel: offlineSaveDetailLabel, iconName: "icon_download", showChevron: true)
-        let offlineSaveButton = UIButton(type: .custom)
-        offlineSaveButton.accessibilityLabel = "离线保存"
-        offlineSaveButton.addTarget(self, action: #selector(openOfflineSavePage), for: .touchUpInside)
-        offlineSaveButton.bearyAddPressFeedback()
-        let offlineSaveGroup = makeGroupCard(title: "离线保存", rows: [
-            makeSettingsTappableRow(content: offlineSaveContent, button: offlineSaveButton),
-        ])
-        dataFeedbackWrap.addArrangedSubview(offlineSaveGroup.card)
+
         // 第十一轮审计 1：开发者模式行是组内末行——只藏 row 会留 wrap 的 28pt
         // 内边距与其前分隔线；改藏 wrapper＋separator＋row 三者（Plus 限免行同款口径）。
         if let devIndex = rows.firstIndex(where: { $0 === devRow }) {
