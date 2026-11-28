@@ -3935,10 +3935,14 @@ class BearyProfileViewController: UIViewController {
             let requestSeq = followActionSeq
             followState = target
             applyFollowButton(animated: true)
+            BearyPendingVisual.begin(for: followButton)
             BearyAPI.shared.followFriend(userId: targetId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
-                    guard requestSeq == self.followActionSeq else { return }
+                    guard requestSeq == self.followActionSeq else {
+                        BearyPendingVisual.end(for: self.followButton)
+                        return
+                    }
                     switch result {
                     case .success:
                         self.confirmedFollowState = target
@@ -3962,6 +3966,8 @@ class BearyProfileViewController: UIViewController {
                             BearyToast.show(in: self.view, message: wasFollowedBy ? "回关失败，请重试" : "关注失败，请重试")
                         }
                     }
+                    // 结算即结束待定态。
+                    BearyPendingVisual.end(for: self.followButton)
                 }
             }
         case .following, .mutual:
@@ -3984,10 +3990,14 @@ class BearyProfileViewController: UIViewController {
                 let requestSeq = self.followActionSeq
                 self.followState = target
                 self.applyFollowButton(animated: true)
+                BearyPendingVisual.begin(for: self.followButton)
                 BearyAPI.shared.unfollowFriend(userId: targetId) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
-                        guard requestSeq == self.followActionSeq else { return }
+                        guard requestSeq == self.followActionSeq else {
+                            BearyPendingVisual.end(for: self.followButton)
+                            return
+                        }
                         switch result {
                         case .success:
                             self.confirmedFollowState = target
@@ -4010,6 +4020,8 @@ class BearyProfileViewController: UIViewController {
                                 BearyToast.show(in: self.view, message: "取消关注失败，请重试")
                             }
                         }
+                        // 结算即结束待定态。
+                        BearyPendingVisual.end(for: self.followButton)
                     }
                 }
             }

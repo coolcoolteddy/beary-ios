@@ -1122,6 +1122,8 @@ final class BearyWishWallViewController: UIViewController {
     private func sendVoteRequest(wishId: Int, sendVote: Int, gen: Int, onSettled: ((Bool) -> Void)? = nil) {
         voteInFlight.insert(wishId)
         voteInflight.insert(wishId)
+        // 超 800ms 未确认才给轻量待定态（整行微灰）；800ms 内回包则延迟没触发过。
+        if let row = rowViews[wishId] { BearyPendingVisual.begin(for: row) }
         BearyAPI.shared.voteWish(id: wishId, vote: sendVote) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -1146,12 +1148,18 @@ final class BearyWishWallViewController: UIViewController {
                         // 审计 26 #34：中间态写请求也已服务端确认，写入版本 +1。
                         self.wishWriteVersion[wishId, default: 0] += 1
                     }
+                    // 本次请求已结算，待定态结束；补发的新请求重新 begin，
+                    // 不被本次的 end 取消。
+                    if let row = self.rowViews[wishId] { BearyPendingVisual.end(for: row) }
                     self.sendVoteRequest(wishId: wishId, sendVote: pending, gen: self.voteGeneration[wishId] ?? gen, onSettled: pendingCompletion ?? onSettled)
                     return
                 }
                 // 代次守卫（点赞 likeSeq 同款）：已有更新点按时过期回包直接丢弃，
                 // 不回滚、不摇头、不弹 toast，屏幕只反映最后一次点按。
-                guard let idx = self.indexOfWish(wishId), self.voteGeneration[wishId] == gen else { return }
+                guard let idx = self.indexOfWish(wishId), self.voteGeneration[wishId] == gen else {
+                    if let row = self.rowViews[wishId] { BearyPendingVisual.end(for: row) }
+                    return
+                }
                 switch result {
                 case .success(let resp):
                     // 审计登录杂项：成功音只在服务端成功回包后播。
@@ -1182,6 +1190,8 @@ final class BearyWishWallViewController: UIViewController {
                     BearyToast.show(in: self.view, message: NSLocalizedString("wish.vote_failed", comment: ""))
                     onSettled?(false)
                 }
+                // 结算即结束待定态。
+                if let row = self.rowViews[wishId] { BearyPendingVisual.end(for: row) }
             }
         }
     }

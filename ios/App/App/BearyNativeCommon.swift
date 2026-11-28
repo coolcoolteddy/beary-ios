@@ -597,6 +597,55 @@ final class BearyHit44SegmentedControl: UISegmentedControl {
 
 // MARK: - 图片地址
 
+// MARK: - 乐观写点超时待定态（数据同步审阅 #2）
+// 口径（Li 2026-11-28 定，取代 2026-10-28“先行期间不半透明”）：写请求
+// 800ms 内无待定态——点按瞬间仍是最终态；超 800ms 未确认才把目标控件
+// 轻微变淡（alpha 0.55），不加 spinner、不禁用按钮、不拦点按；确认后恢复。
+// 引用计数：同一控件多路写点并发时只在全部结束时恢复。只在主线程调用。
+// 恢复只碰自己变淡的态：期间被置成禁用态（alpha 0.4）等不恢复、不覆盖。
+enum BearyPendingVisual {
+    private final class State {
+        var count = 0
+        var workItem: DispatchWorkItem?
+        deinit { workItem?.cancel() }
+    }
+
+    private static var stateKey: UInt8 = 0
+
+    private static func state(for view: UIView) -> State {
+        if let existing = objc_getAssociatedObject(view, &stateKey) as? State { return existing }
+        let created = State()
+        objc_setAssociatedObject(view, &stateKey, created, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        return created
+    }
+
+    /// 开始一次待定：800ms 后仍未结束，把 view 变淡到 0.55。
+    static func begin(for view: UIView) {
+        let state = state(for: view)
+        state.count += 1
+        guard state.count == 1 else { return }
+        let item = DispatchWorkItem { [weak view] in
+            guard let view = view else { return }
+            // 只在仍为全不透明时变淡；已是禁用态（0.4）等不覆盖。
+            if view.alpha == 1.0 { view.alpha = 0.55 }
+        }
+        state.workItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: item)
+    }
+
+    /// 结束一次待定：计数归零时取消未触发的延迟，恢复 alpha。
+    /// 结算与代次守卫丢弃两条路都要调；控件已释放时状态随之释放，无需调。
+    static func end(for view: UIView) {
+        guard let state = objc_getAssociatedObject(view, &stateKey) as? State else { return }
+        state.count = max(0, state.count - 1)
+        guard state.count == 0 else { return }
+        state.workItem?.cancel()
+        state.workItem = nil
+        // 只恢复自己变淡的态；期间被置成禁用态（0.4）等不碰。
+        if view.alpha == 0.55 { view.alpha = 1.0 }
+    }
+}
+
 enum BearyImageURLs {
     static let base = "https://teddyhn.com"
 
