@@ -3858,13 +3858,19 @@ class BearyTimelineViewController: UIViewController {
     /// tick 到达 ephemeralUntil 时，对可见行重算有效态并原地刷新——pill/虚线框/图标由 cell.configure 按有效态重绘；
     /// 当日面板行走分区重载（面板头后缀同步翻转），时间线行走单行重载；不整表重载、不改存储态 isPublic；
     /// 其他列表页（Feed/搜索/个人页/星图/地图列表）的到期复核由权限组统筹，本支不碰。
+    /// F7 夜巡：行翻了、数没翻——表头“公开 X · 私密 Y”与当月圆点仍按过期前算，故 sweep
+    /// 命中过期时同步调本地计数（见 applyExpiredEphemeralCounts），只动客户端缓存口径。
     private func sweepEphemeralExpiry() {
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         var expiredIds: [String] = []
+        var expiredEntries: [Entry] = []
         for entry in timelineEntries + dayEntries {
-            guard let entryId = entry.id, !expiredEphemeralHandledIds.contains(entryId) else { continue }
+            // 同一篇可能同时在 timelineEntries 与 dayEntries 里：旧代码会把 id 追加两次
+            // （当时只多一次行重载、无害）；计数调整按篇扣，去重后才准。
+            guard let entryId = entry.id, !expiredEphemeralHandledIds.contains(entryId), !expiredIds.contains(entryId) else { continue }
             if let until = entry.ephemeralUntil, until <= nowMs, entry.isPublic == true {
                 expiredIds.append(entryId)
+                expiredEntries.append(entry)
             }
         }
         let liveIds = Set((timelineEntries + dayEntries).compactMap { $0.id })
@@ -3890,6 +3896,67 @@ class BearyTimelineViewController: UIViewController {
         }
         if !rowReloads.isEmpty {
             tableView.reloadRows(at: rowReloads, with: .none)
+        }
+        // F7：行已翻、数同步翻（表头计数＋当月圆点），见下。
+        applyExpiredEphemeralCounts(expiredEntries)
+    }
+
+    /// F7 夜巡：限时篇前台过期后，表头“公开 X · 私密 Y”与当月圆点仍按过期前算——
+    /// sweep 只 reload 可见行/面板分区，不动 countsValue 与 calendarCache。
+    /// 本方法在 sweep 命中过期时同步调本地计数，口径与改可见性同款（applyEditedEntry :3571）：
+    /// 公开 −1／私密 +1，总量不变；只在缓存 pub > 0 时扣（服务端若已按有效态下发，
+    /// 回包在过期后，本地不再重复扣）。日历圆点就地改缓存当日的 pub/priv，不删月缓存——
+    /// 删缓存会先闪空统计行（updateStatsLine 空态签名）、弱网失败后圆点直接丢；
+    /// 就地改无网络依赖，失败也不丢数。月总数与 streak 不受过期影响（总量不变、
+    /// streak 只计写作日），不碰。服务端 tl_counts 与日历 pub 均已按有效公开算
+    /// （服务端 ephemeral_until > now 条款），下次刷新整体覆盖本地值时与本调整一致，
+    /// 不会回弹（核实见本支 NOTES）。
+    private func applyExpiredEphemeralCounts(_ expiredEntries: [Entry]) {
+        var countsChanged = false
+        var touchedViewMonths = Set<String>()
+        for entry in expiredEntries {
+            // 表头计数：过期篇下发时计公开，本地按有效态公开 −1／私密 +1。
+            if var counts = countsValue, (counts.pub ?? 0) > 0 {
+                counts.pub = (counts.pub ?? 0) - 1
+                counts.priv = (counts.priv ?? 0) + 1
+                countsValue = counts
+                countsChanged = true
+            }
+            // 日历圆点：就地改缓存当日的 pub/priv（只改已缓存的月；未缓存的月下次拉取为准，
+            // 服务端同口径）。日分桶与服务端一致：北京日界（BearyBeijingDay :3）。
+            if let created = entry.createdAt,
+               let comp = BearyBeijingDay.components(ofMs: created) {
+                let monthKey = BearyBeijingDay.monthKey(year: comp.year, month: comp.month)
+                let dayKey = "\(comp.day)"
+                if var month = calendarCache[monthKey],
+                   var days = month.days,
+                   var dayCount = days[dayKey],
+                   (dayCount.pub ?? 0) > 0 {
+                    dayCount.pub = (dayCount.pub ?? 0) - 1
+                    dayCount.priv = (dayCount.priv ?? 0) + 1
+                    days[dayKey] = dayCount
+                    month.days = days
+                    calendarCache[monthKey] = month
+                    touchedViewMonths.insert(monthKey)
+                }
+            }
+        }
+        if countsChanged {
+            updateCountsLabel()
+            refreshHeaderHeight()
+            // 切档快照同写：否则切档回来 countsValue 被快照里的旧值顶回（applyVisFilter :2899）。
+            if let snap = filterSnapshots[.all] {
+                filterSnapshots[.all] = FilterSnapshot(entries: snap.entries, hasMore: snap.hasMore, trashCount: snap.trashCount, counts: countsValue)
+            }
+            // 首屏快照同步写回（删帖/改可见性同款）：冷启动先渲染快照，纠过的计数不得复活。
+            if timelineVisFilter == .all, let uid = SessionManager.shared.currentUser?.id {
+                BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
+            }
+        }
+        // 圆点只在受影响月份处于当前视图时重画（月份回包同款：renderCalendar + 表头高度）。
+        if !touchedViewMonths.isEmpty, !Set(monthKeysForCurrentView()).isDisjoint(with: touchedViewMonths) {
+            renderCalendar()
+            refreshHeaderHeight()
         }
     }
 
