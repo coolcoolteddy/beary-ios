@@ -42,7 +42,7 @@ final class BearyHeatmapView: UIView {
         label.font = BearyDynamicType.sectionTitleFont()
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
-        label.text = "写日记热力图"
+        label.text = NSLocalizedString("profile.heatmap.title", comment: "")
         return label
     }()
 
