@@ -203,22 +203,26 @@ final class BearyTagEntriesViewController: UIViewController {
         stateLabel.isHidden = true
         loadingIndicator.startAnimating()
         BearyAPI.shared.fetchEntries(scope: .tag(tag), limit: Self.pageSize) { [weak self] result in
-            guard let self = self else { return }
-            self.loading = false
-            self.loadingIndicator.stopAnimating()
-            switch result {
-            case .success(let list):
-                // 整表更新前记下首个可见日记，reload 后按它恢复滚动位置。
-                let anchor = self.captureScrollAnchor()
-                self.entries = list.entries ?? []
-                self.hasMore = (list.entries ?? []).count >= Self.pageSize
-                self.reloadDataPreservingScrollPosition(anchor: anchor)
-                self.refreshStateLabel()
-                self.updateLoadMoreFooter()
-            case .failure:
-                self.loadFailed = true
-                self.refreshStateLabel()
-                self.updateLoadMoreFooter()
+            // 回包在 URLSession 后台队列（非主线程）：脚部／reload／指示器
+            // 都是 UIKit 调用，须先切回主线程（广场／个人页同款口径）。
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.loading = false
+                self.loadingIndicator.stopAnimating()
+                switch result {
+                case .success(let list):
+                    // 整表更新前记下首个可见日记，reload 后按它恢复滚动位置。
+                    let anchor = self.captureScrollAnchor()
+                    self.entries = list.entries ?? []
+                    self.hasMore = (list.entries ?? []).count >= Self.pageSize
+                    self.reloadDataPreservingScrollPosition(anchor: anchor)
+                    self.refreshStateLabel()
+                    self.updateLoadMoreFooter()
+                case .failure:
+                    self.loadFailed = true
+                    self.refreshStateLabel()
+                    self.updateLoadMoreFooter()
+                }
             }
         }
     }
@@ -229,33 +233,37 @@ final class BearyTagEntriesViewController: UIViewController {
         loadMoreFailed = false
         updateLoadMoreFooter()
         BearyAPI.shared.fetchEntries(scope: .tag(tag), limit: Self.pageSize, before: last.createdAt, beforeId: last.id) { [weak self] result in
-            guard let self = self else { return }
-            self.loading = false
-            switch result {
-            case .success(let list):
-                let page = list.entries ?? []
-                // 页间可能重叠：按日记 ID 去重，只追加本页没出现过的新篇。
-                let anchor = self.captureScrollAnchor()
-                var seenIds = Set(self.entries.compactMap { $0.id })
-                let fresh = BearyCursorPageLoad.fresh(page, id: { $0.id }, seen: &seenIds)
-                self.hasMore = page.count >= Self.pageSize
-                self.updateLoadMoreFooter()
-                guard !fresh.isEmpty else { return }
-                let startIndex = self.entries.count
-                self.entries.append(contentsOf: fresh)
-                BearyLoadingUX.appendRowsIfConsistent(tableView: self.tableView, oldCount: startIndex, insert: {
-                    // 纯追加只插新行：旧 cell 不重建，头像/图片不闪。
-                    let indexPaths = (startIndex..<(startIndex + fresh.count)).map { IndexPath(row: $0, section: 0) }
-                    self.tableView.insertRows(at: indexPaths, with: .none)
-                }, fallback: {
-                    // 表行数与模型对不上时才整表重载，并按首个可见日记恢复滚动。
-                    self.reloadDataPreservingScrollPosition(anchor: anchor)
-                })
-            case .failure:
-                // 翻页失败亮脚部重试态：已有内容可看，不弹 toast；
-                // 点脚部“加载失败，重试”再拉一次，下一轮滑到底也会再试。
-                self.loadMoreFailed = true
-                self.updateLoadMoreFooter()
+            // 回包在 URLSession 后台队列（非主线程）：脚部／插行／reload
+            // 都是 UIKit 调用，须先切回主线程（广场／个人页同款口径）。
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.loading = false
+                switch result {
+                case .success(let list):
+                    let page = list.entries ?? []
+                    // 页间可能重叠：按日记 ID 去重，只追加本页没出现过的新篇。
+                    let anchor = self.captureScrollAnchor()
+                    var seenIds = Set(self.entries.compactMap { $0.id })
+                    let fresh = BearyCursorPageLoad.fresh(page, id: { $0.id }, seen: &seenIds)
+                    self.hasMore = page.count >= Self.pageSize
+                    self.updateLoadMoreFooter()
+                    guard !fresh.isEmpty else { return }
+                    let startIndex = self.entries.count
+                    self.entries.append(contentsOf: fresh)
+                    BearyLoadingUX.appendRowsIfConsistent(tableView: self.tableView, oldCount: startIndex, insert: {
+                        // 纯追加只插新行：旧 cell 不重建，头像/图片不闪。
+                        let indexPaths = (startIndex..<(startIndex + fresh.count)).map { IndexPath(row: $0, section: 0) }
+                        self.tableView.insertRows(at: indexPaths, with: .none)
+                    }, fallback: {
+                        // 表行数与模型对不上时才整表重载，并按首个可见日记恢复滚动。
+                        self.reloadDataPreservingScrollPosition(anchor: anchor)
+                    })
+                case .failure:
+                    // 翻页失败亮脚部重试态：已有内容可看，不弹 toast；
+                    // 点脚部“加载失败，重试”再拉一次，下一轮滑到底也会再试。
+                    self.loadMoreFailed = true
+                    self.updateLoadMoreFooter()
+                }
             }
         }
     }
