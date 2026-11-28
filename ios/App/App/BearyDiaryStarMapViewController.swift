@@ -1898,10 +1898,10 @@ extension BearyDiaryStarMapViewController: UITableViewDataSource, UITableViewDel
 
 /// r17 M2 差分入场参数：新星按 starDelays 错峰出现（0.25 秒、间隔
 /// 0.03 秒、最多延后 0.24 秒），新线（edgeIds）在两端星可见后淡入。
-/// 画布是单块 draw(_:) 画布，无逐星 UIView——入场以逐帧重绘表达：
-/// 星用半径缩放（transform 等价）+ alpha，线用 alpha；动效只走
-/// transform / opacity，不改位置与布局。减动效时调用方不传 entrance，
-/// 直接呈现终态（BearyMotion.animated 门控在 VC 侧）。
+/// 画布是图层化渲染，无逐星 UIView——入场逐帧只改已建图层的
+/// transform / opacity，不重建路径、不重建日期 string：星用 transform
+/// 缩放 + opacity，线用 opacity；不改位置与布局。减动效时调用方不传
+/// entrance，直接呈现终态（BearyMotion.animated 门控在 VC 侧）。
 struct StarMapEntrance {
     /// 新星 id → 入场延后（秒，已按 0.03 间隔、0.24 上限算好）。
     let starDelays: [String: TimeInterval]
@@ -2139,7 +2139,9 @@ private final class StarMapSkyView: UIView {
     }
 
     /// r17 M2 入场逐帧：入场总时长 = 最多延后 0.24 + 星 0.25 + 线 0.25；
-    /// 跑完停 link、清入场态、最后一帧按终态重建图层，不留逐帧重建。
+    /// 跑完停 link、清入场态、最后一帧按终态重建图层。逐帧只改已建图层的
+    /// opacity／transform（applyEntranceFrame），不重建路径、不重建日期
+    /// string；路径与 string 只在入场开始前由 rebuildLayers 建一次。
     /// link 与 target 的互持有 tick 末的 invalidate 打断；deinit 再保一层。
     @objc private func entranceTick() {
         let elapsed = CACurrentMediaTime() - entranceStart
@@ -2149,8 +2151,59 @@ private final class StarMapSkyView: UIView {
             entranceStarDelays = [:]
             entranceEdgeIds = []
             entranceStart = 0
+            rebuildLayers()
+            return
         }
-        rebuildLayers()
+        applyEntranceFrame(now: CACurrentMediaTime())
+    }
+
+    /// r17 M2 入场逐帧（轻量）：只改已建图层的 opacity／transform，不重建
+    /// 任何路径、不重建日期 string——路径与 string 由 rebuildLayers 在入场
+    /// 开始前建好一次（setStars 末尾调过）。星：halo／core／ring／flash 按
+    /// entranceState 的 scale 做 transform 缩放（锚点默认中心、与星心重合）、
+    /// 按 alpha 做 opacity；日期只改 opacity 与 frame 的 y（跟半径走，不碰
+    /// string、不触发文本布局）。线：只改 opacity／显隐。flash 的 opacity
+    /// 不碰（光点经过时的亮灭由 flashHalo 的动画管，模型值恒 0）。
+    /// 尺寸／数据／字号变化仍走 rebuildLayers 全量重建。
+    private func applyEntranceFrame(now: CFTimeInterval) {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for star in stars {
+            guard let layers = starLayers[star.id] else { continue }
+            let center = point(for: (x: star.x, y: star.y), in: bounds)
+            let (starAlpha, starScale) = entranceState(forStarId: star.id, now: now)
+            let scaleTransform = CATransform3DMakeScale(starScale, starScale, 1)
+            layers.halo.transform = scaleTransform
+            layers.core.transform = scaleTransform
+            layers.ring.transform = scaleTransform
+            layers.flash.transform = scaleTransform
+            // ring 描边不跟 transform 变细：本地宽度按 1/scale 补偿，屏上恒 2pt。
+            layers.ring.borderWidth = 2 / starScale
+            layers.halo.opacity = Float(starAlpha)
+            layers.core.opacity = Float(starAlpha)
+            layers.ring.opacity = Float(starAlpha)
+            let starHidden = starAlpha <= 0
+            layers.halo.isHidden = starHidden
+            layers.flash.isHidden = starHidden
+            layers.core.isHidden = starHidden
+            layers.ring.isHidden = starHidden || star.id != selectedStarId
+            if star.dateText.isEmpty {
+                layers.date.isHidden = true
+            } else {
+                layers.date.opacity = Float(starAlpha)
+                layers.date.isHidden = starHidden
+                let radius = star.radius * starScale
+                layers.date.frame = CGRect(x: center.x - 30, y: center.y + radius + 3, width: 60, height: 14)
+            }
+        }
+        for edge in displayedEdges {
+            guard let edgeLayer = edgeLayers[edge.id] else { continue }
+            let alpha = entranceAlpha(forEdge: edge, now: now)
+            edgeLayer.opacity = Float(alpha)
+            edgeLayer.isHidden = alpha <= 0
+        }
+        CATransaction.commit()
     }
 
     /// r17 M2：星入场进度——easeOut（1-(1-t)²），alpha 0→1、半径 0.6→1；
@@ -2523,6 +2576,9 @@ private final class StarMapSkyView: UIView {
     /// 按当前 bounds 重建全部图层：星尘、每条边、每颗星；不触发布局、
     /// 不改模型。重建时关掉隐式动画（布局变化不带淡入淡出），
     /// 选中态由 updateSelectionVisuals 收尾（不做淡入）。
+    /// 入场逐帧不再调本函数（见 applyEntranceFrame）：路径与日期 string
+    /// 在此建一次，入场帧只改已建图层的 opacity／transform；本函数只留给
+    /// 尺寸／数据／字号变化与入场最后一帧。
     private func rebuildLayers() {
         guard bounds.width > 0, bounds.height > 0 else { return }
         // r17 M2：本帧入场时刻（同一帧内星与线用同一 now，不逐项取时）。
@@ -2566,7 +2622,7 @@ private final class StarMapSkyView: UIView {
             let p1 = point(for: a, in: bounds)
             let p2 = point(for: b, in: bounds)
             // r17 M2：新线在两端星可见后淡入；未到起播时刻（alpha 0）先藏起，
-            // 每帧 rebuildLayers 时再按进度放出（入场收尾见本函数末尾）。
+            // 入场帧由 applyEntranceFrame 按进度放出（全量重建时的入场收尾见本函数末尾）。
             edgeEntranceAlphas[edge.id] = entranceAlpha(forEdge: edge, now: now)
             let edgeLayer: CAShapeLayer
             if let existing = edgeLayers[edge.id] {
@@ -2594,9 +2650,12 @@ private final class StarMapSkyView: UIView {
             seenStarIds.insert(star.id)
             let center = point(for: (x: star.x, y: star.y), in: bounds)
             // r17 M2：新星入场——半径 0.6→1 + alpha 0→1；未到延后时刻
-            //（alpha 0）整组图层先藏起，每帧 rebuildLayers 时再按进度放出。
+            //（alpha 0）整组图层先藏起。帧按满半径建一次，入场缩放只走
+            // transform（applyEntranceFrame 每帧改）、透明只走 opacity，
+            // 不把 alpha 烘进背景色／日期色里；日期 string 在此建一次。
             let (starAlpha, starScale) = entranceState(forStarId: star.id, now: now)
-            let radius = star.radius * starScale
+            let radius = star.radius
+            let scaleTransform = CATransform3DMakeScale(starScale, starScale, 1)
             let layers: StarLayers
             if let existing = starLayers[star.id] {
                 layers = existing
@@ -2627,18 +2686,27 @@ private final class StarMapSkyView: UIView {
             let haloRect = CGRect(x: center.x - radius - 7, y: center.y - radius - 7, width: (radius + 7) * 2, height: (radius + 7) * 2)
             layers.halo.frame = haloRect
             layers.halo.cornerRadius = radius + 7
-            layers.halo.backgroundColor = BearyStarMapNight.star.withAlphaComponent(star.brightness * 0.12 * starAlpha).cgColor
+            layers.halo.backgroundColor = BearyStarMapNight.star.withAlphaComponent(star.brightness * 0.12).cgColor
+            layers.halo.transform = scaleTransform
+            layers.halo.opacity = Float(starAlpha)
             layers.flash.frame = haloRect
             layers.flash.cornerRadius = radius + 7
             layers.flash.backgroundColor = BearyStarMapNight.star.withAlphaComponent(0.45).cgColor
             layers.flash.opacity = 0
+            layers.flash.transform = scaleTransform
             let coreRect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
             layers.core.frame = coreRect
             layers.core.cornerRadius = radius
-            layers.core.backgroundColor = BearyStarMapNight.star.withAlphaComponent(star.brightness * starAlpha).cgColor
+            layers.core.backgroundColor = BearyStarMapNight.star.withAlphaComponent(star.brightness).cgColor
+            layers.core.transform = scaleTransform
+            layers.core.opacity = Float(starAlpha)
             let ringRect = CGRect(x: center.x - radius - 3, y: center.y - radius - 3, width: (radius + 3) * 2, height: (radius + 3) * 2)
             layers.ring.frame = ringRect
             layers.ring.cornerRadius = radius + 3
+            // ring 描边不跟 transform 变细：本地宽度按 1/scale 补偿，屏上恒 2pt。
+            layers.ring.borderWidth = 2 / starScale
+            layers.ring.transform = scaleTransform
+            layers.ring.opacity = Float(starAlpha)
             // 未到延后时刻整组先藏起（ring 的选中显隐仍由 updateSelectionVisuals
             // 在本函数末尾收尾，到场后这里放出；date 的显隐见下）。
             let starHidden = starAlpha <= 0
@@ -2649,13 +2717,16 @@ private final class StarMapSkyView: UIView {
                 layers.date.isHidden = true
             } else {
                 // 审计登录杂项：画布日期字不再写死 9pt，按当前字号档位缩放；
-                // 固定夜色主题本身不动（颜色仍走 dateText）。
+                // 固定夜色主题本身不动（颜色仍走 dateText）。string 在此建一次，
+                // 入场透明只走 date.opacity，不再每帧新建 string（旧实现把
+                // alpha 烘进前景色、每帧触发文本布局）。
                 let datePointSize = UIFontMetrics.default.scaledFont(for: UIFont.systemFont(ofSize: 9)).pointSize
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: UIFont.systemFont(ofSize: datePointSize),
-                    .foregroundColor: BearyStarMapNight.dateText.withAlphaComponent(starAlpha),
+                    .foregroundColor: BearyStarMapNight.dateText,
                 ]
                 layers.date.string = NSAttributedString(string: star.dateText, attributes: attributes)
+                layers.date.opacity = Float(starAlpha)
                 layers.date.isHidden = starAlpha <= 0
                 layers.date.frame = CGRect(x: center.x - 30, y: center.y + radius + 3, width: 60, height: 14)
             }
