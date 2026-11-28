@@ -5037,7 +5037,6 @@ enum BearyBlockFlow {
                             // v15：仅好友回应互关验证结论同清。
                             BearyDiaryCardCell.invalidateEmoteMutualAccess(forAuthorId: userId)
                             NotificationCenter.default.post(name: .bearyDidBlockUser, object: userId)
-                            BearyToast.show(in: vc.view, message: "已拉黑")
                             onDone?(true)
                         case .failure:
                             BearyToast.show(in: vc.view, message: "拉黑失败，请重试")
