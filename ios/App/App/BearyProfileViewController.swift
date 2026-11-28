@@ -1256,7 +1256,8 @@ class BearyProfileViewController: UIViewController {
     private let topBarView: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.bg
+        // 顶栏透明：吸顶条已接管背景（modal 与本人页同套），顶栏只留按钮；静止态底色见 view.backgroundColor。
+        viewValue.backgroundColor = .clear
         viewValue.isHidden = true
         return viewValue
     }()
@@ -2009,12 +2010,12 @@ class BearyProfileViewController: UIViewController {
     /// 不是单独淡入的新条，而是封面本身随滚动慢慢变模糊、收成 header——
     /// 预模糊 18px 图交叉淡入 ≈ 模糊度 0→18px 随行程连续加深，行程走完后
     /// 模糊层顶冻结在带底边 - 跟踪图高，带内恒为模糊封面本身（不另起白玻璃条）；
-    /// 用户名最后才浮上来（模糊走完后按遮挡比例淡入）。
+    /// 用户名最后才滑上来（内容名被盖住后从下方 1:1 滑入、不渐显）。
     /// 滚动回调里只改背景顶约束常量与 alpha，不调 layoutIfNeeded、
     /// 不做图片加载、不改文案；几何只在布局变化时算一次（背景自然顶与
     /// header 底边存字段，滚动回调只读）。header 是 table 的兄弟视图
-    /// （不进 table），全程不拦截触摸；modal 顶栏已自带名字时新 header 全程
-    /// 隐藏，避免遮挡返回 / 分享。
+    /// （不进 table），全程不拦截触摸；modal 页与本人页同套上滑 header，
+    /// 顶栏名已隐藏、顶栏透明，吸顶条在顶栏之下、不拦截触摸。
     private let stickyHeaderView: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -2031,8 +2032,8 @@ class BearyProfileViewController: UIViewController {
     /// 区域像素与真封面完全相同、无跳变；上滑时与真封面 1:1 同速同框上移
     ///（视差 0.3 已删），到锁定点后顶冻结在带底边 - 跟踪图高、带内恒为封面
     /// 底部本身（即封面锁定成 header，不另起模糊层）。
-    /// 无封面默认背景时无图、背景色为主题底色（见 updateStickyHeaderLayout；
-    /// #528 起跟踪图一律隐藏，吸顶 header 本身即主题底色）。
+    /// 无封面默认背景时无图、吸顶条底色跟封面区默认背景走（limitedBubbleBg，
+    /// 见 syncStickyHeaderCover；#528 起跟踪图一律隐藏）。
     private let stickyHeaderBgImageView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -2136,9 +2137,8 @@ class BearyProfileViewController: UIViewController {
     /// 程序化跳位、回顶、转屏都不会卡在旧进度。
     private lazy var stickyHeaderNameLeadingConstraint: NSLayoutConstraint = stickyHeaderNameLabel.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor)
     private lazy var stickyHeaderNameCenterYConstraint: NSLayoutConstraint = stickyHeaderNameLabel.centerYAnchor.constraint(equalTo: stickyHeaderView.topAnchor, constant: 30)
-    /// 布局时算一次、滚动回调只读：header 底边（view 坐标）与 modal 禁用态。
+    /// 布局时算一次、滚动回调只读：header 底边（view 坐标）。
     private var stickyHeaderBottom: CGFloat = 0
-    private var stickyHeaderModalDisabled = false
     /// v22 封面自然高（2026-10-30）：代码现行封面高恒 180（applyProfile／resetCoverStretch／
     /// updateCoverStretch 同值），滚动回调取此常量、不取拉伸中的 live 约束（下拉复位动画
     /// 0.28s 内 live 值会抖）；改封面高时此处与三处同改，另 stickyWordmark 的 144 也要同步。
@@ -2542,13 +2542,14 @@ class BearyProfileViewController: UIViewController {
         if modal {
             headerShareToGearConstraint.isActive = false
             headerShareToHeaderConstraint.isActive = true
+            // 顶栏名隐藏：名字改由吸顶名接管（被 header 遮住后才滑入），顶栏只留按钮。
+            topNameLabel.isHidden = true
         } else {
             headerShareToGearConstraint.isActive = false
             headerShareToHeaderConstraint.isActive = false
         }
         layoutHeaderForced(widthValue: headerWidthValue)
-        // 上滑 header：modal 顶栏已自带名字时禁用新 header，并按当前 offset 刷新一次态。
-        stickyHeaderModalDisabled = !topBarView.isHidden
+        // 上滑 header：modal 页与本人页同套机制，按当前 offset 刷新一次态。
         updateProfileCoverScroll(offsetY: tableView.contentOffset.y, topBaseline: -tableView.contentInset.top)
     }
 
@@ -2594,7 +2595,7 @@ class BearyProfileViewController: UIViewController {
     /// 锁定后冻结），容器淡入时与下方
     /// 真封面像素对齐，故不再有黑块盖在照片上、也无接缝；到锁定点后模糊层
     /// 再按遮挡进度交叉淡入，背景即逐渐变成 header。无封面照片时仍无图、
-    /// 容器即主题底色（默认背景本来就是底色，无图可跟）。
+    /// 容器底色跟封面区默认背景走（limitedBubbleBg），与下方封面区同色、无接缝。
     private func syncStickyHeaderCover() {
         if festivalTheme.coverTheme != nil {
             // 景深封面白块根因：景深款走 ProfileCoverView（活的分层视图），静态
@@ -2650,6 +2651,8 @@ class BearyProfileViewController: UIViewController {
             stickyHeaderBgImageView.image = nil
         }
         stickyWordmarkView.isHidden = true
+        // 无图时吸顶条底色跟封面区默认背景同色（limitedBubbleBg），有图时恢复主题底色。
+        stickyHeaderView.backgroundColor = stickyHeaderBgImageView.isHidden ? BearyColors.limitedBubbleBg : BearyColors.bg
         updateStickyHeaderNameColor()
         refreshStickyHeaderBlurImage()
     }
@@ -2730,7 +2733,6 @@ class BearyProfileViewController: UIViewController {
         let width = view.bounds.width
         let tableFrame = tableView.frame
         guard width > 0, tableFrame.width > 0 else { return }
-        stickyHeaderModalDisabled = !topBarView.isHidden
         // 容器高 = 安全区顶 + 60（v22：标题带 60，用户名落在状态栏下方）；底边存下来供滚动回调只读。
         let headerHeight = safeTop + 60
         if stickyHeaderHeightConstraint.constant != headerHeight {
@@ -2798,10 +2800,6 @@ class BearyProfileViewController: UIViewController {
         if stickyHeaderNameLabel.text != nameLabel.text {
             stickyHeaderNameLabel.text = nameLabel.text
         }
-        // modal 顶栏可见时新 header 全程隐藏（顶栏已自带名字）。
-        if stickyHeaderModalDisabled {
-            stickyHeaderView.isHidden = true
-        }
     }
 
     /// v22 封面滚动态（2026-10-30，取代视差 0.3＋上滑模糊 header＋旧名字淡入）：
@@ -2824,7 +2822,7 @@ class BearyProfileViewController: UIViewController {
         // 吸顶显现前必先与当前封面态同步（见 syncStickyHeaderCover），
         // 否则首帧橙底会在上滑时以吸顶形式露出来。
         syncStickyHeaderCover()
-        guard !stickyHeaderModalDisabled, coverHeightConstraint.constant > 0 else {
+        guard coverHeightConstraint.constant > 0 else {
             resetProfileCoverScroll()
             stickyHeaderView.alpha = 0
             stickyHeaderView.isHidden = true
@@ -2931,12 +2929,18 @@ class BearyProfileViewController: UIViewController {
         let stickyHeaderFade = min(max(up / 24, 0), 1)
         stickyHeaderView.alpha = stickyHeaderFade
         stickyHeaderView.isHidden = (stickyHeaderFade == 0)
-        // header 用户名转移：内容用户名顶边（已含 belowShift 位移的实时屏坐标）
-        // 碰到 header 底边时起，往后 20px 内淡入 0→1＋上浮 6→0，往回滑反向恢复。
+        // header 用户名转移：消失比例＝出现比例——吸顶名滑入进度与内容名消失进度同步。
+        // 起点 = 内容名顶边刚碰 header 底边（开始消失），终点 = 内容名完全被 header
+        // 盖住（消失完）；进度 = 遮挡比例 (headerHeight - nameTop) / nameHeight，
+        // 0→1 夹取。吸顶名位移 41pt（下限：槽位底离 header 底边 19pt＋label 高
+        // 22pt，少了起步会闪现；起点时 label 顶边正好贴 header 底边、容器裁剪全藏），
+        // 透明度全程 1；往回滑原路下落、重新藏到底边之下。
         let nameTop = nameLabel.convert(nameLabel.bounds, to: view).origin.y
-        let transferProgress = min(max((headerHeight - nameTop) / 20, 0), 1)
-        stickyHeaderNameLabel.alpha = transferProgress
-        stickyHeaderNameLabel.transform = CGAffineTransform(translationX: 0, y: 6 * (1 - transferProgress))
+        let nameHeight = nameLabel.bounds.height
+        let slideDistance: CGFloat = 41
+        let slideProgress = min(max((headerHeight - nameTop) / nameHeight, 0), 1)
+        stickyHeaderNameLabel.alpha = 1
+        stickyHeaderNameLabel.transform = CGAffineTransform(translationX: 0, y: slideDistance * (1 - slideProgress))
         // 背景 header 渐进模糊（Li 2026-10-31）：起点 = 头像快被 header 盖完时
         // （头像被 header 底边盖住 75%），不是头像一进 header 就糊；
         // 强度跟滚动走：盖满前 75%→100% 占 0→0.35，盖满后继续上滑 100pt
