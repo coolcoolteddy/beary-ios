@@ -802,11 +802,38 @@ final class BearyAPI {
     // 60s 才亮本地组。GET 网络错会重试 1 次（见 request），故最坏约 20s
     // 才进失败分支，仍远短于默认 60s。
     private static let searchTimeout: TimeInterval = 10
+    /// 数据同步审阅 #11：乐观写与等待类端点 15s 上限——弱网下最多等
+    /// 15 秒即转失败 toast、恢复可点；60 秒默认只留给读请求与上传／
+    /// 发布／搜索等已显式定值的端点。全局 60s 默认不动，不影响其他请求。
+    private static let optimisticWriteTimeout: TimeInterval = 15
     private func defaultTimeout(for path: String, method: String) -> TimeInterval? {
         if method == "POST" && path == "/beary/api/images/upload" { return Self.uploadTimeout }
         if method == "POST" && path == "/beary/api/entries" { return Self.publishTimeout }
         if method == "GET" && path == "/beary/api/search" { return Self.searchTimeout }
+        if Self.isOptimisticWrite(path: path, method: method) { return Self.optimisticWriteTimeout }
         return nil
+    }
+
+    /// 乐观写端点判定（#11）：写路径均带目标 id，故按前后缀判，不逐条列 id；
+    /// 读路径（GET 列表／详情）不在此列，仍走 60 秒默认。
+    /// 覆盖：点赞／取消点赞、收藏、回应、可见性、置顶／取消置顶、
+    /// 关注／取关、许愿投票、通知标已读、删帖（DELETE 单篇）。
+    private static func isOptimisticWrite(path: String, method: String) -> Bool {
+        if path == "/beary/api/friends/follow" || path == "/beary/api/friends/unfollow" {
+            return method == "POST"
+        }
+        if path == "/beary/api/notifications/read" { return method == "POST" }
+        if path.hasPrefix("/beary/api/wishes/") && path.hasSuffix("/vote") {
+            return method == "POST"
+        }
+        guard path.hasPrefix("/beary/api/entries/") else { return false }
+        if method == "DELETE" {
+            // DELETE /beary/api/entries/:id（删帖）：正好 4 段，排除子资源。
+            return path.split(separator: "/").count == 4
+        }
+        guard method == "POST" else { return false }
+        return path.hasSuffix("/like") || path.hasSuffix("/bookmark") || path.hasSuffix("/emote")
+            || path.hasSuffix("/visibility") || path.hasSuffix("/pin") || path.hasSuffix("/unpin")
     }
 
     // 原始请求：只负责发请求，不做业务映射
