@@ -3919,6 +3919,19 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 不再重播填充淡入）；失败按原模型回滚 + 拒绝动效 + 通用提示。
     /// 取消点赞双向即时（2026-10-29 定版，覆盖 pre-unlike 只改视图旧口径）：
     /// 抬起确认时立即褪色、计数 -1，失败同样回滚。
+    /// 离线已排队提示：卡片是 cell，toast 挂自己身上会被裁剪；
+    /// 沿响应链找宿主 VC，挂它 view 上（与详情页 toast 同款落点）。
+    private func showOfflineQueuedToast() {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let vc = current as? UIViewController {
+                BearyToast.show(in: vc.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                return
+            }
+            responder = current.next
+        }
+    }
+
     private func feedLikeTapped() {
         // 按下已给过先行反馈时抬起不再重播（否则震动来两次）；
         // 守卫失败时把按下预览复原（按下与抬起之间状态几乎不可能变，纯防御）。
@@ -3974,6 +3987,12 @@ class BearyDiaryCardCell: UITableViewCell {
             clearLikeBurst()
         }
         BearySoundPlayer.play(targetLiked ? .likePop : .unlikeSoft)
+        if BearyConnectivity.isOffline {
+            // 无网：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+            BearyOfflineOutbox.enqueueLike(entryId: entryIdValue, liked: targetLiked)
+            showOfflineQueuedToast()
+            return
+        }
         let reqSeq = likeState.beginRequest()
         BearyAPI.shared.toggleLike(id: entryIdValue, liked: targetLiked) { [weak self] result in
             DispatchQueue.main.async {
@@ -3996,18 +4015,25 @@ class BearyDiaryCardCell: UITableViewCell {
                     // 会再炸一次）；取消点赞不炸。
                     strongSelf.onInteractionChanged?(entryIdValue, strongSelf.currentEntry?.likeCount, newLiked, nil)
                 case .failure(let err):
-                    // 失败回滚到最后服务端确认态（不是本次点按前的中间态），
-                    // 再走既有失败路径（拒绝动效 + 通用提示），不另起一套。
-                    strongSelf.currentEntry?.likedByMe = strongSelf.likeState.confirmed.liked
-                    strongSelf.currentEntry?.likeCount = strongSelf.likeState.confirmed.count
-                    strongSelf.updateLikeButton()
-                    // 回滚到未填色：在飞的点赞微粒一并清掉，屏幕只反映最新点按态。
-                    strongSelf.clearLikeBurst()
-                    if case .unauthorized = err {
-                        strongSelf.onRequireLogin?()
+                    if case .network = err {
+                        // 在途中断网：意图落盘排队，不回滚，先行态保留；
+                        // 联网后补发最后一次。
+                        BearyOfflineOutbox.enqueueLike(entryId: entryIdValue, liked: targetLiked)
+                        strongSelf.showOfflineQueuedToast()
                     } else {
-                        strongSelf.playDenyShake(on: strongSelf.likeButton)
-                        strongSelf.onActionFailed?()
+                        // 失败回滚到最后服务端确认态（不是本次点按前的中间态），
+                        // 再走既有失败路径（拒绝动效 + 通用提示），不另起一套。
+                        strongSelf.currentEntry?.likedByMe = strongSelf.likeState.confirmed.liked
+                        strongSelf.currentEntry?.likeCount = strongSelf.likeState.confirmed.count
+                        strongSelf.updateLikeButton()
+                        // 回滚到未填色：在飞的点赞微粒一并清掉，屏幕只反映最新点按态。
+                        strongSelf.clearLikeBurst()
+                        if case .unauthorized = err {
+                            strongSelf.onRequireLogin?()
+                        } else {
+                            strongSelf.playDenyShake(on: strongSelf.likeButton)
+                            strongSelf.onActionFailed?()
+                        }
                     }
                 }
             }
@@ -4042,6 +4068,12 @@ class BearyDiaryCardCell: UITableViewCell {
         // 收藏音随点按立即播（不等回包）；回包成功不再重播，失败只回滚、不补播。
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
         BearySoundPlayer.play(flipped ? .bookmarkTick : .deleteSwoosh)
+        if BearyConnectivity.isOffline {
+            // 无网：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+            BearyOfflineOutbox.enqueueBookmark(entryId: entryIdValue, bookmarked: flipped)
+            showOfflineQueuedToast()
+            return
+        }
         let reqSeq = bookmarkState.beginRequest()
         BearyAPI.shared.toggleBookmark(id: entryIdValue) { [weak self] result in
             DispatchQueue.main.async {
@@ -4058,17 +4090,24 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.updateActionInteractivity()
                     strongSelf.onInteractionChanged?(entryIdValue, nil, nil, newBookmarked)
                 case .failure(let err):
-                    // 失败回滚到最后服务端确认态，再走既有失败路径。
-                    strongSelf.currentEntry?.bookmarkedByMe = strongSelf.bookmarkState.confirmed
-                    strongSelf.updateBookmarkButton()
-                    // 回滚到未填色：在飞的收藏微粒一并清掉。
-                    BearyBurstParticles.clear(from: strongSelf.bookmarkButton)
-                    strongSelf.updateActionInteractivity()
-                    if case .unauthorized = err {
-                        strongSelf.onRequireLogin?()
+                    if case .network = err {
+                        // 在途中断网：意图落盘排队，不回滚，先行态保留；
+                        // 联网后补发最后一次。
+                        BearyOfflineOutbox.enqueueBookmark(entryId: entryIdValue, bookmarked: flipped)
+                        strongSelf.showOfflineQueuedToast()
                     } else {
-                        strongSelf.playDenyShake(on: strongSelf.bookmarkButton)
-                        strongSelf.onActionFailed?()
+                        // 失败回滚到最后服务端确认态，再走既有失败路径。
+                        strongSelf.currentEntry?.bookmarkedByMe = strongSelf.bookmarkState.confirmed
+                        strongSelf.updateBookmarkButton()
+                        // 回滚到未填色：在飞的收藏微粒一并清掉。
+                        BearyBurstParticles.clear(from: strongSelf.bookmarkButton)
+                        strongSelf.updateActionInteractivity()
+                        if case .unauthorized = err {
+                            strongSelf.onRequireLogin?()
+                        } else {
+                            strongSelf.playDenyShake(on: strongSelf.bookmarkButton)
+                            strongSelf.onActionFailed?()
+                        }
                     }
                 }
             }

@@ -3935,6 +3935,12 @@ class BearyProfileViewController: UIViewController {
             let requestSeq = followActionSeq
             followState = target
             applyFollowButton(animated: true)
+            if BearyConnectivity.isOffline {
+                // 无网：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+                BearyOfflineOutbox.enqueueFollow(userId: targetId, target: target)
+                BearyToast.show(in: view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                return
+            }
             BearyAPI.shared.followFriend(userId: targetId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
@@ -3952,14 +3958,20 @@ class BearyProfileViewController: UIViewController {
                         }
                         BearyToast.show(in: self.view, message: wasFollowedBy ? "已互关" : "已关注")
                     case .failure(let error):
-                        // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
-                        self.followState = self.confirmedFollowState
-                        self.applyFollowButton()
-                        if case .unauthorized = error {
-                            self.onRequireLogin?()
+                        if case .network = error {
+                            // 在途中断网：意图落盘排队，不回滚，先行态保留。
+                            BearyOfflineOutbox.enqueueFollow(userId: targetId, target: target)
+                            BearyToast.show(in: self.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
                         } else {
-                            self.playFollowDenyShake()
-                            BearyToast.show(in: self.view, message: wasFollowedBy ? "回关失败，请重试" : "关注失败，请重试")
+                            // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
+                            self.followState = self.confirmedFollowState
+                            self.applyFollowButton()
+                            if case .unauthorized = error {
+                                self.onRequireLogin?()
+                            } else {
+                                self.playFollowDenyShake()
+                                BearyToast.show(in: self.view, message: wasFollowedBy ? NSLocalizedString("follow.toast.followBackFailed", comment: "") : NSLocalizedString("follow.toast.followFailed", comment: ""))
+                            }
                         }
                     }
                 }
@@ -3984,6 +3996,12 @@ class BearyProfileViewController: UIViewController {
                 let requestSeq = self.followActionSeq
                 self.followState = target
                 self.applyFollowButton(animated: true)
+                if BearyConnectivity.isOffline {
+                    // 无网：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+                    BearyOfflineOutbox.enqueueFollow(userId: targetId, target: target)
+                    BearyToast.show(in: self.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                    return
+                }
                 BearyAPI.shared.unfollowFriend(userId: targetId) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
@@ -3998,16 +4016,22 @@ class BearyProfileViewController: UIViewController {
                             BearyFriends.clearDiaryCachesAndNotify(userId: targetId)
                             self.reloadProfile()
                         case .failure(let error):
-                            // 失败回滚到最后确认态；401 与关注分支同款走登录入口
-                            // （onRequireLogin），登录后由用户重试取关，不弹失败 toast；
-                            // 其他失败仍走原拒绝动效＋“取关失败”toast。
-                            self.followState = self.confirmedFollowState
-                            self.applyFollowButton()
-                            if case .unauthorized = error {
-                                self.onRequireLogin?()
+                            if case .network = error {
+                                // 在途中断网：意图落盘排队，不回滚，先行态保留。
+                                BearyOfflineOutbox.enqueueFollow(userId: targetId, target: target)
+                                BearyToast.show(in: self.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
                             } else {
-                                self.playFollowDenyShake()
-                                BearyToast.show(in: self.view, message: "取消关注失败，请重试")
+                                // 失败回滚到最后确认态；401 与关注分支同款走登录入口
+                                // （onRequireLogin），登录后由用户重试取关，不弹失败 toast；
+                                // 其他失败仍走原拒绝动效＋“取关失败”toast。
+                                self.followState = self.confirmedFollowState
+                                self.applyFollowButton()
+                                if case .unauthorized = error {
+                                    self.onRequireLogin?()
+                                } else {
+                                    self.playFollowDenyShake()
+                                    BearyToast.show(in: self.view, message: NSLocalizedString("follow.toast.unfollowFailed", comment: ""))
+                                }
                             }
                         }
                     }
@@ -9341,6 +9365,15 @@ class BearyProfileViewController: UIViewController {
             updateEntryInAllTabs(entry: cleared)
         }
         tableView.reloadData()
+        if BearyConnectivity.isOffline {
+            // 无网：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+            // pinBusy 复位，否则置顶钮永久卡住。旧置顶篇的清除由服务端
+            // 单槽位语义兜底（新置顶成功即旧篇失置顶），不另排一条。
+            pinBusy = false
+            BearyOfflineOutbox.enqueuePin(entryId: entryId, pinned: pinning)
+            BearyToast.show(in: view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+            return
+        }
         let completion: (Result<BearyAPI.PinResponse, APIError>) -> Void = { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -9362,18 +9395,25 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.tableView.reloadData()
                     BearyToast.show(in: strongSelf.view, message: pinning ? "已置顶" : "已取消置顶")
                 case .failure(let err):
-                    strongSelf.updateEntryInAllTabs(entry: originalTarget)
-                    if let prev = originalPrevious {
-                        strongSelf.updateEntryInAllTabs(entry: prev)
-                    }
-                    strongSelf.tableView.reloadData()
-                    BearyToast.show(in: strongSelf.view, message: BearyDiaryPin.errorMessage(for: err, pinning: pinning))
-                    // reloadData 后布局未必已落定，下一 runloop 再取可见行摇头。
-                    DispatchQueue.main.async {
-                        guard let row = strongSelf.displayedEntries.firstIndex(where: { $0.id == entryId }),
-                              let cell = strongSelf.tableView.cellForRow(at: IndexPath(row: row, section: 0)) as? BearyDiaryCardCell,
-                              cell.cellEntryId == entryId else { return }
-                        cell.playPublishDenyShake()
+                    if case .network = err {
+                        // 在途中断网：意图落盘排队，不回滚，先行态保留；
+                        // 联网后补发最后一次。
+                        BearyOfflineOutbox.enqueuePin(entryId: entryId, pinned: pinning)
+                        BearyToast.show(in: strongSelf.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                    } else {
+                        strongSelf.updateEntryInAllTabs(entry: originalTarget)
+                        if let prev = originalPrevious {
+                            strongSelf.updateEntryInAllTabs(entry: prev)
+                        }
+                        strongSelf.tableView.reloadData()
+                        BearyToast.show(in: strongSelf.view, message: BearyDiaryPin.errorMessage(for: err, pinning: pinning))
+                        // reloadData 后布局未必已落定，下一 runloop 再取可见行摇头。
+                        DispatchQueue.main.async {
+                            guard let row = strongSelf.displayedEntries.firstIndex(where: { $0.id == entryId }),
+                                  let cell = strongSelf.tableView.cellForRow(at: IndexPath(row: row, section: 0)) as? BearyDiaryCardCell,
+                                  cell.cellEntryId == entryId else { return }
+                            cell.playPublishDenyShake()
+                        }
                     }
                 }
             }
