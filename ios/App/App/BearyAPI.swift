@@ -726,6 +726,9 @@ final class BearyAPI {
         config.httpCookieAcceptPolicy = .always
         config.httpShouldSetCookies = true
         config.urlCache = nil
+        config.timeoutIntervalForRequest = 10
+        config.timeoutIntervalForResource = 300
+        config.waitsForConnectivity = true
         return URLSession(configuration: config, delegate: uploadProgressDelegate, delegateQueue: nil)
     }
 
