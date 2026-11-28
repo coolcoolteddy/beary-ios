@@ -3038,6 +3038,25 @@ final class BearyChromeViewController: UIViewController {
         let search: BearySearchViewController.SearchDeleteRemoval?
     }
 
+    /// 删除撤销后的恢复（数据同步审阅 #9）：从回收站恢复该篇；成功重拉
+    /// 各页（原位恢复的近似：行级快照不在 main 结构里，重拉即回到原位
+    /// 附近的顺序）；失败 toast（条已消失，不再重弹撤销条）。
+    private func restoreDeletedEntryAfterUndo(entryId: String) {
+        BearyAPI.shared.restoreTrashDetail(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success:
+                    self.timelineVC?.reloadTimeline()
+                    self.feedVC?.refreshAll()
+                    self.profileVC?.reloadProfile()
+                case .failure:
+                    self.showToast(message: NSLocalizedString("trash.toast.restore_failed", comment: ""))
+                }
+            }
+        }
+    }
+
     private func confirmAndDeleteEntry(_ entry: Entry) {
         guard let entryId = entry.id else { return }
         // 审计 P2-23：删除是作者动作——非作者不弹确认（服务端同样校验作者，客户端先拦）。
@@ -3109,6 +3128,12 @@ final class BearyChromeViewController: UIViewController {
                         // 保留（广场不在 C4 范围，其分页态仍靠重拉对齐）。
                         // 本地通知：删篇可能影响今晚提醒（删了当天唯一一篇）与限时到期提醒。
                         BearyLocalNotifications.shared.refreshAll(force: true)
+                        // 删除撤销（数据同步审阅 #9）：删除成功后 5 秒内可撤销——
+                        // 点撤销即从回收站恢复；5 秒内再删一篇时旧条被新条顶掉（单槽）。
+                        BearyDeleteUndoBar.show(in: self.view, message: NSLocalizedString("trash.toast.moved_to_trash", comment: ""), undoTitle: NSLocalizedString("common.undo", comment: "")) { [weak self] in
+                            guard let self = self else { return }
+                            self.restoreDeletedEntryAfterUndo(entryId: entryId)
+                        }
                     case .failure(let error):
                         // 乐观删除失败回滚（本批 ①）：DELETE 没成功，服务端
                         // 没删——把该篇按原位插回四处行（行已不在时才插），

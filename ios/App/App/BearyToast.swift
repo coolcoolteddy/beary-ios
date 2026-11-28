@@ -614,3 +614,108 @@ final class BearyPublishPillView: UIView {
         }
     }
 }
+
+// MARK: - 删除撤销条（数据同步审阅 #9）
+
+/// 删除撤销条：surface3 pill，文案＋撤销钮，5 秒到期自动消失；
+/// 与编辑器删图撤销条同款（单槽，只留最近一次删除；同容器内旧条先撤）。
+/// 落点与 BearyToast 同款（FAB 顶之上／底栏顶之上，见 bottomConstant）。
+final class BearyDeleteUndoBar: UIView {
+    /// 撤销保留时长（秒）：删除是整篇操作，5 秒够点、又不长占底部。
+    static let undoSeconds: TimeInterval = 5
+
+    private let messageLabel = UILabel()
+    private let undoButton = UIButton(type: .system)
+    private var dismissWorkItem: DispatchWorkItem?
+    private var dismissed = false
+    private var onUndo: (() -> Void)?
+
+    init(message: String, undoTitle: String, onUndo: @escaping () -> Void) {
+        self.onUndo = onUndo
+        super.init(frame: .zero)
+        backgroundColor = BearyColors.surface3
+        layer.masksToBounds = true
+        messageLabel.text = message
+        messageLabel.font = BearyDynamicType.secondaryFont()
+        messageLabel.textColor = BearyColors.ink
+        undoButton.setTitle(undoTitle, for: .normal)
+        undoButton.setTitleColor(BearyColors.ink, for: .normal)
+        undoButton.titleLabel?.font = BearyDynamicType.buttonSmallFont()
+        undoButton.addTarget(self, action: #selector(undoTapped), for: .touchUpInside)
+        undoButton.bearyAddPressFeedback()
+        translatesAutoresizingMaskIntoConstraints = false
+        messageLabel.translatesAutoresizingMaskIntoConstraints = false
+        undoButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(messageLabel)
+        addSubview(undoButton)
+        NSLayoutConstraint.activate([
+            messageLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            messageLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            messageLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            undoButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            undoButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            undoButton.heightAnchor.constraint(equalToConstant: 44),
+            undoButton.leadingAnchor.constraint(greaterThanOrEqualTo: messageLabel.trailingAnchor, constant: 12),
+        ])
+    }
+
+    required init?(coder: NSCoder) { return nil }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer.cornerRadius = bounds.height / 2
+    }
+
+    /// 在容器底部弹出；同容器内旧的撤销条先撤掉（单槽）。
+    static func show(in container: UIView, message: String, undoTitle: String, onUndo: @escaping () -> Void) {
+        for old in container.subviews where old is BearyDeleteUndoBar {
+            old.removeFromSuperview()
+        }
+        let bar = BearyDeleteUndoBar(message: message, undoTitle: undoTitle, onUndo: onUndo)
+        container.addSubview(bar)
+        container.bringSubviewToFront(bar)
+        NSLayoutConstraint.activate([
+            bar.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            bar.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 20),
+            bar.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -20),
+            bar.bottomAnchor.constraint(equalTo: container.safeAreaLayoutGuide.bottomAnchor, constant: BearyToast.bottomConstant(for: container)),
+        ])
+        bar.scheduleAutoDismiss()
+        if UIAccessibility.isReduceMotionEnabled {
+            bar.alpha = 1
+        } else {
+            bar.alpha = 0
+            UIView.animate(withDuration: BearyMotion.normal) {
+                bar.alpha = 1
+            }
+        }
+    }
+
+    @objc private func undoTapped() {
+        guard !dismissed else { return }
+        dismissed = true
+        dismissWorkItem?.cancel()
+        removeFromSuperview()
+        onUndo?()
+    }
+
+    private func scheduleAutoDismiss() {
+        let workItem = DispatchWorkItem { [weak self] in self?.dismiss() }
+        dismissWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.undoSeconds, execute: workItem)
+    }
+
+    private func dismiss() {
+        guard !dismissed else { return }
+        dismissed = true
+        if UIAccessibility.isReduceMotionEnabled {
+            removeFromSuperview()
+        } else {
+            UIView.animate(withDuration: BearyMotion.normal, animations: {
+                self.alpha = 0
+            }, completion: { _ in
+                self.removeFromSuperview()
+            })
+        }
+    }
+}
