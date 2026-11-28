@@ -55,6 +55,31 @@ enum BearyHiResImagePolicy: String {
     }
 }
 
+/// 上传画质（数据用量页）：新图按此档定上传方式。原图仅 Plus——起传时
+/// 由 BearyPlusGate 把关，非 Plus 静默按压缩走，不改本值；单张原图超
+/// 5MB 仍自动按压缩上传。只存本地，不同步服务端；默认压缩。
+enum BearyUploadQuality: String {
+    case original = "original"
+    case compressed = "compressed"
+
+    private static let key = "beary_upload_quality"
+
+    static var current: BearyUploadQuality {
+        guard let raw = UserDefaults.standard.string(forKey: key),
+              let value = BearyUploadQuality(rawValue: raw) else { return .compressed }
+        return value
+    }
+
+    static func setCurrent(_ value: BearyUploadQuality) {
+        UserDefaults.standard.set(value.rawValue, forKey: key)
+    }
+
+    /// 新图与旧草稿未定方式的图按此档定上传方式。
+    static var modeForNewImage: BearyUploadMode {
+        current == .original ? .original : .compressed
+    }
+}
+
 /// 当前是否 Wi-Fi（只读系统状态，不写档）。
 /// NWPathMonitor 在主线程外回调，状态经串行队列同步读；首报未到前按非 Wi-Fi
 /// 保守处理（流量策略向省取严）。

@@ -683,12 +683,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshEditOriginFreeze()
     }
 
-    /// 开发者模式 Plus 开关变化（.bearyDeveloperModeChanged kind "plus"）：
-    /// 清掉本会话缓存的 Plus 态，下次取 Plus 态时重拉并按新开关算。
-    @objc private func handleDeveloperPlusChanged(_ note: Notification) {
-        guard (note.userInfo?["kind"] as? String) == "plus" else { return }
-        cachedPlusStatus = nil
-    }
     private func refreshEditOriginFreeze() {
         guard isEditMode else { return }
         let mismatched = isEditOriginMismatch()
@@ -800,20 +794,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var imageItems: [ComposerImageItem] = [] {
         didSet { editorEditVersion += 1 }
     }
-    /// 原图确认（2026-11-12 Li 定）：一次选图（一个 picker 回调）内新选
-    /// 的图先只显示本地图、不上传，等用户在确认弹窗里选原图/压缩再传。
+    /// 上传画质（2026-11-29 Li 定）：一次选图（一个 picker 回调）内新选
+    /// 的图先只显示本地图、不上传，准备全部 settled 后按设置里的上传画质
+    /// 定方式再传；原图档的 Plus 门在起传时把关（见 startUpload）。
     /// pendingChoiceAwaiting：准备未完成（压缩落盘＋原图取文件未都 settled）
-    /// 的项；pendingChoiceBatchItems：本批全部新选图（收尾时起传已定项用）。
-    /// 两批先后选图时合并为一批处理（后一批 settled 前不弹弹窗，弹窗面向
-    /// 当前全部未确认项）。cachedPlusStatus：本编辑器会话内缓存一次的 Plus 态。
+    /// 的项；pendingChoiceBatchItems：本批全部新选图（收尾时起传用）。
+    /// 两批先后选图时合并为一批处理（后一批 settled 前不收尾）。
     private static let maxOriginalBytes = 5 * 1024 * 1024
-    private var cachedPlusStatus: Bool?
     private var pendingChoiceAwaiting: [ComposerImageItem] = []
     private var pendingChoiceBatchItems: [ComposerImageItem] = []
-    private var uploadChoiceSheetVisible = false
-    private var uploadChoiceSheet: BearyOriginalUploadSheetViewController?
-    /// 2026-11-14：确认弹窗被在场 VC（如正在退场的相册）挡住时只重试一次的旗标。
-    private var uploadChoiceSheetRetryPending = false
     private var plusPageEdgeDismiss: BearyEdgeDismissController?
     /// 草稿保存级别：nil=未显示；2=草稿已保存；1=文字已保存，图片未保存；0=保存失败（红字）。
     private var draftStatusLevel: Int?
@@ -968,11 +957,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // 图片预览（无标题、无 + 块；空时整条隐藏，添加走工具栏图片钮）
     private let imageScrollView = UIScrollView()
     private let imageStackView = UIStackView()
-    /// 待确认条：「N 张照片待确认上传方式」，点按重开确认弹窗；无未确认项时隐藏。
-    private let pendingUploadBar = UIButton(type: .custom)
-    private let pendingUploadBarLabel = UILabel()
-    private let pendingUploadBarChevron = UIImageView()
-    /// 浮条容器：待上传条与撤销条的浮层（2026-11-27 Li 定：不占内容栈，浮在工具栏上方）。
+    /// 浮条容器：撤销条的浮层（2026-11-27 Li 定：不占内容栈，浮在工具栏上方）。
     /// 底边与工具栏顶边之间留 12pt（Li 定：跟工具栏图标顶到分割线的 toolRowTopToSeparator 12pt 一致；约束定死；键盘升起时随工具栏一起抬，间隙不变）。
     private let transientBarContainer = UIView()
     private let transientBarStack = UIStackView()
@@ -1103,10 +1088,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 第二轮增量审计第 6 项：图片条固定高约束（96）。无图隐藏整条时须停用它，
     /// 否则隐藏的 arranged 子项仍被自身 96 必需高撑住、与 stack 的隐藏折叠冲突。
     private var imageStripHeightConstraint: NSLayoutConstraint?
-    /// 第 20 轮 A4：待确认条最小高约束（≥44）。无未确认项隐藏整条时须停用它，
-    /// 否则隐藏的 arranged 子项仍被自身 44 最小高撑住、与 stack 的隐藏折叠冲突
-    ///（同图片条 96 约束先例）。
-    private var pendingUploadBarHeightConstraint: NSLayoutConstraint?
     private let draftStatusGroup = UIStackView()
     private let draftStatusIcon = UIImageView()
     private let draftStatusLabel = UILabel()
@@ -1236,8 +1217,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         NotificationCenter.default.addObserver(self, selector: #selector(presentBackgroundFlushFailureIfNeeded), name: UIApplication.willEnterForegroundNotification, object: nil)
         // 第三轮审计第 5 项：编辑中切号立即冻结（见 handleEditOriginAccountChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleEditOriginAccountChanged), name: .bearyUserDidChange, object: nil)
-        // 开发者模式 Plus 开关变化：清掉本会话缓存的 Plus 态，下次取时重拉并按新开关算。
-        NotificationCenter.default.addObserver(self, selector: #selector(handleDeveloperPlusChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         NSLog("[Diag] composer-viewDidLoad-exit")
     }
 
@@ -1261,10 +1240,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 编辑器开着时改系统字号，pill 宽度直接过期、大字号下裁标题）。
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
             refreshPublishButtonWidth()
-            // 第 20 轮 A6：待确认条字号档变化时重取 scaled 字号并同步 sheet 高
-            //（label 自带 adjustsFontForContentSizeCategory 自动跟档，此处补字体
-            // 重算与布局同步）。
-            pendingUploadBarLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
             updatePreferredContentSize()
         }
         // 动态字号变化时标题字号跟随（原 UITextField 靠
@@ -2470,7 +2445,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteFetchFailedRow.isHidden = true
         // 引用区放图片块后面（2026-11-27 Li 定：图片是自己的内容在前，引用是外部的在后，
         // 与发布后卡片顺序一致——卡片栈：标题、正文、图片、九宫格、引用卡、定位、标签）。
-        // pendingUploadBar 自 #2753 起已移出内容栈、改放浮层 transientBarStack，以它定位恒回 nil；
         // 改以图片块定位插入点，不依赖固定下标；图片块不在栈内时兜底追加。
         if let imageIndex = contentStack.arrangedSubviews.firstIndex(of: imageScrollView) {
             contentStack.insertArrangedSubview(quoteSection, at: imageIndex + 1)
@@ -3799,42 +3773,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshImageStripVisibility()
         // 图片条无图时隐藏，写死的 4pt 间距照算；藏起来归 0（refreshImageStripVisibility 内已同步写，此处同口径）。
         contentStack.setCustomSpacing(imageScrollView.isHidden ? 0 : 4, after: imageScrollView)
-        // 原图确认待确认条：浮在工具栏上方（2026-11-27 改，不再插图片条下方），默认隐藏；有未确认项时显示
-        //「N 张照片待确认上传方式」，点按重开确认弹窗（见 refreshPendingUploadBar）。
-        pendingUploadBar.backgroundColor = BearyColors.surface2
-        pendingUploadBar.layer.cornerRadius = 12
-        pendingUploadBar.clipsToBounds = true
-        pendingUploadBar.isHidden = true
-        pendingUploadBar.addTarget(self, action: #selector(didTapPendingUploadBar), for: .touchUpInside)
-        // 第 20 轮 A10：统一 0.18s 单段按压反馈（bearyAddPressFeedback）。
-        pendingUploadBar.bearyAddPressFeedback()
-        pendingUploadBar.translatesAutoresizingMaskIntoConstraints = false
-        pendingUploadBarLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
-        // 第 20 轮 A6：字号档变化时自动跟随（字体重算见 traitCollectionDidChange）。
-        pendingUploadBarLabel.adjustsFontForContentSizeCategory = true
-        pendingUploadBarLabel.textColor = BearyColors.ink
-        pendingUploadBarLabel.translatesAutoresizingMaskIntoConstraints = false
-        pendingUploadBar.addSubview(pendingUploadBarLabel)
-        pendingUploadBarChevron.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 14)
-        pendingUploadBarChevron.tintColor = BearyColors.gray
-        pendingUploadBarChevron.contentMode = .scaleAspectFit
-        pendingUploadBarChevron.translatesAutoresizingMaskIntoConstraints = false
-        pendingUploadBar.addSubview(pendingUploadBarChevron)
-        // 2026-11-27 浮条：待确认条不再进内容栈，改放浮层容器（见 transientBarContainer）。
-        transientBarStack.addArrangedSubview(pendingUploadBar)
-        // 第 20 轮 A4：最小高约束（≥44）单独存引用——隐藏整条时停用它（同图片条先例）。
-        let pendingUploadBarHeight = pendingUploadBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
-        pendingUploadBarHeightConstraint = pendingUploadBarHeight
-        NSLayoutConstraint.activate([
-            pendingUploadBarHeight,
-            pendingUploadBarLabel.centerYAnchor.constraint(equalTo: pendingUploadBar.centerYAnchor),
-            pendingUploadBarLabel.leadingAnchor.constraint(equalTo: pendingUploadBar.leadingAnchor, constant: 16),
-            pendingUploadBarLabel.trailingAnchor.constraint(lessThanOrEqualTo: pendingUploadBarChevron.leadingAnchor, constant: -8),
-            pendingUploadBarChevron.centerYAnchor.constraint(equalTo: pendingUploadBar.centerYAnchor),
-            pendingUploadBarChevron.trailingAnchor.constraint(equalTo: pendingUploadBar.trailingAnchor, constant: -16),
-            pendingUploadBarChevron.widthAnchor.constraint(equalToConstant: 14),
-            pendingUploadBarChevron.heightAnchor.constraint(equalToConstant: 14),
-        ])
     }
 
     /// 图片条显隐：有图才显示（网页 img-preview 空时 display:none）。
@@ -5538,8 +5476,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshPublishingInputFreeze()
         // 任务2：正文空/非空翻转即“正在写/准备发布”翻转，发布行显隐同步变。
         refreshPublishVisibilityRow()
-        // 原图确认：发布启用态每次同步时顺带刷新待确认条（未确认项显隐）。
-        refreshPendingUploadBar()
     }
 
     /// D 批：发布/保存请求在途时冻结编辑输入（发布钮本身由上方的 updatePublishState
@@ -6264,7 +6200,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func removeImageItem(_ item: ComposerImageItem) {
         cancelUpload(for: item)
-        // 原图确认：准备中的项被删时记一笔（幂等），批内其余项不因此等不到收尾。
+        // 上传画质：准备中的项被删时记一笔（幂等），批内其余项不因此等不到收尾。
         notePickPrepFinished(item)
         var kept: [ComposerImageItem] = []
         for existing in imageItems {
@@ -6295,7 +6231,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func deleteImageItemWithUndo(_ item: ComposerImageItem) {
         // 审计-编辑器详情：删图即取消在途上传（网络任务不继续跑、回包不回写）。
         cancelUpload(for: item)
-        // 原图确认：准备中的项被删时记一笔（幂等），批内其余项不因此等不到收尾。
+        // 上传画质：准备中的项被删时记一笔（幂等），批内其余项不因此等不到收尾。
         notePickPrepFinished(item)
         var index = imageItems.count
         for (i, existing) in imageItems.enumerated() {
@@ -6416,11 +6352,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshTransientBarContainer()
     }
 
-    /// 浮层容器显隐：两条全藏时容器藏起；任一条出现时淡入＋上滑
+    /// 浮层容器显隐：撤销条藏起时容器藏起；出现时淡入＋上滑
     ///（减动效或未进窗口时直设终值；条已不在内容栈，不再改内容高）。
     private func refreshTransientBarContainer() {
         guard isViewLoaded else { return }
-        let visible = !pendingUploadBar.isHidden || !imageUndoBar.isHidden
+        let visible = !imageUndoBar.isHidden
         if visible {
             guard transientBarContainer.isHidden || transientBarContainer.alpha < 1 else { return }
             transientBarContainer.layer.removeAllAnimations()
@@ -6448,7 +6384,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.transientBarContainer.transform = CGAffineTransform(translationX: 0, y: 8)
                 }, completion: { _ in
                     // 动画期间若又有条要显示，不抢藏。
-                    if self.pendingUploadBar.isHidden && self.imageUndoBar.isHidden {
+                    if self.imageUndoBar.isHidden {
                         self.transientBarContainer.isHidden = true
                     }
                 })
@@ -6557,8 +6493,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     item.liveVideoMissing = false
                     item.failed = false
                     item.localFile = saved
-                    // 原图确认：裁剪出的是新渲染图，无原图可保——方式定为压缩，
-                    // 清原图引用，随后仍按现有路立即压缩上传，不进确认弹窗。
+                    // 裁剪出的是新渲染图，无原图可保——方式定为压缩，
+                    // 清原图引用，随后仍按现有路立即压缩上传。
                     item.uploadMode = .compressed
                     item.originalFile = nil
                     item.originalBytes = nil
@@ -6634,7 +6570,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if provider.canLoadObject(ofClass: PHLivePhoto.self) {
                 let item = createImageItem(localImage: nil, key: nil, uploading: true, localFile: nil, failed: false)
                 insertImageItem(item)
-                // 原图确认：本项进待定批（压缩落盘＋原图取文件都 settled 才收尾）。
+                // 上传画质：本项进待定批（压缩落盘＋原图取文件都 settled 才收尾定方式）。
                 pendingChoiceAwaiting.append(item)
                 pendingChoiceBatchItems.append(item)
                 provider.loadObject(ofClass: PHLivePhoto.self) { [weak self, weak item] object, _ in
@@ -6819,7 +6755,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                                     self.notePickPrepFinished(item)
                                                     return
                                                 }
-                                                // 收尾（视频回填 + 未确认项停转圈 + 存草稿 + 记完成）：
+                                                // 收尾（视频回填 + 待定项停转圈 + 存草稿 + 记完成）：
                                                 // 原图写盘走后台（见 applyOriginalData），取到原图时
                                                 // 在 completion 里调同一份收尾，其余分支直接调；
                                                 // 弱引用：准备期间删图由 removeImageItem 记完成（幂等），
@@ -6844,7 +6780,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                                     // 本次临时文件直接清理。
                                                     if BearyDraftStore.currentAccountId != pickAccountId || (pickDraftId != nil && self.currentDraftId != pickDraftId) {
                                                         BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
-                                                        // 身份已变：本项只剩预览图可传，按压缩计，不进确认。
+                                                        // 身份已变：本项只剩预览图可传，按压缩计。
                                                         item.uploadMode = .compressed
                                                         // 已定项也清占位上传态，否则批收尾跳过它、圈永久转。
                                                         self.markUploadIdle(item)
@@ -6852,7 +6788,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                                         return
                                                     }
                                                     item.localFile = saved
-                                                    // 原图落点（见 applyOriginalData）：≤5MB 才存 .orig、保持未确认；
+                                                    // 原图落点（见 applyOriginalData）：≤5MB 才存 .orig、保持方式未定；
                                                     // 超限打标回落；格式不限（截图等任何格式都可原图）。
                                                     if let fetchedData = fetchedData {
                                                         self.applyOriginalData(fetchedData, for: item, stillName: saved, completion: finishPrep)
@@ -6890,7 +6826,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 占位项计入 9 张上限，发布在上传完成前保持禁用，与原有联动一致。
             let item = createImageItem(localImage: nil, key: nil, uploading: true, localFile: nil, failed: false)
             insertImageItem(item)
-            // 原图确认：本项进待定批（压缩落盘＋原图取文件都 settled 才收尾）。
+            // 上传画质：本项进待定批（压缩落盘＋原图取文件都 settled 才收尾定方式）。
             pendingChoiceAwaiting.append(item)
             pendingChoiceBatchItems.append(item)
             provider.loadObject(ofClass: UIImage.self) { [weak self, weak item] object, _ in
@@ -6964,7 +6900,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                     self.notePickPrepFinished(item)
                                     return
                                 }
-                                // 收尾（未确认项停转圈 + 存草稿 + 记完成）：
+                                // 收尾（待定项停转圈 + 存草稿 + 记完成）：
                                 // 原图写盘走后台（见 applyOriginalData），取到原图时
                                 // 在 completion 里调同一份收尾，其余分支直接调；
                                 // 弱引用：准备期间删图由 removeImageItem 记完成（幂等），
@@ -6986,7 +6922,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                     // 本次临时文件直接清理。
                                     if BearyDraftStore.currentAccountId != pickAccountId || (pickDraftId != nil && self.currentDraftId != pickDraftId) {
                                         BearyDraftImageStore.deletePair(fullName: saved, accountId: pickAccountId)
-                                        // 身份已变：本项只剩预览图可传，按压缩计，不进确认。
+                                        // 身份已变：本项只剩预览图可传，按压缩计。
                                         item.uploadMode = .compressed
                                         // 已定项也清占位上传态，否则批收尾跳过它、圈永久转。
                                         self.markUploadIdle(item)
@@ -6994,7 +6930,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                         return
                                     }
                                     item.localFile = saved
-                                    // 原图落点（见 applyOriginalData）：≤5MB 才存 .orig、保持未确认；
+                                    // 原图落点（见 applyOriginalData）：≤5MB 才存 .orig、保持方式未定；
                                     // 超限打标回落；格式不限（截图等任何格式都可原图）。
                                     if let fetchedData = fetchedData {
                                         self.applyOriginalData(fetchedData, for: item, stillName: saved, completion: finishPrep)
@@ -7030,8 +6966,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             showToast(message: NSLocalizedString("composer.livephoto.reselect", comment: ""))
             return
         }
-        // 原图确认：已选原图的项走原图路（读 .orig、剥 GPS、按实测格式发）；
+        // 上传画质：原图档的项走原图路（读 .orig、剥 GPS、按实测格式发）；
         // 压缩项走下文现有路（复用已落盘 JPEG 或重编）。
+        // Plus 过期兜底：已非 Plus 时静默按压缩走，不改设置值。
+        if item.uploadMode == .original, !BearyPlusGate.canUsePlusFeature(user: SessionManager.shared.currentUser) {
+            item.uploadMode = .compressed
+        }
         if item.uploadMode == .original {
             startOriginalUpload(for: item)
             return
@@ -7265,9 +7205,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if item.key != nil || item.uploading || item.failed || item.liveVideoMissing {
                 continue
             }
-            // 原图确认：未确认方式的项不自动续传——等用户在弹窗/待确认条里
-            // 选了再传，否则会把还没选方式的图直接按压缩传走。老草稿恢复
-            // 时已在 restore/loadDraftFromBox 里定为压缩，不在此列。
+            // 未定方式的项不自动续传——方式在选图收尾或草稿恢复时已定；
+            // 万一仍为 nil，跳过，等下次恢复定方式后再续传。
             if item.uploadMode == nil {
                 continue
             }
@@ -7296,67 +7235,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    // MARK: - 原图确认（选完图后问，原图仅 Plus；2026-11-12 Li 定）
+    // MARK: - 上传画质（选完图后按设置定方式；2026-11-29 Li 定）
 
-    /// 未确认上传方式的图：有本地文件、无 key、非失败态、方式仍为 nil 的项。
-    /// 失败态与已上传项不进确认；裁剪项与老草稿恢复时已定为压缩，不在此列。
-    private func undecidedImageItems() -> [ComposerImageItem] {
-        return imageItems.filter { $0.key == nil && !$0.failed && $0.uploadMode == nil }
-    }
-
-    private func hasUndecidedImage() -> Bool {
-        return !undecidedImageItems().isEmpty
-    }
-
-    /// 准备已完成的未确认项：本批新选图在 pendingChoiceAwaiting 里时
-    /// 仍在准备（压缩落盘＋原图取文件未都 settled），确认弹窗只列已就绪项——
-    /// 就绪项的 localFile 与 originalBytes 已回填，不会显示 0 B，
-    /// 压缩分支也不会因预览未到而误判失败。
-    private func readyUndecidedImageItems() -> [ComposerImageItem] {
-        return undecidedImageItems().filter { item in
-            !pendingChoiceAwaiting.contains { $0 === item }
-        }
-    }
-
-    /// 待确认条：有未确认方式的图时显示「N 张照片待确认上传方式」，点按重开
-    /// 确认弹窗；无未确认项时隐藏。显隐变化时同步一次 sheet 高。
-    private func refreshPendingUploadBar() {
-        let count = undecidedImageItems().count
-        let shouldShow = count > 0
-        // 第 20 轮 A13：数字变化走 0.18s 交叉淡变（同许愿墙 fadeVoteCount 口径）。
-        setPendingUploadBarText("\(count) 张照片待确认上传方式")
-        pendingUploadBar.accessibilityLabel = "\(count) 张照片待确认上传方式，点按选择上传方式"
-        // 第 20 轮 A4：44 高约束与显隐同步——隐藏时停用，显示时恢复（同图片条先例）。
-        pendingUploadBarHeightConstraint?.isActive = shouldShow
-        // 藏起来的条不占间距（同 refreshQuoteSection 口径）：显示留 4，隐藏归 0。
-        if pendingUploadBar.isHidden != !shouldShow {
-            pendingUploadBar.isHidden = !shouldShow
-            // 2026-11-27 浮条：条已不在内容栈，显隐不再改内容高，只刷新浮层。
-            refreshTransientBarContainer()
-        }
-    }
-
-    /// 第 20 轮 A13：待确认数量交叉淡变——数字不变直返；减动效或未进窗口时直设终值。
-    private func setPendingUploadBarText(_ text: String) {
-        guard pendingUploadBarLabel.text != text else { return }
-        guard !UIAccessibility.isReduceMotionEnabled, pendingUploadBar.window != nil else {
-            pendingUploadBarLabel.text = text
-            return
-        }
-        UIView.transition(with: pendingUploadBarLabel, duration: BearyMotion.localStateDuration, options: .transitionCrossDissolve, animations: {
-            self.pendingUploadBarLabel.text = text
-        })
-    }
-
-    @objc private func didTapPendingUploadBar() {
-        guard !readyUndecidedImageItems().isEmpty else {
-            showToast(message: "照片准备中，请稍候")
-            return
-        }
-        presentUploadChoiceSheet()
-    }
-
-    /// 未确认态：停转圈、露预览，不占上传态（发布钮不被 hasUploadingImage 锁死）。
+    /// 待传闲态：停转圈、露预览，不占上传态（发布钮不被 hasUploadingImage 锁死）；方式已定、等批收尾起传的项先闲置于此。
     private func markUploadIdle(_ item: ComposerImageItem) {
         item.uploading = false
         item.failView.isHidden = true
@@ -7368,7 +7249,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 本批某项准备完成（压缩落盘＋原图取文件都 settled，或任一出口失败/
-    /// 项被删）：从待定集里划掉；待定集空时收尾（见 maybePresentUploadChoiceSheet）。
+    /// 项被删）：从待定集里划掉；待定集空时收尾（见 finishPickBatchUploads）。
     /// 幂等：同一项多次调用只划一次；从未进待定集的项不触发收尾。
     private func notePickPrepFinished(_ item: ComposerImageItem) {
         var removed = false
@@ -7383,26 +7264,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         pendingChoiceAwaiting = kept
         guard removed else { return }
         if pendingChoiceAwaiting.isEmpty {
-            maybePresentUploadChoiceSheet()
+            finishPickBatchUploads()
         }
     }
 
-    /// 批内全部准备完成后的收尾：先起传本批已定项（超限回落的压缩项，
-    /// 不等用户选）；仍有未确认项时弹确认弹窗；全批都已定且有超限项时 toast 一句。
+    /// 批内全部准备完成后的收尾：先起传本批已定项（准备中已回落压缩的项）；
+    /// 未定方式的项按设置里的上传画质定方式并起传；有超限项时 toast 一句。
     /// 计数只算仍在条里的项（准备中被删的项已不在 imageItems，不计入总数）。
-    private func maybePresentUploadChoiceSheet() {
+    private func finishPickBatchUploads() {
         let batch = pendingChoiceBatchItems
         pendingChoiceBatchItems = []
         guard !batch.isEmpty else { return }
         let liveBatch = batch.filter { item in imageItems.contains { $0 === item } }
         var oversizeCount = 0
-        var oversizeCompressedBytes = 0
         for item in liveBatch where item.originalOversize {
             oversizeCount += 1
-            if let name = item.localFile, let url = BearyDraftImageStore.fileURL(for: name),
-               let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber {
-                oversizeCompressedBytes += size.intValue
-            }
         }
         for item in batch {
             if item.key == nil, !item.uploading, !item.failed, item.uploadMode != nil,
@@ -7410,113 +7286,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 startUpload(for: item, image: image)
             }
         }
-        if hasUndecidedImage() {
-            if !uploadChoiceSheetVisible {
-                presentUploadChoiceSheet(oversizeCount: oversizeCount, oversizeCompressedBytes: oversizeCompressedBytes)
-            }
-            return
+        let undecided = liveBatch.filter { $0.key == nil && !$0.failed && $0.uploadMode == nil }
+        if !undecided.isEmpty {
+            applyUploadMode(BearyUploadQuality.modeForNewImage, for: undecided)
         }
         if oversizeCount > 0 {
-            showToast(message: "\(oversizeCount) 张原图超过 5MB，改用压缩上传")
+            showToast(message: String(format: NSLocalizedString("composer.oversize_fallback", comment: ""), oversizeCount))
         }
     }
 
-    /// Plus 判定走统一门 BearyPlusGate（现在全开）：
-    /// 本编辑器会话内缓存一次；只缓存成功拉到的结果，拉取失败不缓存、不判定，
-    /// 下次再拉——已开通用户遇网络失败不再被误认为非 Plus。
-    /// completion(nil) 表示拉取失败；未登录（/me 回 nil）时统一门仍按全开放行，
-    /// 登录态由编辑器入口另拦，不在这里判。
-    private func ensurePlusStatus(completion: @escaping (Bool?) -> Void) {
-        if let cached = cachedPlusStatus {
-            completion(cached)
-            return
-        }
-        BearyAPI.shared.fetchMe { [weak self] result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let user):
-                    let isPlus = BearyPlusGate.canUsePlusFeature(user: user)
-                    self?.cachedPlusStatus = isPlus
-                    completion(isPlus)
-                case .failure:
-                    completion(nil)
-                }
-            }
-        }
-    }
-
-    /// 弹原图/压缩确认弹窗（面向当前已就绪的未确认项）：先取 Plus 态，再按
-    /// 各原图字节和与压缩字节和建模；关闭（×/下拉）后不做任何事，待确认条留着重开。
-    /// 选择按整批算：弹窗张数 = 待确认项＋本批已自动压缩的超限项（总数），
-    /// 压缩行体积含超限项的压缩字节；oversizeCount 与 oversizeCompressedBytes
-    /// 只在批收尾那次传（弹窗脚注用），待确认条/发布重开时传 0。
-    private func presentUploadChoiceSheet(oversizeCount: Int = 0, oversizeCompressedBytes: Int = 0, allowRetry: Bool = true) {
-        let undecided = readyUndecidedImageItems()
-        guard !undecided.isEmpty, !uploadChoiceSheetVisible else { return }
-        // 2026-11-14：选图刚结束时相册可能还在退场动画里，presentedViewController
-        // 仍非 nil；此时直接 return 会把本次触发丢掉（批已消费、再无重试），
-        // 弹窗就永不出现。只拦这一种情况：0.6 秒后重唤一次（退场动画约 0.4 秒），
-        // 只重试一次。
-        if presentedViewController != nil {
-            guard allowRetry, !uploadChoiceSheetRetryPending else { return }
-            uploadChoiceSheetRetryPending = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-                guard let self = self else { return }
-                self.uploadChoiceSheetRetryPending = false
-                self.presentUploadChoiceSheet(oversizeCount: oversizeCount, oversizeCompressedBytes: oversizeCompressedBytes, allowRetry: false)
-            }
-            return
-        }
-        ensurePlusStatus { [weak self] isPlus in
-            guard let self = self else { return }
-            let undecided = self.readyUndecidedImageItems()
-            guard !undecided.isEmpty, !self.uploadChoiceSheetVisible, self.presentedViewController == nil else { return }
-            guard let isPlus = isPlus else {
-                self.showToast(message: "会员状态没加载出来，请重试")
-                return
-            }
-            var originalBytes = 0
-            var compressedBytes = 0
-            for item in undecided {
-                originalBytes += item.originalBytes ?? 0
-                if let name = item.localFile, let url = BearyDraftImageStore.fileURL(for: name),
-                   let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber {
-                    compressedBytes += size.intValue
-                }
-            }
-            let model = BearyOriginalUploadSheetModel(count: undecided.count + oversizeCount, originalBytes: originalBytes, compressedBytes: compressedBytes + oversizeCompressedBytes, oversizeCount: oversizeCount, isPlus: isPlus)
-            self.uploadChoiceSheetVisible = true
-            let sheet = BearyOriginalUploadSheet.show(from: self, model: model, onPickOriginal: { [weak self] in
-                guard let self = self else { return }
-                self.uploadChoiceSheetVisible = false
-                self.applyUploadChoice(.original, for: undecided)
-            }, onPickCompressed: { [weak self] in
-                guard let self = self else { return }
-                self.uploadChoiceSheetVisible = false
-                self.applyUploadChoice(.compressed, for: undecided)
-            }, onShowPlus: { [weak self] in
-                guard let self = self else { return }
-                self.uploadChoiceSheetVisible = false
-                BearyToast.show(in: self.view, message: "原图上传是 Plus 功能", actionTitle: "了解 Plus") { [weak self] in
-                    self?.presentPlusPage()
-                }
-            })
-            sheet.onDismiss = { [weak self] in
-                self?.uploadChoiceSheetVisible = false
-            }
-            self.uploadChoiceSheet = sheet
-        }
-    }
-
-    /// 应用用户选的方式：逐项定模式并起传（原图走原图路、压缩走现有路）。
-    /// 选完不自动续发：发布仍须用户再点一次（见 didTapPublish 的未确认拦截）。
-    private func applyUploadChoice(_ mode: BearyUploadMode, for items: [ComposerImageItem]) {
+    /// 按设置定的方式逐项定模式并起传（起传经 startUpload 分流；原图档的
+    /// Plus 门在那里把关，非 Plus 静默按压缩走）。
+    private func applyUploadMode(_ mode: BearyUploadMode, for items: [ComposerImageItem]) {
         for item in items {
             guard item.key == nil, !item.failed, item.uploadMode == nil else { continue }
             item.uploadMode = mode
-            if mode == .original {
-                startOriginalUpload(for: item)
-            } else if let image = item.imageView.image {
+            if let image = item.imageView.image {
                 startUpload(for: item, image: image)
             } else {
                 markFailed(item)
@@ -7702,7 +7487,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// Plus 页（个人页皇冠点按同款呈现：窄屏全屏＋左缘右滑、宽屏默认呈现）。
     private func presentPlusPage() {
         guard presentedViewController == nil else { return }
-        let page = BearyPlusPageViewController(isPlus: cachedPlusStatus == true)
+        let page = BearyPlusPageViewController(isPlus: BearyPlusGate.isRealPlus(user: SessionManager.shared.currentUser))
         if traitCollection.horizontalSizeClass == .compact {
             page.modalPresentationStyle = .fullScreen
             let edgeDismiss = BearyEdgeDismissController()
@@ -8558,9 +8343,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     if img.liveVideoKey == nil {
                         item.liveVideoFile = img.liveVideoFile
                     }
-                    // 原图确认：恢复上传方式标记。老草稿（无方式且无原图文件）
-                    // 按压缩计，保持旧行为（重开即续传，不弹确认）；原图文件
-                    // 已不在时按压缩回落，不静默丢图。
+                    // 上传画质：恢复上传方式标记。老草稿（无方式且无原图文件）
+                    // 按压缩计；无方式但有原图文件时按设置走；原图文件已不在
+                    // 时按压缩回落，不静默丢图。
                     item.uploadMode = BearyUploadMode(rawValue: img.uploadMode ?? "")
                     item.originalFile = img.originalFile
                     item.originalBytes = img.originalBytes
@@ -8574,6 +8359,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         item.fellBackFromOriginal = true
                     } else if item.uploadMode == nil, item.originalFile == nil {
                         item.uploadMode = .compressed
+                    } else if item.uploadMode == nil {
+                        item.uploadMode = BearyUploadQuality.modeForNewImage
                     }
                     self.insertImageItem(item)
                     // 只有 key 的老项（v1 迁移而来）走远程缩略图；有本地文件的项等后台解码后填图。
@@ -9112,8 +8899,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if img.liveVideoKey == nil {
                 item.liveVideoFile = img.liveVideoFile
             }
-            // 原图确认：恢复上传方式标记（与 restoreDraft 同款口径）。
-            // 老草稿（无方式且无原图文件）按压缩计，保持旧行为；
+            // 上传画质：恢复上传方式标记（与 restoreDraft 同款口径）。
+            // 老草稿（无方式且无原图文件）按压缩计；无方式但有原图文件时按设置走；
             // 原图文件已不在时按压缩回落，不静默丢图。
             item.uploadMode = BearyUploadMode(rawValue: img.uploadMode ?? "")
             item.originalFile = img.originalFile
@@ -9128,6 +8915,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 item.fellBackFromOriginal = true
             } else if item.uploadMode == nil, item.originalFile == nil {
                 item.uploadMode = .compressed
+            } else if item.uploadMode == nil {
+                item.uploadMode = BearyUploadQuality.modeForNewImage
             }
             insertImageItem(item)
             // 只有 key 的老项走远程缩略图；有本地文件的项等后台解码后填图。
@@ -9168,8 +8957,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 只拆视图不删文件（切草稿时旧篇文件仍归旧篇所有，删文件只在丢弃/发布成功时做）。
     private func removeAllImageViews() {
-        // 原图确认：切篇时在途的选图准备一并作废——旧批的项不再记入
-        // 待定集（其后台回调仍会走 stillThere 门，不再弹旧批的弹窗）。
+        // 切篇时在途的选图准备一并作废——旧批的项不再记入待定集
+        //（其后台回调仍会走 stillThere 门，不再收尾旧批）。
         pendingChoiceAwaiting = []
         pendingChoiceBatchItems = []
         // 切草稿/重置时撤销缓冲一并提交（旧缓冲项不跟进新篇，见 commitPendingRemoval）。
@@ -9525,9 +9314,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if img.liveVideoKey == nil {
                 item.liveVideoFile = img.liveVideoFile
             }
-            // 原图确认：恢复上传方式标记。老草稿（无方式且无原图文件）
-            // 按压缩计，保持旧行为（重开即续传，不弹确认）；原图文件
-            // 已不在时按压缩回落，不静默丢图。
+            // 上传画质：恢复上传方式标记。老草稿（无方式且无原图文件）
+            // 按压缩计；无方式但有原图文件时按设置走；原图文件已不在
+            // 时按压缩回落，不静默丢图。
             item.uploadMode = BearyUploadMode(rawValue: img.uploadMode ?? "")
             item.originalFile = img.originalFile
             item.originalBytes = img.originalBytes
@@ -9541,6 +9330,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 item.fellBackFromOriginal = true
             } else if item.uploadMode == nil, item.originalFile == nil {
                 item.uploadMode = .compressed
+            } else if item.uploadMode == nil {
+                item.uploadMode = BearyUploadQuality.modeForNewImage
             }
             insertImageItem(item)
             if img.localFile == nil, let key = img.serverKey, let url = BearyImageURLs.imageURL(key: key, thumb: true) {
@@ -9862,16 +9653,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             showToast(message: NSLocalizedString("composer.livephoto.lost_reselect", comment: ""))
             return
         }
-        // 原图确认：有未确认上传方式的图时先弹确认弹窗，不直接发布；
-        // 用户选完方式后需再点一次发布（不做选完自动续发）。
-        // 准备未完成时不弹选择（弹窗只列已就绪项，大小才真实），先提示准备中。
-        if hasUndecidedImage() {
-            guard !readyUndecidedImageItems().isEmpty else {
-                showToast(message: "照片准备中，请稍候")
-                return
-            }
-            presentUploadChoiceSheet()
+        // 上传画质：选图准备未完成时方式未定，先提示准备中，不直接发布。
+        if !pendingChoiceAwaiting.isEmpty {
+            showToast(message: NSLocalizedString("composer.photo_preparing", comment: ""))
             return
+        }
+        // 上传画质 Plus 过期兜底：设置仍是原图但已非 Plus 时，发布静默按
+        // 压缩走，不改设置值（发布中心按快照里的 uploadMode 起传）。
+        if !BearyPlusGate.canUsePlusFeature(user: SessionManager.shared.currentUser) {
+            for item in imageItems where item.uploadMode == .original {
+                item.uploadMode = .compressed
+            }
         }
         // 决议第 3 项 B：去掉发布/保存确认弹框，点发布/保存直接发（网页口径：
         // 网页 editorPublish 直接走校验与请求，无确认弹框）。
