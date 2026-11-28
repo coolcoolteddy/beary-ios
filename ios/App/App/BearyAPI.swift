@@ -229,6 +229,15 @@ struct Entry: Codable {
     /// iCity 私密占位：服务端对非作者的私密单篇只下发 {placeholder: true, id, published: 0}，
     /// 详情页凭此只显一句“该日记已设为私密”，不带标题／封面／时间／作者名。
     var placeholder: Bool?
+    /// 拉黑双向提示（2026-11-28）：单篇占位回包带两个方向标记——
+    /// blocked_by_author（对方拉黑了我）／blocked_by_me（我拉黑了对方），
+    /// 可能同时为 true；可见回包不带这两个字段（恒为 false，省略）。
+    /// convertFromSnakeCase 直解；旧回包缺字段时为 nil，按无拉黑处理。
+    var blockedByAuthor: Bool?
+    var blockedByMe: Bool?
+    /// 占位文案（服务端 message 字段；详情占位展示仍走本地文案口径，
+    /// 见 BearyDetailViewController.showPlaceholder，本字段只作模型透传）。
+    var message: String?
     var likeCount: Int?
     var likedByMe: Bool?
     var bookmarkedByMe: Bool?
