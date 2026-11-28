@@ -10,7 +10,7 @@ import UIKit
 //   - （2026-10-29 第 4 项：风控提示行已删，零残留；风控逻辑本身不动。）
 //   - 统计“已邀请 N 人 · 累计获得 M 天 Plus（rewardMonths × 30）”（accounts /me 的 referral
 //     invited_count / reward_months，只数 granted/pending/granting/flagged）；
-//   - 绑定区两态：已绑定 → “已通过 X 的邀请加入 beary”（status 为 cancelled/expired
+//   - 绑定区两态：已绑定 → “已通过 X 的邀请加入 Beary”（status 为 cancelled/expired
 //     时显示“邀请已作废”）；未绑定 → 输入框 + “绑定”钮 + “随时可补绑”
 //     （邀请无时间限制，2026-11-19 Li 定）；其余 → 不显示绑定区。
 //   - 绑定结果文案与网页 ivDoBind 同款（granted/flagged/其他成功态、cancelled、
@@ -18,20 +18,21 @@ import UIKit
 // 数据来源：SessionManager.refreshMe（复用本次会话的 /me：已确认字段
 // 先渲染，在途 /me 订阅结果、不多发请求，字段缺失再等待请求），与网页
 // openInvite 的 fetchMe 刷新同口径；绑定走 BearyAPI.bindReferral。
-// 呈现方式：容器以弹窗呈现（宽 ≥821 居中卡片 / 宽 ≤820 底 sheet，与编辑器
-// 模态同款）；本页不决定呈现，只定内容与弹窗高度（见 updatePreferredSheetHeight）。
+// 呈现方式：系统 sheet（BearySystemSheet.present，宽 ≥821 居中 600 / 宽 ≤820 底 sheet）；
+// 本页不决定呈现，只定内容与弹窗高度（见 updatePreferredSheetHeight）。
 // 容器接线：
-//   - onClose：用户点关闭钮；本页不自己 dismiss，容器负责关闭弹窗。
+//   - onClose：首页“不再提示”流程调本回调关页；本页不自己 dismiss，容器负责关闭弹窗。
 //   - onRequireLogin：未登录（fetchMe 返回 nil 或 401）时调用，容器接登录页；
 //     未接时页内只显示“请先登录”。
 //   - reload()：手动刷新（每次点开新建一页，打开时 viewDidLoad 已拉取一次）。
 // 礼物钮门控不在本页：容器用 refreshMe 结果（/me 的
 // referral.enabled，网页 giftBtn 显示逻辑同款）决定是否显示礼物钮。
-// 颜色一律走 BearyColors，不新增字面量颜色；弹窗背板走 BearyGlass（中性 bg 52%
-// tint，见 BearyNativeCommon），关闭/复制钮已撤回玻璃（2026-10-27）；无 force unwrap。
+// 颜色一律走 BearyColors，不新增字面量颜色；弹窗面板透明、走系统液态玻璃
+// （2026-11-25 Li 定，见 #2536）；复制钮是内容元素，颜色不动；无 force unwrap。
 
-final class BearyInviteViewController: UIViewController {
-    /// 用户点关闭钮。本页不自己 dismiss，容器负责关闭。
+final class BearyInviteViewController: UIViewController, BearySystemSheetSizing {
+    /// 首页“不再提示”流程调本回调关页（2026-11-27 Li 定拿掉叉叉后，关闭只走抓手下滑／点外）。
+    /// 本页不自己 dismiss，容器负责关闭。
     var onClose: (() -> Void)?
     /// 未登录时调用，容器接登录页；为 nil 时页内显示“请先登录”。
     var onRequireLogin: (() -> Void)?
@@ -44,9 +45,6 @@ final class BearyInviteViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let stackView = UIStackView()
-    private let closeButton = BearyHit44Button(type: .system)
-    /// 审计 8/10 项：关闭行固定在面板顶部（不再是滚动栈首项），滚动后关闭钮仍在顶。
-    private let closeRow = UIView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let codeBox = UIView()
@@ -78,10 +76,6 @@ final class BearyInviteViewController: UIViewController {
     private var pendingBindMessage: String?
     private var pendingBindMessageOK = false
 
-    /// 审计 P2：邀请码格式两端统一——8 位大写字母或数字，与登录页同口径。
-    private func isValidInviteCode(_ code: String) -> Bool {
-        return code.range(of: "^[A-Z0-9]{8}$", options: .regularExpression) != nil
-    }
     private var isLoading = false
     /// 第六轮 04：邀请码跨账号回填——每次 load() 发起时 +1 的请求代次。
     /// 切号（.bearyUserDidChange）时再 +1 作废在途回包；回包先比代次，
@@ -94,10 +88,6 @@ final class BearyInviteViewController: UIViewController {
     /// 升起动画中途算出的弹窗高度（/me 回包改内容时）：先记下不写，
     /// 动画完成后再一次性落位，见 updatePreferredSheetHeight 与 viewDidAppear。
     private var pendingSheetHeight: CGFloat?
-    /// 键盘动画进行中的时长与曲线（inviteKeyboardWillShow/Hide 记下）：
-    /// 高度更新落在其动画窗口内时沿用同一组参数，与键盘避让同拍；
-    /// 窗口过后恢复弹窗本体弹簧。
-    private var activeKeyboardAnimation: (duration: TimeInterval, curveRaw: UInt, expiresAt: Date)?
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -115,7 +105,8 @@ final class BearyInviteViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.surface3
+        // 面板透明：系统 sheet 自带液态玻璃底，实色会盖住它（2026-11-25 Li 定，见 #2536）。
+        view.backgroundColor = .clear
         buildLayout()
         // 审计 8 项：键盘避让（与反馈页同口径，见 inviteKeyboardWillShow）。
         NotificationCenter.default.addObserver(self, selector: #selector(inviteKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
@@ -140,19 +131,16 @@ final class BearyInviteViewController: UIViewController {
         updatePreferredSheetHeight()
     }
 
-    /// 弹窗高度跟内容走：固定关闭行高（44）+ 内容栈 fitting 高 + 上下边距
-    /// （栈顶 34 = 原 16 上边距 + 原 closeRow 后间距 18，标题首帧位置不变；
-    /// 栈底 24）+ 上下安全区；
-    /// 底 sheet 与居中卡片的 presentation 方各以 88% / 80% 容器高封顶取小，
-    /// 内容超高时内层 scrollView 可滚（关闭行固定在面板顶部不随滚走）。
+    /// 弹窗高度跟内容走：内容栈 fitting 高 + 上下边距
+    /// （栈顶 16、栈底 24）+ 上下安全区；
+    /// 系统 sheet 以 custom detent 封顶 88% 容器高，内容超高时内层 scrollView 可滚。
     /// 绑定区显隐变化时布局重算即跟高；
     /// 仅高度变化超 0.5pt 才写 preferredContentSize，避免布局循环。
-    /// 玻璃批：弹窗本体已改玻璃背板（view 底 clear + BearyGlass 背板钉满），
-    /// 外形圆角仍由呈现层定，本方法只算高度不动玻璃。
-    /// 52 批：此前只写 preferredContentSize、不通知呈现层，导致首帧 0 高 fallback 走 88%/80%
-    /// 满高封顶后不回落（即“弹窗过高”）；现与编辑器同款，写完即请父视图重布局，
-    /// 呈现层 containerViewWillLayoutSubviews 重算帧；首帧 view.bounds 仍为 0 时按屏宽估算。
-    private func updatePreferredSheetHeight() {
+    /// 面板透明、走系统液态玻璃（2026-11-25 Li 定）；外形圆角由系统 sheet 定，
+    /// 本方法只算高度不动面板。
+    /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐
+    /// （确认 sheet 同款）；首帧 view.bounds 仍为 0 时按屏宽估算。
+    private func updatePreferredSheetHeight(extraBottomInset: CGFloat = 0) {
         let baseWidth = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
         let width = min(max(0, baseWidth - 44), 432)
         let fitting = stackView.systemLayoutSizeFitting(
@@ -160,7 +148,8 @@ final class BearyInviteViewController: UIViewController {
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         )
-        let height = view.safeAreaInsets.top + 44 + fitting.height + 34 + 24 + view.safeAreaInsets.bottom
+        let bottomInset = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
+        let height = view.safeAreaInsets.top + fitting.height + 16 + 24 + bottomInset
         // 升起动画进行中（/me 回包改内容常落在这个窗口）：此时写
         // preferredContentSize 会让呈现层在弹簧中途直接改 presentedView 的帧，
         // 升起卡一下。先记下，等动画完成后再落位（viewDidAppear）。
@@ -178,28 +167,20 @@ final class BearyInviteViewController: UIViewController {
     }
 
     /// 高度落位唯一入口（转场中暂存后更新／转场后直接更新共用）：
-    /// 先测出目标高度并写 preferredContentSize，再协调弹窗容器的布局动画——
-    /// 入场完成后的回包改高同样走动画，弹窗顶部不再瞬间变高；
-    /// 键盘正在变化时沿用键盘的时长与曲线（剩余时长），与键盘避让同拍；
-    /// 减动效时直接落位。
+    /// 写 preferredContentSize 后调 refreshDetentsIfNeeded 让系统 sheet 重算
+    /// detent（确认／输入 sheet 同款）；旧自研容器那套父视图重布局动画随
+    /// 容器退役一并撤掉。
     private func applySheetHeight(_ height: CGFloat) {
         guard abs(height - lastPreferredSheetHeight) > 0.5 else { return }
         lastPreferredSheetHeight = height
         preferredContentSize = CGSize(width: 0, height: height)
-        guard !UIAccessibility.isReduceMotionEnabled else {
-            view.superview?.setNeedsLayout()
-            return
-        }
-        if let keyboard = activeKeyboardAnimation, keyboard.expiresAt.timeIntervalSinceNow > 0 {
-            let remaining = max(keyboard.expiresAt.timeIntervalSinceNow, 0.01)
-            UIView.animate(withDuration: remaining, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: keyboard.curveRaw << 16)], animations: {
-                self.view.superview?.layoutIfNeeded()
-            })
-            return
-        }
-        UIView.animate(withDuration: BearyBottomSheet.springDuration, delay: 0, usingSpringWithDamping: BearyBottomSheet.springDamping, initialSpringVelocity: 0, options: [.beginFromCurrentState], animations: {
-            self.view.superview?.layoutIfNeeded()
-        })
+        BearySystemSheet.refreshDetentsIfNeeded(for: self)
+    }
+
+    /// 系统 sheet sizing：进场前由 BearySystemSheet.present 调，extraBottomInset
+    /// 为调用方的安全区底（未进窗口时 view.safeAreaInsets.bottom 为 0）。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
+        updatePreferredSheetHeight(extraBottomInset: extraBottomInset)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -218,9 +199,9 @@ final class BearyInviteViewController: UIViewController {
     // MARK: - 布局（与登录页同尺寸体系：左右 22、输入框高 48、内容列 ≤432）
 
     private func buildLayout() {
-        // 视觉清单第 12 项：弹窗玻璃背板已撤，改实色 surface3 底（sheet 层底色；
-        // 玻璃范围 Token 只允许栏/菜单，弹窗不在内）；外形圆角仍由呈现层
-        // presentedView 的圆角 20 + 裁剪定（居中卡片/底 sheet 呈现层均已设，本文件不动）。
+        // 面板透明、走系统液态玻璃（2026-11-25 Li 定，见 #2536；旧口径“弹窗
+        // 不在玻璃范围”已作废）；外形圆角由系统 sheet 的 preferredCornerRadius
+        // （屏幕圆角，iOS 26+；26 以下 20）定，本文件不动。
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         scrollView.delaysContentTouches = false
@@ -228,26 +209,13 @@ final class BearyInviteViewController: UIViewController {
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .vertical
         stackView.spacing = 0
-        // 审计 10 项：关闭行固定在面板顶部，不进滚动栈；其余内容顺序不变。
-        view.addSubview(closeRow)
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
         contentView.addSubview(stackView)
 
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.backgroundColor = BearyColors.surface2
-        closeButton.layer.cornerRadius = 16
-        closeButton.tintColor = BearyColors.ink
-        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
-        closeButton.accessibilityLabel = "关闭"
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        closeRow.translatesAutoresizingMaskIntoConstraints = false
-        closeRow.addSubview(closeButton)
-
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "邀请好友"
-        titleLabel.font = BearyDynamicType.cappedFont(for: BearyDynamicType.serifDesign(for: UIFont.systemFont(ofSize: 21, weight: .heavy)), maximumPointSize: 28)
+        titleLabel.font = BearyDynamicType.pageTitleFont()
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
 
@@ -263,7 +231,7 @@ final class BearyInviteViewController: UIViewController {
         codeBox.layer.cornerRadius = 12
         codeLabel.translatesAutoresizingMaskIntoConstraints = false
         codeLabel.text = "—"
-        codeLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 20, weight: .bold), maximumPointSize: 28)
+        codeLabel.font = BearyDynamicType.fieldFont()
         codeLabel.adjustsFontForContentSizeCategory = true
         codeLabel.textColor = BearyColors.ink
         copyButton.translatesAutoresizingMaskIntoConstraints = false
@@ -348,7 +316,7 @@ final class BearyInviteViewController: UIViewController {
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         messageLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         messageLabel.adjustsFontForContentSizeCategory = true
-        messageLabel.textColor = BearyColors.surface3ErrorText
+        messageLabel.textColor = BearyColors.destructiveText
         messageLabel.numberOfLines = 0
         // 第十一轮审计 3：无文案时整行隐藏、不占 18pt + 8pt 间距；有文案时由 showMessage / render 恢复显示（照登录页 showMessage 口径）。
         messageLabel.isHidden = true
@@ -397,18 +365,8 @@ final class BearyInviteViewController: UIViewController {
         stackView.setCustomSpacing(12, after: retryButton)
 
         NSLayoutConstraint.activate([
-            // 审计 10 项：关闭行钉面板顶、行宽与面板同宽（关闭钮贴面板右缘）；
-            // 滚动区从关闭行下方起，不再盖住它。
-            closeRow.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            // 叉叉贴面板边修法：此前行宽＝内容列宽、钮贴行右缘即贴内容列右缘，
-            // 手机上钮右缘离面板边约 37.5pt，看着悬在半空、不是右上角（用户报位置不对）；
-            // 规范§8“非全屏弹窗统一右上角叉叉”＋回应 Sheet（面板边 −18）、草稿箱
-            // Sheet（面板边 −14）均把钮贴面板边。本支把行放宽到面板、钮贴行右缘
-            // 内收 16（两先例中间值），不是改回旧口径（旧口径是行宽未定被压成钮宽
-            // 32 再居中、叉叉落在屏中）。
-            closeRow.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            closeRow.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: closeRow.bottomAnchor),
+            // 2026-11-27 Li 定拿掉叉叉：滚动区直接钉面板顶，标题顶回到原 16 上边距。
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
@@ -417,20 +375,14 @@ final class BearyInviteViewController: UIViewController {
             contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-            // 栈顶 34 = 原 16 上边距 + 原 closeRow 后间距 18，标题首帧位置不变。
-            stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 34),
+            // 栈顶 16：拿掉叉叉后标题顶回到原上边距，不留叉叉行的空档。
+            stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
             stackView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -24),
-            stackView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 22),
-            stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -22),
+            stackView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: BearySpace.lg),
+            stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -BearySpace.lg),
             stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             stackView.widthAnchor.constraint(lessThanOrEqualToConstant: 432),
-            // Hit44：行高放开到 44（钮 32 居中，上下各留 6），热区不再被 32 高行截断；钮视觉尺寸不变。
-            closeRow.heightAnchor.constraint(equalToConstant: 44),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-            closeButton.trailingAnchor.constraint(equalTo: closeRow.trailingAnchor, constant: -16),
-            closeButton.centerYAnchor.constraint(equalTo: closeRow.centerYAnchor),
-            codeBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 56),
+            codeBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
             codeLabel.leadingAnchor.constraint(equalTo: codeBox.leadingAnchor, constant: 16),
             codeLabel.centerYAnchor.constraint(equalTo: codeBox.centerYAnchor),
             copyButton.trailingAnchor.constraint(equalTo: codeBox.trailingAnchor, constant: -8),
@@ -487,8 +439,6 @@ final class BearyInviteViewController: UIViewController {
         let bottom = overlapsInput ? max(0, view.bounds.maxY - view.safeAreaInsets.bottom - frameInView.minY) : 0
         let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
         let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
-        // 高度更新落在其动画窗口内时沿用同一组参数（见 applySheetHeight）。
-        activeKeyboardAnimation = (duration: duration, curveRaw: curveRaw, expiresAt: Date().addingTimeInterval(duration))
         UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
             self.scrollView.contentInset.bottom = bottom
             self.scrollView.verticalScrollIndicatorInsets.bottom = bottom
@@ -504,8 +454,6 @@ final class BearyInviteViewController: UIViewController {
     @objc private func inviteKeyboardWillHide(_ note: Notification) {
         let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
         let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
-        // 高度更新落在其动画窗口内时沿用同一组参数（见 applySheetHeight）。
-        activeKeyboardAnimation = (duration: duration, curveRaw: curveRaw, expiresAt: Date().addingTimeInterval(duration))
         UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
             self.scrollView.contentInset.bottom = 0
             self.scrollView.verticalScrollIndicatorInsets.bottom = 0
@@ -517,7 +465,7 @@ final class BearyInviteViewController: UIViewController {
     private func showMessage(_ text: String, ok: Bool = false) {
         messageLabel.text = text
         messageLabel.isHidden = text.isEmpty
-        messageLabel.textColor = ok ? BearyColors.deepGreenText : BearyColors.surface3ErrorText
+        messageLabel.textColor = ok ? BearyColors.deepGreenText : BearyColors.destructiveText
         // 审计登录杂项：行内失败时绑定框同步 isError 红边，成功 / 清空时复位。
         bindInputContainer?.isError = !text.isEmpty && !ok
     }
@@ -533,15 +481,7 @@ final class BearyInviteViewController: UIViewController {
 
     /// 拒绝动效（详情页／编辑资料页同口径：values [0,-8,8,-5,5,0] / BearyMotion.screen）。
     private func playDenyShake(on button: UIButton) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled { return }
-        button.layer.removeAnimation(forKey: "bearyDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        button.layer.add(shake, forKey: "bearyDenyShake")
+        BearyIconMotion.playDenyShake(on: button, key: "bearyDenyShake")
     }
 
     /// 116 数据填入动效：文案变化时只淡入该 label 本身（alpha 0→1、
@@ -549,16 +489,7 @@ final class BearyInviteViewController: UIViewController {
     /// 不赋值不重播；减动效或未进窗口时直设终值。绑定区容器本身的
     /// 隐藏变可见淡入已实现，本函数只补文案层。
     private func setLabelTextFaded(_ label: UILabel, _ text: String) {
-        guard label.text != text else { return }
-        label.text = text
-        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
-            label.alpha = 1
-            return
-        }
-        label.alpha = 0
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            label.alpha = 1
-        })
+        BearyLabelFade.setText(text, on: label, duration: BearyMotion.normal)
     }
 
     /// r21-A15：邀请统计数字变化走 0.18s 交叉淡变（规范 §6 micro 档即
@@ -664,7 +595,7 @@ final class BearyInviteViewController: UIViewController {
                         strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
                         strongSelf.pendingBindMessage = nil
                     } else {
-                        strongSelf.showMessage("网络不稳定，请稍后再试")
+                        strongSelf.showMessage(NSLocalizedString("common.network_unstable", comment: ""))
                     }
                     strongSelf.retryButton.isHidden = false
                 case .failure:
@@ -740,7 +671,7 @@ final class BearyInviteViewController: UIViewController {
                 // 审计 P2：作废态不写死绿勾，图标隐藏。
                 boundCheckIcon.isHidden = true
             } else if status == "granted" {
-                setLabelTextFaded(boundLabel, "已通过 \(inviterName) 的邀请加入 beary")
+                setLabelTextFaded(boundLabel, String(format: NSLocalizedString("invite.joined_via_format", comment: ""), inviterName))
                 boundCheckIcon.isHidden = false
             } else if status == "flagged" {
                 // flagged 是服务端风控拦截（同 IP / 邀请人被封），须站长在管理端放行或作废——此处“待审核”属实。
@@ -757,7 +688,7 @@ final class BearyInviteViewController: UIViewController {
             // 补绑随时可做，不再算倒计时。
             bindRow.isHidden = false
             bindHintLabel.isHidden = false
-            setLabelTextFaded(bindHintLabel, "随时可补绑")
+            setLabelTextFaded(bindHintLabel, NSLocalizedString("invite.bind_anytime", comment: ""))
             updateBindButton()
         } else if referral != nil {
             // 审计 P2：未绑定且补绑窗口已关（bindOpen == false）——给过期文案，不整区静默消失。
@@ -769,7 +700,7 @@ final class BearyInviteViewController: UIViewController {
         // 审计 P2：绑定成功文案先显示——render 清空消息行后，待展示的绑定文案重新落回。
         if let pending = pendingBindMessage {
             messageLabel.text = pending
-            messageLabel.textColor = pendingBindMessageOK ? BearyColors.deepGreenText : BearyColors.surface3ErrorText
+            messageLabel.textColor = pendingBindMessageOK ? BearyColors.deepGreenText : BearyColors.destructiveText
             pendingBindMessage = nil
         }
         // 第十一轮审计 3：render 直接写 text、绕过 showMessage，此处同步显隐——无文案隐藏、有待展示文案显示。
@@ -790,7 +721,7 @@ final class BearyInviteViewController: UIViewController {
         // 审计登录杂项：启用条件改 isValidInviteCode（此前只看非空，输满 8 位
         // 含 - / 空格时按钮呈可点态、点按才拦截）。
         let code = (bindField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        let enabled = isValidInviteCode(code) && !isBinding
+        let enabled = BearyText.isValidInviteCode(code) && !isBinding
         bindButton.isEnabled = enabled
         bindButton.alpha = enabled ? 1 : 0.35
         // M14：绑定进行态用“绑定中…”文案，不再只有 alpha 变化。
@@ -809,18 +740,12 @@ final class BearyInviteViewController: UIViewController {
             messageLabel.text = baseText + "，Plus 永久有效"
             return
         }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy/M/d"
-        let dateText = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
-        messageLabel.text = baseText + "，Plus 至 \(dateText)"
+        // 2026-11-21 日期完全本地化：“Plus 至 <短日期>”走共享 helper（跟 App
+        // 语言；非中文为草稿 Plus until <短日期>，待 Li 定稿）。
+        messageLabel.text = baseText + BearyLocalizedDate.plusUntilSuffix(untilMs: until)
     }
 
     // MARK: - 动作
-
-    @objc private func closeTapped() {
-        onClose?()
-    }
 
     @objc private func dismissPromptTapped() {
         onDismissHomePrompt?()
@@ -857,7 +782,7 @@ final class BearyInviteViewController: UIViewController {
             return
         }
         // 审计 P2：邀请码先行格式校验，不合规行内提示且不发请求。
-        guard isValidInviteCode(code) else {
+        guard BearyText.isValidInviteCode(code) else {
             showMessage("邀请码格式不正确，应为 8 位字母或数字")
             return
         }
@@ -905,7 +830,7 @@ final class BearyInviteViewController: UIViewController {
                 case .failure(.server(let message, _)):
                     strongSelf.showBindFailure(message)
                 case .failure(.network):
-                    strongSelf.showBindFailure("网络不稳定，请稍后再试")
+                    strongSelf.showBindFailure(NSLocalizedString("common.network_unstable", comment: ""))
                 case .failure:
                     strongSelf.showBindFailure("绑定失败，请稍后再试")
                 }

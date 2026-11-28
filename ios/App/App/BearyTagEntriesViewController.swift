@@ -25,10 +25,15 @@ final class BearyTagEntriesViewController: UIViewController {
     private var loading = false
     private var hasMore = true
     private var loadFailed = false
+    private var loadMoreFailed = false
+    private let loadMoreFooterView = BearyLoadMoreFooterView()
 
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let loadingIndicator = UIActivityIndicatorView(style: .large)
     private let stateLabel = UILabel()
+
+    /// iPad 600 列上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；Feed 同款）。
+    private var tagColCapConstraint: NSLayoutConstraint?
 
     /// 自有顶栏（本页只进 SceneDelegate 的标签 modal nav，系统导航栏隐藏；
     /// 与个人页 modal 顶栏同款：44pt＋返回钮＋居中标题）。
@@ -101,25 +106,47 @@ final class BearyTagEntriesViewController: UIViewController {
         stateLabel.isHidden = true
         let retryTap = UITapGestureRecognizer(target: self, action: #selector(stateLabelTapped))
         stateLabel.addGestureRecognizer(retryTap)
+        stateLabel.bearyAddRowPressFeedback()
         stateLabel.isUserInteractionEnabled = true
         view.addSubview(stateLabel)
 
+        // iPad 600 列上限（Feed 同款）：宽 ≥821 时 600 居中，≤820 全宽；
+        // 上限只在 ≥821 激活，开关在 viewDidLayoutSubviews。
+        let tagColWidth = tableView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        tagColWidth.priority = .defaultHigh
+        let tagColCap = tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        tagColCapConstraint = tagColCap
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
+            tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            tagColCap,
+            tagColWidth,
 
             loadingIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             loadingIndicator.centerYAnchor.constraint(equalTo: view.centerYAnchor),
 
             stateLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             stateLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            stateLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            stateLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
+            stateLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: BearySpace.xl),
+            stateLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -BearySpace.xl),
         ])
 
+        loadMoreFooterView.onRetry = { [weak self] in self?.retryLoadMore() }
+
         loadFirstPage()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // iPad 600 列上限只在宽 ≥821 时激活，其余关掉、列走 750 全宽等式回满屏宽；
+        // 状态不变不开关，避免布局循环（Feed 同款）。
+        let wantColCap = BearyDesktop.isWide(view.bounds.width)
+        if tagColCapConstraint?.isActive != wantColCap {
+            tagColCapConstraint?.isActive = wantColCap
+        }
     }
 
     private func buildTopBar() {
@@ -164,17 +191,15 @@ final class BearyTagEntriesViewController: UIViewController {
     func restoreDetailReturnAnchor(entryId: String, viewportOffset: CGFloat) {
         guard let row = entries.firstIndex(where: { $0.id == entryId }) else { return }
         tableView.layoutIfNeeded()
-        let targetY = tableView.rectForRow(at: IndexPath(row: row, section: 0)).origin.y - viewportOffset
-        guard abs(targetY - tableView.contentOffset.y) >= 1 else { return }
-        let minY = -tableView.contentInset.top
-        let maxY = max(minY, tableView.contentSize.height - tableView.bounds.height + tableView.contentInset.bottom)
-        tableView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+        BearyScrollAnchor.restoreDetailReturn(in: tableView, rowTop: tableView.rectForRow(at: IndexPath(row: row, section: 0)).origin.y, viewportOffset: viewportOffset)
     }
 
     private func loadFirstPage() {
         guard !loading else { return }
         loading = true
         loadFailed = false
+        loadMoreFailed = false
+        updateLoadMoreFooter()
         stateLabel.isHidden = true
         loadingIndicator.startAnimating()
         BearyAPI.shared.fetchEntries(scope: .tag(tag), limit: Self.pageSize) { [weak self] result in
@@ -189,9 +214,11 @@ final class BearyTagEntriesViewController: UIViewController {
                 self.hasMore = (list.entries ?? []).count >= Self.pageSize
                 self.reloadDataPreservingScrollPosition(anchor: anchor)
                 self.refreshStateLabel()
+                self.updateLoadMoreFooter()
             case .failure:
                 self.loadFailed = true
                 self.refreshStateLabel()
+                self.updateLoadMoreFooter()
             }
         }
     }
@@ -199,6 +226,8 @@ final class BearyTagEntriesViewController: UIViewController {
     private func loadMore() {
         guard !loading, hasMore, let last = entries.last else { return }
         loading = true
+        loadMoreFailed = false
+        updateLoadMoreFooter()
         BearyAPI.shared.fetchEntries(scope: .tag(tag), limit: Self.pageSize, before: last.createdAt, beforeId: last.id) { [weak self] result in
             guard let self = self else { return }
             self.loading = false
@@ -208,29 +237,54 @@ final class BearyTagEntriesViewController: UIViewController {
                 // 页间可能重叠：按日记 ID 去重，只追加本页没出现过的新篇。
                 let anchor = self.captureScrollAnchor()
                 var seenIds = Set(self.entries.compactMap { $0.id })
-                let fresh = page.filter { entry in
-                    guard let id = entry.id else { return true }
-                    guard !seenIds.contains(id) else { return false }
-                    seenIds.insert(id)
-                    return true
-                }
+                let fresh = BearyCursorPageLoad.fresh(page, id: { $0.id }, seen: &seenIds)
                 self.hasMore = page.count >= Self.pageSize
+                self.updateLoadMoreFooter()
                 guard !fresh.isEmpty else { return }
                 let startIndex = self.entries.count
                 self.entries.append(contentsOf: fresh)
-                if self.tableView.numberOfRows(inSection: 0) == startIndex {
+                BearyLoadingUX.appendRowsIfConsistent(tableView: self.tableView, oldCount: startIndex, insert: {
                     // 纯追加只插新行：旧 cell 不重建，头像/图片不闪。
                     let indexPaths = (startIndex..<(startIndex + fresh.count)).map { IndexPath(row: $0, section: 0) }
                     self.tableView.insertRows(at: indexPaths, with: .none)
-                } else {
+                }, fallback: {
                     // 表行数与模型对不上时才整表重载，并按首个可见日记恢复滚动。
                     self.reloadDataPreservingScrollPosition(anchor: anchor)
-                }
+                })
             case .failure:
-                // 分页失败不弹失败态（已有内容可看），下一轮滑到底再试一次。
-                break
+                // 翻页失败亮脚部重试态：已有内容可看，不弹 toast；
+                // 点脚部“加载失败，重试”再拉一次，下一轮滑到底也会再试。
+                self.loadMoreFailed = true
+                self.updateLoadMoreFooter()
             }
         }
+    }
+
+    /// 翻页脚部（首页同款 BearyLoadMoreFooterView）：加载中三点、
+    /// 到底“没有更多了”、失败可点重试。首屏加载／空列表时不挂脚部。
+    /// 只改翻页失败展示，不动翻页触发逻辑（willDisplay 倒数第 3 行预取）与数据。
+    private func updateLoadMoreFooter() {
+        let state: BearyLoadMoreFooterView.State = {
+            if entries.isEmpty { return .hidden }
+            if loading { return .loading }
+            if loadMoreFailed { return .failed }
+            if !hasMore { return .end }
+            return .hidden
+        }()
+        loadMoreFooterView.setState(state)
+        guard state != .hidden else {
+            if tableView.tableFooterView != nil { tableView.tableFooterView = nil }
+            return
+        }
+        let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
+        loadMoreFooterView.frame = CGRect(x: 0, y: 0, width: width, height: BearyLoadMoreFooterView.height)
+        if tableView.tableFooterView !== loadMoreFooterView {
+            tableView.tableFooterView = loadMoreFooterView
+        }
+    }
+
+    private func retryLoadMore() {
+        loadMore()
     }
 
     /// 整表 reload 前的首个可见锚点：日记 ID + 该行顶缘到视口顶的距离。
@@ -254,10 +308,7 @@ final class BearyTagEntriesViewController: UIViewController {
               let row = entries.firstIndex(where: { $0.id == anchor.entryId }) else { return }
         tableView.layoutIfNeeded()
         let rect = tableView.rectForRow(at: IndexPath(row: row, section: 0))
-        var offsetY = rect.minY - anchor.topOffset
-        let topLimit = -tableView.adjustedContentInset.top
-        let bottomLimit = max(topLimit, tableView.contentSize.height - tableView.bounds.height + tableView.adjustedContentInset.bottom)
-        offsetY = min(max(offsetY, topLimit), bottomLimit)
+        let offsetY = BearyScrollAnchor.clampedOffsetY(in: tableView, rowTop: rect.minY, viewportOffset: anchor.topOffset, contentInset: tableView.adjustedContentInset)
         tableView.setContentOffset(CGPoint(x: 0, y: offsetY), animated: false)
     }
 
@@ -347,7 +398,14 @@ final class BearyTagEntriesViewController: UIViewController {
         cell.onShareRequested = { [weak self] _ in
             guard let self = self else { return }
             let sheet = UIActivityViewController(activityItems: [entry.content ?? ""], applicationActivities: nil)
-            self.present(sheet, animated: true)
+            // 标签页此前未设 iPad popover 锚点，iPad 上弹分享面板会崩溃；
+            // 锚点取触发分享的 cell，不可见时退回本页中心零尺寸 rect。
+            if let index = self.entries.firstIndex(where: { $0.id == entry.id }),
+               let cellView = self.tableView.cellForRow(at: IndexPath(row: index, section: 0)) {
+                BearyShareSheet.present(sheet, from: self, sourceView: cellView, sourceRect: cellView.bounds)
+            } else {
+                BearyShareSheet.present(sheet, from: self, sourceView: self.view, sourceRect: CGRect(x: self.view.bounds.midX, y: self.view.bounds.midY, width: 0, height: 0), permittedArrowDirections: [])
+            }
         }
         cell.onActionFailed = { [weak self] in
             self?.presentActionFailedAlert()
@@ -403,6 +461,17 @@ extension BearyTagEntriesViewController: UITableViewDataSource, UITableViewDeleg
         cell.configure(with: entry)
         wireCell(cell, entry: entry)
         return cell
+    }
+
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        guard indexPath.row < entries.count else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {

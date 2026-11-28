@@ -419,10 +419,10 @@ class BearyEditProfileViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // 景深背景门控初值：与九宫格门控同口径读共享会话 currentUser.plus。
+        // 景深背景门控初值：走统一门 BearyPlusGate（现在全开）。
         // 此前初值 false，且正常入口（带 userId）从不走 refreshLinkRowFromMe
         // 的 /me 补写，Plus 用户进页即被判非 Plus，封面行全锁“Plus 专属”。
-        fetchedPlus = SessionManager.shared.currentUser?.plus == true
+        fetchedPlus = BearyPlusGate.canUsePlusFeature(user: SessionManager.shared.currentUser)
         view.backgroundColor = BearyColors.bg
         buildLayout()
         // U3：输入框 Return 收起/切换 + 滑动收键盘 + 键盘顶起时调 inset
@@ -492,7 +492,7 @@ class BearyEditProfileViewController: UIViewController {
                 case .success(let user):
                     strongSelf.meFetchFailed = false
                     strongSelf.fetchedUserId = user?.id
-                    strongSelf.fetchedPlus = BearyDeveloperMode.effectivePlus(user?.plus == true)
+                    strongSelf.fetchedPlus = BearyPlusGate.canUsePlusFeature(user: user)
                     strongSelf.updateLinkRow()
                     strongSelf.fetchInitialSignature()
                     if thenCopy {
@@ -520,16 +520,7 @@ class BearyEditProfileViewController: UIViewController {
     /// 直设终值。签名输入框内容为可编辑文档，不做淡入（与编辑器
     /// 表单回填同口径）。
     private func setLinkLabelTextFaded(_ text: String) {
-        guard linkLabel.text != text else { return }
-        linkLabel.text = text
-        guard !UIAccessibility.isReduceMotionEnabled, linkLabel.window != nil else {
-            linkLabel.alpha = 1
-            return
-        }
-        linkLabel.alpha = 0
-        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            self.linkLabel.alpha = 1
-        })
+        BearyLabelFade.setText(text, on: linkLabel, duration: BearyMotion.localStateDuration)
     }
 
     private func updateLinkRow() {
@@ -647,7 +638,7 @@ class BearyEditProfileViewController: UIViewController {
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.backgroundColor = BearyColors.line
         NSLayoutConstraint.activate([
-            separator.heightAnchor.constraint(equalToConstant: 1),
+            separator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
         return separator
     }
@@ -794,7 +785,7 @@ class BearyEditProfileViewController: UIViewController {
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
             closeButton.widthAnchor.constraint(equalToConstant: 44),
             saveButton.widthAnchor.constraint(equalToConstant: 44),
-            coverImageView.heightAnchor.constraint(equalToConstant: 180),
+            coverImageView.heightAnchor.constraint(equalToConstant: BearyProfileCover.height),
             // U7：三输入框高度改最小 28（默认档外观不变），大字号时随字长高、不裁字。
             nameField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
             signatureField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
@@ -872,7 +863,7 @@ class BearyEditProfileViewController: UIViewController {
     func requestExit(interactive: Bool) -> Bool {
         if isSaving {
             if presentedViewController == nil {
-                presentSimpleAlert(message: "正在保存，请稍候")
+                presentSimpleAlert(message: NSLocalizedString("editprofile.saving_in_progress", comment: ""))
             }
             return false
         }
@@ -980,10 +971,15 @@ class BearyEditProfileViewController: UIViewController {
     private func presentDepthBackgroundPicker() {
         // 进选择页前按共享会话重读一次 Plus 态：本页打开期间刚到账的 Plus
         //（邀请绑定后 refreshMe 已写回 currentUser）不等下次进页即生效。
-        fetchedPlus = SessionManager.shared.currentUser?.plus == true
+        fetchedPlus = BearyPlusGate.canUsePlusFeature(user: SessionManager.shared.currentUser)
+        // 预览顶部叠头像＋名字（画出来像个人页封面的样子）；昵称取当前输入，
+        // 为空时回落到进页时的初值。
+        let pickerDisplayName = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let picker = BearyDepthBackgroundViewController(
             currentTheme: storedFestivalTheme(),
             isPlus: fetchedPlus,
+            avatarImage: avatarImageView.image,
+            displayName: pickerDisplayName.isEmpty ? initialDisplayName : pickerDisplayName,
             onPick: { [weak self] theme, isPlus in
                 guard let strongSelf = self else { return false }
                 return strongSelf.handleDepthThemePicked(theme, isPlus: isPlus)
@@ -1129,7 +1125,7 @@ class BearyEditProfileViewController: UIViewController {
            let coverPath = initialCoverUrl,
            let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
             didLoadInitialCover = true
-            coverImageView.bearySetImage(url: coverURLValue, placeholder: nil)
+            coverImageView.bearySetImageWithBlurUp(url: coverURLValue)
         }
     }
 
@@ -1461,15 +1457,7 @@ class BearyEditProfileViewController: UIViewController {
 
     /// 拒绝动效（卡片 playDenyShake 同口径：values [0,-8,8,-5,5,0] / 0.38s）。
     private func playDenyShake(on button: UIButton) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled { return }
-        button.layer.removeAnimation(forKey: "bearyDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        button.layer.add(shake, forKey: "bearyDenyShake")
+        BearyIconMotion.playDenyShake(on: button, key: "bearyDenyShake")
     }
 
     private func handleErrorMessage(err: APIError) -> String {
@@ -1528,7 +1516,7 @@ class BearyEditProfileViewController: UIViewController {
         guard side > 0 else { return nil }
         let crop = CGRect(x: (image.size.width - side) / 2, y: (image.size.height - side) / 2, width: side, height: side)
         guard let cropped = cropImage(image: image, rect: crop) else { return nil }
-        let resized = resizeImage(image: cropped, maxDimension: 256)
+        let resized = BearyImagePrep.resized(cropped, maxSide: 256)
         for quality in [CGFloat(0.85), CGFloat(0.7), CGFloat(0.5)] {
             if let data = resized.jpegData(compressionQuality: quality) {
                 let dataURL = "data:image/jpeg;base64," + data.base64EncodedString()
@@ -1544,7 +1532,7 @@ class BearyEditProfileViewController: UIViewController {
         let image = normalizeImage(image: image)
         let tries: [(CGFloat, CGFloat)] = [(1280, 0.8), (1024, 0.72), (880, 0.62)]
         for (maxWidth, quality) in tries {
-            let resized = resizeImage(image: image, maxDimension: maxWidth)
+            let resized = BearyImagePrep.resized(image, maxSide: maxWidth)
             if let data = resized.jpegData(compressionQuality: quality) {
                 let dataURL = "data:image/jpeg;base64," + data.base64EncodedString()
                 if dataURL.count <= 400000 {
@@ -1576,18 +1564,6 @@ class BearyEditProfileViewController: UIViewController {
         return UIImage(cgImage: cropped, scale: scale, orientation: image.imageOrientation)
     }
 
-    private func resizeImage(image: UIImage, maxDimension: CGFloat) -> UIImage {
-        let longest = max(image.size.width, image.size.height)
-        guard longest > maxDimension else { return image }
-        let ratio = maxDimension / longest
-        let target = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        let renderer = UIGraphicsImageRenderer(size: target, format: format)
-        return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: target))
-        }
-    }
 }
 
 // MARK: - 图片选择
@@ -1671,10 +1647,10 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
             // F14：封面预览高已改 180，裁剪窗比例同步。
             let previewWidth = coverImageView.bounds.width
             if previewWidth > 0 {
-                aspectRatio = previewWidth / 180
+                aspectRatio = previewWidth / BearyProfileCover.height
             } else {
                 let columnWidth = min(max(view.bounds.width - 40, 0), 600)
-                aspectRatio = columnWidth > 0 ? columnWidth / 180 : 2
+                aspectRatio = columnWidth > 0 ? columnWidth / BearyProfileCover.height : 2
             }
         }
         // Mantis 裁剪（3.1.1）：固定比例、确认先退场再回调（#952 同款口径），
@@ -1786,7 +1762,7 @@ extension BearyEditProfileViewController: UITextFieldDelegate {
             // 免得每敲一字都弹；多字替换视为粘贴才提示；光标落末尾是
             // 程序赋值固有行为，本条只补提示，不改光标逻辑）。
             if string.count > 1 {
-                BearyToast.show(in: view, message: "超出上限的部分已截断")
+                BearyToast.show(in: view, message: NSLocalizedString("profile.paste_truncated", comment: ""))
             }
             return false
         }

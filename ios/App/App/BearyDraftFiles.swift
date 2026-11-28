@@ -12,10 +12,11 @@ import ImageIO
 // v3 = v2 字段（正文 + 心情 + 图片项数组（本地文件名 / 服务端 key / 上传状态
 // / 实况视频 key / 待传实况视频本地 mov 文件名，见 B1）
 // + clientReq（本篇草稿创建时生成一次，发布重试全程复用，拿到 entry id 才换）
-// + updatedAt）+ weather + recipientId + notifyRecipient + quoteId
+// + updatedAt）+ weather + recipientId + quoteId
 // + 引用展示快照（作者名 / 作者头像 / 日期 / 正文 / 图片 key / 是否公开 / 已删标记）
 // + 写给展示快照（收信人展示名 / 头像路径；只为恢复 chip 显示，不作身份依据）。
 // + 可见性分段 index（0 私密 / 1 公开；老草稿缺本键时按 0 私密解码）。
+// + tzName（创建草稿时的设备时区 IANA 标识；老草稿缺本键时按 nil 解码，发布时取设备时区回落）。
 // 排序：updatedAt 倒序（同秒按 draftId 升序兜底，保证顺序稳定）；草稿箱按此顺序列出全部。
 // 迁移：v3 文件不存在时，首次读取把旧 v2 单槽文件 beary_draft_v2.json 迁入 v3
 // （有实质内容才迁：正文非空，或心情、图片、引用、写给、天气任一非空；
@@ -113,7 +114,6 @@ struct BearyDraft: Codable {
     var recipientId: Int?
     var recipientName: String?
     var recipientAvatar: String?
-    var notifyRecipient: Bool
     var quoteId: String?
     var quoteAuthorName: String?
     var quoteAuthorAvatar: String?
@@ -133,6 +133,10 @@ struct BearyDraft: Codable {
     /// 最近一次失败时原日记是否已公开（部分成功态）：只重试新篇时跳过
     /// setVisibility 的依据；与 lastPublishFailure 同写同清，老草稿缺省 false。
     var sourcePublished: Bool = false
+    /// 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识
+    /// （草稿创建时取一次，之后编辑/发布都不改；老草稿缺本键时按 nil 解码，
+    /// 发布时取设备时区作回落）。
+    var tzName: String? = nil
 
     /// 有实质内容：空白篇（全空）不迁入、不展示为有效草稿。
     /// 心情不算内容（网页口径：只选表情、没写字的日记不保存），与编辑器
@@ -187,7 +191,7 @@ enum BearyDraftImageStore {
     /// 按捕获账号算目标目录。
     fileprivate static func directory(forAccount accountId: Int?) -> URL? {
         guard let accountId = accountId else { return nil }
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         let dir = base.appendingPathComponent("\(directoryName)_\(accountId)", isDirectory: true)
         if !FileManager.default.fileExists(atPath: dir.path) {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
@@ -820,7 +824,7 @@ enum BearyDraftStore {
     /// 捕获账号版路径：后台写任务专用，目的目录只由入队时捕获的账号决定。
     private static func fileURL(for accountId: Int?) -> URL? {
         guard let accountId = accountId else { return nil }
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         if !FileManager.default.fileExists(atPath: base.path) {
             try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
         }
@@ -829,12 +833,12 @@ enum BearyDraftStore {
 
     /// 旧全局 v3 文件路径（仅迁移源，不再作为读写路径）。
     private static func legacyGlobalFileURL() -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent(fileName)
     }
 
     private static func legacyV2FileURL() -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent(legacyV2FileName)
     }
 
@@ -1323,7 +1327,6 @@ enum BearyDraftStore {
                 recipientId: nil,
                 recipientName: nil,
                 recipientAvatar: nil,
-                notifyRecipient: true,
                 quoteId: nil,
                 quoteAuthorName: nil,
                 quoteAuthorAvatar: nil,
@@ -1350,7 +1353,6 @@ enum BearyDraftStore {
                 recipientId: nil,
                 recipientName: nil,
                 recipientAvatar: nil,
-                notifyRecipient: true,
                 quoteId: nil,
                 quoteAuthorName: nil,
                 quoteAuthorAvatar: nil,
@@ -1403,13 +1405,21 @@ enum BearyDraftStore {
         var mentionedUserId: Int? = nil
         var mentionCleared: Bool = false
         var updatedAt: TimeInterval
+
+        /// 空检查点：标题与正文双空（去首尾空白后）。正文空时发布按钮禁用、
+        /// 提交走不到 performUpdate，这种快照没有任何可提交的修改，只会在
+        /// 下次打开编辑器时误弹恢复框、一点「恢复」就把原文盖空。
+        var isEmptyText: Bool {
+            content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     /// 检查点文件名：entryId 只留字母/数字/-/_，其余字符换成 "-"，防路径穿越；
     /// 按账号分桶，与草稿 v3 文件同目录（Application Support）。
     private static func editCheckpointFileURL(entryId: String, forAccount accountId: Int?) -> URL? {
         guard let accountId = accountId, !entryId.isEmpty else { return nil }
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         if !FileManager.default.fileExists(atPath: base.path) {
             try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
         }

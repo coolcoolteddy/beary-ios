@@ -284,29 +284,14 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     /// 隐藏变可见时只淡入徽标本身（alpha 0→1、0.18s，不动 transform／
     /// 布局、不重建节点）；同值不赋值不重播；减动效或未进窗口时直设终值。
     private func setStatusTextFaded(_ text: String) {
-        guard statusLabel.text != text else { return }
-        statusLabel.text = text
-        guard !UIAccessibility.isReduceMotionEnabled, statusLabel.window != nil else {
-            statusLabel.alpha = 1
-            return
-        }
-        statusLabel.alpha = 0
-        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            self.statusLabel.alpha = 1
-        })
+        BearyLabelFade.setText(text, on: statusLabel, duration: BearyMotion.localStateDuration)
     }
 
     private func showStatusBadgeFaded() {
         let wasHidden = statusBadge.isHidden
         statusBadge.isHidden = false
-        guard wasHidden, !UIAccessibility.isReduceMotionEnabled, statusBadge.window != nil else {
-            statusBadge.alpha = 1
-            return
-        }
-        statusBadge.alpha = 0
-        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            self.statusBadge.alpha = 1
-        })
+        guard wasHidden else { statusBadge.alpha = 1; return }
+        BearyLabelFade.fadeIn(statusBadge, duration: BearyMotion.localStateDuration)
     }
 
     override func viewDidLoad() {
@@ -679,7 +664,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 separator.backgroundColor = BearyColors.line
                 deviceStack.addArrangedSubview(separator)
                 NSLayoutConstraint.activate([
-                    separator.heightAnchor.constraint(equalToConstant: 1),
+                    separator.heightAnchor.constraint(equalToConstant: 0.5),
                 ])
             }
         }
@@ -844,7 +829,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             parts.append("图片或视频 \(attachments.count) 个")
         }
         if zipReady {
-            parts.append("日志包 1 个")
+            parts.append(NSLocalizedString("feedback.log_bundle_one", comment: ""))
         }
         guard !parts.isEmpty else {
             submitHintLabel.text = "将发送到 hi@teddyhn.com，还需在邮件里再按一次发送。"
@@ -1035,7 +1020,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             let ready: Bool
             if let urlValue = url {
                 self.replaceZipURL(urlValue)
-                self.setStatusTextFaded("反馈数据已准备就绪")
+                self.setStatusTextFaded(NSLocalizedString("feedback.data_ready", comment: ""))
                 self.showStatusBadgeFaded()
                 ready = true
             } else {
@@ -1090,7 +1075,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     func guardZipInFlightForExit() -> Bool {
         if zipInFlight {
             if presentedViewController == nil {
-                BearyToast.show(in: view, message: "正在准备附件，请稍候")
+                BearyToast.show(in: view, message: NSLocalizedString("feedback.preparing_attachments", comment: ""))
             }
             return false
         }
@@ -1198,7 +1183,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 } else {
                     // zip 缺失时发送仍可继续（不带 zip）：先 toast 明说，待 toast 可见
                     // 后再弹出邮件撰写框，避免撰写框盖住 toast 导致说明不可见。
-                    BearyToast.show(in: self.view, message: "日志包准备失败，本次反馈不含日志包")
+                    BearyToast.show(in: self.view, message: NSLocalizedString("feedback.log_prepare_failed_excluded", comment: ""))
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.1) { [weak self] in
                         // 审计登录杂项：2.1 秒延迟分支补 view.window 守卫，与
                         // shareTapped / logOnlyTapped 同口径（此前只守 presented）。
@@ -1219,19 +1204,16 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             // 与 submitTapped 两处守卫同口径，防多窗口叠出。
             guard self.view.window != nil, self.presentedViewController == nil else { return }
             guard ready, let url = self.zipURL else {
-                BearyToast.show(in: self.view, message: "日志包准备失败，请重试")
+                BearyToast.show(in: self.view, message: NSLocalizedString("feedback.log_prepare_failed_retry", comment: ""))
                 self.playDenyShake(on: self.shareButton)
                 return
             }
             // 分享内容只含日志包 zip 一个文件，不含描述与图片 / 视频。
             let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-            sheet.popoverPresentationController?.sourceView = self.shareButton
-            sheet.popoverPresentationController?.sourceRect = self.shareButton.bounds
-            sheet.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+            BearyShareSheet.present(sheet, from: self, sourceView: self.shareButton, sourceRect: self.shareButton.bounds) { [weak self] _, completed, _, _ in
                 BearyAppLog.event(completed ? "feedback share completed" : "feedback share cancelled")
                 self?.cleanupZip()
             }
-            self.present(sheet, animated: BearyMotion.animated(true))
         }
     }
 
@@ -1244,7 +1226,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             // 与 submitTapped 两处守卫同口径，防多窗口叠出。
             guard self.view.window != nil, self.presentedViewController == nil else { return }
             guard ready else {
-                BearyToast.show(in: self.view, message: "日志包准备失败，请重试")
+                BearyToast.show(in: self.view, message: NSLocalizedString("feedback.log_prepare_failed_retry", comment: ""))
                 BearyHaptics.rejectionWarning()
                 return
             }
@@ -1253,7 +1235,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 self.presentLogOnlyComposer()
             } else {
                 // 仅发送日志无文字可复制，不走复制 fallback：toast 明说两条出路。
-                BearyToast.show(in: self.view, message: "请先配置邮箱，或改用“分享诊断日志”")
+                BearyToast.show(in: self.view, message: NSLocalizedString("feedback.email_not_configured_action", comment: ""))
                 BearyHaptics.rejectionWarning()
             }
         }
@@ -1262,15 +1244,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     /// 分享失败拒绝动效（设置页同款：摇头＋warning 震动＋拒绝音效；
     /// 减动效时只跳过视觉抖动，震动与音效照常给）。
     private func playDenyShake(on button: UIButton) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled { return }
-        button.layer.removeAnimation(forKey: "bearyFeedbackDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        button.layer.add(shake, forKey: "bearyFeedbackDenyShake")
+        BearyIconMotion.playDenyShake(on: button, key: "bearyFeedbackDenyShake")
     }
 
     // MARK: - 邮件（系统 MFMailCompose；未配邮箱时按种类分流）
@@ -1284,7 +1258,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         guard MFMailComposeViewController.canSendMail() else {
             // 补缺 P3-34：复制 fallback 只复制描述文字，设备信息与附件不随复制发出，toast 明说。
             UIPasteboard.general.string = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            BearyToast.show(in: view, message: "未配置邮箱，已仅复制反馈文字，附件不随复制发出")
+            BearyToast.show(in: view, message: NSLocalizedString("feedback.no_email_copied_text_only", comment: ""))
             BearyAppLog.event("feedback mail no account copy fallback")
             return
         }
@@ -1298,7 +1272,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                     guard let self = self else { return }
                     guard self.view.window != nil, self.presentedViewController == nil else { return }
                     guard let zipData = zipData else {
-                        BearyToast.show(in: self.view, message: "日志包读取失败，请重试")
+                        BearyToast.show(in: self.view, message: NSLocalizedString("feedback.log_read_failed_retry", comment: ""))
                         BearyHaptics.rejectionWarning()
                         BearyAppLog.event("feedback mail zip read failed")
                         return
@@ -1318,7 +1292,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         let composer = MFMailComposeViewController()
         composer.mailComposeDelegate = self
         composer.setToRecipients([Self.recipient])
-        composer.setSubject("\(subjectPrefix) beary 反馈")
+        composer.setSubject(String(format: NSLocalizedString("feedback.mail_subject_format", comment: ""), subjectPrefix))
         composer.setMessageBody(body, isHTML: false)
         if let zipData = zipData {
             composer.addAttachmentData(zipData, mimeType: "application/zip", fileName: "beary-feedback-logs.zip")
@@ -1341,7 +1315,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 guard let self = self else { return }
                 guard self.view.window != nil, self.presentedViewController == nil else { return }
                 guard let zipData = zipData else {
-                    BearyToast.show(in: self.view, message: "日志包读取失败，请重试")
+                    BearyToast.show(in: self.view, message: NSLocalizedString("feedback.log_read_failed_retry", comment: ""))
                     BearyHaptics.rejectionWarning()
                     BearyAppLog.event("feedback log mail zip read failed")
                     return
@@ -1356,8 +1330,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         let composer = MFMailComposeViewController()
         composer.mailComposeDelegate = self
         composer.setToRecipients([Self.recipient])
-        composer.setSubject("[日志] beary 诊断日志")
-        composer.setMessageBody("beary 诊断日志见附件。", isHTML: false)
+        composer.setSubject(NSLocalizedString("feedback.log_mail_subject", comment: ""))
+        composer.setMessageBody(NSLocalizedString("feedback.log_mail_body", comment: ""), isHTML: false)
         if let zipData = zipData {
             composer.addAttachmentData(zipData, mimeType: "application/zip", fileName: "beary-feedback-logs.zip")
         }
@@ -1447,8 +1421,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                         var parts: [String] = []
                         if failures > 0 {
                             parts.append(oversized > 0
-                                ? "有 \(failures) 个附件未能加载，其中 \(oversized) 个视频超过 50MB"
-                                : "有 \(failures) 个附件未能加载")
+                                ? String(format: NSLocalizedString("feedback.attachments_failed_with_oversized", comment: ""), failures, oversized)
+                                : String(format: NSLocalizedString("feedback.attachments_failed", comment: ""), failures))
                         }
                         if budgetRejected > 0 {
                             parts.append("附件总大小超过 50MB，已跳过 \(budgetRejected) 个附件")

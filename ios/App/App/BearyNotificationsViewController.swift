@@ -311,6 +311,20 @@ final class BearyNotificationsViewController: UIViewController {
     private var cardAnimatingExpanding = false
     private var cardAnimationGeneration = 0
     private var cardAnimator: UIViewPropertyAnimator?
+    /// 卡片动画 animator 工厂：展开／收起两处共用曲线与代次 bookkeeping——
+    /// 建 animator 前代次 +1 并捕获，completion 先验代次（过期直接返回），
+    /// 再跑各处自己的清理动作；动画本体（addAnimations）各处自写，不动。
+    /// 错峰入场只共用曲线、不走本工厂（无代次，+1 会误杀在途卡片动画）。
+    private func makeCardAnimator(duration: TimeInterval, completion: @escaping (BearyNotificationsViewController) -> Void) -> UIViewPropertyAnimator {
+        cardAnimationGeneration += 1
+        let generation = cardAnimationGeneration
+        let animator = UIViewPropertyAnimator(duration: duration, timingParameters: BearyMotion.cardCurve)
+        animator.addCompletion({ [weak self] _ in
+            guard let strongSelf = self, generation == strongSelf.cardAnimationGeneration else { return }
+            completion(strongSelf)
+        })
+        return animator
+    }
     /// 第七轮 7：收起快照——展开区收起时先把可见子行拍成静态图贴在原位，
     /// 行表直接删行落终值（无高度插值、无约束打架），再把快照整体向上收起；
     /// 动画期间禁滚（快照贴在 view 坐标里，不跟表滚），减动效不走本路径。
@@ -356,7 +370,7 @@ final class BearyNotificationsViewController: UIViewController {
         let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
-        button.setTitle("全部已读", for: .normal)
+        button.setTitle(NSLocalizedString("notif.read_all.mark_all", comment: ""), for: .normal)
         button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         button.titleLabel?.adjustsFontForContentSizeCategory = true
         button.setTitleColor(BearyColors.gray, for: .normal)
@@ -866,12 +880,14 @@ final class BearyNotificationsViewController: UIViewController {
         refreshVisibleTimeLabels()
     }
 
-    /// P1-21：在途请求代次校验——各请求发起时捕获 BearyAPI.authEpoch，
+    /// P1-21：在途请求代次校验——各请求发起时捕获 BearyAPI.authEpoch 与 authAccountId，
     /// 回包先比对，代次已变（切账号/401 清态后 bump）说明回包属于旧登录态，
     /// 直接丢弃，不写 items/未读数/角标、不弹登录、不回滚已读。BearyAPI 侧
     /// authEpoch 现只门控 401 回调，不丢弃过期回包数据，本方法是补缺口。
-    private func isStaleRequestEpoch(_ capturedEpoch: Int) -> Bool {
-        return capturedEpoch != BearyAPI.shared.authEpoch
+    private func isStaleRequestEpoch(_ capturedEpoch: Int, requestAccountId: Int?) -> Bool {
+        return BearyAPI.isStaleAccountLoad(
+            requestAccountId: requestAccountId, requestEpoch: capturedEpoch,
+            currentAccountId: BearyAPI.shared.authAccountId, currentEpoch: BearyAPI.shared.authEpoch)
     }
 
     /// 轻量刷新 + D3-App 门控（60 秒轮询、回前台、viewWillAppear 的统一入口）：
@@ -898,6 +914,7 @@ final class BearyNotificationsViewController: UIViewController {
             return
         }
         let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         // 第 17 轮 11：拍下发起时的已读操作代次——全部已读成功后代次 +1，
         // 此前在途的回包随后一律过期，不把已清零的未读数加回来（与单条
         // 标已读失败回滚同口径，见 markSingleRead）。
@@ -906,7 +923,7 @@ final class BearyNotificationsViewController: UIViewController {
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // P1-21：代次已变 → 旧账号回包丢弃，不写未读数与角标。
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     return
                 }
                 // 第 17 轮 11：全部已读已成功（操作代次已变）→ 旧回包丢弃，
@@ -1200,6 +1217,7 @@ final class BearyNotificationsViewController: UIViewController {
         let requestedLimit = items.isEmpty ? pageLimit : min(max(pageLimit, items.count), maxRefreshLimit)
         refreshVisibleState()
         let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         // 第 17 轮 11：拍下发起时的已读操作代次（同轻量刷新）。
         let operationGen = readOperationGeneration
         BearyAPI.shared.fetchNotifications(limit: requestedLimit) { [weak self] result in
@@ -1208,7 +1226,7 @@ final class BearyNotificationsViewController: UIViewController {
                 strongSelf.isLoadingFirstPage = false
                 // P1-21：代次已变 → 旧账号回包丢弃；下拉刷新仍走 completion 收尾，
                 // 避免转圈悬停（见 beginCustomPullRefresh）。
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     completion?()
                     return
                 }
@@ -1442,7 +1460,7 @@ final class BearyNotificationsViewController: UIViewController {
             cell.transform = CGAffineTransform(translationX: 0, y: -24)
             let animator = UIViewPropertyAnimator(
                 duration: BearyMotion.normal,
-                timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1))
+                timingParameters: BearyMotion.cardCurve
             )
             animator.addAnimations({
                 cell.alpha = 1
@@ -1563,13 +1581,11 @@ final class BearyNotificationsViewController: UIViewController {
         return t != "system" && t != "letter" && t != "dm"
     }
 
-    /// 多人通知聚合（2026-11-18 Li 定）：同一动作、同一目标、≥2 人合并一条。
-    /// 分组键：like/bookmark/emote 按（动作＋entry_id）；follow 目标即本人，
-    /// 按动作本身。mention 不聚合（@ 提醒各有各的上下文）；无 entry_id 的
+    /// 多人通知聚合分组键（2026-11-18 Li 定，#1873 口径；详情页复用同一条）：
+    /// like/bookmark/emote 按（动作＋entry_id）；follow 目标即本人，按动作
+    /// 本身。mention 不聚合（@ 提醒各有各的上下文）；无 entry_id 的
     /// like/bookmark/emote 同样不聚合（目标不明，宁单条不错组）。
-    private func notificationGroupKey(for index: Int) -> String? {
-        guard index < items.count else { return nil }
-        let item = items[index]
+    static func groupKey(for item: NotificationItem) -> String? {
         let type = item.type ?? ""
         switch type {
         case "like", "bookmark", "emote":
@@ -1582,8 +1598,15 @@ final class BearyNotificationsViewController: UIViewController {
         }
     }
 
+    /// 多人通知聚合（2026-11-18 Li 定）：同一动作、同一目标、≥2 人合并一条。
+    private func notificationGroupKey(for index: Int) -> String? {
+        guard index < items.count else { return nil }
+        return Self.groupKey(for: items[index])
+    }
+
     /// 互动行分组：槽位按首次出现顺序（即时间倒序）——单条占一槽，一组占一槽，
     /// 组按组内最新一条时间排序；组内下标按时间倒序（最新在前）；单人组仍为单条。
+    /// 2026-11-28 Li 定：只有没看过的才聚合，看过的单条不动。
     private func groupedActRows(from actIndices: [Int]) -> [NotificationDisplayRow] {
         enum Slot {
             case single(Int)
@@ -1592,7 +1615,8 @@ final class BearyNotificationsViewController: UIViewController {
         var slots: [Slot] = []
         var groups: [String: [Int]] = [:]
         for index in actIndices {
-            guard let key = notificationGroupKey(for: index) else {
+            guard (items[index].read ?? true) == false,
+                  let key = notificationGroupKey(for: index) else {
                 slots.append(.single(index))
                 continue
             }
@@ -1715,16 +1739,7 @@ final class BearyNotificationsViewController: UIViewController {
                     cardCell.setChevronExpanded(true)
                 }
             }
-            cardAnimationGeneration += 1
-            let generation = cardAnimationGeneration
-            let animator = UIViewPropertyAnimator(duration: BearyMotion.localStateDuration, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
-            animator.addAnimations({
-                self.zeroHeightRows.removeAll()
-                self.tableView.beginUpdates()
-                self.tableView.endUpdates()
-            })
-            animator.addCompletion({ [weak self] _ in
-                guard let strongSelf = self, generation == strongSelf.cardAnimationGeneration else { return }
+            let animator = makeCardAnimator(duration: BearyMotion.localStateDuration) { strongSelf in
                 strongSelf.zeroHeightRows.removeAll()
                 strongSelf.cardAnimatingKind = nil
                 strongSelf.isCardAnimating = false
@@ -1732,6 +1747,11 @@ final class BearyNotificationsViewController: UIViewController {
                 for visibleCell in strongSelf.tableView.visibleCells {
                     visibleCell.accessibilityElementsHidden = false
                 }
+            }
+            animator.addAnimations({
+                self.zeroHeightRows.removeAll()
+                self.tableView.beginUpdates()
+                self.tableView.endUpdates()
             })
             cardAnimator = animator
             animator.startAnimation()
@@ -1815,18 +1835,14 @@ final class BearyNotificationsViewController: UIViewController {
             isCardAnimating = true
             cardAnimatingKind = kind
             cardAnimatingExpanding = false
-            cardAnimationGeneration += 1
-            let generation = cardAnimationGeneration
             let collapsedFrame = CGRect(x: snapshot.frame.minX, y: snapshot.frame.minY, width: snapshot.frame.width, height: 0)
-            let animator = UIViewPropertyAnimator(duration: BearyMotion.localStateDuration, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
-            animator.addAnimations({
-                snapshot.frame = collapsedFrame
-            })
-            animator.addCompletion({ [weak self] _ in
-                guard let strongSelf = self, generation == strongSelf.cardAnimationGeneration else { return }
+            let animator = makeCardAnimator(duration: BearyMotion.localStateDuration) { strongSelf in
                 strongSelf.removeCollapseSnapshot()
                 strongSelf.cardAnimatingKind = nil
                 strongSelf.isCardAnimating = false
+            }
+            animator.addAnimations({
+                snapshot.frame = collapsedFrame
             })
             collapseSnapshotAnimator = animator
             animator.startAnimation()
@@ -1900,9 +1916,20 @@ final class BearyNotificationsViewController: UIViewController {
 
     /// 第七轮 12：只刷新哨兵行——加载态翻转时行数不变（哨兵一直在位），
     /// 整表重载会丢滚动锚点；三态已同高 56，这里只换行内图标/文案。
+    /// 135 闪退：willDisplay 触发的 loadMore 会同步调这里；翻页回包的
+    /// performBatchUpdates 插行时新建 cell 走 willDisplay，isLoadingMore
+    /// 已在回包里清掉，守卫放行，又一次 loadMore 同步 reloadRows，
+    /// 嵌套进正在跑的批更新里，UIKit 报行数不一致直接 abort。
+    /// 改异步发：等当前批更新跑完再刷哨兵行（只晚一个 runloop，肉眼无感）；
+    /// 执行时重核哨兵仍在位且行号未越界，过期通知丢弃。
     private func refreshSentinelRow() {
         guard showsSentinelRow else { return }
-        tableView.reloadRows(at: [IndexPath(row: displayRows.count, section: 0)], with: .none)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.showsSentinelRow else { return }
+            let row = self.displayRows.count
+            guard row < self.tableView.numberOfRows(inSection: 0) else { return }
+            self.tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+        }
     }
 
     private func loadMore() {
@@ -1930,6 +1957,7 @@ final class BearyNotificationsViewController: UIViewController {
         let oldDisplayRows = displayRows
         let oldSentinelRow = showsSentinelRow
         let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         // 第 17 轮 11：拍下发起时的已读操作代次（同首屏）。
         let operationGen = readOperationGeneration
         BearyAPI.shared.fetchNotifications(limit: pageLimit, before: cursor) { [weak self] result in
@@ -1937,7 +1965,7 @@ final class BearyNotificationsViewController: UIViewController {
                 guard let strongSelf = self else { return }
                 strongSelf.isLoadingMore = false
                 // P1-21：代次已变 → 旧账号回包丢弃；哨兵重绘回闲置态，不弹失败 toast。
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     strongSelf.cancelCardAnimation()
                     // 第七轮 12：只翻哨兵态，只刷新哨兵行。
                     strongSelf.refreshSentinelRow()
@@ -2171,6 +2199,7 @@ final class BearyNotificationsViewController: UIViewController {
         applyReadAppearanceToVisibleRows()
         // 请求已发出：落定前按钮保持“处理中…”转圈（见回调内复位）。
         let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         BearyAPI.shared.markNotificationRead(id: nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -2178,7 +2207,7 @@ final class BearyNotificationsViewController: UIViewController {
                 // R10-#5：完成态经同一刷新方法恢复，对勾 14pt（此前误写 24pt）。
                 strongSelf.refreshReadAllButtonAppearance(for: .done)
                 // P1-21：代次已变 → 旧账号回包丢弃，不整批置已读、不重拉。
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     return
                 }
                 switch result {
@@ -2298,7 +2327,7 @@ final class BearyNotificationsViewController: UIViewController {
                         // 旧缓存态原样保留（重验调用点只对已有缓存态发请求）。
                     } else {
                         self.followCardStates[actorId] = .loadFailed
-                        self.showToast(message: "回关状态加载失败，点按可重试")
+                        self.showToast(message: NSLocalizedString("notif.followback.load_failed", comment: ""))
                     }
                 }
                 self.refreshFollowCardRows(actorId: actorId)
@@ -2442,17 +2471,29 @@ final class BearyNotificationsViewController: UIViewController {
     /// 另一条的 id 发 POST（本地＋服务端同时标错）；现按点按时快照的通知
     /// id 在回包时刻重查下标，查不到（行已不在列表）则不标不发，行已在
     /// 别处标过已读则不重复扣未读数。
+    /// 乐观标已读共享块：行置已读＋未读数 -1＋发布＋快照＋外观。
+    /// system 路另减 sysUnreadTotal（decrementSystemUnread）；合并快照通知
+    /// 与真正的 POST（markSingleRead）仍由调用方按原顺序调，行为不动。
+    private func applyOptimisticMarkRead(at index: Int, decrementSystemUnread: Bool = false) {
+        items[index].read = true
+        unreadTotal = max(0, unreadTotal - 1)
+        if decrementSystemUnread {
+            sysUnreadTotal = max(0, sysUnreadTotal - 1)
+        }
+        publishUnread(unreadTotal)
+        updateReadAllButton()
+        // 乐观标已读：行已读态与本地未读数已一致，快照同步跟进，
+        // 否则 POST 成功后轻量比对会误判为变化而多拉一次整页；失败回滚处同步改回。
+        recordFullLoadUnread()
+        applyReadAppearanceToVisibleRows()
+    }
+
     private func markFollowCardRead(notificationId: Int?) {
         guard let notificationId = notificationId,
               let index = items.firstIndex(where: { $0.id == notificationId }),
               (items[index].read ?? true) == false else { return }
         let item = items[index]
-        items[index].read = true
-        unreadTotal = max(0, unreadTotal - 1)
-        publishUnread(unreadTotal)
-        updateReadAllButton()
-        recordFullLoadUnread()
-        applyReadAppearanceToVisibleRows()
+        applyOptimisticMarkRead(at: index)
         markSingleRead(item, at: index)
         notifyMergeSnapshotChanged()
     }
@@ -2462,17 +2503,7 @@ final class BearyNotificationsViewController: UIViewController {
         // 5-11：无 id 的行不做乐观已读——标已读函数遇 nil 直接 return
         // 不发 POST、不回滚，乐观改动会与服务端未读数脱节；有 id 才乐观。
         if isUnread && item.id != nil {
-            items[index].read = true
-            unreadTotal = max(0, unreadTotal - 1)
-            if item.type == "system" {
-                sysUnreadTotal = max(0, sysUnreadTotal - 1)
-            }
-            publishUnread(unreadTotal)
-            updateReadAllButton()
-            // 本页乐观标已读：行已读态与本地未读数已一致，快照同步跟进，
-            // 否则 POST 成功后轻量比对会误判为变化而多拉一次整页；失败回滚处同步改回。
-            recordFullLoadUnread()
-            applyReadAppearanceToVisibleRows()
+            applyOptimisticMarkRead(at: index, decrementSystemUnread: item.type == "system")
             notifyMergeSnapshotChanged()
         }
         if isUnread {
@@ -2625,6 +2656,7 @@ final class BearyNotificationsViewController: UIViewController {
         }
         markingReadIds.insert(notificationId)
         let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         // 第三轮审计 01：拍下发起时的已读操作代次，供失败回滚校验。
         let operationGen = readOperationGeneration
         BearyAPI.shared.markNotificationRead(id: notificationId) { [weak self] result in
@@ -2632,10 +2664,10 @@ final class BearyNotificationsViewController: UIViewController {
                 guard let strongSelf = self else { return }
                 strongSelf.markingReadIds.remove(notificationId)
                 // P1-21：代次已变 → 旧账号回包丢弃，不回滚新账号的行与未读数。
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     return
                 }
-                if case .failure = result {
+                if case .failure(let apiError) = result {
                     // 第三轮审计 01：全部已读已成功（操作代次已变）→ 旧单条回滚
                     // 作废，服务端已全部已读，不把清零的未读数加回来。
                     guard operationGen == strongSelf.readOperationGeneration else { return }
@@ -2661,6 +2693,11 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.notifyMergeSnapshotChanged()
                     // 详情页本地拷贝不在源表回滚范围内，另行通知它改回未读。
                     strongSelf.onSingleReadRollback?(notificationId)
+                    // 401 只回滚、不提示、不重拉（与全部已读的 401 处理一致：
+                    // 回滚后直接 return，全局登录处理归容器；摇头＋toast 只给非 401 失败）。
+                    if case APIError.unauthorized = apiError {
+                        return
+                    }
                     // 失败有反馈：摇头＋warning 震动＋拒绝音效＋toast（此前静默
                     // 回滚，用户不知道标已读没成）。
                     strongSelf.playDenyShakeForRow(notificationId: notificationId)
@@ -2701,11 +2738,12 @@ final class BearyNotificationsViewController: UIViewController {
         notifyMergeSnapshotChanged()
         saveNotificationCache()
         let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         BearyAPI.shared.deleteNotification(id: id) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.deletingNotificationIds.remove(id)
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                if strongSelf.isStaleRequestEpoch(requestEpoch, requestAccountId: requestAccountId) {
                     completion?(false)
                     return
                 }
@@ -2736,8 +2774,7 @@ final class BearyNotificationsViewController: UIViewController {
                     }
                     // 失败有反馈：震动＋拒绝音效＋toast（行重回列表即是回滚本身；
                     // 不复用 playDenyShakeForRow——它按旧下标找行，删后重插下标已变）。
-                    BearyHaptics.rejectionWarning()
-                    BearySoundPlayer.play(.refuseBonk)
+                    BearyIconMotion.playDenyFeedback()
                     strongSelf.showToast(message: "删除失败，请重试")
                     completion?(false)
                 }
@@ -2747,18 +2784,12 @@ final class BearyNotificationsViewController: UIViewController {
 
     /// 单条标已读失败：对可见行摇头（行不可见时只给震动＋音效），配 toast 说明。
     private func playDenyShakeForRow(notificationId: Int) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
+        BearyIconMotion.playDenyFeedback()
         if UIAccessibility.isReduceMotionEnabled { return }
         guard let index = items.firstIndex(where: { $0.id == notificationId }),
               let rowIndex = displayRows.firstIndex(where: { $0.itemIndex == index }),
               let cell = tableView.cellForRow(at: IndexPath(row: rowIndex, section: 0)) else { return }
-        cell.layer.removeAnimation(forKey: "bearyNotifDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        cell.layer.add(shake, forKey: "bearyNotifDenyShake")
+        BearyIconMotion.denyShake(on: cell, key: "bearyNotifDenyShake")
     }
 
     // MARK: - 角标与顶栏
@@ -2797,7 +2828,11 @@ final class BearyNotificationsViewController: UIViewController {
                 BearyIconMotion.stopSpin(on: buttonImageView, key: "bearyReadAllSpin")
             }
             readAllButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
-            readAllButton.setTitle("全部已读", for: .normal)
+            if state == .done {
+                readAllButton.setTitle(NSLocalizedString("notif.read_all.all_read", comment: ""), for: .normal)
+            } else {
+                readAllButton.setTitle(NSLocalizedString("notif.read_all.mark_all", comment: ""), for: .normal)
+            }
         case .marking:
             readAllButton.isEnabled = false
             readAllButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 14), for: .normal)
@@ -3030,14 +3065,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// .presentLetterPage 同口径；edgeDismiss 由本页持有
     /// （transitioningDelegate 弱引用，不持有则手势与动画代理失效）。
     private func presentLetterPageDirectly(_ letterVC: BearyLetterViewController) {
-        let nav = UINavigationController(rootViewController: letterVC)
-        nav.isNavigationBarHidden = true
-        nav.modalPresentationStyle = .fullScreen
-        let edgeDismiss = BearyEdgeDismissController()
-        edgeDismiss.attach(to: nav)
-        nav.transitioningDelegate = edgeDismiss
-        letterEdgeDismiss = edgeDismiss
-        present(nav, animated: BearyMotion.animated(true))
+        letterEdgeDismiss = presentFullscreenNav(root: letterVC, from: self).edgeDismiss
     }
 
     /// 就地 present 兜底的 EdgeDismiss 持有（见 presentLetterPageDirectly）。
@@ -3127,7 +3155,7 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
                 // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“用户已注销”。
                 // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，不落空串。
                 let deletedName = bearyDeletedAuthorDisplayName(latest.actorName) ?? ""
-                let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
+                let actorName = deletedName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : deletedName
                 let latestVerb = BearyNotificationCell.verb(for: latest.type)
                 cell.configureAsCard(
                     title: "互动消息",
@@ -3184,6 +3212,21 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
             return tableView.cellForRow(at: IndexPath(row: rowIndex, section: 0))
         }
         return nil
+    }
+
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        if indexPath.row == displayRows.count {
+            guard loadMoreFailed && hasMore && !isLoadingMore else { return }
+        } else {
+            guard indexPath.row < displayRows.count else { return }
+        }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
@@ -3261,8 +3304,7 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
         if hasMore && !isLoadingMore && !isLoadingFirstPage && !loadMoreFailed {
             // C-G6：网页哨兵用 IntersectionObserver rootMargin 900px 预取，
             // App 原 120 触发太晚，改 900 与网页一致。
-            let nearBottom = scrollView.contentOffset.y + scrollView.bounds.height >= scrollView.contentSize.height - 900
-            if nearBottom && scrollView.contentSize.height > 0 {
+            if BearyLoadMorePrefetch.isNearBottom(scrollView) {
                 loadMore()
             }
         }
@@ -3807,7 +3849,7 @@ final class BearyAvatarStackView: UIView {
             imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         // 首字母占位与单头像同款（15/700 灰）；无图直接露占位，不走加载。
-        let displayName = name.isEmpty ? "beary 用户" : name
+        let displayName = name.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : name
         let fallbackLabel = UILabel()
         fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
         fallbackLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
@@ -4053,6 +4095,18 @@ class BearyNotificationCell: UITableViewCell {
         return stack
     }()
 
+    /// 副标题行：摘要 label ＋未读圆点。圆点挪到副标题行右侧、与副标题垂直居中
+    ///（2026-11-22 Li 定）；圆点是本栈的 arranged subview，隐藏时栈自动塌零、
+    /// 摘要贴到行尾，标题行时间不再受圆点影响。间距 12 与圆点左侧留位一致。
+    private let excerptRowStack: UIStackView = {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.spacing = 12
+        stack.alignment = .center
+        return stack
+    }()
+
     private let excerptLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -4106,12 +4160,21 @@ class BearyNotificationCell: UITableViewCell {
     private var avatarTopConstraint: NSLayoutConstraint?
     private var avatarCenterYConstraint: NSLayoutConstraint?
     private var avatarBottomGuardConstraint: NSLayoutConstraint?
-    /// 标题栈顶锚点：独立页沿用内容顶 +14；合并页改锚头像顶
-    ///（见 applyAvatarVerticalStyle），标题字形顶对齐圆圈顶。
+    /// 标题栈顶锚点：独立页沿用内容顶 +14；合并页改标题栈相对头像垂直居中
+    ///（见 applyAvatarVerticalStyle），上下留白对头像相等。
     private var bodyStackTopToContentConstraint: NSLayoutConstraint?
     private var bodyStackTopToAvatarConstraint: NSLayoutConstraint?
-    private var dotTrailingToContentConstraint: NSLayoutConstraint?
-    private var dotTrailingToChevronConstraint: NSLayoutConstraint?
+    /// 标题栈右缘：三角隐藏时钉内容右缘 -16（消息页，时间右端与私信行一致）；
+    /// 三角显示时钉三角左缘 -12（独立页，不压三角）。两条同一时刻只激活一条，
+    /// 见 applyBodyStackTrailing。
+    private var bodyStackTrailingToContentConstraint: NSLayoutConstraint?
+    private var bodyStackTrailingToChevronConstraint: NSLayoutConstraint?
+    /// 合并页标题栈相对头像垂直居中约束（bodyStack.centerY = 头像 centerY），
+    /// 只在合并消息页激活；独立通知页仍走顶锚。
+    private var bodyStackCenterYToAvatarConstraint: NSLayoutConstraint?
+    /// 合并页（互动消息）样式标记：applyAvatarVerticalStyle 写入；关注动作区
+    /// 显示时据此把头像改回顶锚（见 configureFollowCard）。
+    private var mergedListStyle = false
 
     /// 聚合头像组：单头像位替换为头像栈；bodyStack 左缘在单头像/栈之间切换。
     private let avatarStackView = BearyAvatarStackView()
@@ -4155,9 +4218,11 @@ class BearyNotificationCell: UITableViewCell {
         // 高度生长动画中行高缩到 0 时内容不得溢出到相邻行。
         clipsToBounds = true
         bodyStack.addArrangedSubview(titleRowStack)
-        bodyStack.addArrangedSubview(excerptLabel)
+        bodyStack.addArrangedSubview(excerptRowStack)
         titleRowStack.addArrangedSubview(titleLabel)
         titleRowStack.addArrangedSubview(timeLabel)
+        excerptRowStack.addArrangedSubview(excerptLabel)
+        excerptRowStack.addArrangedSubview(unreadDotView)
         kindBadgeView.addSubview(kindIconView)
         contentView.addSubview(unreadBgView)
         contentView.sendSubviewToBack(unreadBgView)
@@ -4171,7 +4236,6 @@ class BearyNotificationCell: UITableViewCell {
         avatarStackView.isHidden = true
         contentView.addSubview(avatarStackView)
         contentView.addSubview(bodyStack)
-        contentView.addSubview(unreadDotView)
         contentView.addSubview(chevronView)
         contentView.addSubview(separatorView)
         contentView.addSubview(nestedLineView)
@@ -4188,12 +4252,13 @@ class BearyNotificationCell: UITableViewCell {
         // 顶层行头像 x=16、未读点右 -16、箭头右 -16；嵌套行在此基础上再缩进（见 configure）。
         avatarLeadingConstraint = avatarImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16)
         separatorLeadingConstraint = separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0)
-        dotTrailingToContentConstraint = unreadDotView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
-        dotTrailingToChevronConstraint = unreadDotView.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -12)
+        // 标题栈右缘跟三角走：三角隐藏时钉内容右缘 -16（消息页，时间右端与私信行一致），
+        // 三角显示时钉三角左缘 -12（独立页）；未读点已在副标题行内，不再占标题行右缘。
+        bodyStackTrailingToContentConstraint = bodyStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
+        bodyStackTrailingToChevronConstraint = bodyStack.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -12)
         avatarLeadingConstraint?.isActive = true
         separatorLeadingConstraint?.isActive = true
-        dotTrailingToContentConstraint?.isActive = true
-        dotTrailingToChevronConstraint?.isActive = false
+        applyBodyStackTrailing()
         // bodyStack 左缘：单头像行钉头像右缘＋12，聚合行钉头像栈右缘＋12；
         // 栈与单头像同顶（14）、同左缘（跟 avatarLeadingConstraint 走嵌套缩进）。
         bodyStackLeadingToAvatarConstraint = bodyStack.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 12)
@@ -4215,10 +4280,11 @@ class BearyNotificationCell: UITableViewCell {
         avatarTopConstraint = avatarImageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
         avatarCenterYConstraint = avatarImageView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
         avatarTopConstraint?.isActive = true
-        // 标题栈顶锚点：默认内容顶 +14（独立通知页现行）；合并页改锚头像顶
-        //（见 applyAvatarVerticalStyle），头像锚默认不激活。
+        // 标题栈顶锚点：默认内容顶 +14（独立通知页现行）；合并页改标题栈相对
+        // 头像垂直居中（见 applyAvatarVerticalStyle），顶锚默认不激活。
         bodyStackTopToContentConstraint = bodyStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
         bodyStackTopToAvatarConstraint = bodyStack.topAnchor.constraint(equalTo: avatarImageView.topAnchor, constant: 0)
+        bodyStackCenterYToAvatarConstraint = bodyStack.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor)
         bodyStackTopToContentConstraint?.isActive = true
         NSLayoutConstraint.activate([
             unreadBgView.topAnchor.constraint(equalTo: contentView.topAnchor),
@@ -4252,11 +4318,9 @@ class BearyNotificationCell: UITableViewCell {
             followActionStack.leadingAnchor.constraint(equalTo: bodyStack.leadingAnchor),
             followActionStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
             followActionStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            // 标题行右缘钉到未读点左缘 -12：时间在标题行内，标题列撑满整宽，
-            // 标题在（整宽 - 时间宽 - 间距）内换行，未读点位置由自身约束定，不依赖此式。
-            bodyStack.trailingAnchor.constraint(equalTo: unreadDotView.leadingAnchor, constant: -12),
-            unreadDotView.leadingAnchor.constraint(equalTo: timeLabel.trailingAnchor, constant: 12),
-            unreadDotView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
+            // 标题行右缘钉法见 bodyStackTrailingToContentConstraint 一组（init 上方），
+            // 三角隐藏钉内容右缘 -16、三角显示钉三角左缘 -12；未读点在副标题行内，
+            // 8×8 定尺寸，栈内隐藏自动塌零。
             unreadDotView.widthAnchor.constraint(equalToConstant: 8),
             unreadDotView.heightAnchor.constraint(equalToConstant: 8),
             chevronView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
@@ -4265,7 +4329,7 @@ class BearyNotificationCell: UITableViewCell {
             chevronView.heightAnchor.constraint(equalToConstant: 16),
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            separatorView.heightAnchor.constraint(equalToConstant: 1),
+            separatorView.heightAnchor.constraint(equalToConstant: 0.5),
             nestedLineView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             nestedLineView.widthAnchor.constraint(equalToConstant: 2),
             nestedLineView.topAnchor.constraint(equalTo: contentView.topAnchor),
@@ -4327,13 +4391,15 @@ class BearyNotificationCell: UITableViewCell {
         avatarTopConstraint?.isActive = true
         avatarBottomGuardConstraint?.constant = 16
         bodyStackTopToAvatarConstraint?.isActive = false
+        bodyStackCenterYToAvatarConstraint?.isActive = false
         bodyStackTopToContentConstraint?.isActive = true
         bodyStack.spacing = 2
         nestedLineView.isHidden = true
         unreadBgView.backgroundColor = .clear
         unreadBgLeadingConstraint?.constant = 0
-        dotTrailingToContentConstraint?.isActive = true
-        dotTrailingToChevronConstraint?.isActive = false
+        // 复位态三角隐藏：标题栈右缘改钉内容右缘 -16。
+        applyBodyStackTrailing()
+        mergedListStyle = false
         // 关注提醒卡动作区不得带到复用行。
         hideFollowAction()
     }
@@ -4355,7 +4421,7 @@ class BearyNotificationCell: UITableViewCell {
         avatarRetryURL = url
         // 第十三轮第 8 项：缺名（nil 或空串已在调用方回落，此处再兜底一次）不再回退字母 "T"，
         // 与全站缺省名“beary 用户”一致（首字母占位即 "B"）。
-        let displayName = actorName.isEmpty ? "beary 用户" : actorName
+        let displayName = actorName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : actorName
         avatarRetryActorName = displayName
         avatarImageView.image = nil
         avatarRetryButton.isHidden = true
@@ -4435,26 +4501,35 @@ class BearyNotificationCell: UITableViewCell {
         applyCardCategoryColors(isSystem: isSystem, anyUnread: anyUnread)
     }
 
+    /// 标题栈右缘跟三角走（未读圆点已挪到副标题行内，不再占标题行右缘）：
+    /// 三角隐藏（消息页）时标题栈钉内容右缘 -16，时间右端与私信行对齐；
+    /// 三角显示（独立页）时钉三角左缘 -12，不压三角。三角显隐由 configure 定，
+    /// 改完三角后须再调一次。
+    private func applyBodyStackTrailing() {
+        bodyStackTrailingToContentConstraint?.isActive = chevronView.isHidden
+        bodyStackTrailingToChevronConstraint?.isActive = !chevronView.isHidden
+    }
+
     /// 合并消息页口径：头像改垂直居中（与私信行同款；居中 42 圆在 72 高行内
     /// 上下各 15，底 guard 相应改为 15）；独立通知页仍走顶锚 14 + 底 guard 16。
-    /// 合并页标题栈顶同时改锚头像顶，标题字形顶对齐圆圈顶。
+    /// 合并页标题栈（标题行＋摘要）相对头像垂直居中：标题栈 centerY 锚头像
+    /// centerY，上下留白对头像相等；多行标题与大字号下也居中。时间在标题行内
+    /// 跟首行基线，不用另动；未读点位置不动。
     /// 只由两 configure 方法的 mergedList 分支调；复用复位见 prepareForReuse。
     private func applyAvatarVerticalStyle(mergedList: Bool) {
+        mergedListStyle = mergedList
         if mergedList {
             avatarTopConstraint?.isActive = false
             avatarCenterYConstraint?.isActive = true
             avatarBottomGuardConstraint?.constant = 15
-            // 标题顶对齐圆圈顶：16 粗标题字形顶比 label 框顶低 ascender-capHeight
-            //（默认字号约 4pt），标题栈顶改锚头像顶再上移该量，字形顶即落到头像顶；
-            // 按当前字号实算，大字号下仍对齐。时间在标题行内跟首行基线，不用另动。
-            let titleFont = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
-            bodyStackTopToAvatarConstraint?.constant = -(titleFont.ascender - titleFont.capHeight)
             bodyStackTopToContentConstraint?.isActive = false
-            bodyStackTopToAvatarConstraint?.isActive = true
+            bodyStackTopToAvatarConstraint?.isActive = false
+            bodyStackCenterYToAvatarConstraint?.isActive = true
         } else {
             avatarCenterYConstraint?.isActive = false
             avatarTopConstraint?.isActive = true
             avatarBottomGuardConstraint?.constant = 16
+            bodyStackCenterYToAvatarConstraint?.isActive = false
             bodyStackTopToAvatarConstraint?.isActive = false
             bodyStackTopToContentConstraint?.isActive = true
         }
@@ -4489,19 +4564,17 @@ class BearyNotificationCell: UITableViewCell {
         lastTimeMs = timeMs
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
         if mergedList {
-            // 合并消息页与通知详情页：右三角去掉（点按进详情不变）；未读点贴内容右缘。
+            // 合并消息页与通知详情页：右三角去掉（点按进详情不变）。
             chevronView.isHidden = true
             chevronView.image = nil
             chevronView.transform = .identity
-            dotTrailingToContentConstraint?.isActive = true
-            dotTrailingToChevronConstraint?.isActive = false
         } else {
             chevronView.isHidden = false
             chevronView.image = BearyIconImages.image(named: "icon_chevron_down", pointSize: 16)
             chevronView.transform = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : CGAffineTransform.identity
-            dotTrailingToContentConstraint?.isActive = false
-            dotTrailingToChevronConstraint?.isActive = true
         }
+        // 三角显隐刚定：按三角现态同步标题栈右缘约束。
+        applyBodyStackTrailing()
         avatarLeadingConstraint?.constant = 16
         separatorLeadingConstraint?.constant = mergedList ? 16 : 0
         nestedLineView.isHidden = true
@@ -4531,12 +4604,11 @@ class BearyNotificationCell: UITableViewCell {
 
     /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
     /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
-    private static let monthDayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日"
-        return formatter
-    }()
+    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；时区沿用
+    /// 既有行为（这里原来没写时区，跟设备走）。
+    private static var monthDayFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "MMMMd", zhFormat: "M月d日")
+    }
 
     /// 通知时间口径（2026-11-11 定版带空格，取代 2026-11-05 口径）：24 小时内相对时间——不到 1 分钟“刚刚”，
     /// 不到 1 小时“X 分钟前”，不到 24 小时“X 小时前”；超过 24 小时写天数“X 天前”。
@@ -4607,8 +4679,7 @@ class BearyNotificationCell: UITableViewCell {
         separatorLeadingConstraint?.constant = mergedList ? 16 : (nested ? 30 : 0)
         nestedLineView.isHidden = !nested
         chevronView.isHidden = true
-        dotTrailingToContentConstraint?.isActive = true
-        dotTrailingToChevronConstraint?.isActive = false
+        applyBodyStackTrailing()
 
         // 未读底：普通行蓝 7%、sys 行（含信件行）蓝 9%（网页 .nt-item.unread / .sys.unread）。
         // 高亮走 unreadBgView（嵌套行从竖线右侧起），点只看未读。
@@ -4676,7 +4747,7 @@ class BearyNotificationCell: UITableViewCell {
             // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，
             // 与已注销（“用户已注销”）是两种状态，不混淆。
             let deletedName = bearyDeletedAuthorDisplayName(item.actorName) ?? ""
-            let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
+            let actorName = deletedName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : deletedName
             if let avatarURL = BearyImageURLs.avatarURL(item.actorAvatar) {
                 loadAvatar(url: avatarURL, actorName: actorName)
             } else {
@@ -4736,7 +4807,7 @@ class BearyNotificationCell: UITableViewCell {
     /// 表情附件（各成员表情可能不同，动词已说明动作）。
     /// 注：后端已在通知里补 e.title（2026-11-18 Li 定），代表条有标题时动词后加《标题》，
     /// 无标题（null/空/旧缓存）仍用现行动词（「赞了你的日记」）。
-    func configureAsGroup(representative: NotificationItem, members: [NotificationItem], nested: Bool, highlight: Bool, expanded: Bool, onToggle: @escaping () -> Void) {
+    func configureAsGroup(representative: NotificationItem, members: [NotificationItem], nested: Bool, highlight: Bool, expanded: Bool, onToggle: @escaping () -> Void, mergedList: Bool = false) {
         hideFollowAction()
         resetAvatarStack()
         cancelAvatarLoad()
@@ -4750,11 +4821,10 @@ class BearyNotificationCell: UITableViewCell {
         popperView.isHidden = true
         kindBadgeView.isHidden = true
         avatarLeadingConstraint?.constant = nested ? 50 : 16
-        separatorLeadingConstraint?.constant = nested ? 30 : 0
+        separatorLeadingConstraint?.constant = mergedList ? 16 : (nested ? 30 : 0)
         nestedLineView.isHidden = !nested
         chevronView.isHidden = true
-        dotTrailingToContentConstraint?.isActive = true
-        dotTrailingToChevronConstraint?.isActive = false
+        applyBodyStackTrailing()
 
         let anyUnread = members.contains(where: { ($0.read ?? true) == false })
         applyUnreadHighlight(highlight: highlight, blueAlpha: 0.07, nested: nested)
@@ -4765,7 +4835,7 @@ class BearyNotificationCell: UITableViewCell {
         let overflowCount = members.count > 4 ? members.count - 3 : 0
         let actors: [(name: String, avatarURL: URL?)] = shownMembers.map { member in
             let deletedName = bearyDeletedAuthorDisplayName(member.actorName) ?? ""
-            let displayName = deletedName.isEmpty ? "beary 用户" : deletedName
+            let displayName = deletedName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : deletedName
             return (name: displayName, avatarURL: BearyImageURLs.avatarURL(member.actorAvatar))
         }
         avatarStackView.configure(actors: actors, overflowCount: overflowCount, expanded: expanded, onToggle: onToggle)
@@ -4779,7 +4849,7 @@ class BearyNotificationCell: UITableViewCell {
 
         let displayNames = members.map { member -> String in
             let deletedName = bearyDeletedAuthorDisplayName(member.actorName) ?? ""
-            return deletedName.isEmpty ? "beary 用户" : deletedName
+            return deletedName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : deletedName
         }
         let namesText: String
         if displayNames.count == 2 {
@@ -4788,7 +4858,7 @@ class BearyNotificationCell: UITableViewCell {
             let head = displayNames.dropLast().joined(separator: "、")
             namesText = head + " 和 " + (displayNames.last ?? "")
         } else {
-            namesText = displayNames.first ?? "beary 用户"
+            namesText = displayNames.first ?? NSLocalizedString("emote.posters.fallback_display_name", comment: "")
         }
         let title = NSMutableAttributedString()
         title.append(NSAttributedString(
@@ -4879,6 +4949,16 @@ class BearyNotificationCell: UITableViewCell {
         followActionStack.isHidden = false
         followActionsTopConstraint?.constant = 10
         followActionsHeightConstraint?.isActive = false
+        // 合并页（互动消息）关注行顶锚：头像垂直居中按整行高（含动作区）取中，
+        // 动作区把行高撑大后头像与标题被压到行中部、顶部留出大段空白（实测约 36pt，
+        // 关注行顶空约 52pt、点赞行约 16pt）。有动作区时改顶锚 14，与独立通知页
+        // 一致；回关按钮仍贴标题区下方、相对位置不动。
+        if mergedListStyle {
+            avatarCenterYConstraint?.isActive = false
+            avatarTopConstraint?.isActive = true
+            bodyStackCenterYToAvatarConstraint?.isActive = false
+            bodyStackTopToAvatarConstraint?.isActive = true
+        }
         // 第十三轮第 7 项：定宽（按“回关”量取，与“关注”同宽），每次重配都按当前字号重算，
         // 加载态无文案占位与有文案态同宽，态变不顶布局、不闪没。
         let titleFont = followBackButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
@@ -5305,7 +5385,7 @@ extension BearyNotificationsViewController {
             // 32 注销口径：互动卡对方已注销时，摘要里的对方名显“用户已注销”。
             // 第十三轮第 8 项：缺名（nil 或空串）统一回落全站缺省名“beary 用户”，不落空串。
             let deletedName = bearyDeletedAuthorDisplayName(latest.actorName) ?? ""
-            let actorName = deletedName.isEmpty ? "beary 用户" : deletedName
+            let actorName = deletedName.isEmpty ? NSLocalizedString("emote.posters.fallback_display_name", comment: "") : deletedName
             let latestVerb = BearyNotificationCell.verb(for: latest.type)
             cards.append(NotifMergeCardData(
                 kind: .interactive,
@@ -5370,6 +5450,57 @@ extension BearyNotificationsViewController {
         openNotification(items[index], at: index)
     }
 
+    /// 详情页聚合行点按：按 id 把组员换算成源表下标，走 openGroupNotification
+    /// 同套（follow 组只标代表条已读、进代表条主页；entry 组全标已读、进日记详情）。
+    func openGroupForDetail(members: [NotificationItem]) {
+        let indices = members.compactMap { member in
+            member.id.flatMap { id in items.firstIndex(where: { $0.id == id }) }
+        }
+        guard let first = indices.first else { return }
+        openGroupNotification(NotificationDisplayRow(kind: .actItem, itemIndex: first, groupItemIndices: indices))
+    }
+
+    /// 详情页聚合行已读同步：按 id 取源表该条的已读态（源页 openGroupNotification
+    /// 已按组口径标过，详情页本地拷贝据此同步，不自算口径）。
+    func readStateForDetail(id: Int) -> Bool? {
+        return items.first(where: { $0.id == id })?.read
+    }
+
+    /// 详情页进页标已读（2026-11-27 Li 定）：进互动消息／系统消息详情页即把该
+    /// 列表的未读全部标已读，不用逐条点进最深层。只标给定 id 集（本卡条目），
+    /// 不碰另一张卡的未读——服务端无批量接口（id=nil 会标全部），故逐条复用
+    /// markSingleRead（在途去重＋失败单条回滚，含角标与详情页本地拷贝回滚）；
+    /// 本地先整批乐观置已读（未读数／角标／快照／合并快照一次同步）。
+    /// 注意与点聚合行口径不同：点 follow 组行只标代表条（#1901），进页则
+    /// 全标——进列表等于已看过全部行。
+    func markItemsReadForDetail(ids: [Int]) {
+        var newlyReadCount = 0
+        var newlyReadSysCount = 0
+        var itemsToPost: [(item: NotificationItem, index: Int)] = []
+        for id in ids {
+            guard let index = items.firstIndex(where: { $0.id == id }),
+                  (items[index].read ?? true) == false else { continue }
+            items[index].read = true
+            newlyReadCount += 1
+            if items[index].type == "system" {
+                newlyReadSysCount += 1
+            }
+            itemsToPost.append((items[index], index))
+        }
+        guard newlyReadCount > 0 else { return }
+        unreadTotal = max(0, unreadTotal - newlyReadCount)
+        sysUnreadTotal = max(0, sysUnreadTotal - newlyReadSysCount)
+        publishUnread(unreadTotal)
+        updateReadAllButton()
+        recordFullLoadUnread()
+        rebuildDisplayRows()
+        applyReadAppearanceToVisibleRows()
+        notifyMergeSnapshotChanged()
+        for (item, index) in itemsToPost {
+            markSingleRead(item, at: index)
+        }
+    }
+
     /// 详情页高亮判定：与行 cell 同口径（未读且晚于 seen 水印）。
     func highlightForDetail(_ item: NotificationItem) -> Bool {
         return shouldHighlight(item: item)
@@ -5407,6 +5538,10 @@ extension BearyNotificationsViewController {
 // 见 onDetailWillDisappear）。
 // 翻页追加的新条目：本页打开期间不实时追（回列表重进即见最新），
 // 但从上层页返回时 viewWillAppear 重读卡快照补齐。
+// 进页即标已读（2026-11-27 Li 定）：进本页即把本卡未读全部标已读，
+// 不用逐条点进最深层；只标本卡 id 集（源页 markItemsReadForDetail），
+// 不碰另一张卡；「全部标为已读」按钮不进本页（进页已全清，按钮多余），
+// 独立通知页上的按钮保持原样不动。
 
 final class BearyNotificationDetailViewController: UIViewController, UITableViewDelegate, UITableViewDataSource {
 
@@ -5416,6 +5551,16 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
 
     private let tableView = UITableView(frame: .zero, style: .plain)
     private var items: [NotificationItem]
+
+    /// 详情页展示行（#1873 分组键，见 BearyNotificationsViewController.groupKey）：
+    /// 同类多条并成一组（成员下标指回 items，时间倒序、最新在前），单条仍为一行。
+    private struct DetailDisplayRow {
+        let representativeIndex: Int
+        var memberIndices: [Int]?
+    }
+    private var displayRows: [DetailDisplayRow] = []
+    /// 聚合头像组展开态：按组 key 持有（与子页 expandedGroupKeys 同口径）。
+    private var expandedGroupKeys: Set<String> = []
 
     init(
         card: NotifMergeCardData,
@@ -5433,8 +5578,50 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         return nil
     }
 
+    /// 详情页行表重建：与子页 groupedActRows 同口径——组按首次出现顺序
+    /// （即时间倒序），组内下标按时间倒序（最新在前）；只出现一次的键仍为单条。
+    /// 2026-11-28 Li 定：只有没看过的才聚合，看过的单条不动。
+    private func rebuildDisplayRows() {
+        var rows: [DetailDisplayRow] = []
+        var groupRowPosition: [String: Int] = [:]
+        for index in items.indices {
+            guard (items[index].read ?? true) == false,
+                  let key = BearyNotificationsViewController.groupKey(for: items[index]) else {
+                rows.append(DetailDisplayRow(representativeIndex: index, memberIndices: nil))
+                continue
+            }
+            if let position = groupRowPosition[key] {
+                if var members = rows[position].memberIndices {
+                    members.append(index)
+                    rows[position].memberIndices = members
+                } else {
+                    rows[position].memberIndices = [rows[position].representativeIndex, index]
+                }
+            } else {
+                groupRowPosition[key] = rows.count
+                rows.append(DetailDisplayRow(representativeIndex: index, memberIndices: nil))
+            }
+        }
+        displayRows = rows
+    }
+
+    /// 聚合头像组展开/收起（与子页 toggleGroupExpanded 同口径）：VC 只记 key，
+    /// 行高生长走 begin/endUpdates；栈内圆圈散开由 cell 播。
+    private func toggleGroupExpanded(key: String, cell: BearyNotificationCell) {
+        let expanding = !expandedGroupKeys.contains(key)
+        if expanding {
+            expandedGroupKeys.insert(key)
+        } else {
+            expandedGroupKeys.remove(key)
+        }
+        cell.setGroupExpanded(expanding, animated: true)
+        tableView.beginUpdates()
+        tableView.endUpdates()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+        rebuildDisplayRows()
         view.backgroundColor = BearyColors.bg
 
         let topBar = UIView()
@@ -5504,6 +5691,7 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         // 从上层页返回时补齐翻页追加的新条目；toast 改挂本页。
         if let fresh = notifSource.mergeSnapshot.cards.first(where: { $0.kind == card.kind }) {
             items = fresh.items
+            rebuildDisplayRows()
             tableView.reloadData()
         }
         notifSource.toastOverride = { [weak self] message in
@@ -5515,6 +5703,10 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         notifSource.onSingleReadRollback = { [weak self] notificationId in
             self?.applyLocalReadRollback(notificationId: notificationId)
         }
+        // 进页即标已读（2026-11-27 Li 定）：进本页即把本卡未读全部标已读，
+        // 不用逐条点进最深层；从上层页返回时同样触发（快照重读后新到的
+        // 未读一并消除）。
+        markVisibleItemsRead()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -5534,8 +5726,11 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
     ///（与子页 refreshFollowCardRows 同口径，避免整行闪一下）。
     func refreshFollowButtons(actorId: Int) {
         for path in tableView.indexPathsForVisibleRows ?? [] {
-            guard path.row < items.count else { continue }
-            let item = items[path.row]
+            guard path.row < displayRows.count else { continue }
+            // 聚合行不画回关钮，只刷新单条 follow 行。
+            let row = displayRows[path.row]
+            guard row.memberIndices == nil else { continue }
+            let item = items[row.representativeIndex]
             guard item.type == "follow", item.actorId == actorId,
                   let cell = tableView.cellForRow(at: path) as? BearyNotificationCell else { continue }
             cell.configureFollowCard(state: notifSource.followStateForDetail(actorId: actorId)) { [weak self] in
@@ -5547,14 +5742,20 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
     /// 详情展开过渡的源行：带该 entryId 的通知行可见时返回 cell
     /// （供动画器快照 morph）；行不在视野内时返回 nil（动画器走兜底）。
     func detailSourceView(for entryId: String) -> UIView? {
-        guard let row = items.firstIndex(where: { $0.entryId == entryId }) else { return nil }
+        // 组员在组内时返回组行 cell（组行即该 entry 的可见行）。
+        guard let row = displayRows.firstIndex(where: { displayRow in
+            if let memberIndices = displayRow.memberIndices {
+                return memberIndices.contains(where: { $0 < items.count && items[$0].entryId == entryId })
+            }
+            return items[displayRow.representativeIndex].entryId == entryId
+        }) else { return nil }
         return tableView.cellForRow(at: IndexPath(row: row, section: 0))
     }
 
     // MARK: - Table
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return items.count
+        return displayRows.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -5564,26 +5765,68 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         ) as? BearyNotificationCell else {
             return UITableViewCell()
         }
-        let item = items[indexPath.row]
-        // 详情页行是顶层行（非嵌套）：头像 x=16、分隔线缩进 16、
-        // 行高 72、头像垂直居中、标题／摘要间距 5，与私信行统一（mergedList）。
-        cell.configure(with: item, nested: false, highlight: notifSource.highlightForDetail(item), mergedList: true)
-        if item.type == "follow", let actorId = item.actorId {
-            cell.configureFollowCard(state: notifSource.followStateForDetail(actorId: actorId)) { [weak self] in
-                self?.notifSource.performFollowBackForDetail(actorId: actorId)
+        guard indexPath.row < displayRows.count else { return cell }
+        let row = displayRows[indexPath.row]
+        if let memberIndices = row.memberIndices, memberIndices.count >= 2 {
+            // 聚合行：头像组＋多人标题；聚合 follow 行不画回关钮（与子页 #1873 同口径）。
+            let members = memberIndices.compactMap { $0 < items.count ? items[$0] : nil }
+            let representative = items[row.representativeIndex]
+            let groupKey = BearyNotificationsViewController.groupKey(for: representative) ?? ""
+            cell.configureAsGroup(
+                representative: representative,
+                members: members,
+                nested: false,
+                highlight: members.contains(where: { notifSource.highlightForDetail($0) }),
+                expanded: expandedGroupKeys.contains(groupKey),
+                onToggle: { [weak self, weak cell] in
+                    guard let strongSelf = self, let cell = cell else { return }
+                    strongSelf.toggleGroupExpanded(key: groupKey, cell: cell)
+                },
+                mergedList: true
+            )
+        } else {
+            let item = items[row.representativeIndex]
+            // 详情页行是顶层行（非嵌套）：头像 x=16、分隔线缩进 16、
+            // 行高 72、头像垂直居中、标题／摘要间距 5，与私信行统一（mergedList）。
+            cell.configure(with: item, nested: false, highlight: notifSource.highlightForDetail(item), mergedList: true)
+            if item.type == "follow", let actorId = item.actorId {
+                cell.configureFollowCard(state: notifSource.followStateForDetail(actorId: actorId)) { [weak self] in
+                    self?.notifSource.performFollowBackForDetail(actorId: actorId)
+                }
             }
         }
         return cell
     }
 
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        guard indexPath.row < displayRows.count else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
-        guard indexPath.row < items.count else { return }
+        guard indexPath.row < displayRows.count else { return }
+        let row = displayRows[indexPath.row]
+        if let memberIndices = row.memberIndices, memberIndices.count >= 2 {
+            // 聚合行点按：走子页 openGroupNotification 同套（follow 组只标
+            // 代表条已读、进代表条主页；entry 组全标已读、进日记详情），
+            // 再同步本页本地拷贝的已读态（见 applyLocalGroupRead）。
+            let members = memberIndices.compactMap { $0 < items.count ? items[$0] : nil }
+            notifSource.openGroupForDetail(members: members)
+            applyLocalGroupRead(at: indexPath)
+            return
+        }
         // 行点按全走子页原分流（乐观已读＋POST＋导航）：follow 行 → 容器
         // onOpenUser → 个人页（旧行为整行点按即进个人页，这里同口径，
         // 不另给人名／头像加独立按钮）；entry 行 → 日记详情；dm 行 →
         // 会话页；无 entry 的系统／信件行 → 信件模态（挂本页 view）。
-        let tappedItem = items[indexPath.row]
+        let tappedItem = items[row.representativeIndex]
         notifSource.openItemForDetail(tappedItem)
         // 乐观已读就地清点：源页 openNotification 只改源模型＋源表，
         // 本页 items 是 card.items 的值拷贝、源表也不在本页层级，点按后
@@ -5598,15 +5841,57 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
     /// 已读行／无 id 行不做任何事。
     private func applyLocalRead(itemId: Int?, at indexPath: IndexPath) {
         guard let itemId = itemId,
-              indexPath.row < items.count,
-              items[indexPath.row].id == itemId,
-              (items[indexPath.row].read ?? true) == false else { return }
-        items[indexPath.row].read = true
+              indexPath.row < displayRows.count else { return }
+        let row = displayRows[indexPath.row]
+        guard row.memberIndices == nil,
+              items[row.representativeIndex].id == itemId,
+              (items[row.representativeIndex].read ?? true) == false else { return }
+        items[row.representativeIndex].read = true
         guard let cell = tableView.cellForRow(at: indexPath) as? BearyNotificationCell else { return }
-        let item = items[indexPath.row]
+        let item = items[row.representativeIndex]
         let isSystemStyle = item.type == "system" || item.type == "letter"
         // 已读后高亮判定恒 false（shouldHighlight 先判 read），直接灭。
         cell.setReadAppearance(isUnread: false, isSystemStyle: isSystemStyle, highlight: false)
+    }
+
+    /// 详情页聚合行乐观已读就地清点：按源页已标的成员同步本地拷贝
+    ///（follow 组只代表条、entry 组全员；源页没标的成员保持未读），
+    /// 再就地改该行 class（未读点看组内任一成员）。
+    private func applyLocalGroupRead(at indexPath: IndexPath) {
+        guard indexPath.row < displayRows.count else { return }
+        let row = displayRows[indexPath.row]
+        guard let memberIndices = row.memberIndices, memberIndices.count >= 2 else { return }
+        for index in memberIndices where index < items.count {
+            if let id = items[index].id, let read = notifSource.readStateForDetail(id: id) {
+                items[index].read = read
+            }
+        }
+        guard let cell = tableView.cellForRow(at: indexPath) as? BearyNotificationCell else { return }
+        let localMembers = memberIndices.compactMap { $0 < items.count ? items[$0] : nil }
+        let anyUnread = localMembers.contains(where: { ($0.read ?? true) == false })
+        let anyHighlight = localMembers.contains(where: { notifSource.highlightForDetail($0) })
+        let representative = items[row.representativeIndex]
+        let isSystemStyle = (representative.type ?? "") == "system" || (representative.type ?? "") == "letter"
+        cell.setReadAppearance(isUnread: anyUnread, isSystemStyle: isSystemStyle, highlight: anyHighlight)
+    }
+
+    /// 进页标已读（2026-11-27 Li 定）：进本页即把本卡未读全部标已读。
+    /// 本地拷贝先乐观置已读＋就地清点（与 applyLocalRead 同口径，不
+    /// reloadRows）；再让源页按同一批 id 标已读（服务端逐条 POST＋
+    /// 未读数／底栏角标同步，见 markItemsReadForDetail）。无 id 的行
+    /// 不标；失败单条回滚走源页 onSingleReadRollback（本页改回未读）。
+    private func markVisibleItemsRead() {
+        let unreadIds = items.compactMap { ($0.read ?? true) == false ? $0.id : nil }
+        guard !unreadIds.isEmpty else { return }
+        for row in items.indices where (items[row].read ?? true) == false && items[row].id != nil {
+            items[row].read = true
+            let indexPath = IndexPath(row: row, section: 0)
+            guard let cell = tableView.cellForRow(at: indexPath) as? BearyNotificationCell else { continue }
+            let item = items[row]
+            let isSystemStyle = item.type == "system" || item.type == "letter"
+            cell.setReadAppearance(isUnread: false, isSystemStyle: isSystemStyle, highlight: false)
+        }
+        notifSource.markItemsReadForDetail(ids: unreadIds)
     }
 
     /// 左滑删除单条通知：只给「删除」一个红色动作（卡片本身不加左滑）。
@@ -5614,13 +5899,17 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
     /// 一并走源页）；服务端失败时源页回滚＋toast，本页按 completion 把行
     /// 插回原位。减动效时行直接消失／出现，不播淡入淡出。
     func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
-        guard indexPath.row < items.count,
-              let notificationId = items[indexPath.row].id else { return nil }
-        let item = items[indexPath.row]
+        guard indexPath.row < displayRows.count else { return nil }
+        // 聚合行不给左滑删除（聚合行不是单条通知；与子页组行无左滑同口径）。
+        let row = displayRows[indexPath.row]
+        guard row.memberIndices == nil,
+              let notificationId = items[row.representativeIndex].id else { return nil }
+        let itemIndex = row.representativeIndex
+        let item = items[itemIndex]
         let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
             guard let self = self else { done(false); return }
-            BearyHaptics.press()
-            self.items.remove(at: indexPath.row)
+            self.items.remove(at: itemIndex)
+            self.rebuildDisplayRows()
             tableView.deleteRows(at: [indexPath], with: BearyMotion.animated(true) ? .fade : .none)
             self.notifSource.deleteNotification(id: notificationId) { [weak self] success in
                 guard let self = self else { return }
@@ -5633,7 +5922,19 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
                         || (($0.createdAt ?? 0) == (item.createdAt ?? 0) && ($0.id ?? 0) < notificationId)
                 }) ?? self.items.count
                 self.items.insert(item, at: insertAt)
-                self.tableView.insertRows(at: [IndexPath(row: insertAt, section: 0)], with: BearyMotion.animated(true) ? .fade : .none)
+                self.rebuildDisplayRows()
+                // 插回后该条所在展示行（单条；若恰与同类成组则组行已存在，整表重绘）。
+                guard let displayRow = self.displayRows.firstIndex(where: { displayRow in
+                    if let memberIndices = displayRow.memberIndices {
+                        return memberIndices.contains(where: { $0 < self.items.count && self.items[$0].id == notificationId })
+                    }
+                    return self.items[displayRow.representativeIndex].id == notificationId
+                }) else { return }
+                if self.displayRows[displayRow].memberIndices != nil {
+                    self.tableView.reloadData()
+                } else {
+                    self.tableView.insertRows(at: [IndexPath(row: displayRow, section: 0)], with: BearyMotion.animated(true) ? .fade : .none)
+                }
             }
             done(true)
         }
@@ -5644,12 +5945,28 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
     /// 单条标已读失败回滚：把本地拷贝改回未读并重画该行（只改该行 class，
     /// 不 reloadRows）；行已不在本页列表时不做任何事（回页重读快照为准）。
     private func applyLocalReadRollback(notificationId: Int) {
-        guard let row = items.firstIndex(where: { $0.id == notificationId }),
-              (items[row].read ?? true) == true else { return }
-        items[row].read = false
-        let indexPath = IndexPath(row: row, section: 0)
+        guard let itemIndex = items.firstIndex(where: { $0.id == notificationId }),
+              (items[itemIndex].read ?? true) == true else { return }
+        items[itemIndex].read = false
+        guard let displayRow = displayRows.firstIndex(where: { displayRow in
+            if let memberIndices = displayRow.memberIndices {
+                return memberIndices.contains(itemIndex)
+            }
+            return displayRow.representativeIndex == itemIndex
+        }) else { return }
+        let indexPath = IndexPath(row: displayRow, section: 0)
         guard let cell = tableView.cellForRow(at: indexPath) as? BearyNotificationCell else { return }
-        let item = items[row]
+        let row = displayRows[displayRow]
+        if let memberIndices = row.memberIndices, memberIndices.count >= 2 {
+            let members = memberIndices.compactMap { $0 < items.count ? items[$0] : nil }
+            let anyUnread = members.contains(where: { ($0.read ?? true) == false })
+            let anyHighlight = members.contains(where: { notifSource.highlightForDetail($0) })
+            let representative = items[row.representativeIndex]
+            let isSystemStyle = (representative.type ?? "") == "system" || (representative.type ?? "") == "letter"
+            cell.setReadAppearance(isUnread: anyUnread, isSystemStyle: isSystemStyle, highlight: anyHighlight)
+            return
+        }
+        let item = items[itemIndex]
         let isSystemStyle = item.type == "system" || item.type == "letter"
         cell.setReadAppearance(isUnread: true, isSystemStyle: isSystemStyle, highlight: notifSource.highlightForDetail(item))
     }
@@ -5676,7 +5993,7 @@ enum BearyNotificationCache {
     }
 
     private static func fileURL(bucket: String) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(filePrefix)\(bucket).json")
     }
 

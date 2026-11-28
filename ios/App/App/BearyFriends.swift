@@ -7,11 +7,14 @@ import UIKit
 // 对方回关后双方变互关，互关才算好友。仅好友可见与私信只认互关。
 // 后端接口并行施工中：接口未上线前非 200 一律走调用方失败态（toast、不改本地态）。
 //
-// 状态机（状态一律调 GET /friends/state 实时取，不靠本地缓存；任一方向拉黑 /
+// 状态机（状态一律调 GET /friends/state 实时取；任一方向拉黑 /
 // 游客 / 本人 → 隐藏，由调用方先判）：
 //   none（无关系）→ “关注”；following（我关他、未互关）→ “已关注”（点按进取关确认）；
 //   followedBy（他关我、我未关）→ “回关”（点按即关注，成互关）；
 //   mutual（互关）→ “互关”（点按进取关确认；取关后退为对方单向关注我）。
+// 首帧例外（2026-11-28 延迟修）：进页可先画上次确认态的缓存占位
+// （见 BearyFollowStateCache），进页仍并行实时取数重验，回包到达即纠正；
+// 缓存永不代替实时取数，只解决“首帧无态可画”的延迟。
 // 注意：App 只能查到“我拉黑的人”（BearyBlockedStore）；对方拉黑我时无 per-user
 // 接口可查——此时关注按钮按“未拉黑”画出，点关注会被服务端 403，调用方只 toast，
 // 不得把“查不到”说成“可关注”之外的任何保证。
@@ -48,9 +51,46 @@ enum BearyFollowState {
 
 enum BearyFriends {
 
+    /// 关注态首绘缓存（2026-11-28 延迟修）：只解决“首帧无态可画”的延迟，
+    /// 不代替实时取数——每次进页仍并行调 state 接口重验，回包到达即纠正
+    /// （缓存错了也只错一轮网络往返）。按（观看者 id，目标 id）分键，
+    /// 切号即失效（键不同直接 miss，不读旧账号的态）。写点：state 回包
+    /// 成功确认时与关注／取关点按成功确认时（confirmedFollowState 落点处）。
+    enum BearyFollowStateCache {
+        private static func key(viewerId: Int, targetId: Int) -> String {
+            "beary_follow_state_cache_\(viewerId)_\(targetId)"
+        }
+
+        static func load(viewerId: Int, targetId: Int) -> BearyFollowState? {
+            guard let raw = UserDefaults.standard.string(forKey: key(viewerId: viewerId, targetId: targetId)) else { return nil }
+            switch raw {
+            case "following": return .following
+            case "followedBy": return .followedBy
+            case "mutual": return .mutual
+            case "none": return .none
+            default: return nil
+            }
+        }
+
+        static func save(_ state: BearyFollowState, viewerId: Int, targetId: Int) {
+            let raw: String
+            switch state {
+            case .none: raw = "none"
+            case .following: raw = "following"
+            case .followedBy: raw = "followedBy"
+            case .mutual: raw = "mutual"
+            }
+            UserDefaults.standard.set(raw, forKey: key(viewerId: viewerId, targetId: targetId))
+        }
+    }
+
     /// B2：关注变化广播里变动的对方 id 的 userInfo 键——通知页收到后只
     /// 更新那一个人的卡片，不全量重验；无 id 的旧广播仍走全量重验。
     static let friendsChangedUserIdKey = "userId"
+
+    /// 取关在途去重：同一用户的取关请求在途时再次确认直接丢弃（私信删除
+    /// deletingConversationPeerIds 同款口径）；请求结束（成功或失败）后移除。
+    private static var unfollowingUserIds: Set<Int> = []
 
     /// 取关二次确认 sheet（仅弹框，不发请求）：确认回调由调用方接乐观更新＋请求。
     /// 文案与 confirmUnfollow 同款（同一 builder，不另起一套 copy）。
@@ -64,8 +104,11 @@ enum BearyFriends {
     /// 单向取关只断自己的关注流。叉叉/遮罩/下滑关闭与点“取消”同义（不发请求）。
     static func confirmUnfollow(from vc: UIViewController, displayName: String, userId: Int, mutual: Bool, onRemoved: @escaping () -> Void) {
         presentUnfollowSheet(from: vc, displayName: displayName, mutual: mutual) {
+            guard !unfollowingUserIds.contains(userId) else { return }
+            unfollowingUserIds.insert(userId)
             BearyAPI.shared.unfollowFriend(userId: userId) { result in
                 DispatchQueue.main.async {
+                    unfollowingUserIds.remove(userId)
                     switch result {
                     case .success:
                         clearDiaryCachesAndNotify(userId: userId)
@@ -112,6 +155,8 @@ enum BearyFriends {
         // 跳动审计第 6 条：关系变化时该作者的仅好友引用互关验证标记同清，
         // 下次按现行关系重验；userId 为 nil 时清当前桶全部。
         BearyDiaryCardCell.invalidateQuoteMutualAccess(forAuthorId: userId)
+        // v15：仅好友回应互关验证结论同清，下次按现行关系重验。
+        BearyDiaryCardCell.invalidateEmoteMutualAccess(forAuthorId: userId)
         var userInfo: [AnyHashable: Any]?
         if let userId = userId {
             userInfo = [friendsChangedUserIdKey: userId]

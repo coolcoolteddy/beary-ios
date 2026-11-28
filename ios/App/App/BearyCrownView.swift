@@ -18,6 +18,13 @@ public final class BearyCrownView: UIView {
     /// 皇冠是否可用（动画或静态图任一在位）。调用方以此代替旧的 image == nil 守卫。
     public private(set) var hasCrown = false
 
+    /// 是否允许播放循环动画，默认 true（其余调用方行为不变）。
+    /// 关掉后皇冠恒停在第 0 帧静态显示，start() 与 trait 变化都不会再播；
+    /// 个人页未开通时用它锁死静态（见 BearyProfileViewController.updateCrownDisplay）。
+    public var allowsAnimation = true {
+        didSet { applyPlayback() }
+    }
+
     private var animationView: LottieAnimationView?
     private var fallbackImageView: UIImageView?
     private var reduceMotionObserver: NSObjectProtocol?
@@ -38,7 +45,7 @@ public final class BearyCrownView: UIView {
         }
     }
 
-    /// 显示时调用：减动效停 0 帧，否则从 0 帧起循环播放。
+    /// 显示时调用：allowsAnimation 关着时恒停 0 帧；减动效停 0 帧，否则从 0 帧起循环播放。
     public func start() {
         applyPlayback()
     }
@@ -86,7 +93,7 @@ public final class BearyCrownView: UIView {
             ])
             animationView = view
             hasCrown = true
-        } else if let image = UIImage(named: "crown") {
+        } else if let image = UIImage(named: BearyAssets.crown) {
             let view = UIImageView(image: image)
             view.translatesAutoresizingMaskIntoConstraints = false
             view.contentMode = .scaleAspectFit
@@ -104,7 +111,7 @@ public final class BearyCrownView: UIView {
 
     private func applyPlayback() {
         guard let view = animationView else { return }
-        if UIAccessibility.isReduceMotionEnabled {
+        if !allowsAnimation || UIAccessibility.isReduceMotionEnabled {
             view.stop()
             view.currentFrame = 0
         } else if !isHidden {
@@ -117,7 +124,7 @@ public final class BearyCrownView: UIView {
 
     private func currentAnimation() -> LottieAnimation? {
         let dark = traitCollection.userInterfaceStyle == .dark
-        let name = dark ? "crown_dark" : "crown"
+        let name = dark ? BearyAssets.crownDark : BearyAssets.crown
         guard let path = Bundle.main.path(forResource: name, ofType: "json") else { return nil }
         return LottieAnimation.filepath(path)
     }

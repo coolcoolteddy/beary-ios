@@ -98,6 +98,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let onOpenEntryHandler: (String) -> Void
 
     private var searchTimer: Timer?
+    /// F2：限时到期 live 复核（时间线 sweep 同款 1 秒 tick）——搜索结果内
+    /// 限时篇到期即撤行；renderResults 本就按有效态过滤两组，此处只在
+    /// 有篇刚过期时触发一次重渲（同关键词重渲复用行节点、不动滚动位）。
+    private var limitedExpiryTimer: Timer?
     private var lastNavigationAt: Date?
     /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
     private var headerTopInsetVisible = false
@@ -123,12 +127,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var savedResultsOffsetY: CGFloat?
     private var searchBoxFocused: Bool = false
     // 88 包 M13：结果区底部常驻尾行（对齐时间线/个人主页尾行形态）。
-    // sweep32-2：尾行新增“加载更多”态（加载中转圈、失败重试复用重试钮）；
-    // 仍是 44 高居中形态，三态互斥显隐，见 updateSearchFooter。
+    // 搜索页自动加载：尾行改复用共享 BearyLoadMoreFooterView（加载中三点、
+    // 到底“没有更多了”、失败重试），手动“加载更多”钮已由滑到底自动
+    // 预加载取代（见 scrollViewDidScroll）；重试走脚部 onRetry → retryTapped，
+    // 翻页重试与整搜重试仍按 searchFooterRetryIsLoadMore 分流。
     private let searchFooterRow = UIView()
-    private let searchFooterRetryButton = BearyButton.retryPage()
-    private let searchFooterLoadMoreButton = BearyButton.retryPill()
-    private let searchFooterSpinnerView = UIImageView()
+    private let searchLoadMoreFooterView = BearyLoadMoreFooterView()
     // sweep32-2 翻页状态：三组各有 hasMore 与游标（游标取服务端回包原始
     // 末条，不取客户端过滤后末条——过滤掉的拉黑/过期行仍占服务端页内位置，
     // 用过滤后末条当游标会把已回包的行重拉一遍，LIMIT 截断下还可能卡住进度）。
@@ -405,15 +409,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         scrollView.scrollIndicatorInsets.bottom = chrome + keyboardBottomInset
     }
 
-    /// 补缺 P2-21：搜索拉黑判定（与 SceneDelegate isBlockedAuthor 同口径：游客不承接拉黑表，
-    /// 作者本人永不命中；其余走 BearyBlockedStore 同步缓存，点按路径不发网络）。
-    private func isBlockedForSearch(userId: Int?) -> Bool {
-        if SessionManager.shared.isGuestMode { return false }
-        guard let userId = userId else { return false }
-        if let viewerId = SessionManager.shared.currentUser?.id, viewerId == userId { return false }
-        return BearyBlockedStore.isBlocked(userId)
-    }
-
     /// 审计 P2-20：拉黑作者——用户行与该作者全部日记行一并清掉，引用缓存同清。
     @objc private func handleBlockedUserNotification(_ note: Notification) {
         guard let userId = note.object as? Int else { return }
@@ -469,11 +464,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
               let row = entryRowById[entryId] else { return }
         scrollView.layoutIfNeeded()
         let frame = row.convert(row.bounds, to: scrollView)
-        let targetY = frame.minY - viewportOffset
-        guard abs(targetY - scrollView.contentOffset.y) >= 1 else { return }
-        let minY = -scrollView.contentInset.top
-        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
-        scrollView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+        BearyScrollAnchor.restoreDetailReturn(in: scrollView, rowTop: frame.minY, viewportOffset: viewportOffset)
     }
 
     /// 详情内编辑/可见性变化按 id 定向同步本页：模型原地改字段，
@@ -517,6 +508,31 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             }
         }
         lastRenderedData = data
+        renderResults(data: data, query: query)
+    }
+
+    private func startLimitedExpiryTimer() {
+        guard limitedExpiryTimer == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.sweepExpiredLimitedEntries()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        limitedExpiryTimer = timer
+    }
+
+    private func stopLimitedExpiryTimer() {
+        limitedExpiryTimer?.invalidate()
+        limitedExpiryTimer = nil
+    }
+
+    /// F2：搜索结果内限时篇到期即撤行——renderResults 按有效态过滤两组
+    /// （公开组 !isExpired、我的组 isMineSearchEntry 先挡过期），有篇刚
+    /// 过期时触发一次重渲即撤行；无过期篇时不重渲、不动滚动位。
+    private func sweepExpiredLimitedEntries() {
+        guard showingResults, let data = lastRenderedData, let query = lastRenderedQuery else { return }
+        let hasExpired = (data.entries ?? []).contains { BearyEphemeral.isExpired($0) }
+            || (data.mine ?? []).contains { BearyEphemeral.isExpired($0) }
+        guard hasExpired else { return }
         renderResults(data: data, query: query)
     }
 
@@ -623,6 +639,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === self.scrollView else { return }
         updateStickyBoxPosition()
         // S5：滚动露出新行时，屏外排队的关注状态按可见优先重排队头；
         // 无待办时不做帧量算。
@@ -632,6 +649,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if !followStatePendingIds.isEmpty,
            shouldReorderFollowStatesForScroll(offsetY: scrollView.contentOffset.y) {
             requestFollowStatesForVisibleRows()
+        }
+        // 加载三件套·加载更多：滑到离底部一屏时预加载下一页（复用现有
+        // loadMore，三组各按本组游标发请求；loading/失败/无更多时守卫拦住）。
+        if showingResults, !isLoadingMore, !loadMoreFailed,
+           searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers || searchMineLocalHasMore {
+            let y = scrollView.contentOffset.y
+            let remaining = scrollView.contentSize.height - (y + scrollView.bounds.height - scrollView.adjustedContentInset.bottom)
+            if remaining <= scrollView.bounds.height {
+                loadMore()
+            }
         }
     }
 
@@ -712,6 +739,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 loadMore()
             }
         }
+        startLimitedExpiryTimer()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -729,7 +757,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchSeq += 1
         // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
         // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
-        // “加载更多”再也点不动；新搜索另有 resetSearchPagination 兜底。
+        // 自动翻页再也触发不了；新搜索另有 resetSearchPagination 兜底。
         // 离页时在途翻页被取消：记一笔，回来时按原游标续跑（见 viewDidAppear）。
         loadMoreCancelledMidFlight = isLoadingMore
         for task in currentLoadMoreTasks { task.cancel() }
@@ -738,6 +766,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateSearchFooter()
         // 审计 26-21：停框内圈与状态区转圈（旧回包被序号守卫丢弃，不会收尾）。
         stopSearchSpinnersForLeave()
+        stopLimitedExpiryTimer()
     }
 
     /// 切页生命周期 7 号（最小化）：容器切页只改 isHidden，本回调不触发，
@@ -754,7 +783,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchSeq += 1
         // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
         // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
-        // “加载更多”再也点不动；新搜索另有 resetSearchPagination 兜底。
+        // 自动翻页再也触发不了；新搜索另有 resetSearchPagination 兜底。
         // 同 viewWillDisappear：记一笔，回来时按原游标续跑。
         loadMoreCancelledMidFlight = isLoadingMore
         for task in currentLoadMoreTasks { task.cancel() }
@@ -763,6 +792,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateSearchFooter()
         // 审计 26-21：停框内圈与状态区转圈（旧回包被序号守卫丢弃，不会收尾）。
         stopSearchSpinnersForLeave()
+        stopLimitedExpiryTimer()
     }
 
     /// T3：切回结果页——搜索词（searchField.text）与结果行离页时原样保留，
@@ -771,6 +801,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 容器 showPage 在切回搜索页时调（与个人页 pageDidReturn 同口径）。
     func pageDidReturn() {
         guard showingResults, let savedY = savedResultsOffsetY else { return }
+        startLimitedExpiryTimer()
         scrollView.layoutIfNeeded()
         let minY = -scrollView.contentInset.top
         let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
@@ -794,6 +825,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     deinit {
         searchTimer?.invalidate()
+        limitedExpiryTimer?.invalidate()
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
@@ -999,7 +1031,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         errorStateWrap.isHidden = true
         contentStack.addArrangedSubview(errorStateWrap)
         errorStateView.translatesAutoresizingMaskIntoConstraints = false
-        errorStateView.configure(kind: .error, title: "搜索失败", subtitle: "检查网络后重试", iconName: "icon_search", actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
+        errorStateView.configure(kind: .error, title: NSLocalizedString("search.failed_title", comment: ""), subtitle: nil, iconName: "icon_search", actionTitle: NSLocalizedString("common.retry", comment: ""), onAction: { [weak self] in self?.retryTapped() })
         errorStateWrap.addSubview(errorStateView)
         NSLayoutConstraint.activate([
             errorStateView.topAnchor.constraint(equalTo: errorStateWrap.topAnchor, constant: 28),
@@ -1030,44 +1062,23 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         resultsStack.spacing = 0
         contentStack.addArrangedSubview(resultsStack)
 
-        // 88 包 M13：结果区尾行（加载态转圈＋失败重试），平时隐藏；高度 44
-        // 与时间线尾行同口径，内容居中，避免显隐两态约束冲突。
+        // 88 包 M13：结果区尾行（共享脚部：加载中三点／到底／失败重试），
+        // 平时隐藏；高度与 BearyLoadMoreFooterView.height 同口径。
         searchFooterRow.translatesAutoresizingMaskIntoConstraints = false
         searchFooterRow.isHidden = true
         contentStack.addArrangedSubview(searchFooterRow)
-        // 重试两档·整页档（BearyButton.retryPage，与失败态重试钮同档）。
-        searchFooterRetryButton.translatesAutoresizingMaskIntoConstraints = false
-        searchFooterRetryButton.setTitle("重试", for: .normal)
-        searchFooterRetryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        searchFooterRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButton.retryPageStyle.height).isActive = true
-        searchFooterRetryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
-        searchFooterRetryButton.bearyAddPressFeedback()
-        searchFooterRow.addSubview(searchFooterRetryButton)
-        // sweep32-2：加载更多钮（与重试钮同工厂紧凑档）与加载中转圈，
-        // 三态互斥显隐（见 updateSearchFooter），约束与重试钮同槽位居中。
-        searchFooterLoadMoreButton.translatesAutoresizingMaskIntoConstraints = false
-        searchFooterLoadMoreButton.setTitle("加载更多", for: .normal)
-        searchFooterLoadMoreButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        searchFooterLoadMoreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height).isActive = true
-        searchFooterLoadMoreButton.addTarget(self, action: #selector(loadMoreTapped), for: .touchUpInside)
-        searchFooterLoadMoreButton.bearyAddPressFeedback()
-        searchFooterRow.addSubview(searchFooterLoadMoreButton)
-        searchFooterSpinnerView.translatesAutoresizingMaskIntoConstraints = false
-        searchFooterSpinnerView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 21)
-        searchFooterSpinnerView.tintColor = BearyColors.gray
-        searchFooterSpinnerView.contentMode = .scaleAspectFit
-        searchFooterSpinnerView.isHidden = true
-        searchFooterRow.addSubview(searchFooterSpinnerView)
+        // 尾行改复用共享脚部（BearyLoadMoreFooterView：加载中三点、到底
+        // “没有更多了”、失败重试）；脚部重试走 retryTapped，翻页重试与
+        // 整搜重试仍按 searchFooterRetryIsLoadMore 分流。
+        searchLoadMoreFooterView.translatesAutoresizingMaskIntoConstraints = false
+        searchLoadMoreFooterView.onRetry = { [weak self] in self?.retryTapped() }
+        searchFooterRow.addSubview(searchLoadMoreFooterView)
         NSLayoutConstraint.activate([
-            searchFooterRow.heightAnchor.constraint(equalToConstant: 44),
-            searchFooterRetryButton.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
-            searchFooterRetryButton.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
-            searchFooterLoadMoreButton.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
-            searchFooterLoadMoreButton.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
-            searchFooterSpinnerView.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
-            searchFooterSpinnerView.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
-            searchFooterSpinnerView.widthAnchor.constraint(equalToConstant: 21),
-            searchFooterSpinnerView.heightAnchor.constraint(equalToConstant: 21),
+            searchFooterRow.heightAnchor.constraint(equalToConstant: BearyLoadMoreFooterView.height),
+            searchLoadMoreFooterView.topAnchor.constraint(equalTo: searchFooterRow.topAnchor),
+            searchLoadMoreFooterView.leadingAnchor.constraint(equalTo: searchFooterRow.leadingAnchor),
+            searchLoadMoreFooterView.trailingAnchor.constraint(equalTo: searchFooterRow.trailingAnchor),
+            searchLoadMoreFooterView.bottomAnchor.constraint(equalTo: searchFooterRow.bottomAnchor),
         ])
 
         updateBorderColors()
@@ -1185,8 +1196,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// updateSearchBoxShadow）；搜索框边框恒为 0，此处不再给它赋边框色。
     private func updateBorderColors() {
         retryButton.layer.bearyDynamicBorderColor = BearyColors.line
-        searchFooterRetryButton.layer.bearyDynamicBorderColor = BearyColors.line
-        searchFooterLoadMoreButton.layer.bearyDynamicBorderColor = BearyColors.line
         updateSearchBoxShadow()
     }
 
@@ -1260,11 +1269,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         runSearch(query: lastQuery)
     }
 
-    @objc private func loadMoreTapped() {
-        loadMore()
-    }
-
-    /// sweep32-2 搜索翻页：尾行“加载更多”只在还有下一批时出现。
+    /// sweep32-2 搜索翻页：滑到底自动拉下一批（见 scrollViewDidScroll），
+    /// 脚部只亮状态，不再有手动“加载更多”钮。
     /// 为何按组各发一请求：服务端三组共用同一套 before/before_id 参，
     /// 一组游标套到另一组会重复或漏项（公开组与“我的”组各按 created_at
     /// DESC + id DESC、用户组按 id 升序，游标语义本就不同）。故有下一批
@@ -1330,7 +1336,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 // clearResultRows 会拆掉全部行重建，页越多每翻越重）；
                 // 改增量追加本批新行（游标/hasMore/去重口径不动，见
                 // appendResultRows）；末尾 updateSearchFooter 按新 hasMore
-                // 决定尾行（取尽则隐藏、失败则亮翻页重试）。
+                // 决定尾行（取尽则亮“没有更多了”、失败则亮翻页重试）。
                 self.appendResultRows(data: merged, mine: freshMineEntries + freshLocalMineEntries, publicEntries: freshPublicEntries, users: freshUsersList, query: query)
             }
             self.updateSearchFooter()
@@ -1632,7 +1638,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 // 翻出的本地页），服务端重渲不丢离线翻页追加的行。
                 self.searchMineLocalOnly = false
                 data.mine = self.mergedMine(serverMine: data.mine, ftsMine: self.searchLocalMineEntries)
-                self.renderResults(data: data, query: trimmed)
+                // 搜索审计第 3 条：服务端先到且结果为空时，FTS 还在路上就先不渲
+                // 空态（allowEmptyState: ftsDone）；FTS 晚到会再走一次本分支补渲。
+                self.renderResults(data: data, query: trimmed, allowEmptyState: ftsDone)
                 // FTS 晚到时再渲一次：同 query 走行复用路径，只补「我的」组行；
                 // 两路都到齐才停框内圈。
                 if ftsDone { self.setBoxBusy(false) }
@@ -2123,7 +2131,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             removeStaleResultsBanner(preserveAnchor: !resultsStack.isHidden)
             return
         }
-        let text = "下方是「\(rendered)」的结果"
+        let text = String(format: NSLocalizedString("search.stale_results_format", comment: ""), rendered)
         if let banner = staleResultsBanner, banner.superview == resultsStack,
            let label = banner.subviews.first as? UILabel {
             // 同横幅只换文案：高度可能随词长/字号变化，按差量补偏移。
@@ -2279,32 +2287,35 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         banner.removeFromSuperview()
     }
 
-    /// 尾行四态（与时间线/个人主页尾行同形态；搜索进行时不显示尾行，只转框内圈）：
-    /// 未出结果时隐藏；出结果后：翻页进行中 → 转圈；翻页失败 → 重试钮
-    /// （走 loadMore 再试）；整搜失败保结果 → 重试钮（走整搜重跑，见
-    /// searchFooterRetryIsLoadMore）；还有下一批 → “加载更多”钮；三组都
-    /// 取尽 → 隐藏。加载更多钮与重试钮同槽位居中、互斥显隐。
+    /// 尾行四态（共享 BearyLoadMoreFooterView，与广场/时间线同形态；
+    /// 搜索进行时不显示尾行，只转框内圈）：未出结果时隐藏；出结果后：
+    /// 翻页进行中 → 三点；翻页失败 → “加载失败，重试”（走 loadMore 再试）；
+    /// 整搜失败保结果 → “加载失败，重试”（走整搜重跑，见
+    /// searchFooterRetryIsLoadMore）；还有下一批 → 隐藏（滑到底自动拉）；
+    /// 三组都取尽 → “没有更多了”。
     private func updateSearchFooter() {
-        searchFooterRetryButton.isHidden = true
-        searchFooterLoadMoreButton.isHidden = true
-        searchFooterSpinnerView.isHidden = true
-        BearyIconMotion.stopSpin(on: searchFooterSpinnerView, key: "bearySearchFooterSpin")
-        guard showingResults else {
-            searchFooterRow.isHidden = true
-            return
-        }
-        if isLoadingMore {
-            searchFooterRow.isHidden = false
-            searchFooterSpinnerView.isHidden = false
-            BearyIconMotion.startSpin(on: searchFooterSpinnerView, duration: 0.9, key: "bearySearchFooterSpin")
-        } else if loadMoreFailed {
-            searchFooterRow.isHidden = false
-            searchFooterRetryButton.isHidden = false
-        } else if searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers || searchMineLocalHasMore {
-            searchFooterRow.isHidden = false
-            searchFooterLoadMoreButton.isHidden = false
-        } else {
-            searchFooterRow.isHidden = true
+        // 脚部只属于搜索翻页：加载中三点、到底“没有更多了”、失败重试；
+        // 手动“加载更多”按钮已由滑到底自动预加载取代（见 scrollViewDidScroll）。
+        // 有更多未在加载时脚部隐藏（自动加载在滑到底时触发，见下预取）。
+        let hasMore = searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers || searchMineLocalHasMore
+        let footerState: BearyLoadMoreFooterView.State = {
+            guard showingResults else { return .hidden }
+            if isLoadingMore { return .loading }
+            if loadMoreFailed { return .failed }
+            if !hasMore { return .end }
+            return .hidden
+        }()
+        searchLoadMoreFooterView.setState(footerState)
+        searchFooterRow.isHidden = footerState == .hidden
+        // 内容不满一屏时滑不到底：渲染完即预取下一页，免得有更多却拉不动；
+        // loadMore 自带 isLoadingMore/hasMore 守卫，不会重入。
+        if footerState == .hidden, hasMore, !isLoadingMore, !loadMoreFailed, showingResults,
+           scrollView.contentSize.height <= scrollView.bounds.height {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.view.window != nil, self.showingResults,
+                      !self.isLoadingMore, !self.loadMoreFailed else { return }
+                self.loadMore()
+            }
         }
     }
 
@@ -2452,6 +2463,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 正常态 FTS 结果是服务端全集的子集、并集首批仍是服务端页宽；两边万一
     /// 有不重合的篇，并集全显、余下仍由翻页按服务端游标续取，不丢篇。
     /// 无 id 的行渲染时本就建不出行（makeEntryRow 返回 nil），这里一并跳过。
+    /// 搜索审计第 4 条：同 id 两边版本不同时按 updatedAt 取新版——另一台设备
+    /// 改过标题后服务端版 updatedAt 更新，取服务端版；行签名含标题与正文，
+    /// 同关键词重渲时签名一变即重建该行、锚点保位（见 renderResults）。
+    /// 本机版 updatedAt 更新（或相等、或两边都无）时保留本机版。
+    /// 本机未同步编辑没有可查标记：本地归档只存服务端回显（upsertEntry 只
+    /// 在同步拉取里调），编辑器 checkpoint 是 composer 私有的、搜索侧按
+    /// id 查不到；故以 updatedAt 为准——两边都是服务端写的时间戳（本机编
+    /// 辑成功后本地副本记的也是同一时刻），无时钟偏差问题。未编辑过的篇
+    /// 两边 updatedAt 均为 nil，按相等处理、留本机版。
     private func mergedMine(serverMine: [Entry]?, ftsMine: [Entry]) -> [Entry]? {
         if ftsMine.isEmpty { return serverMine }
         var seen = Set<String>()
@@ -2462,9 +2482,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             merged.append(entry)
         }
         for entry in serverMine ?? [] {
-            guard let id = entry.id, !seen.contains(id) else { continue }
-            seen.insert(id)
-            merged.append(entry)
+            guard let id = entry.id else { continue }
+            if let index = merged.firstIndex(where: { $0.id == id }) {
+                // 同 id：服务端版更新才替换本机版（updatedAt 是毫秒时间戳，
+                // nil 按 0 算——未编辑过的篇两边都无，相等留本机版）。
+                if (entry.updatedAt ?? 0) > (merged[index].updatedAt ?? 0) {
+                    merged[index] = entry
+                }
+            } else {
+                merged.append(entry)
+            }
         }
         merged.sort { (a, b) in
             if a.createdAt != b.createdAt { return (a.createdAt ?? 0) > (b.createdAt ?? 0) }
@@ -2478,7 +2505,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var lastRenderedData: SearchResult?
     private var lastRenderedQuery: String?
 
-    private func renderResults(data: SearchResult, query: String) {
+    private func renderResults(data: SearchResult, query: String, allowEmptyState: Bool = true) {
         // 开发者模式强制态：在途搜索回包不接受，按强制态渲染。
         if BearyDevPreviewState.forcedSearch != .none {
             applyDevForcedSearch()
@@ -2509,9 +2536,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 已在“我的”组出的篇不重复进公开组（本地公开篇进我的组后同此；
         // 与 appendResultRows 的 rowEntryIds 去重同口径）。
         let mineEntryIds = Set(mineEntries.compactMap { $0.id })
-        let publicEntries = (data.entries ?? []).filter { ($0.visibility == "public" || $0.isPublic == true) && !BearyEphemeral.isExpired($0) }.filter { !isBlockedForSearch(userId: $0.authorId) }.filter { $0.id.map { !mineEntryIds.contains($0) } ?? true }
-        let users = (data.users ?? []).filter { !isBlockedForSearch(userId: $0.id) }
+        let publicEntries = (data.entries ?? []).filter { ($0.visibility == "public" || $0.isPublic == true) && !BearyEphemeral.isExpired($0) }.filter { !BearyBlockedStore.isBlockedAuthor(userId: $0.authorId) }.filter { $0.id.map { !mineEntryIds.contains($0) } ?? true }
+        let users = (data.users ?? []).filter { !BearyBlockedStore.isBlockedAuthor(userId: $0.id) }
         if mineEntries.isEmpty && publicEntries.isEmpty && users.isEmpty {
+            // 搜索审计第 3 条：空态只在两路都回完且三组都空时才亮；任一路还在
+            // 路上时保持加载态（框内圈继续转），不先亮「没有找到」。
+            guard allowEmptyState else { return }
             showNoneState(query: query)
             return
         }
@@ -2888,7 +2918,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             // 审计 #19：与 renderResults 逐字一致——公开信号（visibility/is_public 任一）
             // 即可，不过期、不拉黑；缺 is_public 不丢行。
             if (entry.visibility == "public" || entry.isPublic == true) == false || BearyEphemeral.isExpired(entry) { continue }
-            if isBlockedForSearch(userId: entry.authorId) { continue }
+            if BearyBlockedStore.isBlockedAuthor(userId: entry.authorId) { continue }
             guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
                 publicRows.append(row)
@@ -2898,7 +2928,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         var userRows: [UIView] = []
         var newUserKeys: [String] = []
         for user in freshUsers {
-            if isBlockedForSearch(userId: user.id) { continue }
+            if BearyBlockedStore.isBlockedAuthor(userId: user.id) { continue }
             if let key = userKey(for: user), userRowByKey[key] != nil { continue }
             if let key = userKey(for: user) { newUserKeys.append(key) }
             userRows.append(makeUserRow(user: user, query: query))
@@ -3158,9 +3188,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // BearySearchImageRetry，不动；imageRetryHolders 只剩首图槽位）。
         avatarView.configure(displayName: displayName, avatarURL: user.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) })
 
+        // 文字块相对头像垂直居中：名字＋handle 进竖栈（间距 1 不变），栈中心锚头像
+        // 中心；无 handle 时栈自动塌掉 handle 行，单行名字同样居中（原顶钉
+        // row.top + 14 令块顶贴头像顶、块比头像矮，上面挤、下面空）。
+        let textStack = UIStackView()
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        textStack.axis = .vertical
+        textStack.spacing = 1
+        textStack.alignment = .fill
+        textStack.addArrangedSubview(nameLabel)
+        textStack.addArrangedSubview(handleLabel)
+
         row.addSubview(avatarView)
-        row.addSubview(nameLabel)
-        row.addSubview(handleLabel)
+        row.addSubview(textStack)
         row.addSubview(chevron)
         NSLayoutConstraint.activate([
             avatarView.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
@@ -3169,13 +3209,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),
-            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
-            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
-            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
-            handleLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
-            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
-            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -14),
+            textStack.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
+            textStack.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
+            textStack.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+            textStack.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -14),
             chevron.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             chevron.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
             chevron.widthAnchor.constraint(equalToConstant: 16),
@@ -3184,12 +3221,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
         row.addTarget(self, action: #selector(userRowTapped(_:)), for: .touchUpInside)
+        row.bearyAddRowPressFeedback()
         // 审计：搜索行 VoiceOver 带“用户”上下文，不再只读名字。
         row.accessibilityLabel = "用户：" + displayName
         // 好友第一期：紧凑版状态机钮（仅登录、非本人、未拉黑时出现；游客/本人/
         // 拉黑无钮；按钮是行内独立 UIControl，点按不触发整行点按）。状态未到
         // 前画与按钮同宽同形的灰色圆角骨架块且不可点（r29-10），读失败画「重试」点按重拉。
-        if let myId = SessionManager.shared.currentUser?.id, let userId = user.id, userId != myId, !isBlockedForSearch(userId: userId) {
+        if let myId = SessionManager.shared.currentUser?.id, let userId = user.id, userId != myId, !BearyBlockedStore.isBlockedAuthor(userId: userId) {
             // 审计：关注钮视觉高约 28 不变，热区用 Hit44 扩到 44。
             let followButton = BearyHit44Button(type: .system)
             followButton.translatesAutoresizingMaskIntoConstraints = false
@@ -3209,8 +3247,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 followButton.centerYAnchor.constraint(equalTo: row.centerYAnchor),
                 followButton.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: -8),
                 followButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
-                nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: followButton.leadingAnchor, constant: -8),
-                handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: followButton.leadingAnchor, constant: -8),
+                textStack.trailingAnchor.constraint(lessThanOrEqualTo: followButton.leadingAnchor, constant: -8),
             ])
             followButtonUserIds[followButton] = userId
             followButtonsByUserId[userId] = followButton
@@ -3250,7 +3287,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         dateLabel.adjustsFontForContentSizeCategory = true
         dateLabel.textColor = BearyColors.gray
         if let created = entry.createdAt {
-            dateLabel.text = searchDateString(ms: created)
+            dateLabel.text = searchDateString(ms: created, timeZone: entry.diaryTimeZone)
         }
 
         let contentText = collapsedWhitespace(entry.content ?? "")
@@ -3347,7 +3384,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             // 2-3：私密行只留 pill，不再拼“· 未公开”文字（双重状态文案已删）。
             // 好友第一期：仅好友篇在我的组里同样只留 pill，文案“仅好友”、蓝档不变。
             // 审计 2026-11-02 第十节：我的组按三档标 pill——存活限时篇标“限时”
-            // （沿用私密档蓝底，不新发明颜色），仅好友标“仅好友”，其余标“私密”。
+            // （紫字＋紫 13% 底，G6 对比度修复），仅好友标“仅好友”，其余标“私密”。
             metaStack.addArrangedSubview(dateLabel)
             metaStack.addArrangedSubview(makePrivatePill(friendsOnly: entry.isFriendsOnly, ephemeralLive: BearyEphemeral.isLive(entry), isPublic: entry.isPublic == true))
         } else {
@@ -3405,7 +3442,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             separator.leadingAnchor.constraint(equalTo: row.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: row.trailingAnchor),
             separator.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-            separator.heightAnchor.constraint(equalToConstant: 1),
+            separator.heightAnchor.constraint(equalToConstant: 0.5),
         ]
         if let thumbWrap = thumbWrapView {
             constraints.append(thumbWrap.widthAnchor.constraint(equalToConstant: 44))
@@ -3419,6 +3456,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 审计三轮 06：记下本行内容签名，供同关键词重渲比对复用。
         entryRowContentSignatures[entryId] = entryRowContentSignature(entry: entry, isMineGroup: isMineGroup)
         row.addTarget(self, action: #selector(entryRowTapped(_:)), for: .touchUpInside)
+        row.bearyAddRowPressFeedback()
         // r13-3：读屏串只拼实际存在的信息——日记，标题，作者，日期，可见范围，
         // 正文摘要，图片数量；正文截断为摘要，不把全文塞进 label。
         // 可见范围与行内 pill 同口径：限时／仅好友／私密（我的组）／公开。
@@ -3430,7 +3468,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             entryA11yParts.append("作者：" + author)
         }
         if let created = entry.createdAt {
-            entryA11yParts.append(searchDateString(ms: created))
+            entryA11yParts.append(searchDateString(ms: created, timeZone: entry.diaryTimeZone))
         }
         if BearyEphemeral.isLive(entry) {
             entryA11yParts.append("限时")
@@ -3472,20 +3510,34 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 同款口径见 BlindBox pillLabel（2026-11-04）、Composer statusPill。
         pill.setContentHuggingPriority(.required, for: .horizontal)
         pill.setContentCompressionResistancePriority(.required, for: .horizontal)
-        pill.backgroundColor = friendsOnly ? BearyColors.surface2 : BearyColors.alpha(BearyColors.blue, 0.13)
+        // G6 对比度修复（2026-11-21）：私密／限时 pill 文字按规范值取色——
+        // 私密深蓝字（浅 #0066CC／深 #0A84FF）＋蓝 13% 底、限时深紫字
+        // （浅 #8E2FB8／深 #BE6FE8，紫 13% 深底上 #AF52DE 仅 4.27:1 故加亮）
+        // ＋紫 13% 底；锁图标跟文字同色。仅好友墨字灰底不动；公开沿用蓝档
+        // （规范无搜索公开 pill 定义，不动）。
+        let pillColors: (text: UIColor, bg: UIColor, icon: UIColor)
+        if friendsOnly {
+            pillColors = (BearyColors.ink, BearyColors.surface2, BearyColors.ink)
+        } else if ephemeralLive {
+            pillColors = (BearyColors.deepPurpleTextOnTint, BearyColors.alpha(BearyColors.limitedPurple, 0.13), BearyColors.deepPurpleTextOnTint)
+        } else if isPublic {
+            pillColors = (BearyColors.blue, BearyColors.alpha(BearyColors.blue, 0.13), BearyColors.blue)
+        } else {
+            pillColors = (BearyColors.deepBlueText, BearyColors.alpha(BearyColors.blue, 0.13), BearyColors.deepBlueText)
+        }
+        pill.backgroundColor = pillColors.bg
         pill.layer.cornerRadius = 11
         pill.layer.masksToBounds = true
-        // 黑白灰新标准：仅好友 pill 改墨字灰底（与编辑器 chip 同口径）；
-        // 私密/限时仍沿用蓝档（可见性语义，不动）。
+        // 黑白灰新标准：仅好友 pill 改墨字灰底（与编辑器 chip 同口径）。
         let lock = UIImageView(image: BearyIconImages.image(named: friendsOnly ? "icon_friends_lock" : (isPublic ? "icon_globe" : "icon_lock"), pointSize: 12))
         lock.translatesAutoresizingMaskIntoConstraints = false
-        lock.tintColor = friendsOnly ? BearyColors.ink : BearyColors.blue
+        lock.tintColor = pillColors.icon
         lock.contentMode = .scaleAspectFit
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold))
         label.adjustsFontForContentSizeCategory = true
-        label.textColor = friendsOnly ? BearyColors.ink : BearyColors.blue
+        label.textColor = pillColors.text
         label.text = ephemeralLive ? "限时" : (friendsOnly ? "仅好友" : (isPublic ? "公开" : "私密"))
         pill.addSubview(lock)
         pill.addSubview(label)
@@ -3510,7 +3562,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 // 补缺 P2-21：点按前比对拉黑表（渲染后新拉黑的竞态兜底）：命中则不行进主页，
                 // 行即时摘掉并 toast，首渲染过滤与广播清行已覆盖常规路径。
                 let user = rowUsers[index]
-                if isBlockedForSearch(userId: user.id) {
+                if BearyBlockedStore.isBlockedAuthor(userId: user.id) {
                     if let userId = user.id { removeBlockedUserFromResults(userId: userId) }
                     BearyToast.show(in: view, message: "该用户已被拉黑")
                     return
@@ -3519,9 +3571,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 let now = Date()
                 if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
                 lastNavigationAt = now
-                // 震动只在点按确认（touchUpInside）后触发：行在主 scrollView 内且
-                // delaysContentTouches=false，手指按上即滑会在 touchDown 误震。
-                BearyHaptics.press()
                 onOpenUserHandler(user)
                 return
             }
@@ -3940,15 +3989,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 搜索关注钮拒绝动效（个人页 playFollowDenyShake 同款：摇头＋warning 震动＋拒绝音效，toast 由调用方发；
     /// 减动效时只跳过视觉抖动，震动与音效照常给）。
     private func playFollowDenyShake(on button: UIButton) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled { return }
-        button.layer.removeAnimation(forKey: "bearySearchFollowDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        button.layer.add(shake, forKey: "bearySearchFollowDenyShake")
+        BearyIconMotion.playDenyShake(on: button, key: "bearySearchFollowDenyShake")
     }
 
     @objc private func entryRowTapped(_ sender: UIButton) {
@@ -3958,9 +3999,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 let now = Date()
                 if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
                 lastNavigationAt = now
-                // 震动只在点按确认（touchUpInside）后触发：行在主 scrollView 内且
-                // delaysContentTouches=false，手指按上即滑会在 touchDown 误震。
-                BearyHaptics.press()
                 // iCity §12：搜索结果点按记 search_click（只记 id，不记查询词；失败静默）。
                 BearyAPI.shared.sendEvent(eventType: "search_click", targetId: rowEntryIds[index])
                 onOpenEntryHandler(rowEntryIds[index])
@@ -4046,19 +4084,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         return parts.joined(separator: " ")
     }
 
-    /// 搜索结果日记行日期：7 天内相对时间、7 天外绝对时间（共用口径）。
-    /// 绝对时间：同年 M 月 d 日，跨年 yyyy 年 M 月 d 日（带空格，不带时间）。
-    private func searchDateString(ms: Int) -> String {
-        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
-            return relative
-        }
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        let year = Calendar.current.component(.year, from: date)
-        let currentYear = Calendar.current.component(.year, from: Date())
-        fmt.dateFormat = year == currentYear ? "M 月 d 日" : "yyyy 年 M 月 d 日"
-        return fmt.string(from: date)
+    /// 搜索结果日记行日期：7 天内相对时间、7 天外“/”绝对日期（同年只写月日，
+    /// 跨年带年；月日顺序跟地区走），不带时分。见 BearyVisibilityText.diaryTimeString。
+    /// 日记时区（2026-11-21 v20 §二）：绝对回落按篇时区显示。
+    private func searchDateString(ms: Int, timeZone: TimeZone) -> String {
+        BearyVisibilityText.diaryTimeString(publishedAtMs: ms, timeZone: timeZone) ?? BearyDiaryCardCell.feedTimeString(ms: ms, timeZone: timeZone)
     }
 
     /// 网页用户行名字回退口径：display_name || ('@' + handle) || 'beary 用户'。
@@ -4069,7 +4099,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if let handle = user.handle, !handle.isEmpty {
             return "@" + handle
         }
-        return "beary 用户"
+        return NSLocalizedString("emote.posters.fallback_display_name", comment: "")
     }
 }
 
@@ -4106,11 +4136,11 @@ private final class BearySearchImageRetry: NSObject {
         generation += 1
         let capturedGeneration = generation
         retryButton.isHidden = true
-        imageView.bearySetImage(url: imageURL, placeholder: nil) { [weak self] _ in
+        imageView.bearySetImageWithBlurUp(url: imageURL, onFailure: { [weak self] _ in
             guard let self = self else { return }
             guard capturedGeneration == self.generation else { return }
             self.retryButton.isHidden = false
-        }
+        })
     }
 
     @objc private func retryTapped() {

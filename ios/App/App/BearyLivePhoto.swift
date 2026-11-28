@@ -33,6 +33,9 @@ enum BearyLivePhoto {
     /// iOS 实况视频通常 2–5MB，10MB 覆盖绝大多数；超限在选图时直接拒收
     /// （toast 说明、不进图片条），不静默降级为静态图。
     static let maxVideoBytes = 10 * 1024 * 1024
+    /// 实况元数据加载限时 5 秒（可复用资源 27 遍 B-A3）：剥位置元数据与读
+    /// content identifier 两处信号量等待共用；导出等待 30 秒语义不同，不并入。
+    static let livePhotoLoadTimeout: TimeInterval = 5
 
     static func videoDataURL(_ data: Data) -> String {
         return "data:video/quicktime;base64," + data.base64EncodedString()
@@ -64,7 +67,7 @@ enum BearyLivePhoto {
         asset.loadValuesAsynchronously(forKeys: ["metadata"]) {
             loadSemaphore.signal()
         }
-        guard loadSemaphore.wait(timeout: .now() + 5) == .success else { return nil }
+        guard loadSemaphore.wait(timeout: .now() + livePhotoLoadTimeout) == .success else { return nil }
         var loadError: NSError?
         guard asset.statusOfValue(forKey: "metadata", error: &loadError) == .loaded else { return nil }
         let kept = asset.metadata.filter { !isLocationMetadataItem($0) }
@@ -131,14 +134,13 @@ final class BearyLivePhotoLoader {
     /// 磁盘读 + TTL/上限 sweep 只走这里，不占主线程（原实现在调用线程同步读盘，
     /// 调用方是主线程的卡片 configure，实况 mov 可达 10MB，首帧可卡）。
     private static let diskQueue = DispatchQueue(label: "com.beary.live-disk", qos: .userInitiated)
-    /// 磁盘缓存 TTL 24 小时：与图片桶（BearyImageLoader）同款口径。
-    /// 实况视频与静态图同一可见性口径：转私密后旧盘缓存至多再活 24 小时，
-    /// 之后强制走网络、服务端按最新可见性判定，不无限期可读。
-    private static let diskCacheMaxAge: TimeInterval = 24 * 3600
+    /// 磁盘缓存 TTL 24 小时：与图片桶（BearyImageLoader）同款口径，单源见
+    /// BearyDiskCacheBudget.maxAge。实况视频与静态图同一可见性口径：
+    /// 转私密后旧盘缓存至多再活 24 小时，之后强制走网络、服务端按最新
+    /// 可见性判定，不无限期可读。
     /// 每账号桶磁盘上限 200MB：与图片桶共用单账号总盘点
     ///（BearyDiskCacheBudget：图片桶 + 实况桶合计 200MB，不再各算各的 200MB）；
-    /// 合计超了按修改时间删最旧文件直至回落。
-    private static let diskCacheCapBytes: Int64 = BearyDiskCacheBudget.totalCapBytes
+    /// 合计超了按修改时间删最旧文件直至回落（上限见 totalCapBytes）。
 
     private let stateLock = NSLock()
     /// 第十一轮 06：写盘与清理的共享锁（图片加载器 diskWriteLock 同款）——
@@ -161,18 +163,14 @@ final class BearyLivePhotoLoader {
         var completions: [(PHLivePhoto?) -> Void] = []
     }
     private var inFlightLoads: [NSString: InFlightLiveLoad] = [:]
-    private var diskCacheTotals: [String: Int64] = [:]
+    /// 写盘累计记账见 BearyDiskCacheBudget.Tracker（与图片桶同款）；
+    /// stateLock 仍护代次与在途表，不动。
+    private let diskCacheTracker = BearyDiskCacheBudget.Tracker()
 
     private init() {
-        let config = URLSessionConfiguration.default
-        // 审计-性能：只关 URLCache，不改 ephemeral。ephemeral 会丢共享
-        // cookie 存储，私密实况视频将 401；图片加载器同款口径（default +
-        // urlCache=nil）：URLCache 按 URL 裸键、不分账号，私密字节一旦
-        // 进共享缓存，换号后仍可能被命中而不走服务端可见性判定，故关掉；
-        // 本加载器自有按账号分桶的磁盘缓存，URLCache 层纯属多余。
-        config.urlCache = nil
-        config.httpMaximumConnectionsPerHost = 6
-        self.session = URLSession(configuration: config, delegate: BearyImageRedirectGuard.shared, delegateQueue: nil)
+        // 私密图片会话走共享工厂（见 BearyPrivateImageSession）：与图片加载器
+        // 同口径；每 host 6 并发（原内联值，不变）。
+        self.session = BearyPrivateImageSession.makeSession(maxConnectionsPerHost: 6)
         // PHLivePhoto 内存条目偏大（视频），NSCache 仍会在内存压力下自动逐出；
         // countLimit 只作后备上限，不作日常淘汰依据。
         cache.countLimit = 20
@@ -246,7 +244,7 @@ final class BearyLivePhotoLoader {
         }
         diskWriteLock.unlock()
         stateLock.lock()
-        diskCacheTotals[bucket] = nil
+        diskCacheTracker.reset(bucket: bucket)
         stateLock.unlock()
     }
 
@@ -254,7 +252,7 @@ final class BearyLivePhotoLoader {
         guard let file = fileURL(key: key, ext: ext, bucket: bucket) else { return nil }
         if let values = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
            let mtime = values.contentModificationDate,
-           Date().timeIntervalSince(mtime) > Self.diskCacheMaxAge {
+           Date().timeIntervalSince(mtime) > BearyDiskCacheBudget.maxAge {
             try? FileManager.default.removeItem(at: file)
             return nil
         }
@@ -268,7 +266,7 @@ final class BearyLivePhotoLoader {
         guard let file = fileURL(key: key, ext: ext, bucket: bucket) else { return false }
         if let values = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
            let mtime = values.contentModificationDate,
-           Date().timeIntervalSince(mtime) > Self.diskCacheMaxAge {
+           Date().timeIntervalSince(mtime) > BearyDiskCacheBudget.maxAge {
             try? FileManager.default.removeItem(at: file)
             return false
         }
@@ -317,37 +315,31 @@ final class BearyLivePhotoLoader {
     /// 写回本桶淘汰后的真实总量；枚举失败时累计值保持越限、下次写重试。
     private func enforceDiskCacheCap(bucket: String, writtenDelta: Int64) {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+
         let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent(bucket)
-        // 短锁：只更新累计值、判定是否需要扫盘。
-        stateLock.lock()
-        let needsScan: Bool
-        if let known = diskCacheTotals[bucket] {
-            let tracked = known + writtenDelta
-            diskCacheTotals[bucket] = tracked
-            needsScan = tracked > Self.diskCacheCapBytes
-        } else {
-            // 本进程首写、累计值未知：置为越限值，迫使本次即枚举校准一次。
-            diskCacheTotals[bucket] = Self.diskCacheCapBytes + 1
-            needsScan = true
-        }
-        stateLock.unlock()
-        guard needsScan else { return }
+
+        // 记账与越限判定已收进 BearyDiskCacheBudget.Tracker（与图片桶同款）；
+        // 扫盘仍在专用串行队列 diskQueue 上做、代次门仍在派发时校验，不动。
+        guard diskCacheTracker.noteWritten(bucket: bucket, writtenDelta: writtenDelta).needsScan else { return }
+
         // 派发时代次：purge/切桶已推进该桶代次时，本次扫盘即过期，跳过——
         // 免得把 purge 后刚重下的同名文件误删；累计值已由 purge 清零，
         // 下次写盘即重新校准。
         let scanGeneration = generation(for: bucket)
+
         Self.diskQueue.async { [weak self] in
             guard let self = self, self.isCurrentGeneration(scanGeneration, bucket: bucket) else { return }
+
             guard FileManager.default.fileExists(atPath: dir.path) else { return }
+
             let swept = BearyDiskCacheBudget.enforceCombined(bucket: bucket)
+
             guard swept.ok else {
                 // 枚举失败不静默低估：累计值仍是越限值，下次写重试枚举。
                 return
             }
-            // 短锁：只写回淘汰后的真实总量。
-            self.stateLock.lock()
-            self.diskCacheTotals[bucket] = swept.liveTotal
-            self.stateLock.unlock()
+
+            self.diskCacheTracker.recordSwept(bucket: bucket, total: swept.liveTotal)
         }
     }
 
@@ -525,7 +517,7 @@ final class BearyLivePhotoLoader {
                 }
             }
         }
-        _ = semaphore.wait(timeout: .now() + 5)
+        _ = semaphore.wait(timeout: .now() + BearyLivePhoto.livePhotoLoadTimeout)
         return identifier
     }
 
@@ -619,6 +611,65 @@ final class BearyLivePhotoLoader {
 /// “是实况但没加载出来”还是“根本不是实况”；失败时长按重试一次。
 /// 读屏（第 25 轮 71、72）：角标是本视图唯一的无障碍元素，上面挂
 /// “播放实况／重试实况”自定义操作，失败时标签也说明加载失败。
+
+/// 详情页与卡片共用的实况长按接线（可复用资源 26 遍第 6 条）：两处 setLiveOverlay
+/// 与 liveLongPressed 原逐字相同，抽到这里；灯箱实现刻意不同，不并入。
+/// 0.4 秒长按播实况；began 立 3 秒点按压制，ended/cancelled 抬手补 0.35 秒窗
+/// （按住超 0.35 秒后的抬手仍在 began 的 3 秒窗内，不缩短）。
+enum BearyLiveLongPress {
+    static let minimumPressDuration: TimeInterval = 0.4
+    static let playbackSuppressDuration: TimeInterval = 3
+    static let releaseSuppressDuration: TimeInterval = 0.35
+
+    /// 有 liveKey 时配覆盖层并给槽位挂长按手势（只挂实况槽）；无 liveKey 时清覆盖层并摘手势。
+    /// presses 以 inout 传入：新建的手势存回对应槽位，摘下时置 nil。
+    /// 手势目标仍是调用方自己（须持有槽位数组的对象），故 setup 与处理分开：
+    /// 这里只负责挂手势，处理走下方的 handleLongPress。
+    static func setLiveOverlay(index: Int, staticKey: String?, liveKey: String?,
+                               liveViews: [BearyLivePhotoView], slots: [UIImageView],
+                               presses: inout [UILongPressGestureRecognizer?],
+                               target: Any?, action: Selector) {
+        guard index >= 0, index < liveViews.count, index < slots.count,
+              index < presses.count else { return }
+        let overlay = liveViews[index]
+        let slot = slots[index]
+        if let liveKey = liveKey, !liveKey.isEmpty, let staticKey = staticKey, !staticKey.isEmpty {
+            overlay.configure(staticKey: staticKey, liveKey: liveKey)
+            if presses[index] == nil {
+                let press = UILongPressGestureRecognizer(target: target, action: action)
+                press.minimumPressDuration = minimumPressDuration
+                slot.addGestureRecognizer(press)
+                presses[index] = press
+            }
+        } else {
+            overlay.clear()
+            if let press = presses[index] {
+                slot.removeGestureRecognizer(press)
+                presses[index] = nil
+            }
+        }
+    }
+
+    /// 长按处理：began 播实况并立 3 秒点按压制；ended/cancelled 抬手补 0.35 秒窗。
+    static func handleLongPress(_ sender: UILongPressGestureRecognizer, liveViews: [BearyLivePhotoView]) {
+        let index = sender.view?.tag ?? -1
+        guard index >= 0, index < liveViews.count else { return }
+        let overlay = liveViews[index]
+        if sender.state == .began {
+            overlay.startPlayback()
+            // 抬手点按压制：播完抬手那次点按不进灯箱（3 秒覆盖按住时长）。
+            overlay.suppressTapUntil = Date().addingTimeInterval(playbackSuppressDuration)
+        } else if sender.state == .ended || sender.state == .cancelled {
+            let until = Date().addingTimeInterval(releaseSuppressDuration)
+            if let existing = overlay.suppressTapUntil, existing > until {
+                // 按住超 0.35 秒后的抬手仍在 began 的 3 秒窗内，不缩短。
+            } else {
+                overlay.suppressTapUntil = until
+            }
+        }
+    }
+}
+
 final class BearyLivePhotoView: UIView {
     private let liveView = PHLivePhotoView()
     private let photoContentMode: PHImageContentMode

@@ -26,6 +26,14 @@ enum BearySpace {
     static let xxxl: CGFloat = 32
 }
 
+/// 个人页封面高（第二十四批第 4 项）：个人页（ProfileVC）与编辑资料页
+/// 共用同一值，改一处两处同步；编辑资料页裁剪窗比例按同一高算。
+/// 注意：CoverView :710 的 [180, 480, 760] 是 overlay 元素 x 坐标、
+/// Timeline estimatedRowHeight 与 DraftBox chip 宽上限 180 语义不同，不走本值。
+enum BearyProfileCover {
+    static let height: CGFloat = 180
+}
+
 /// 圆角唯一档 BearyCorners 见 BearyColors.swift（#790 修红：本文件不在
 /// BearyCoreTests target 内，BearyPastSelf.swift 单测编不过；token 须放双 target
 /// 共用文件，与 #555 把 BearyColors 抽出同款处理）。
@@ -48,6 +56,15 @@ enum BearyDesktop {
     static func isWide(_ width: CGFloat) -> Bool {
         UIDevice.current.userInterfaceIdiom == .pad && width >= 821
     }
+}
+
+/// 三列网格格边长（九宫格／照片墙／个人页照片脚部共用）：主宽为 0 时回退到备用宽，
+/// 再扣掉横向总边距（左右 inset＋格间间距），除以列数向下取整。
+/// 边距按页传，不统一数值——九宫格 48（左右各 16＋两道 8），照片墙与脚部 56
+/// （脚部左右各 20；照片墙 56 与本页布局 48 对不上，疑似从脚部抄来，本支只收公式、不改数值）。
+func bearyGridSide(width: CGFloat, fallbackWidth: CGFloat, horizontalDeduction: CGFloat, columns: Int = 3) -> CGFloat {
+    let widthValue = width > 0 ? width : fallbackWidth
+    return floor((widthValue - horizontalDeduction) / CGFloat(columns))
 }
 
 /// 阴影 token（视觉清单 Grok 项 2）：hairline 用于搜索框、callout；
@@ -94,6 +111,33 @@ enum BearyMotion {
     /// 局部状态动效统一时长（规格附录第 3 项已定）：开关、选中等小反馈取 micro。
     /// 拒绝摇头 0.38s 是拒绝动效、不是局部状态动效，不走本值。
     static let localStateDuration: TimeInterval = micro
+    /// 通知卡片动画共用缓动曲线（三次贝塞尔 0.32/0.72 → 0.35/1）：错峰入场、
+    /// 卡片展开、收起快照三处共用；曲线一改三处同改，防三段手感分裂。
+    static let cardCurve = UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1))
+}
+
+/// 116 数据填入动效共享版（Label 文字淡入）：换文字时同值不重播 →
+/// 减动效／未进窗口直设终值 → 否则 alpha 0 再淡入到 1；纯显隐淡入
+/// （无换文字）走同一形状，见 fadeIn。
+enum BearyLabelFade {
+    /// 换文字并淡入：同值不赋值不重播。
+    static func setText(_ text: String?, on label: UILabel, duration: TimeInterval) {
+        guard label.text != text else { return }
+        label.text = text
+        fadeIn(label, duration: duration)
+    }
+
+    /// 纯显隐淡入变体（无换文字）：已可见时不重播，只直设 alpha。
+    static func fadeIn(_ view: UIView, duration: TimeInterval) {
+        guard !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            view.alpha = 1
+            return
+        }
+        view.alpha = 0
+        UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            view.alpha = 1
+        })
+    }
 }
 
 /// 新卡片入场统一配置（审计 r16 第 10 项，Li 定版 2026-11-06，规范 §6）：
@@ -128,9 +172,38 @@ enum BearyEntranceConfig {
     }
 }
 
+/// 视口锚点恢复共用数学（可复用资源第十六批第 1 项）：
+/// 详情返回五处（广场／搜索／照片墙／标签／时间线）与重渲染恢复两处
+/// （标签整表 reload、许愿墙）原先各写一套相同的钳制——行顶减视口偏移、
+/// ±1pt 守卫、钳到 [-topInset, max(…, contentSize - bounds + bottomInset)]。
+/// 锚点捕获（首可见行／首可见愿望）与已删回落各留自己的，不进本 helper。
+enum BearyScrollAnchor {
+    /// 行顶放到视口偏移处后的钳制偏移 y。
+    /// - Parameters:
+    ///   - scrollView: 要恢复滚动位置的滚动视图。
+    ///   - rowTop: 行顶在内容坐标系里的 y（tableView rectForRow origin.y／
+    ///     行视图 convert 后 frame.minY／collectionView layoutAttributes frame.minY）。
+    ///   - viewportOffset: 行顶相对视口顶的目标偏移（详情打开时记下的值）。
+    ///   - contentInset: 钳制用的内边距——详情返回传 scrollView.contentInset，
+    ///     重渲染恢复传 scrollView.adjustedContentInset（与原地行为一致）。
+    static func clampedOffsetY(in scrollView: UIScrollView, rowTop: CGFloat, viewportOffset: CGFloat, contentInset: UIEdgeInsets) -> CGFloat {
+        let targetY = rowTop - viewportOffset
+        let minY = -contentInset.top
+        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + contentInset.bottom)
+        return min(max(targetY, minY), maxY)
+    }
+
+    /// 详情关闭时把该行放回打开时的视口位置；已在原位（±1pt）时不动（x 置 0）。
+    static func restoreDetailReturn(in scrollView: UIScrollView, rowTop: CGFloat, viewportOffset: CGFloat) {
+        let targetY = rowTop - viewportOffset
+        guard abs(targetY - scrollView.contentOffset.y) >= 1 else { return }
+        scrollView.contentOffset = CGPoint(x: 0, y: clampedOffsetY(in: scrollView, rowTop: rowTop, viewportOffset: viewportOffset, contentInset: scrollView.contentInset))
+    }
+}
+
 // MARK: - Sheet/居中模态统一口径（B 批）
 
-/// 底 sheet 与居中模态的共享 chrome：顶部圆角 20、抓手 40×4（顶距 10、圆角 2）、
+/// 底 sheet 与居中模态的共享 chrome：顶部圆角＝屏幕圆角（26+）／20（26 以下）、抓手 40×4（顶距 10、圆角 2）、
 /// 遮罩 scrim 0.45。B 批前四处各写各的数值（恰好同值），改一处即全跟走，防再分裂。
 /// 2026-10-28 Li 令：回应 Sheet 与草稿箱 Sheet 统一走本 chrome（此前草稿箱遮罩全透明、
 /// 回应 Sheet 圆角 22 / 抓手 38×4 的例外一律撤销）；遮罩出现时 0.26s 淡入。
@@ -143,7 +216,54 @@ enum BearyEntranceConfig {
 /// 已废弃并删除——@ 选人 iPad 卡片改走 raised（BearyShadow.applyRaised），
 /// 草稿箱 sheet 改走底 sheet 档；居中卡片此前已走 raised（见 BearyCenteredModal），不变。
 enum BearySheetChrome {
-    static let topCornerRadius: CGFloat = 20
+    /// 底 sheet 四角圆角（2026-11-27 修：跟屏幕圆角一致，Threads 同款口径；
+    /// 同日 Li 纠正：38pt（iOS 26 系统默认值）相对 62pt 屏幕还是小、不够贴）。
+    /// 动态读没有公开 API：`_displayCornerRadius` 是私有 key，生产代码走 KVC 读它
+    /// 有 App Store 审核风险（首版可能放过、越往后越可能被拒），故不用；
+    /// 改走机型查表：hw.machine（uname，公开 API）→ 已实测的屏幕圆角。
+    /// iPhone 17 Pro 实测 62pt（iOS 27 探针读私有 key，仅探针用、不进生产代码）；
+    /// 其余机型值为已公开的实测表；未知新机型回退 62pt（当前旗舰值，也是主值）；
+    /// iPad 18pt（Air / Pro 11" / 12.9" 实测）；SE 直角屏回退旧 20pt。
+    /// 26 以下无浮动 sheet（底边贴合、只圆顶角），保持旧 20pt 不动。
+    static var topCornerRadius: CGFloat {
+        if #available(iOS 26.0, *) { screenCornerRadius } else { 20 }
+    }
+
+    /// 屏幕圆角（机型查表，见 topCornerRadius 注释；值均为实测，非拍脑袋）。
+    static var screenCornerRadius: CGFloat {
+        switch deviceModelIdentifier {
+        case "iPhone10,3", "iPhone10,6", "iPhone11,2", "iPhone11,4", "iPhone11,6",
+             "iPhone12,3", "iPhone12,5":
+            return 39
+        case "iPhone11,8", "iPhone12,1":
+            return 41.5
+        case "iPhone13,1", "iPhone14,4":
+            return 44
+        case "iPhone13,2", "iPhone13,3", "iPhone14,2", "iPhone14,5", "iPhone14,7", "iPhone17,5":
+            return 47.33
+        case "iPhone13,4", "iPhone14,3", "iPhone14,8":
+            return 53.33
+        case "iPhone15,2", "iPhone15,3", "iPhone15,4", "iPhone15,5",
+             "iPhone16,1", "iPhone16,2", "iPhone17,3", "iPhone17,4":
+            return 55
+        case "iPhone17,1", "iPhone17,2", "iPhone18,1", "iPhone18,2", "iPhone18,3", "iPhone18,4":
+            return 62
+        case "iPhone12,8", "iPhone14,6":
+            return 20
+        default:
+            if UIDevice.current.userInterfaceIdiom == .pad { return 18 }
+            return 62
+        }
+    }
+
+    /// 机型标识（如 iPhone18,2），uname 公开 API，无审核风险。
+    private static var deviceModelIdentifier: String {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        return withUnsafePointer(to: &systemInfo.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
+        }
+    }
     static let grabberWidth: CGFloat = 40
     static let grabberHeight: CGFloat = 4
     static let grabberTop: CGFloat = 10
@@ -249,7 +369,11 @@ enum BearySheetDrag {
 
 /// 玻璃适用范围 Token（视觉清单第 12 项）：系统材质（UIGlassEffect /
 /// systemMaterial 降级）只允许在栏与菜单区域使用——顶栏、底栏衬底、顶栏内
-/// 登录 pill、菜单卡（bearyMenuGlassView）。窗口 / 弹窗 / Toast / 浮动按钮
+/// 登录 pill、菜单卡（bearyMenuGlassView）——以及底部弹窗（Li 2026-11-25 新定：
+/// 底部弹窗要不带颜色的液态玻璃效果，覆盖本条对弹窗的限制；2026-11-27 修：
+/// 弹窗背板改走 .systemUltraThinMaterial（无色、无亮面），盖住系统液态玻璃
+/// 自带的颜色与上下亮边，见 BearySystemSheet.installGlassBackdrop）。
+/// 其余窗口 / 弹窗 / Toast / 浮动按钮
 /// 一律不用系统材质，改走实色底（见各调用点注释）。
 /// 注意：本令推翻 Li 2026-10-26“所有窗口弹窗与全 App 按钮都用官方玻璃”
 /// 的旧令，可逆——恢复旧令 = 把本支删掉的玻璃背板原样贴回（见 PR 描述清单）。
@@ -258,9 +382,9 @@ enum BearySheetDrag {
 /// tint 只用两档：中性 bg 52%（与顶栏/底栏同款）、主操作橙（顶栏登录 pill 同款）。
 /// SceneDelegate.makeGlassView 与本 helper 同配方，调用点按需任选其一，不新增配方。
 /// 部署目标 iOS 15.0：分支内 #available 兜底，不抬部署目标，不引新依赖。
-/// 例外（Li 2026-11-02 批准）：登录底 sheet 弹窗（BearyLoginSheet）用本配方
-/// 中性玻璃（顶栏同款），不属于上条“窗口/弹窗不用系统材质”的清理范围；
-/// 不要把登录弹窗的玻璃“统一”回实色底，其余窗口/弹窗仍走实色底。
+/// 例外（Li 2026-11-02 批准）：登录底 sheet 弹窗（BearyLoginSheet）是最早一例，
+/// 用本配方中性玻璃（顶栏同款）；2026-11-25 起该口径扩至全部底部弹窗。
+/// 不要把底部弹窗的玻璃“统一”回实色底，其余窗口/弹窗仍走实色底。
 enum BearyGlass {
     static func effectView(tint: UIColor? = nil) -> UIVisualEffectView {
         let view: UIVisualEffectView
@@ -284,7 +408,8 @@ enum BearyGlass {
 }
 
 /// 渐进模糊（规范 §6 滚动交界）：毛玻璃＋渐变遮罩，模糊从贴体处最强、向内容方向渐弱至透明。
-/// 强度取轻量（无 tint 液态玻璃／超薄材质，内容隐约可见、不断层）。
+/// 强度取轻量（超薄材质，内容隐约可见、不断层；2026-11-19 起不用液态玻璃——
+/// 无 tint 的 UIGlassEffect 在深色下自带亮面、整条垫片泛白，见本类 init 注释）。
 /// 现行只剩底栏一处垫片（.up）：自屏幕底缘向上整高平滑渐变，底部满强度、顶端完全透明
 /// （2026-11-14 Li 定；此前满强度保持到距顶边 12pt 处再淡，整块均匀厚模糊，见 #903）。
 /// 其余 10 处垫片已随 125 移除，不再新增。
@@ -317,13 +442,11 @@ final class BearyProgressiveBlurView: UIView {
 
     init(fade: BearyProgressiveBlur.Fade) {
         self.fade = fade
-        let effect: UIVisualEffect
-        if #available(iOS 26.0, *) {
-            effect = UIGlassEffect()
-        } else {
-            effect = UIBlurEffect(style: .systemUltraThinMaterial)
-        }
-        let effectView = UIVisualEffectView(effect: effect)
+        // 2026-11-19 Li 定：垫片只要纯渐变模糊、不带任何颜色。
+        // 无 tint 的 UIGlassEffect 在深色下自带亮面、整条垫片泛白（iOS 27 实机），
+        // 故全版本统一用 .systemUltraThinMaterial（随深浅自适应、无 tint、无亮面），
+        // 与低版本分支及 init(coder:) 同口径；渐变遮罩与强度口径不动。
+        let effectView = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
         effectView.isUserInteractionEnabled = false
         self.effectView = effectView
         super.init(frame: .zero)
@@ -444,6 +567,32 @@ final class BearyHit44SegmentedControl: UISegmentedControl {
         if dx == 0 && dy == 0 { return super.point(inside: point, with: event) }
         return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
     }
+
+    /// 底栏填色跟滑块（Li 2026-11-28 定）：手指在栏上拖动时的实时 x（控件坐标），
+    /// 供 SceneDelegate 让填色跟着滑块走；手指离开／取消时回 nil（滑块回到已选段）。
+    /// 只上报位置，不改控件自身的触摸与选中行为（super 照常调）；默认 nil，别的
+    /// 调用点（如首页“广场／正在关注”分段器）不受影响。
+    var trackingXChanged: ((CGFloat?) -> Void)?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        if let x = touches.first?.location(in: self).x { trackingXChanged?(x) }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+        if let x = touches.first?.location(in: self).x { trackingXChanged?(x) }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        trackingXChanged?(nil)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        trackingXChanged?(nil)
+    }
 }
 
 // MARK: - 图片地址
@@ -533,6 +682,26 @@ final class BearyImageRedirectGuard: NSObject, URLSessionTaskDelegate {
     }
 }
 
+/// 私密图片会话工厂（可复用第 10 项）：图片加载器（BearyImageLoader）与
+/// 实况照片加载器（BearyLivePhotoLoader）共用的会话口径，两处原来各写一份。
+/// 口径：URLSessionConfiguration.default + urlCache = nil + 重定向守门
+/// BearyImageRedirectGuard.shared；只关 URLCache，不改 ephemeral——ephemeral
+/// 会丢共享 cookie 存储，私密实况视频将 401。urlCache = nil 的原因：
+/// URLCache 按 URL 裸键、不分账号，私密字节一旦进共享缓存，换号／退出后
+/// 仍可能被直接命中而不走服务端可见性判定；两加载器自有按账号分桶的磁盘
+/// 缓存，URLCache 层纯属多余且有跨账号漏读风险。
+/// 每 host 并发数由调用方传（两处现行均为 6）。
+/// BearyAPI 的专用会话（上传、dedicated）另有 cookie／delegate 配置，不走这里。
+enum BearyPrivateImageSession {
+    static func makeSession(maxConnectionsPerHost: Int) -> URLSession {
+        let config = URLSessionConfiguration.default
+        config.httpMaximumConnectionsPerHost = maxConnectionsPerHost
+        config.urlCache = nil
+        // delegateQueue = nil 走系统串行队列，不改 dataTask 完成回调语义。
+        return URLSession(configuration: config, delegate: BearyImageRedirectGuard.shared, delegateQueue: nil)
+    }
+}
+
 /// 图片与实况两路磁盘缓存的单账号总盘点（第二批体验检查第 6 项）：
 /// 此前图片桶（BearyImageCache）与实况桶（BearyLiveCache）各有自己的
 /// 200MB 上限，单账号合计可占 400MB；现合并为单账号合计 200MB——
@@ -543,6 +712,66 @@ enum BearyDiskCacheBudget {
     static let totalCapBytes: Int64 = 200 * 1024 * 1024
     static let imageDirName = "BearyImageCache"
     static let liveDirName = "BearyLiveCache"
+
+    /// 磁盘缓存 TTL 24 小时：图片桶与实况桶同款口径（与服务端公开图
+    /// Cache-Control public, max-age=86400 同口径——转私密后旧缓存至多
+    /// 再活 24 小时，之后强制走网络、服务端按最新可见性判定）。
+    static let maxAge: TimeInterval = 24 * 3600
+
+    /// 两桶共用的写盘累计记账器（可复用资源第十四批第 1 项）：
+    /// 图片桶与实况桶此前各有一份按桶累计字典＋首写校准＋越限判定＋
+    /// 扫盘后写回，四处行文逐字同义、只差写回字段（图片桶／实况桶
+    /// 各自的真实总量）与执行上下文（图片同步扫盘／实况 diskQueue
+    /// 异步扫盘＋代次门）；记账这一步收进这里，两加载器各持一个实例
+    /// ——两桶同名桶的累计值各自记，不可共用一个实例。本类只护累计值
+    /// 字典本身；扫盘执行、锁范围与代次门仍归各加载器，行为一律不动
+    ///（见各加载器 enforceDiskCacheCap 注释）。
+    final class Tracker {
+
+        private let lock = NSLock()
+
+        private var totals: [String: Int64] = [:]
+
+        /// 记一笔写入，返回是否需要扫盘与此前累计值是否已知。
+        /// 本进程首写（累计值未知）时置为越限值并返回 needsScan=true，
+        /// 迫使本次即枚举校准一次；已知时累计后越限才扫盘。
+        func noteWritten(bucket: String, writtenDelta: Int64) -> (needsScan: Bool, hadKnownTotal: Bool) {
+            lock.lock()
+
+            defer { lock.unlock() }
+
+            if let known = totals[bucket] {
+                let tracked = known + writtenDelta
+
+                totals[bucket] = tracked
+
+                return (tracked > BearyDiskCacheBudget.totalCapBytes, true)
+            }
+
+            totals[bucket] = BearyDiskCacheBudget.totalCapBytes + 1
+
+            return (true, false)
+        }
+
+        /// 扫盘成功后写回本桶淘汰后的真实总量；枚举失败时不调用，
+        /// 累计值保持越限、下次写重试（两桶原口径一致）。
+        func recordSwept(bucket: String, total: Int64) {
+            lock.lock()
+
+            defer { lock.unlock() }
+
+            totals[bucket] = total
+        }
+
+        /// purgeAccount 删目录时累计值随之作废，下次写该桶时重新校准。
+        func reset(bucket: String) {
+            lock.lock()
+
+            defer { lock.unlock() }
+
+            totals[bucket] = nil
+        }
+    }
 
     private static func dirURL(name: String, bucket: String) -> URL? {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
@@ -767,7 +996,7 @@ final class BearyImageLoader {
         diskWriteLock.unlock()
         // 审计三轮 23 项：目录已删，累计字节随之作废（下次写该桶时重新校准一次）。
         diskCacheLock.lock()
-        diskCacheTotals["\(id)"] = nil
+        diskCacheTracker.reset(bucket: "\(id)")
         diskCacheLock.unlock()
     }
 
@@ -783,17 +1012,9 @@ final class BearyImageLoader {
 
     init(session: URLSession = .shared) {
         if session === URLSession.shared {
-            let config = URLSessionConfiguration.default
-            config.httpMaximumConnectionsPerHost = Self.maxConcurrentDownloads
-            // 秒开-网络层：urlCache = nil。URLCache 按 URL 裸键、不分账号，
-            // 且退出/401 清理不覆盖它——私密图字节一旦进共享缓存，换号/
-            // 退出后仍可能被直接命中而不走服务端可见性判定；本加载器
-            // 自有按账号分桶的磁盘缓存（见 S10），URLCache 层纯属多余
-            // 且跨账号漏读风险，故显式关掉（与 BearyAPI 专用会话同口径）。
-            config.urlCache = nil
-            // D4-App：默认会话挂重定向守门（见 BearyImageRedirectGuard）；
-            // delegateQueue=nil 走系统串行队列，不改 dataTask 完成回调语义。
-            self.session = URLSession(configuration: config, delegate: BearyImageRedirectGuard.shared, delegateQueue: nil)
+            // 私密图片会话走共享工厂（见 BearyPrivateImageSession）：与实况
+            // 加载器同口径；并发上限仍是 B3-3 的 6（见 maxConcurrentDownloads）。
+            self.session = BearyPrivateImageSession.makeSession(maxConnectionsPerHost: Self.maxConcurrentDownloads)
         } else {
             self.session = session
         }
@@ -833,8 +1054,8 @@ final class BearyImageLoader {
     /// 私密图服务端给的是 private 1 年，但本加载器无法从 URL 区分
     /// 公开/私密（key 不含可见性），故统一 24 小时、向 fail-closed
     /// 取严；代价只是私密图 24 小时后多一次下载。预热记录的 TTL 复用
-    /// 此值（BearyImagePrefetcher.warmedTTL），同一文件内单源。
-    fileprivate static let diskCacheMaxAge: TimeInterval = 24 * 3600
+    /// 此值（BearyImagePrefetcher.warmedTTL），单源见 BearyDiskCacheBudget.maxAge。
+    fileprivate static let diskCacheMaxAge: TimeInterval = BearyDiskCacheBudget.maxAge
 
     /// 磁盘命中同时带回该文件的到期时间（写入时间 + 24 小时，A5）：
     /// 内存转存沿用它，不再从“现在”重起 24 小时——已缓存 23 小时的图
@@ -923,8 +1144,10 @@ final class BearyImageLoader {
     /// 出的真实值，故不会误删；低估时至多延迟到下一次越限校准即纠正。
     /// 读写线程：writeDisk 仍在 URLSession 回调（非主线程）执行，枚举与
     /// 删除也在同一把锁内、同一非主线程完成，绝不上主线程。
+    /// 记账本体已收进 BearyDiskCacheBudget.Tracker（与实况桶同款）；
+    /// 本锁仍护 deletedDiskFiles 与同步扫盘范围，不动。
     private let diskCacheLock = NSLock()
-    private var diskCacheTotals: [String: Int64] = [:]
+    private let diskCacheTracker = BearyDiskCacheBudget.Tracker()
 
     /// 审计 r1-images 第 4 项：待删磁盘文件路径集（由 diskCacheLock 守卫）。
     /// 逐出删除已改后台队列，删除完成前本集仍记该文件，diskData 视之为
@@ -988,34 +1211,32 @@ final class BearyImageLoader {
     /// 刚写入的最新文件天然在最后、不会被误删；简单 sweep，不新增清理状态机。
     /// 审计三轮 23 项改动只在触发时机：稳态写盘不枚举，仅累计值越限（或本进程
     /// 首写校准）时枚举一次，枚举出的真实总量写回累计值。
-    private static let diskCacheCapBytes: Int64 = BearyDiskCacheBudget.totalCapBytes
     private func enforceDiskCacheCap(bucket: Int?, writtenDelta: Int64) {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+
         let bucketName = bucket.map(String.init) ?? "guest"
+
         let dir = caches.appendingPathComponent("BearyImageCache").appendingPathComponent(bucketName)
+
         diskCacheLock.lock()
+
         defer { diskCacheLock.unlock() }
-        var hadKnownTotal = false
-        if let known = diskCacheTotals[bucketName] {
-            hadKnownTotal = true
-            let tracked = known + writtenDelta
-            diskCacheTotals[bucketName] = tracked
-            guard tracked > Self.diskCacheCapBytes else { return }
-        }
-        // 越限（或本进程首写、累计值未知）才枚举：首写时枚举值已含本次写入，
-        // 不再另加 writtenDelta；越限时枚举值同样是写后真实总量。
-        // 合并口径：淘汰走两桶合计（图片桶 + 实况桶），删最旧文件直至合计回落，
-        // 写回本桶淘汰后的真实总量；枚举失败时保持越限累计值，下次写重试。
-        guard FileManager.default.fileExists(atPath: dir.path) || hadKnownTotal else {
-            diskCacheTotals[bucketName] = Self.diskCacheCapBytes + 1
-            return
-        }
+
+        // 记账与越限判定已收进 BearyDiskCacheBudget.Tracker（与实况桶同款）；
+        // 同步扫盘仍在 diskCacheLock 内、同一非主线程完成（原口径，不改异步）。
+        // 首写时枚举值已含本次写入，不再另加 writtenDelta；越限时枚举值同样
+        // 是写后真实总量。枚举失败时累计值保持越限，下次写重试。
+        let noted = diskCacheTracker.noteWritten(bucket: bucketName, writtenDelta: writtenDelta)
+
+        guard noted.needsScan else { return }
+
+        guard FileManager.default.fileExists(atPath: dir.path) || noted.hadKnownTotal else { return }
+
         let swept = BearyDiskCacheBudget.enforceCombined(bucket: bucketName)
-        guard swept.ok else {
-            if !hadKnownTotal { diskCacheTotals[bucketName] = Self.diskCacheCapBytes + 1 }
-            return
-        }
-        diskCacheTotals[bucketName] = swept.imageTotal
+
+        guard swept.ok else { return }
+
+        diskCacheTracker.recordSwept(bucket: bucketName, total: swept.imageTotal)
     }
 
     /// 内存键：账号隔离 4 号——键首含账号维度（未登录为 guest），同 URL
@@ -1462,51 +1683,78 @@ final class BearyImageLoader {
         // 尺寸合并为一次磁盘读与一次下载），再把尺寸记录插表；解码与内存
         // 仍按尺寸各做各的。原始订阅先于插表建立，取消路径总能找到它。
         // 原始回包在后台队列执行，解码转 diskAndDecodeQueue 做，不占主线程。
-        let (rawKey, rawId) = loadRawData(for: url, bucket: bucket) { [weak self, weak entry] result in
-            guard let self = self, let entry = entry else { return }
-            self.inFlightLock.lock()
-            let live = self.inFlight[key] === entry && !entry.subscribers.isEmpty && !entry.finishing
-            self.inFlightLock.unlock()
-            guard live else { return }
-            // 审计 r1-images 第 1 项：完成方先置位、不摘表——解码/交付
-            // 期间同键新加载挂到同一记录上，交付时一并分发。
-            self.inFlightLock.lock()
-            entry.finishing = true
-            self.inFlightLock.unlock()
-            switch result {
-            case .failure(let err):
-                self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: nil, result: .failure(err))
-            case .success(let raw):
-                // S4：解码进后台队列（与磁盘解码共用 diskAndDecodeQueue，信号量限 2 路
-                // 并发）；原始回包队列立即释放，一张图的解码不再拖住后续回包。
-                // entry.finishing 已在上面置位，解码期间同键新订阅仍挂同一记录、
-                // 交付时一并分发，不再因摘表过早另起加载链。
-                // S1 校验（HTTP/MIME）与写盘已在原始字节层（loadRawData）做过，
-                // 这里只解码、存内存、交付，不再重复校验与写盘。
-                Self.diskAndDecodeQueue.async { [weak self, weak entry] in
-                    guard let self = self, let entry = entry else { return }
-                    _ = Self.networkDecodeSemaphore.wait()
-                    let img = BearyImageLoader.decodedImage(data: raw.data, downsampleToWidth: downsampleToWidth)
-                    Self.networkDecodeSemaphore.signal()
-                    guard let img = img else {
-                        self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: nil, result: .failure(.invalidData))
-                        return
+        // 图片加载失败自动重试一次（静默重试，不改加载态、不 toast、
+        // 不用三点）：首次失败（网络／脏数据／解码失败）后立即再发一次；
+        // 取消不重试，第二次失败即按现有失败态交付——离线时两次失败即停。
+        // 重试复用同一在途记录与订阅表，调用方只收到一次最终回调；
+        // entry.finishing 在失败分支复位，否则重试回包会被 live 门拦住。
+        func startRawLoad(attempt: Int) {
+            let (rawKey, rawId) = loadRawData(for: url, bucket: bucket) { [weak self, weak entry] result in
+                guard let self = self, let entry = entry else { return }
+                self.inFlightLock.lock()
+                let live = self.inFlight[key] === entry && !entry.subscribers.isEmpty && !entry.finishing
+                self.inFlightLock.unlock()
+                guard live else { return }
+                // 审计 r1-images 第 1 项：完成方先置位、不摘表——解码/交付
+                // 期间同键新加载挂到同一记录上，交付时一并分发。
+                self.inFlightLock.lock()
+                entry.finishing = true
+                self.inFlightLock.unlock()
+                switch result {
+                case .failure(let err):
+                    if attempt == 0 {
+                        switch err {
+                        case .cancelled:
+                            self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: nil, result: .failure(err))
+                        default:
+                            self.inFlightLock.lock()
+                            entry.finishing = false
+                            self.inFlightLock.unlock()
+                            startRawLoad(attempt: 1)
+                        }
+                    } else {
+                        self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: nil, result: .failure(err))
                     }
-                    // 审计 22 项：写内存前验代次，代次已变即不写内存（磁盘
-                    // 文件本身已被 purge/evict 删掉或即将删掉，读到的是删除前
-                    // 已解码在手的旧字节，不得再留存）；交付走 finishDelivery，
-                    // 其内另按逐出戳核对。
-                    // A5：内存与交付共用原始字节的到期时间（磁盘支为磁盘剩余
-                    // TTL、网络支为现在 + 24 小时），与 HEAD 的口径一致。
-                    if capturedGeneration == self.generation(for: bucket) {
-                        self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration, expiresAt: raw.expiresAt)
+                case .success(let raw):
+                    // S4：解码进后台队列（与磁盘解码共用 diskAndDecodeQueue，信号量限 2 路
+                    // 并发）；原始回包队列立即释放，一张图的解码不再拖住后续回包。
+                    // entry.finishing 已在上面置位，解码期间同键新订阅仍挂同一记录、
+                    // 交付时一并分发，不再因摘表过早另起加载链。
+                    // S1 校验（HTTP/MIME）与写盘已在原始字节层（loadRawData）做过，
+                    // 这里只解码、存内存、交付，不再重复校验与写盘。
+                    Self.diskAndDecodeQueue.async { [weak self, weak entry] in
+                        guard let self = self, let entry = entry else { return }
+                        _ = Self.networkDecodeSemaphore.wait()
+                        let img = BearyImageLoader.decodedImage(data: raw.data, downsampleToWidth: downsampleToWidth)
+                        Self.networkDecodeSemaphore.signal()
+                        guard let img = img else {
+                            if attempt == 0 {
+                                self.inFlightLock.lock()
+                                entry.finishing = false
+                                self.inFlightLock.unlock()
+                                startRawLoad(attempt: 1)
+                            } else {
+                                self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: nil, result: .failure(.invalidData))
+                            }
+                            return
+                        }
+                        // 审计 22 项：写内存前验代次，代次已变即不写内存（磁盘
+                        // 文件本身已被 purge/evict 删掉或即将删掉，读到的是删除前
+                        // 已解码在手的旧字节，不得再留存）；交付走 finishDelivery，
+                        // 其内另按逐出戳核对。
+                        // A5：内存与交付共用原始字节的到期时间（磁盘支为磁盘剩余
+                        // TTL、网络支为现在 + 24 小时），与 HEAD 的口径一致。
+                        if capturedGeneration == self.generation(for: bucket) {
+                            self.storeMemory(img, forKey: key, bucket: bucket, generation: capturedGeneration, expiresAt: raw.expiresAt)
+                        }
+                        self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: raw.expiresAt, result: .success(img))
                     }
-                    self.finishDelivery(entry: entry, key: key, bucket: bucket, capturedGeneration: capturedGeneration, expiresAt: raw.expiresAt, result: .success(img))
                 }
             }
+            entry.rawKey = rawKey
+            entry.rawId = rawId
         }
-        entry.rawKey = rawKey
-        entry.rawId = rawId
+        startRawLoad(attempt: 0)
         inFlightLock.lock()
         if let existing = inFlight[key] {
             // 插表竞态：已有后来者先插表，本次的尺寸记录直接丢弃（订阅挂到
@@ -1552,7 +1800,7 @@ struct BearyImagePrefetchBudget {
 /// 不抢首屏：只在滚动停稳（didEndDecelerating / 不减速的 didEndDragging）
 /// 与切回本页时触发，逐张错峰 0.15s 起步（首张再等 0.25s），新滚动
 /// 开始即 cancel（在途预热订阅摘除；若与可见 cell 合并在途，可见侧
-/// 的下载不受影响）；预热失败静默丢弃，不 toast、不重试、不亮失败态。
+/// 的下载不受影响）；预热失败静默丢弃，不 toast、不另行重试、不亮失败态。
 /// 私密口径：只预热当前 viewer 可见的篇——已公开，或作者是本人；
 /// 占位篇（placeholder）与他人私密篇一律跳过，不进任何缓存桶。
 /// 账号隔离：窗口计算时快照当前账号桶，换号后旧桶的 warmed 与 pending
@@ -1567,7 +1815,7 @@ struct BearyImagePrefetchBudget {
 /// “已预热”；本进程内同一 URL 不重复排队靠 pending + warmed 两集合
 /// 共同保证（warmed 的“已见过”以未过期为准）。
 /// 卡片键对齐：预热传卡片同款下采样宽度（strip × scale，见
-/// cardStripWidth，与 BearyDiaryCardCell.stripWidth 同口径），使预热
+/// bearyStripWidth(forKey:dims:height:) 同口径），使预热
 /// 解码图与卡片显示走同一内存键，不再全尺寸解码后仍命中不了。
 final class BearyImagePrefetcher {
     static let shared = BearyImagePrefetcher()
@@ -1672,20 +1920,6 @@ final class BearyImagePrefetcher {
         return budget
     }
 
-    /// 卡片图片条同款定宽（BearyDiaryCardCell.stripWidth 同口径，卡片
-    /// 显示逻辑本身不动）：216 高按宽高比定宽，0.55–2.22 倍高夹取，
-    /// 无尺寸老图默认 280。预热用 strip × scale 作下采样宽度，使
-    /// memoryKey 与卡片显示的键一字相同；卡片键若改口径，这里须同改。
-    private func cardStripWidth(forKey key: String, dims: [String: [Int]]?, height: CGFloat) -> CGFloat {
-        if let dims = dims, let d = dims[key], d.count >= 2, d[0] > 0, d[1] > 0 {
-            let raw = height * CGFloat(d[0]) / CGFloat(d[1])
-            let low = height * 0.55
-            let high = height * 2.22
-            return round(max(low, min(high, raw)))
-        }
-        return 280
-    }
-
     /// entries 为当前列表全量顺序；lastVisibleIndex 为最后可见行下标
     ///（无可见行时传 -1，即从头预热）；viewerId 为当前登录用户 id，
     ///游客传 nil（此时只预热公开篇）。
@@ -1737,7 +1971,7 @@ final class BearyImagePrefetcher {
                 let seen = isWarmed(warmedKey) || pending.contains(warmedKey)
                 lock.unlock()
                 if seen { continue }
-                let strip = cardStripWidth(forKey: key, dims: entry.imgDims, height: 216)
+                let strip = bearyStripWidth(forKey: key, dims: entry.imgDims, height: BearyImageStrip.height)
                 items.append((url: url, downsampleToWidth: strip * UIScreen.main.scale, warmedKey: warmedKey))
             }
         }
@@ -1786,7 +2020,7 @@ final class BearyImagePrefetcher {
                         self.noteWarmed(item.warmedKey)
                     }
                     self.lock.unlock()
-                    // 预热失败静默丢弃：不 toast、不重试；滑到该屏时 cell
+                    // 预热失败静默丢弃：不 toast、不另行重试；滑到该屏时 cell
                     // 仍按需加载，不会因预热失败而缺图。
                 }
                 if let task = task { self.inFlight.append(task) }
@@ -2010,8 +2244,9 @@ extension UIImageView {
             bearyImageRequestFinished()
             return
         }
-        // 占位图未到之前挂转圈（占位图一到即摘，与 bearySetImage 同口径）。
-        bearyAttachWebRingSpinner()
+        // 不挂转圈：小图未到之前只留固定尺寸空框，小图一到即为模糊占位
+        //（2026-11-22：转圈与模糊占位同时出现，去掉转圈；头像仍走
+        // bearySetImage 的圈，不动）。
         let startedAt = Date()
         bearyImageRequestStarted()
         let tinyTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 32) { [weak self] result in
@@ -2068,76 +2303,367 @@ extension UIImageView {
 
 // MARK: - 时间与名字
 
+/// 日期完全本地化（2026-11-21）：相对时间跟 App 语言，绝对日期／数字／周起始日跟 region（本地化规范 v4 §二）。
+/// 时区不由本支定：各处沿用既有口径——写死 GMT+8 的地方调用方仍传 GMT+8，
+/// 没写过时区的地方跟设备（timeZone 传 nil，即不设）；日记时区（按写入时
+/// 设备时区记录、展示用该时区，2026-11-21 15:01 Li 定，取代“时区永远北京
+/// 时间”）另开一支做，不在本支里。
+/// 中文当原文：语言为中文时沿用既有格式串，输出与改前逐字节一致；非中文走系统模板
+/// （setLocalizedDateFormatFromTemplate／RelativeDateTimeFormatter），英文输出以系统
+/// 模板实际输出为准，是草稿、待 Li 定稿。@handle 不本地化，不归这里管。
+/// 2026-11-25 日记时间改版（Li 定）：日记绝对日期改“/”格式（见 slashDateString／
+/// slashDateTimeString），时分只在详情页显示；日记时间走 BearyVisibilityText
+/// .diaryTimeString；时区参数已留口（nil = 设备时区），日记时区由 #2094 接线。
+/// 语言切换重建根界面（见 BearyAppLanguage.didChangeNotification），formatter 按
+/// 当前语言缓存、语言变了下次调用重建；调用方只在主线程做行渲染
+/// （DateFormatter 非线程安全，与既有静态 formatter 同约束）。
+enum BearyLocalizedDate {
+    /// App 有效 locale（本地化规范 v4 §二）：language 与 region 分开。
+    /// language：中国大陆档→zh-Hans；English 档→en；跟随系统→系统首选语言属于 {zh, en} 时用它，否则用 en。
+    /// region：中国大陆档→CN；其余→系统地区。日期／数字／周起始日一律按 region 生成，不再用 Locale.current 混算。
+    static var locale: Locale {
+        let language: String
+        switch BearyAppLanguage.mode {
+        case .mainland:
+            language = "zh-Hans"
+        case .english:
+            language = "en"
+        case .system:
+            let preferred = Locale.preferredLanguages.first ?? "en"
+            let code = Locale(identifier: preferred).languageCode ?? "en"
+            language = (code == "zh" || code == "en") ? languagePart(of: preferred) : "en"
+        }
+        let region: String
+        switch BearyAppLanguage.mode {
+        case .mainland:
+            region = "CN"
+        default:
+            region = Locale.current.regionCode ?? "US"
+        }
+        return Locale(identifier: "\(language)_\(region)")
+    }
+
+    /// preferredLanguages 条目（如 zh-Hans-CN／en-US）去掉末尾地区码，只留语言（＋书写体）。
+    private static func languagePart(of identifier: String) -> String {
+        let parts = identifier.split(separator: "-")
+        guard parts.count > 1, parts.last?.count == 2 else { return identifier }
+        return parts.dropLast().joined(separator: "-")
+    }
+    /// 部署目标仍为 iOS 15（升 16 的 #2054 未合），不用 iOS 16 才有的
+    /// Locale.Language API；languageCode 在 15 上可用。
+    static var isChinese: Bool { locale.languageCode == "zh" }
+
+    /// 既有写死时区（与原有各处 GMT+8 同值；本支不新定口径，只是把原来
+    /// 散在各处的 `TimeZone(secondsFromGMT: 8 * 3600)` 收到一处）。
+    static var gmt8: TimeZone {
+        TimeZone(secondsFromGMT: 8 * 3600) ?? .current
+    }
+    /// 既有写死时区（星图底卡／照片页原来用的 Asia/Shanghai，与 GMT+8 同值）。
+    static var shanghai: TimeZone {
+        TimeZone(identifier: "Asia/Shanghai") ?? gmt8
+    }
+
+    /// 一周首日（1=周日 … 7=周六），跟 region 走：语言行
+    /// “中国大陆”固定周一（2）；否则取设备日历的首日（美国 1=周日，
+    /// 欧洲多数地区 2=周一）。只影响时间线周条／月历的列对齐，不动时区口径。
+    static var firstWeekday: Int {
+        if BearyAppLanguage.mode == .mainland { return 2 }
+        return Calendar.current.firstWeekday
+    }
+
+    /// 星期单字头（veryShortWeekdaySymbols），按首日起排，供月历表头用：
+    /// 中文为 ["一"…"日"]，与改前写死值一致；非中文取系统单字（如 "S" "M" …）。
+    static var orderedVeryShortWeekdaySymbols: [String] {
+        var cal = Calendar(identifier: .gregorian)
+        cal.locale = locale
+        let symbols = cal.veryShortWeekdaySymbols // 周日开头，索引 0=周日
+        let start = firstWeekday - 1
+        guard start > 0, start < symbols.count else { return symbols }
+        return Array(symbols[start...] + symbols[..<start])
+    }
+
+    /// 星期短名（shortWeekdaySymbols），按首日起排，供热力图星期列用：
+    /// 中文为 ["周日"…"周六"]，与改前写死值一致；非中文取系统短名（如 "Sun" "Mon" …）。
+    /// 日期类文案走系统本地化，不进 String Catalog（本地化规范 v7：日期完全本地化）。
+    static var orderedShortWeekdaySymbols: [String] {
+        var cal = Calendar(identifier: .gregorian)
+        cal.locale = locale
+        let symbols = cal.shortWeekdaySymbols // 周日开头，索引 0=周日
+        let start = firstWeekday - 1
+        guard start > 0, start < symbols.count else { return symbols }
+        return Array(symbols[start...] + symbols[..<start])
+    }
+
+    private static var cachedLocaleID: String?
+    private static var cachedFormatters: [String: DateFormatter] = [:]
+    private static var cachedRelativeFormatter: RelativeDateTimeFormatter?
+    private static var cachedRelativeLocaleID: String?
+
+    private static func resetCacheIfNeeded() {
+        let id = locale.identifier
+        if cachedLocaleID != id {
+            cachedLocaleID = id
+            cachedFormatters.removeAll()
+            cachedRelativeFormatter = nil
+            cachedRelativeLocaleID = nil
+        }
+    }
+
+    /// 与 timeZone 对应的日历（nil = 设备日历）。
+    static func calendar(for timeZone: TimeZone?) -> Calendar {
+        guard let timeZone = timeZone else { return Calendar.current }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = timeZone
+        return cal
+    }
+
+    /// 由年月日拼 Date：与格式化用同一时区（nil = 设备），中午 12 点拼，
+    /// 跨时区也不挪日。供插值型日期（那年今日／与过去的自己对话／周标题／
+    /// ID 卡生日）非中文分支用。
+    static func dateFromComponents(year: Int, month: Int, day: Int, timeZone: TimeZone? = nil) -> Date? {
+        var comps = DateComponents()
+        comps.year = year; comps.month = month; comps.day = day; comps.hour = 12
+        return calendar(for: timeZone).date(from: comps)
+    }
+
+    /// 中文用既有格式串（输出与改前一致），非中文用系统模板。
+    /// timeZone：nil = 跟设备（不设，沿用各处原来没写时区的行为）；
+    /// 传值 = 该处原来写死的时区。
+    static func formatter(template: String, zhFormat: String, timeZone: TimeZone? = nil) -> DateFormatter {
+        resetCacheIfNeeded()
+        let key = template + "|" + zhFormat + "|" + (timeZone?.identifier ?? "device")
+        if let f = cachedFormatters[key] { return f }
+        let f = DateFormatter()
+        f.locale = locale
+        if let timeZone = timeZone { f.timeZone = timeZone }
+        if isChinese { f.dateFormat = zhFormat } else { f.setLocalizedDateFormatFromTemplate(template) }
+        cachedFormatters[key] = f
+        return f
+    }
+
+    /// H:mm（小时不补零，卡片／详情／通知同口径）。
+    static func timeString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "jmm", zhFormat: "H:mm", timeZone: timeZone).string(from: date)
+    }
+    /// HH:mm（小时补零，草稿箱／时间线行内时间同口径）。
+    static func timeStringPadded(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "jmm", zhFormat: "HH:mm", timeZone: timeZone).string(from: date)
+    }
+    /// M月d日 H:mm（小时不补零）。
+    static func monthDayTimeString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "MMMMdjmm", zhFormat: "M月d日 H:mm", timeZone: timeZone).string(from: date)
+    }
+    /// yyyy年M月d日。
+    static func yearMonthDayString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "yyyyMMMMd", zhFormat: "yyyy年M月d日", timeZone: timeZone).string(from: date)
+    }
+    /// M月d日。
+    static func monthDayString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "MMMMd", zhFormat: "M月d日", timeZone: timeZone).string(from: date)
+    }
+    /// 月日插值（如 ID 卡生日“11月3日”）：走共享 formatter（中文 M月d日，非中文按模板）。
+    static func monthDayString(month: Int, day: Int, timeZone: TimeZone? = nil) -> String {
+        let year = calendar(for: timeZone).component(.year, from: Date())
+        guard let date = dateFromComponents(year: year, month: month, day: day, timeZone: timeZone) else { return "\(month)/\(day)" }
+        return monthDayString(from: date, timeZone: timeZone)
+    }
+    /// yyyy年M月。
+    static func yearMonthString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "yyyyMMMM", zhFormat: "yyyy年M月", timeZone: timeZone).string(from: date)
+    }
+    /// yyyy/M/d（Plus 有效期／注销倒计时里的短日期）。
+    static func shortDateString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "yyyyMd", zhFormat: "yyyy/M/d", timeZone: timeZone).string(from: date)
+    }
+    /// yyyy/M/d HH:mm（注销倒计时括号里的短日期时间）。
+    static func shortDateTimeString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        formatter(template: "yyyyMdjmm", zhFormat: "yyyy/M/d HH:mm", timeZone: timeZone).string(from: date)
+    }
+    /// 日记“/”绝对日期（2026-11-25 Li 定，取代 M月d日 H:mm）：
+    /// 同年只写月日、跨年带年，月日顺序跟地区走（中文／美式 11/25、英式 25/11），
+    /// 不带时分；年份判定与显示走传入时区（nil = 设备时区，日记时区由 #2094 接线）。
+    static func slashDateString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        let year = calendar(for: timeZone).component(.year, from: date)
+        let currentYear = calendar(for: timeZone).component(.year, from: Date())
+        if year == currentYear {
+            return formatter(template: "Md", zhFormat: "M/d", timeZone: timeZone).string(from: date)
+        }
+        return formatter(template: "yMd", zhFormat: "yyyy/M/d", timeZone: timeZone).string(from: date)
+    }
+    /// 日记详情页时间（2026-11-25 Li 定）：日期＋时刻；同年 M/d H:mm、
+    /// 跨年 yyyy/M/d H:mm；英文时刻跟系统 12/24 小时制（模板 jmm）。
+    /// 时分只在详情页显示，卡片等处用 slashDateString。
+    static func slashDateTimeString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        let year = calendar(for: timeZone).component(.year, from: date)
+        let currentYear = calendar(for: timeZone).component(.year, from: Date())
+        if year == currentYear {
+            return formatter(template: "Mdhmm", zhFormat: "M/d H:mm", timeZone: timeZone).string(from: date)
+        }
+        return formatter(template: "yMdhmm", zhFormat: "yyyy/M/d H:mm", timeZone: timeZone).string(from: date)
+    }
+    /// yyyy年M月d日 HH:mm（账号类日期时间）。
+    static func yearMonthDayTimeString(from date: Date, timeZone: TimeZone? = nil) -> String {
+        yearMonthDayString(from: date, timeZone: timeZone) + " " + timeStringPadded(from: date, timeZone: timeZone)
+    }
+
+    /// RelativeDateTimeFormatter：locale 跟 App 语言；不另 pin 日历／时区
+    /// （相对时间原来就是纯秒数差，不跟任何日历走）。
+    static func relativeFormatter() -> RelativeDateTimeFormatter {
+        resetCacheIfNeeded()
+        if cachedRelativeLocaleID != locale.identifier {
+            let f = RelativeDateTimeFormatter()
+            f.locale = locale
+            f.unitsStyle = .full
+            cachedRelativeFormatter = f
+            cachedRelativeLocaleID = locale.identifier
+        }
+        return cachedRelativeFormatter!
+    }
+
+    /// 1 分钟内：文案走 catalog（date.relative.justNow：中文“刚刚”，英文 now，Li 2026-11-21 定稿）。
+    static func justNowString(date: Date) -> String {
+        NSLocalizedString("date.relative.justNow", comment: "")
+    }
+    /// X 分钟前：中文走 catalog（date.relative.minutesAgo），非中文如 5 minutes ago。
+    /// 私信／通知用；日记去“前”走 diaryMinutesString。
+    static func minutesAgoString(_ value: Int) -> String {
+        if isChinese { return String(format: NSLocalizedString("date.relative.minutesAgo", comment: ""), value) }
+        let ref = Date().addingTimeInterval(TimeInterval(-value * 60))
+        return relativeFormatter().localizedString(for: ref, relativeTo: Date())
+    }
+    /// X 小时前：中文走 catalog（date.relative.hoursAgo），非中文如 2 hours ago。
+    /// 私信／通知用；日记去“前”走 diaryHoursString。
+    static func hoursAgoString(_ value: Int) -> String {
+        if isChinese { return String(format: NSLocalizedString("date.relative.hoursAgo", comment: ""), value) }
+        let ref = Date().addingTimeInterval(TimeInterval(-value * 3600))
+        return relativeFormatter().localizedString(for: ref, relativeTo: Date())
+    }
+    /// X 天前：中文走 catalog（date.relative.daysAgo），非中文如 3 days ago（1 天为 yesterday）。
+    /// 私信／通知用；日记去“前”走 diaryDaysString。
+    static func daysAgoString(_ value: Int) -> String {
+        if isChinese { return String(format: NSLocalizedString("date.relative.daysAgo", comment: ""), value) }
+        let ref = Date().addingTimeInterval(TimeInterval(-value * 24 * 3600))
+        return relativeFormatter().localizedString(for: ref, relativeTo: Date())
+    }
+
+    /// 日记相对时间（2026-11-25 Li 定去“前”）：X 分钟／X 小时／X 天，中英文都走
+    /// catalog（date.relative.minutes／hours／days），不带“前”／"ago"。
+    /// 刚刚／昨天／前天不动（前天是一个词，不是后缀）。
+    static func diaryMinutesString(_ value: Int) -> String {
+        String(format: NSLocalizedString("date.relative.minutes", comment: ""), value)
+    }
+    static func diaryHoursString(_ value: Int) -> String {
+        String(format: NSLocalizedString("date.relative.hours", comment: ""), value)
+    }
+    static func diaryDaysString(_ value: Int) -> String {
+        String(format: NSLocalizedString("date.relative.days", comment: ""), value)
+    }
+
+    /// “今天／昨天”：中文走 catalog（date.relative.today／yesterday），非中文走 doesRelativeDateFormatting（如 Today／Yesterday）。
+    /// timeZone 与调用方判定今天／昨天用的日历一致（卡片／草稿箱／回收站三处原来都是 GMT+8）。
+    static func todayWord(timeZone: TimeZone? = nil) -> String { relativeDayWord(for: Date(), timeZone: timeZone) }
+    static func yesterdayWord(timeZone: TimeZone? = nil) -> String {
+        let yesterday = calendar(for: timeZone).date(byAdding: .day, value: -1, to: Date()) ?? Date()
+        return relativeDayWord(for: yesterday, timeZone: timeZone)
+    }
+    private static func relativeDayWord(for date: Date, timeZone: TimeZone? = nil) -> String {
+        if isChinese {
+            let key = calendar(for: timeZone).isDateInToday(date) ? "date.relative.today" : "date.relative.yesterday"
+            return NSLocalizedString(key, comment: "")
+        }
+        let f = DateFormatter()
+        f.locale = locale
+        if let timeZone = timeZone { f.timeZone = timeZone }
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        f.doesRelativeDateFormatting = true
+        return f.string(from: date)
+    }
+
+    /// “Plus 至 <短日期>”后缀：走 catalog（plus.untilSuffix；英文为草稿，待 Li 定稿）。
+    static func plusUntilSuffix(untilMs: Int, timeZone: TimeZone? = nil) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(untilMs) / 1000.0)
+        return String(format: NSLocalizedString("plus.untilSuffix", comment: ""), shortDateString(from: date, timeZone: timeZone))
+    }
+}
+
 enum BearyText {
+    /// 邀请码格式：8 位大写字母或数字；邀请面板与登录页共用同一口径，
+    /// 格式一改只改此处（此前两处逐字重复，一端改漏即一端放行、一端拦截）。
+    static func isValidInviteCode(_ code: String) -> Bool {
+        return code.range(of: "^[A-Z0-9]{8}$", options: .regularExpression) != nil
+    }
+
     /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
     /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
-    private static let hourMinuteFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        formatter.dateFormat = "H:mm"
-        return formatter
-    }()
+    /// 2026-11-21 日期完全本地化：formatter 跟 App 语言（见 BearyLocalizedDate），
+    /// 按语言缓存、语言切换后下次调用重建；中文输出与改前逐字节一致。
     /// 审计四轮 14：月日时分静态复用——聊天页行渲染与 timeString 共用，
     /// 只在主线程用（DateFormatter 非线程安全，不跨线程用）。
-    static let monthDayHourMinuteFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        formatter.dateFormat = "M月d日 H:mm"
-        return formatter
-    }()
+    static var monthDayHourMinuteFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "MMMMdjmm", zhFormat: "M月d日 H:mm", timeZone: BearyLocalizedDate.gmt8)
+    }
+    /// 北京时区（存量口径：无篇场景与旧签名回落用）。
+    static var beijingTimeZone: TimeZone { BearyBeijingDay.timeZone(tzName: nil) }
 
     /// 跨年绝对日期（规范 §12）：同年不带年份，跨年「yyyy年M月d日」
     /// （不带时刻，与回收站 createdLabel 同口径）；显示走北京时区。
-    static let yearMonthDayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        formatter.dateFormat = "yyyy年M月d日"
-        return formatter
-    }()
+    static var yearMonthDayFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "yyyyMMMMd", zhFormat: "yyyy年M月d日", timeZone: BearyLocalizedDate.gmt8)
+    }
 
     /// 7 天外绝对时间：同年「M月d日 H:mm」，跨年「yyyy年M月d日」；
-    /// 年份判定与显示均走北京日历/时区，不跟设备时区。
+    /// 年份判定与显示均走传入时区的日历/时区。
+    /// 无篇场景（旧签名）回落北京；日记面一律走带时区的重载。
     static func absoluteDateString(from date: Date) -> String {
-        let calendar = BearyBeijingDay.calendar
+        absoluteDateString(from: date, timeZone: beijingTimeZone)
+    }
+    static func absoluteDateString(from date: Date, timeZone: TimeZone) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
         let year = calendar.component(.year, from: date)
         let currentYear = calendar.component(.year, from: Date())
         if year == currentYear {
-            return monthDayHourMinuteFormatter.string(from: date)
+            return BearyLocalizedDate.formatter(template: "MMMMdjmm", zhFormat: "M月d日 H:mm", timeZone: timeZone).string(from: date)
         }
-        return yearMonthDayFormatter.string(from: date)
+        return BearyLocalizedDate.formatter(template: "yyyyMMMMd", zhFormat: "yyyy年M月d日", timeZone: timeZone).string(from: date)
     }
 
     /// [24] 小项 6：统一为项目主流口径——今天 → H:mm；昨天 → 昨天 H:mm；
     /// 否则 M月d日 H:mm（小时不补零，与卡片/详情/通知/时间线引用一致），
     /// 跨年「yyyy年M月d日」（规范 §12）。
-    /// 今天/昨天判定与显示均走北京日历/时区，不用设备时区。
+    /// 今天/昨天判定与显示走传入时区；无篇场景（旧签名）走查看设备时区——
+    /// 私信与通知行共用本函数，它们没有日记时区（2026-11-21 日记时区口径）。
     /// created_at 是毫秒时间戳。
     static func timeString(ms: Int) -> String {
+        timeString(ms: ms, timeZone: .current)
+    }
+    static func timeString(ms: Int, timeZone: TimeZone) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let cal = BearyBeijingDay.calendar
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = timeZone
         if cal.isDateInToday(date) {
-            return hourMinuteFormatter.string(from: date)
+            return BearyLocalizedDate.formatter(template: "jmm", zhFormat: "H:mm", timeZone: timeZone).string(from: date)
         }
         if cal.isDateInYesterday(date) {
-            return "昨天 " + hourMinuteFormatter.string(from: date)
+            return BearyLocalizedDate.yesterdayWord(timeZone: timeZone) + " " + BearyLocalizedDate.formatter(template: "jmm", zhFormat: "H:mm", timeZone: timeZone).string(from: date)
         }
-        return absoluteDateString(from: date)
+        return absoluteDateString(from: date, timeZone: timeZone)
     }
 
-    /// 心情 key → 中文名（32 只熊脸＋节日 200 款；与网页 MOOD_DEFS 的 40 种不同集，
+    /// 心情 key → 名字（32 只熊脸＋8 只物件走 String Catalog mood.*，节日 200 款仍为中文硬编码；与网页 MOOD_DEFS 的 40 种不同集，
     /// 节日款是 App 侧新增、网页暂无同款名，见 bearMoodKeys 注释）。
     static let moodNames: [String: String] = [
-        "agree": "嗯嗯", "happy": "开心", "applause": "为你鼓掌", "cheer": "加油",
-        "comfort": "安慰", "confused": "迷惑", "love": "心动", "determined": "加把劲",
-        "facepalm": "捂脸", "shy": "害羞", "goodnight": "晚安", "hug": "抱抱",
-        "wink": "眨眼", "idea": "灵光一闪", "kiss": "亲一下", "thinking": "思考",
-        "listening": "我在听", "lonely": "孤单", "speechless": "无语", "nope": "不嘛",
-        "surprised": "惊讶", "pat": "摸摸头", "peek": "偷偷看", "sleepy": "困倦",
-        "proud": "骄傲", "shrug": "没办法", "sorry": "对不起", "cry": "想哭",
-        "angry": "生气", "thanks": "谢谢你", "zap": "带电", "wave": "挥挥手",
+        "agree": NSLocalizedString("mood.agree", comment: ""), "happy": NSLocalizedString("mood.happy", comment: ""), "applause": NSLocalizedString("mood.applause", comment: ""), "cheer": NSLocalizedString("mood.cheer", comment: ""),
+        "comfort": NSLocalizedString("mood.comfort", comment: ""), "confused": NSLocalizedString("mood.confused", comment: ""), "love": NSLocalizedString("mood.love", comment: ""), "determined": NSLocalizedString("mood.determined", comment: ""),
+        "facepalm": NSLocalizedString("mood.facepalm", comment: ""), "shy": NSLocalizedString("mood.shy", comment: ""), "goodnight": NSLocalizedString("mood.goodnight", comment: ""), "hug": NSLocalizedString("mood.hug", comment: ""),
+        "wink": NSLocalizedString("mood.wink", comment: ""), "idea": NSLocalizedString("mood.idea", comment: ""), "kiss": NSLocalizedString("mood.kiss", comment: ""), "thinking": NSLocalizedString("mood.thinking", comment: ""),
+        "listening": NSLocalizedString("mood.listening", comment: ""), "lonely": NSLocalizedString("mood.lonely", comment: ""), "speechless": NSLocalizedString("mood.speechless", comment: ""), "nope": NSLocalizedString("mood.nope", comment: ""),
+        "surprised": NSLocalizedString("mood.surprised", comment: ""), "pat": NSLocalizedString("mood.pat", comment: ""), "peek": NSLocalizedString("mood.peek", comment: ""), "sleepy": NSLocalizedString("mood.sleepy", comment: ""),
+        "proud": NSLocalizedString("mood.proud", comment: ""), "shrug": NSLocalizedString("mood.shrug", comment: ""), "sorry": NSLocalizedString("mood.sorry", comment: ""), "cry": NSLocalizedString("mood.cry", comment: ""),
+        "angry": NSLocalizedString("mood.angry", comment: ""), "thanks": NSLocalizedString("mood.thanks", comment: ""), "zap": NSLocalizedString("mood.zap", comment: ""), "wave": NSLocalizedString("mood.wave", comment: ""),
+        "candle": NSLocalizedString("mood.candle", comment: ""), "flower": NSLocalizedString("mood.flower", comment: ""), "letter": NSLocalizedString("mood.letter", comment: ""), "paperplane": NSLocalizedString("mood.paperplane", comment: ""),
+        "sprout": NSLocalizedString("mood.sprout", comment: ""), "tea": NSLocalizedString("mood.tea", comment: ""), "umbrella": NSLocalizedString("mood.umbrella", comment: ""), "wish": NSLocalizedString("mood.wish", comment: ""),
         "pumpkin": "南瓜灯", "ghost": "小幽灵", "bat": "蝙蝠", "witchhat": "女巫帽",
         "candy": "糖果", "spider": "蜘蛛", "lantern": "红灯笼", "redenvelope": "红包",
         "dumpling": "饺子", "firecracker": "鞭炮", "liondance": "舞狮", "ingot": "元宝",
@@ -2269,7 +2795,8 @@ enum BearyText {
     /// 内联心情记号（编辑器熊脸图 ↔ 落库纯文本的中间层）：
     /// 编辑器里心情是图片附件，正文/标题落库与后端都只存纯文本，故附件在
     /// 发出/存草稿时转成记号 `[mood:<key>]`，读回编辑器/卡片/详情时再转回图。
-    /// 前 32 只熊脸（后 8 只非熊脸已删，不进记号集）＋节日 200 款；
+    /// 前 32 只熊脸＋后 8 只物件（2026-11-20 Li 定：编辑器统一表情入口
+    /// 可插全部 40 只，8 只物件重进记号集）＋节日 200 款；
     /// 前 32 只即旧编辑器默认组（2026-11-18 选择器已删，不再另抄一份）；
     /// 节日款只进本集与 moodNames（资产检查只认 PNG）。
     /// 未知 key 的记号原样当文字，不凭空变图。用户手打的同形文字也会在读回时变图，
@@ -2279,6 +2806,7 @@ enum BearyText {
         "facepalm", "shy", "goodnight", "hug", "wink", "idea", "kiss", "thinking",
         "listening", "lonely", "speechless", "nope", "surprised", "pat", "peek", "sleepy",
         "proud", "shrug", "sorry", "cry", "angry", "thanks", "zap", "wave",
+        "candle", "flower", "letter", "paperplane", "sprout", "tea", "umbrella", "wish",
         "pumpkin", "ghost", "bat", "witchhat", "candy", "spider",
         "lantern", "redenvelope", "dumpling", "firecracker", "liondance", "ingot",
         "clockstrikesmidnight", "calendarflips", "partypopper", "newyearclink",
@@ -2357,12 +2885,13 @@ enum BearyText {
         }
         return out
     }
-    /// 记号 → 附件：尺寸为传入字号的 1.2 倍（正文 16pt 时为 19.2pt），
-    /// 基线按 descender 对齐；1.2 倍是行高不被撑高的上限（系统字体
-    /// ascent+descent 约为字号的 1.196 倍，再大就会把有表情的行顶高、行距不匀）。
+    /// 记号 → 附件：尺寸为传入字号的 1.875 倍（正文 16pt 时约 30pt，
+    /// 2026-11-22 Li 定全站放大），基线按 descender 对齐；1.875 倍已超过
+    /// 系统字体 ascent+descent（约 1.196 倍），有表情的行会被顶高、行距
+    /// 不匀，Li 已接受（贴纸式显示）。
     static func inlineAttachment(for key: String, font: UIFont, dark: Bool) -> NSAttributedString? {
         guard bearMoodKeys.contains(key) else { return nil }
-        let emoteSize = font.pointSize * 1.2
+        let emoteSize = font.pointSize * 1.875
         let image: UIImage?
         if BearyText.festivalMoodKeys.contains(key) {
             // 节日款无 PNG：不走 BearyEmoteImages（深色缺失会进 C3 上报），
@@ -2381,12 +2910,12 @@ enum BearyText {
         result.addAttribute(.font, value: font, range: NSRange(location: 0, length: 1))
         return result
     }
-    /// 记号 → GIF 附件：尺寸与心情同款（字号 1.2 倍、descender 基线）；
+    /// 记号 → GIF 附件：尺寸与心情同款（字号 1.875 倍、descender 基线）；
     /// image 是首帧（有缓存首帧时用它，否则 surface2 圆角占位）；动画不走
     /// 附件——编辑器只显首帧静态图，卡片/详情/时间线走覆盖层播。
     static func inlineGIFAttachment(randKey: String, font: UIFont, firstFrame: UIImage? = nil) -> NSAttributedString? {
         guard inlineGIFToken(for: randKey) != nil else { return nil }
-        let emoteSize = font.pointSize * 1.2
+        let emoteSize = font.pointSize * 1.875
         let attachment = NSTextAttachment()
         attachment.image = firstFrame ?? inlineGIFPlaceholderImage(size: emoteSize)
         attachment.bounds = CGRect(x: 0, y: font.descender, width: emoteSize, height: emoteSize)
@@ -2413,13 +2942,22 @@ enum BearyText {
     /// 仅表情放大倍数：与写日记页同款 ×2（参考图实测放大后约 2.2 倍，取 2 倍）。
     static let emojiOnlyFontScale: CGFloat = 2
 
-    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情字符、个数 1...3。
-    /// 空白（空格/换行）不计；[mood:]/[gif:] 记号是文字，不算表情。
-    /// 口径与写日记页 #1964（BearyComposerViewController 的同名私有实现）
-    /// 一字相同——该支未合入、写日记页文件不能动，故这里单写一份；
-    /// #1964 合入后两处统一到这里，删作曲侧的私有副本。
+    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情、个数 1...3。
+    /// 空白（空格/换行）不计；[mood:]/[gif:] 记号各算一个表情（2026-11-22
+    /// Li 定）：先把记号换成单个表情占位再数，正则与 inlineAttributedText
+    /// 的记号正则相同。
+    /// 口径与写日记页 BearyComposerViewController 的同名私有实现一字相同
+    /// （两处在表情放大支里同步改）；#1964 合入后两处统一到这里，删作曲侧
+    /// 的私有副本。
     static func isEmojiOnlyBodyText(_ plain: String) -> Bool {
-        let meaningful = plain.filter { !$0.isWhitespace }
+        let replaced: String
+        if let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]|\\[gif:([a-z0-9]+)\\]", options: []) {
+            let ns = plain as NSString
+            replaced = regex.stringByReplacingMatches(in: plain, options: [], range: NSRange(location: 0, length: ns.length), withTemplate: "🙂")
+        } else {
+            replaced = plain
+        }
+        let meaningful = replaced.filter { !$0.isWhitespace }
         guard (1...3).contains(meaningful.count) else { return false }
         return meaningful.allSatisfy { isEmojiCluster($0) }
     }
@@ -2440,7 +2978,7 @@ enum BearyText {
         }
     }
 
-    /// 正文生效字号：仅表情（≤3 个、无其他文字）时基准字号 ×2，否则基准字号。
+    /// 正文生效字号：仅表情（≤3 个、无其他文字，[mood:]/[gif:] 记号算表情）时基准字号 ×2，否则基准字号。
     /// 与写日记页同款算法（bodyFont.withSize(pointSize × 2））。
     static func effectiveBodyFont(_ baseFont: UIFont, for plain: String) -> UIFont {
         isEmojiOnlyBodyText(plain) ? baseFont.withSize(baseFont.pointSize * emojiOnlyFontScale) : baseFont
@@ -2539,6 +3077,45 @@ enum BearyText {
     /// iCity：可见性切换无需确认（选择本身即确认，翻回即撤销），旧公开确认框常量已删除。
 }
 
+/// 天气 Lottie 覆盖层播／停（卡片落点行与详情页共用；原两处各写一套）。
+/// 统一行为取详情版：已有覆盖层须仍挂在图标视图上且同 key 才重播；
+/// 图标无底层静态图（fallback 为 nil）时不建覆盖层；无天气 key 或图标
+/// 隐藏时停掉旧层。映射走 BearyText.weatherLottieKey（卡片原私有副本已删）。
+enum BearyWeatherLottie {
+    /// 播：天气 key 非空且图标可见时建／重播覆盖层；否则停旧层。
+    static func play(weatherKey: String?, iconView: UIImageView, overlay: inout BearyEmoteView?) {
+        guard let weatherKey = weatherKey, !weatherKey.isEmpty, iconView.isHidden == false else {
+            stop(overlay: &overlay)
+            return
+        }
+        let lottieKey = BearyText.weatherLottieKey(for: weatherKey)
+        if let existing = overlay, existing.superview === iconView, existing.emoteKey == lottieKey {
+            existing.play()
+            return
+        }
+        stop(overlay: &overlay)
+        guard let fallback = iconView.image else { return }
+        let view = BearyEmoteView(key: lottieKey, animated: true, fallbackImage: fallback)
+        view.isUserInteractionEnabled = false
+        view.translatesAutoresizingMaskIntoConstraints = false
+        iconView.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: iconView.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: iconView.trailingAnchor),
+            view.topAnchor.constraint(equalTo: iconView.topAnchor),
+            view.bottomAnchor.constraint(equalTo: iconView.bottomAnchor),
+        ])
+        overlay = view
+    }
+
+    /// 停：停播并摘掉覆盖层，底层 wx 静态图即恢复。
+    static func stop(overlay: inout BearyEmoteView?) {
+        overlay?.stop()
+        overlay?.removeFromSuperview()
+        overlay = nil
+    }
+}
+
 /// 第十轮审计 dsh II-7：三句重复短句抽常量（各 4 处），文案本身不动，只收一处定义。
 /// 变基注：第四句“编辑（已超 15 分钟不可编辑）”的四处菜单项已随 main 的编辑永久可改
 /// （15 分钟门控删除）消失，该常量不再收录。
@@ -2563,6 +3140,130 @@ struct LikeResponse: Decodable {
 struct BookmarkResponse: Decodable {
     var ok: Bool?
     var bookmarked: Bool?
+}
+
+/// 乐观计数共享协议（第十五遍第 7 条）：确认态快照＋代次校验＋失败回滚。
+/// 详情／卡片／个人页／许愿墙此前各写一套，现共用同一小 helper；
+/// 各页的合并时机（详情整 Entry 合并 vs 卡片逐字段同步）各留自己的。
+/// 点赞计数的确认态用 `BearyLikeState`（liked＋count），投票用
+/// `BearyVoteState`（vote＋up＋down），单布尔（收藏）直接用 `Bool`。
+struct BearyLikeState: Equatable {
+    var liked: Bool
+    var count: Int
+}
+
+struct BearyVoteState: Equatable {
+    /// 当前票：1 赞成／-1 反对／nil 无票。
+    var vote: Int?
+    var up: Int
+    var down: Int
+}
+
+/// 单条目的确认态：确认值＋代次。点按时 `beginRequest()` 取代次并立即
+/// 乐观渲染；回包先过 `isCurrent(_:)`（过期直接丢弃），成功
+/// `confirm(_:value:)` 写新确认态，失败读 `confirmed` 滚回；
+/// 取数合并时 `hasUnconfirmedRequest(changedDuringFetch:)` 为真则护乐观值，
+/// 否则回包即新确认态（`adopt(_:)` 接纳）。
+struct BearyConfirmedState<Value> {
+    var confirmed: Value
+    private(set) var seq = 0
+    private(set) var confirmedSeq = 0
+
+    init(confirmed: Value) {
+        self.confirmed = confirmed
+    }
+
+    mutating func reset(to value: Value) {
+        confirmed = value
+        seq = 0
+        confirmedSeq = 0
+    }
+
+    mutating func beginRequest() -> Int {
+        seq += 1
+        return seq
+    }
+
+    func isCurrent(_ reqSeq: Int) -> Bool {
+        reqSeq == seq
+    }
+
+    func hasUnconfirmedRequest(changedDuringFetch: Bool = false) -> Bool {
+        seq != confirmedSeq || changedDuringFetch
+    }
+
+    mutating func confirm(_ reqSeq: Int, value: Value) {
+        guard reqSeq == seq else { return }
+        confirmedSeq = reqSeq
+        confirmed = value
+    }
+
+    /// 回包已是最新一代：先记代次已确认，再按成功／失败分流
+    ///（旧代码在守卫后即记 confirmedSeq，失败也不例外——否则取数合并
+    /// 会一直把已回滚的旧值当在途乐观值护着）。
+    mutating func markConfirmed(_ reqSeq: Int) {
+        guard reqSeq == seq else { return }
+        confirmedSeq = reqSeq
+    }
+
+    mutating func adopt(_ value: Value) {
+        confirmedSeq = seq
+        confirmed = value
+    }
+}
+
+/// 按 id 键的确认态表（个人页收藏按 entryId、许愿墙投票按 wishId）：
+/// 代次与确认值各记一本，与单条目 `BearyConfirmedState` 同口径；
+/// 字典里有 key 即已播种（许愿墙 nil 票与“未播种”以此区分）。
+struct BearyConfirmedStatesById<Key: Hashable, Value> {
+    private var confirmed: [Key: Value] = [:]
+    private var seq: [Key: Int] = [:]
+    private var confirmedSeq: [Key: Int] = [:]
+
+    func confirmedValue(for id: Key) -> Value? {
+        confirmed[id]
+    }
+
+    func isSettled(for id: Key) -> Bool {
+        (seq[id] ?? 0) == (confirmedSeq[id] ?? 0)
+    }
+
+    func isCurrent(_ reqSeq: Int, for id: Key) -> Bool {
+        reqSeq == (seq[id] ?? 0)
+    }
+
+    mutating func seedIfAbsent(for id: Key, value: Value) {
+        if confirmed[id] == nil {
+            confirmed[id] = value
+        }
+    }
+
+    mutating func setConfirmed(for id: Key, value: Value) {
+        confirmed[id] = value
+    }
+
+    mutating func adopt(for id: Key, value: Value) {
+        confirmed[id] = value
+        confirmedSeq[id] = seq[id] ?? 0
+    }
+
+    mutating func beginRequest(for id: Key) -> Int {
+        let next = (seq[id] ?? 0) + 1
+        seq[id] = next
+        return next
+    }
+
+    mutating func confirm(_ reqSeq: Int, for id: Key, value: Value) {
+        guard reqSeq == (seq[id] ?? 0) else { return }
+        confirmedSeq[id] = reqSeq
+        confirmed[id] = value
+    }
+
+    /// 回包已是最新一代：先记代次已确认，再按成功／失败分流（同上）。
+    mutating func markConfirmed(_ reqSeq: Int, for id: Key) {
+        guard reqSeq == (seq[id] ?? 0) else { return }
+        confirmedSeq[id] = reqSeq
+    }
 }
 
 struct EmoteResponse: Decodable {
@@ -2611,6 +3312,9 @@ struct UploadResponse: Decodable {
     var liveKey: String?
     /// GIF 上传时库已满 100（服务端 library_full；图本身已上传，只是不进库）。
     var libraryFull: Bool?
+    /// 自定义表情上传去重命中（服务端 duplicate：true；指纹已在库里，
+    /// 直接回了原来那个 key，没再存一份；客户端据此 toast“已经添加过了”）。
+    var duplicate: Bool?
 }
 
 /// 个人 GIF 库列表回包（GET /beary/api/gif-library）。
@@ -2655,6 +3359,16 @@ extension BearyAPI {
         request("/beary/api/entries/\(safe)/emote", method: "POST", jsonBody: ["emote": emote], completion: completion)
     }
 
+    /// 某只回应的贴出人（只读，作者本人看自己的日记用）：GET /beary/api/entries/:id/emotes/:emote/users。
+    /// 客户端没有每表情的贴出人数据（EmoteCount 只有 emote／count／mine），点 chip 时现取。
+    /// 仅作者可查（服务端作者门，非作者／不存在回 404）；回包与好友列表同形 {users: [{id, display_name, handle, avatar_url}]}。
+    /// 服务端 diff 在 ~/workspace/no-self-emote-server-diff/，随 PR #2087 合入后部署；未部署前调它会 404，调用方按失败态处理。
+    func fetchEmotePosters(entryId: String, emote: String, completion: @escaping (Result<BearyAPI.FriendListResponse, APIError>) -> Void) {
+        let safeId = entryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entryId
+        let safeEmote = emote.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? emote
+        request("/beary/api/entries/\(safeId)/emotes/\(safeEmote)/users", completion: completion)
+    }
+
     /// 图片上传：dataUrl 与 thumb 均为 data:image/jpeg;base64,...；单图 ≤5MB、缩略图 ≤2MB。
     /// 成功返回 R2 key（原图与缩略图共用该 key，缩略图另存 key+'_t'）。
     /// 实况：videoDataUrl 非空时才附带（data:video/quicktime;base64,... 的 mov，
@@ -2663,10 +3377,13 @@ extension BearyAPI {
     /// 审计-编辑器详情：返回在途任务，供编辑器取消上传用（调用方不
     /// 用时可忽略返回值；上传本身仍不重试，见 request 注释）。
     @discardableResult
-    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) -> URLSessionDataTask? {
+    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, fingerprint: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) -> URLSessionDataTask? {
         var body: [String: Any] = ["dataUrl": dataUrl, "w": width, "h": height]
         if let t = thumbDataUrl { body["thumb"] = t }
         if let v = videoDataUrl { body["videoDataUrl"] = v }
+        // 自定义表情去重指纹（压完文件的 SHA-256 hex）：只表情上传路传，
+        // 普通照片上传不传、服务端不查；命中时服务端直接回旧 key + duplicate。
+        if let fp = fingerprint, !fp.isEmpty { body["fingerprint"] = fp }
         return request("/beary/api/images/upload", method: "POST", jsonBody: body, uploadProgress: uploadProgress, completion: completion)
     }
 
@@ -2677,8 +3394,12 @@ extension BearyAPI {
 
     /// 个人 GIF 库：POST /beary/api/gif-library/add {key}；满 100 时 409 'library full'，
     /// 已在库里时 200 {ok:true, added:false}；key 不可见时 403 'not viewable'。
-    func gifLibraryAdd(key: String, completion: @escaping (Result<GIFLibraryAddResponse, APIError>) -> Void) {
-        request("/beary/api/gif-library/add", method: "POST", jsonBody: ["key": key], completion: completion)
+    /// fingerprint（可选）：压完文件的 SHA-256 hex，只自定义表情上传路传，
+    /// 服务端存进库行、供上传去重查；长按他人图添加时客户端没文件字节、不传。
+    func gifLibraryAdd(key: String, fingerprint: String? = nil, completion: @escaping (Result<GIFLibraryAddResponse, APIError>) -> Void) {
+        var body: [String: Any] = ["key": key]
+        if let fp = fingerprint, !fp.isEmpty { body["fingerprint"] = fp }
+        request("/beary/api/gif-library/add", method: "POST", jsonBody: body, completion: completion)
     }
 
     /// 个人 GIF 库：POST /beary/api/gif-library/remove {key}；只删行，不删文件。
@@ -2695,8 +3416,11 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, locationLatitude: Double? = nil, locationLongitude: Double? = nil, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, tags: [String]? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, locationLatitude: Double? = nil, locationLongitude: Double? = nil, locationCountry: String? = nil, locationRegion: String? = nil, locationCity: String? = nil, locationStreet: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, tags: [String]? = nil, timeZoneName: String? = nil, uploadProgress: ((Int64, Int64) -> Void)? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
+        // 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识；
+        // nil=省略不传（无记录的旧草稿），服务端回落 Asia/Shanghai。编辑不改时区，故 updateEntry 不发本键。
+        if let tz = timeZoneName { body["tz_name"] = tz }
         // 实况：非空才发 live_videos（无实况的新建与旧版 body 一字相同）；
         // 空映射不发（新建无旧态可清，编辑清实况走 updateEntry 的显式空映射）。
         if let live = liveVideos, !live.isEmpty { body["live_videos"] = live }
@@ -2794,7 +3518,13 @@ extension BearyAPI {
     /// 回包 {temp, code, city}：temp 为摄氏度整数，code 为 WMO 天气代码。code 映射见
     /// weatherKey(forWMOCode:)；未覆盖的代码只回气温、不改天气类型，绝不编一个类型填上。
     /// 取不到（网络错、非 200、字段缺失）即走 failure，调用方如实提示、不填假数据。
+    /// 失败只重试一次（与全站 GET 网络错重试 1 次同口径，见 BearyAPI.request；
+    /// 天气走 URLSession.shared 直连、无 request 的重试，之前失败即静默留空）。
     func fetchLocalWeather(latitude: Double? = nil, longitude: Double? = nil, completion: @escaping (Result<(weatherKey: String?, temperature: Int, city: String?), Error>) -> Void) {
+        fetchLocalWeather(latitude: latitude, longitude: longitude, retried: false, completion: completion)
+    }
+
+    private func fetchLocalWeather(latitude: Double?, longitude: Double?, retried: Bool, completion: @escaping (Result<(weatherKey: String?, temperature: Int, city: String?), Error>) -> Void) {
         var urlString = "https://api.teddyhn.com/api/weather"
         if let lat = latitude, let lon = longitude, lat.isFinite, lon.isFinite {
             urlString += "?lat=\(lat)&lon=\(lon)"
@@ -2807,14 +3537,21 @@ extension BearyAPI {
         req.httpMethod = "GET"
         req.timeoutInterval = 10
         URLSession.shared.dataTask(with: req) { data, response, error in
+            func fail(_ err: Error) {
+                if !retried {
+                    self.fetchLocalWeather(latitude: latitude, longitude: longitude, retried: true, completion: completion)
+                } else {
+                    completion(.failure(err))
+                }
+            }
             if let error = error {
-                completion(.failure(error))
+                fail(error)
                 return
             }
             guard let http = response as? HTTPURLResponse, http.statusCode == 200,
                   let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                completion(.failure(NSError(domain: "BearyWeather", code: -2, userInfo: nil)))
+                fail(NSError(domain: "BearyWeather", code: -2, userInfo: nil))
                 return
             }
             let temp: Int?
@@ -2826,7 +3563,7 @@ extension BearyAPI {
                 temp = nil
             }
             guard let temp = temp else {
-                completion(.failure(NSError(domain: "BearyWeather", code: -3, userInfo: nil)))
+                fail(NSError(domain: "BearyWeather", code: -3, userInfo: nil))
                 return
             }
             let code = json["code"] as? Int
@@ -2880,7 +3617,7 @@ enum BearyImagePrep {
     /// 现一律按像素算目标边、取整到整像素、format.scale = 1 渲染，
     /// 返回图的 cgImage 像素即目标像素。resized 只作编码中间态，
     /// 调用方只取 data / w / h，不参与任何布局，故不改布局语义。
-    private static func resized(_ image: UIImage, maxSide: CGFloat) -> UIImage {
+    static func resized(_ image: UIImage, maxSide: CGFloat) -> UIImage {
         let src = pixelSize(of: image)
         let longest = max(src.width, src.height)
         guard longest > 0, CGFloat(longest) > maxSide else { return image }
@@ -2992,6 +3729,22 @@ enum BearyIconImages {
         let templated = drawn.withRenderingMode(.alwaysTemplate)
         cache.setObject(templated, forKey: key)
         return templated
+    }
+}
+
+/// 图标 image view 工厂（可复用扫查第九遍第 4 条）：小图标 UIImageView 的懒构造
+/// 五件套——关 autoresizing＋配图＋灰 tint＋scaleAspectFit，10 处共用。
+/// 尺寸由各处约束定，不在构造内；配图各处自己传（无图时不传，之后再配）；
+/// 初始隐藏的 3 处（详情／卡片天气、引用失效态）传 isHidden: true。
+enum BearyIconImageView {
+    static func make(image: UIImage? = nil, isHidden: Bool = false) -> UIImageView {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = image
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        v.isHidden = isHidden
+        return v
     }
 }
 
@@ -3617,7 +4370,7 @@ enum BearyHaptics {
 
 // MARK: - iCity 共享助手（可见性相对时间 / 已举报本地态 / 举报与拉黑流程）
 
-/// 广场卡相对时间：“X 分钟 / 小时 / 天前”；1 分钟内为“刚刚”。
+/// 广场卡相对时间：“X 分钟 / 小时 / 天”（2026-11-25 Li 定去“前”）；1 分钟内为“刚刚”。
 /// publishedAt 缺失时返回 nil（调用方回退绝对时间）。
 /// 限时日记有效态（客户端唯一口径）：ephemeralUntil 非空且未到期 = 存活期；
 /// 已到期 = 普通私密（不建 sweep，读时按时间判定；手动翻转可见性时服务端清标记，
@@ -3637,8 +4390,12 @@ enum BearyEphemeral {
         let now = nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000)
         return until <= now
     }
+    /// 有效公开＝isPublic 且限时未过期。公式唯一来源是 BearyStarMap.isEffectivelyPublic
+    ///（带 nowMs 的纯函数，App 与 BearyCoreTests 双 target 可编）；此处只按 isExpired
+    /// 同口径解析 now（开发者预览强制过期／假时刻）再委托，不再手写第二份公式。
     static func isEffectivelyPublic(_ entry: Entry) -> Bool {
-        entry.isPublic == true && !isExpired(entry)
+        if entry.ephemeralUntil != nil && BearyDevPreviewState.forceLimitedExpired { return false }
+        return BearyStarMap.isEffectivelyPublic(entry, nowMs: BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000))
     }
     /// 存活期倒计时灰字（只留这一行，不另加“限时日记”小标签）。
     static func remainingText(until: Int, nowMs: Int? = nil) -> String {
@@ -3660,7 +4417,7 @@ enum BearyEphemeral {
         if ms < 6 * 3_600_000 { return .near }
         return .calm
     }
-    /// 四档倒计时文字色：充裕 #8e8e8a、临近暖黄、紧急橙、到期 #6d6d68。
+    /// 四档倒计时文字色：充裕浅 #73736E／深 #8e8e8a、临近暖黄、紧急橙、到期浅 #6d6d68／深 #8e8e8a（G6 对比度修复，2026-11-21）。
     static func countdownColor(for state: CountdownState) -> UIColor {
         switch state {
         case .calm: return BearyColors.limitedCalmCountdown
@@ -3688,6 +4445,45 @@ enum BearyEphemeral {
     static func bodyFontSize(content: String?, limited: Bool) -> CGFloat {
         guard limited else { return 16 }
         return (content ?? "").count <= 30 ? 19 : 16.5
+    }
+}
+
+/// 限时倒计时 Timer 起停 plumbing（详情与卡片共用）：1 秒重复、RunLoop.main `.common`。
+/// tick 各留自己的——详情版到期走 applyEphemeralExpiryIfNeeded／scheduleEphemeralExpiry，
+/// 卡片版走 refreshEphemeralState＋updateDiaryStackSpacing（带 isLive 守卫），不要强行合。
+/// onTick 须由调用点包一层 [weak self]：Timer 强持有闭包，不弱引用会循环引用。
+final class BearyCountdownTimer {
+    private var timer: Timer?
+
+    /// 起：已在跑时直接返回；`canStart` 为额外守卫（卡片须在窗口内，`window != nil`）。
+    func start(canStart: Bool = true, onTick: @escaping () -> Void) {
+        guard timer == nil, canStart else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { _ in onTick() }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    deinit { timer?.invalidate() }
+}
+
+/// 停留埋点共享 plumbing(第十三批第 8 项 App 部分)：计时＋上报收一处，门槛作参数。App 保持无门槛直报（minimumMs 默认 0），不要擅自统一门槛——网页 dwellBegin／dwellFlush 只报 ≥1000ms，与 App 已分叉。事件名 dwell／search_click／app_open 三枚两面共有，均走 BearyAPI.sendEvent 共享入口；网页无 app_open 事件，不补加。
+enum BearyDwell {
+    /// 计时：自 start 到 now 的毫秒数，负值钳 0。
+    static func milliseconds(since start: Date, now: Date = Date()) -> Int {
+        max(0, Int(now.timeIntervalSince(start) * 1000))
+    }
+
+    /// 上报：ms 未达 minimumMs 时不上报；达门槛即经共享入口 sendEvent 直报。
+    /// 上报失败不得阻塞流程、不得弹 toast；游客 401 由 suppressUnauthorized 兜底。
+    static func report(entryId: String, since start: Date, minimumMs: Int = 0, now: Date = Date()) {
+        let ms = milliseconds(since: start, now: now)
+        guard ms >= minimumMs else { return }
+        BearyAPI.shared.sendEvent(eventType: "dwell", targetId: entryId, durationMs: ms, completion: nil)
     }
 }
 
@@ -3730,7 +4526,8 @@ enum BearyVisibility {
     /// icon_check 图标＋标题加粗（r21-A13，文字勾号“✓”改官方图标）；
     /// 选同档时调用方按无变化处理（不发请求、不清限时标记）。
     /// 限时与仅好友互斥规则不动：本选择器不提供限时档，手动改档恒清限时标记。
-    /// 存活限时篇例外：当前档明确标为“限时”（置灰 ✓ 行，不可点），三档均不带 ✓；
+    /// 存活限时篇例外：当前档明确标为“限时”（置灰限时行：官方 icon_check
+    /// 图标＋标题加粗、不可点，与同 sheet 内选中行同一口径）；
     /// 点“公开”即转普通永久公开（isNoChange 例外放行，perform 清限时标记）。
     static func presentPicker(from vc: UIViewController, entry: Entry, onPick: @escaping (String) -> Void) {
         let currentValue = current(for: entry)
@@ -3739,7 +4536,7 @@ enum BearyVisibility {
             return BearyConfirmSheet.Action(title: title(for: value), style: .default, handler: { onPick(value) }, isSelected: !isLiveEphemeral && value == currentValue)
         }
         if isLiveEphemeral {
-            actions.insert(BearyConfirmSheet.Action(title: "✓ 限时", style: .default, isEnabled: false), at: 0)
+            actions.insert(BearyConfirmSheet.Action(title: NSLocalizedString("visibility.limited", comment: ""), style: .default, isEnabled: false, isSelected: true), at: 0)
         }
         // 2026-11-17 底部弹窗取消行去掉：关闭走抓手下滑／点外收起，不再垫底放“取消”。
         BearyConfirmSheet.show(from: vc, title: "修改权限", message: nil, actions: actions)
@@ -3747,19 +4544,57 @@ enum BearyVisibility {
 }
 
 enum BearyVisibilityText {
+    /// 2026-11-21 日期完全本地化：相对时间跟 App 语言（见 BearyLocalizedDate），
+    /// 中文沿用既有词、输出与改前逐字节一致；非中文走 RelativeDateTimeFormatter
+    /// （英文如 now／5 minutes ago／2 hours ago／yesterday／3 days ago，草稿待 Li 定稿）。
+    /// 口径：7 天内相对、7 天外绝对（同年 M月d日 H:mm、跨年 yyyy年M月d日，规范 §12），
+    /// 时区沿用既有口径。本函数现只供私信／通知等非日记时间用；日记时间走 diaryTimeString。
     static func publishedRelativeString(publishedAtMs: Int?) -> String? {
+        publishedRelativeString(publishedAtMs: publishedAtMs, timeZone: nil)
+    }
+    /// timeZone：日记面传篇时区（entry.diaryTimeZone）；nil = 查看设备时区
+    /// （私信/通知行，它们没有日记时区）。相对部分（刚刚/分钟前/小时前/天前）
+    /// 是时长差，与时区无关；只有 7 天外绝对回落走时区。
+    static func publishedRelativeString(publishedAtMs: Int?, timeZone: TimeZone?) -> String? {
+        guard let ms = publishedAtMs, ms > 0 else { return nil }
+        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let now = Date()
+        let diff = now.timeIntervalSince1970 - TimeInterval(ms) / 1000.0
+        if diff < 60 { return BearyLocalizedDate.justNowString(date: date) }
+        if diff < 3600 { return BearyLocalizedDate.minutesAgoString(Int(diff / 60)) }
+        // 满 1 小时按日历日判定（2026-11-21 Li 定，F1＝A；P3 24–48 小时按日历日）：
+        // 今天 → X 小时前；昨天 → 昨天；前天 → 前天；3–6 天前 → X 天前；
+        // 7 天外回落绝对时间：同年 M月d日 H:mm、跨年 yyyy年M月d日（规范 §12）。
+        // 判定走北京日历，与 timeString／absoluteDateString 同口径；截断放在
+        // 共用工具里，所有调用点（详情、卡片、私信、通知、我的页）自动跟这条
+        // 口径，不用各处另处理。例：23:50 写的日记，次日 00:10 看是“20 分钟前”，
+        // 次日 01:00 看是“昨天”。
+        let calendar = BearyBeijingDay.calendar
+        let startOfDate = calendar.startOfDay(for: date)
+        let startOfToday = calendar.startOfDay(for: now)
+        let dayDiff = calendar.dateComponents([.day], from: startOfDate, to: startOfToday).day ?? 0
+        if dayDiff <= 0 { return BearyLocalizedDate.hoursAgoString(Int(diff / 3600)) }
+        if dayDiff == 1 { return BearyLocalizedDate.yesterdayWord(timeZone: calendar.timeZone) }
+        if dayDiff == 2 { return NSLocalizedString("date.relative.dayBeforeYesterday", comment: "") }
+        if dayDiff < 7 { return BearyLocalizedDate.daysAgoString(dayDiff) }
+        return BearyText.absoluteDateString(from: date)
+    }
+
+    /// 日记时间（2026-11-25 Li 定，取代日记各处对 publishedRelativeString 的调用）：
+    /// 7 天内相对时间（刚刚／X 分钟／X 小时／X 天，跟 App 语言；2026-11-25 Li 定去“前”／"ago"），7 天外“/”
+    /// 绝对日期（同年只写月日、跨年带年，月日顺序跟地区走），不带时分（时分只在详情页
+    /// 显示，见 BearyLocalizedDate.slashDateTimeString）。时区：传入日记时区，
+    /// nil = 设备时区（日记时区由 #2094 接线，在此之前按设备时区显示，不再写死北京）。
+    /// 相对时间部分与 publishedRelativeString 同口径；#2108 的昨天／前天口径落地后同步改这里。
+    static func diaryTimeString(publishedAtMs: Int?, timeZone: TimeZone? = nil) -> String? {
         guard let ms = publishedAtMs, ms > 0 else { return nil }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
-        if diff < 60 { return "刚刚" }
-        if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
-        if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
-        // 7 天口径（2026-11-15 Li 定，全站日记时间统一）：7 天内用相对时间，
-        // 7 天外回落绝对时间：同年 M月d日 H:mm、跨年 yyyy年M月d日（规范 §12），
-        // 北京时间。截断放在共用工具里，所有调用点
-        // （详情、卡片、私信、通知、我的页）自动跟这条口径，不用各处另处理。
-        if diff < 7 * 86400 { return "\(Int(diff / 86400)) 天前" }
-        return BearyText.absoluteDateString(from: date)
+        if diff < 60 { return BearyLocalizedDate.justNowString(date: date) }
+        if diff < 3600 { return BearyLocalizedDate.diaryMinutesString(Int(diff / 60)) }
+        if diff < 24 * 3600 { return BearyLocalizedDate.diaryHoursString(Int(diff / 3600)) }
+        if diff < 7 * 24 * 3600 { return BearyLocalizedDate.diaryDaysString(Int(diff / (24 * 3600))) }
+        return BearyLocalizedDate.slashDateString(from: date, timeZone: timeZone)
     }
 }
 
@@ -3929,6 +4764,20 @@ enum BearyBlockedStore {
         return cached?.contains(userId) ?? false
     }
 
+    /// 共享拉黑作者判定（2026-11-22：详情／搜索／SceneDelegate 三处逐字相同实现合一处）。
+    /// 口径一字不改：游客不承接拉黑表、无作者 id 不命中、作者本人永不命中；其余查拉黑表。
+    static func isBlockedAuthor(userId: Int?) -> Bool {
+        if SessionManager.shared.isGuestMode { return false }
+        guard let userId = userId else { return false }
+        if let viewerId = SessionManager.shared.currentUser?.id, viewerId == userId { return false }
+        return isBlocked(userId)
+    }
+
+    /// Entry 版便利入口（与 userId 版同口径）。
+    static func isBlockedAuthor(_ entry: Entry) -> Bool {
+        isBlockedAuthor(userId: entry.authorId)
+    }
+
     static func markBlocked(_ userId: Int) {
         ensureLoaded()
         cached?.insert(userId)
@@ -4016,6 +4865,30 @@ enum BearyPresentGuard {
     }
 }
 
+/// 分享面板弹出接线（反馈／设置／个人页 ×2／标签页共用）：iPad popover 锚点＋
+/// present 一次写好。锚点视图与矩形由调用方给——控件锚点传控件 bounds；
+/// 无控件时传发起页 view＋中心零尺寸 rect、permittedArrowDirections = []（个人页
+/// handleCellShare 口径，不一刀切）；completion 各留各的清理动作（清 zip／删临时文件／无）。
+/// 详情／广场两处分享流程另有门控与组 items 整套，本 helper 只收锚点＋弹出，合流时锚点部分可走这里。
+enum BearyShareSheet {
+    static func present(
+        _ activity: UIActivityViewController,
+        from vc: UIViewController,
+        sourceView: UIView,
+        sourceRect: CGRect,
+        permittedArrowDirections: UIPopoverArrowDirection = .any,
+        completion: UIActivityViewController.CompletionWithItemsHandler? = nil
+    ) {
+        activity.completionWithItemsHandler = completion
+        if let popover = activity.popoverPresentationController {
+            popover.sourceView = sourceView
+            popover.sourceRect = sourceRect
+            popover.permittedArrowDirections = permittedArrowDirections
+        }
+        vc.present(activity, animated: BearyMotion.animated(true), completion: nil)
+    }
+}
+
 /// 审计 E2 第 23 项：确认后请求期的忙碌态。举报/拉黑的确认入口是 UIAlertAction，
 /// 点按后 sheet/alert 即消失、原按钮已不存在，无法在原按钮上挂 spinner；
 /// 故在发起页中央显示既有加载图标（BearyRefreshIconView，旋转）。
@@ -4095,7 +4968,6 @@ enum BearyReportFlow {
                             NotificationCenter.default.post(name: .bearyDidReportEntry, object: entryId)
                             // 补缺 P3-39：重复举报（服务端 duplicate 成功态）按已举报处理并置灰下次菜单，
                             // 文案不谎称“谢谢反馈”，改“已举报”。
-                            BearyToast.show(in: vc.view, message: resp.duplicate == true ? "已举报" : "已举报，谢谢反馈")
                         case .failure:
                             BearyToast.show(in: vc.view, message: "举报失败，请重试")
                         }
@@ -4158,6 +5030,8 @@ enum BearyBlockFlow {
                             BearyBlockedStore.markBlocked(userId)
                             // 跳动审计第 6 条：拉黑即断互关，该作者的仅好友引用验证标记同清。
                             BearyDiaryCardCell.invalidateQuoteMutualAccess(forAuthorId: userId)
+                            // v15：仅好友回应互关验证结论同清。
+                            BearyDiaryCardCell.invalidateEmoteMutualAccess(forAuthorId: userId)
                             NotificationCenter.default.post(name: .bearyDidBlockUser, object: userId)
                             BearyToast.show(in: vc.view, message: "已拉黑")
                             onDone?(true)
@@ -4277,7 +5151,7 @@ enum BearyQuoteGate {
                     case .failure:
                         // r29-3：拉取失败无法确认引用来源，fail-closed 拦截公开；
                         // 调用方收到 .aborted 只清 busy、不发请求，当前权限不变。
-                        BearyToast.show(in: vc.view, message: "暂时无法确认引用来源，重试后再公开")
+                        BearyToast.show(in: vc.view, message: NSLocalizedString("publish.quote_source_unconfirmed_retry_later", comment: ""))
                         completion(.aborted)
                     }
                 }
@@ -4328,24 +5202,24 @@ enum BearyQuoteGate {
 
     /// 编辑器新发布门禁：宿主将公开且含私密引用时拦截。自己来源三选一
     /// （一并公开／删除引用并公开／保持私密发布），他人来源只剩两项
-    /// （删除引用并公开／保持私密发布）；“取消”仅关弹窗、不发请求。
+    /// （删除引用并公开／保持私密发布）；下滑／点外关闭仅关弹窗、不发请求
+    /// （调 onCancel 解冻发布冻结）。
     static func gateEditorPublish(from vc: UIViewController, sourceIsMine: Bool, sourceIsFriendsOnly: Bool = false, onPublishTogether: @escaping () -> Void, onDeleteQuote: @escaping () -> Void, onKeepPrivate: @escaping () -> Void, onCancel: (() -> Void)? = nil) {
         // 审计 2026-11-02 弹窗组：present 前统一守卫；未过则不弹、不发请求，用户可重试。
         // “保持私密发布”含义固定：本篇改回私密再发（引用保留），与切公开门禁的
         // “放弃公开”（不发请求）不同；标题／正文按来源私密／仅好友分。
-        // 第 25 轮 11 项：取消／无选择关闭时调 onCancel（调用方据此解冻发布冻结）。
+        // 第 25 轮 11 项：无选择关闭时调 onCancel（调用方据此解冻发布冻结）。
         guard BearyPresentGuard.canPresent(from: vc) else { return }
         let sourceWord = sourceIsFriendsOnly ? "仅好友" : "私密"
         // 审计 r16 第 16 项：改走共享确认底 sheet（原系统 UIAlertController
-        // .alert，标题/正文/按钮文案一字不动；行顺序按底 sheet 口径：确认行
-        // 在上、取消行单独在下）。叉叉/遮罩/下滑关闭与点“取消”同义（不发请求）。
+        // .alert，标题/正文/按钮文案一字不动）。叉叉/遮罩/下滑关闭仅关弹窗、
+        // 不发请求（调 onCancel 解冻发布冻结）。
         var actions: [BearyConfirmSheet.Action] = []
         if sourceIsMine {
             actions.append(BearyConfirmSheet.Action(title: "一并公开原日记", style: .default) { onPublishTogether() })
         }
         actions.append(BearyConfirmSheet.Action(title: "删除引用并公开", style: .default) { onDeleteQuote() })
         actions.append(BearyConfirmSheet.Action(title: "保持私密发布", style: .default) { onKeepPrivate() })
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: onCancel))
         BearyConfirmSheet.show(
             from: vc,
             title: "引用的日记还是\(sourceWord)",
@@ -4490,5 +5364,29 @@ extension UITableView {
             })
             self.contentOffset = targetOffset
         })
+    }
+}
+
+// MARK: - 游标翻页累积去重（可复用资源第十六批第 8 项）
+
+/// 游标翻页三处（标签页 / 回收站 / 盲盒池）累积时的同款去重：返回 items 里 id 未见过的项，
+/// id 为空（nil）的项照常返回；新 id 记进 seen。调用方按自己的口径把“空 id”折成 nil
+/// （盲盒把 "" 也当空；标签只把 nil 当空；回收站 id 非空）。
+/// 游标推导与满页递归各留自己的——三处守卫刻意不同（回收站账号／鉴权代际、盲盒页数上限＋
+/// 合格数目标、标签页去重过滤），不抽通用递归驱动。
+enum BearyCursorPageLoad {
+    static func fresh<Item>(_ items: [Item], id: (Item) -> String?, seen: inout Set<String>) -> [Item] {
+        var out: [Item] = []
+        out.reserveCapacity(items.count)
+        for item in items {
+            guard let itemId = id(item) else {
+                out.append(item)
+                continue
+            }
+            guard !seen.contains(itemId) else { continue }
+            seen.insert(itemId)
+            out.append(item)
+        }
+        return out
     }
 }

@@ -8,8 +8,13 @@ import UIKit
 
 enum BearyColors {
     static var ink: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : .black } }
-    static var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.45, alpha: 1) } }
+    static var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.40, alpha: 1) } }
     static var orange: UIColor { UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) }
+    /// 收藏选中金：浅 #B8860B／深 #FFCC00（2026-11-21 Li 定，规范 v12 选 1：收藏选中色从 orange 换暖金，
+    /// 橙只留给公开档位；单值 #FFCC00 浅色对白底仅 1.51:1、不到非文本 3:1 线，故拆深浅）。
+    /// 浅色对白底约 3.25:1、深色对黑底约 13.89:1，均 ≥3:1。只用于收藏选中态；
+    /// 公开 pill／公开橙边／FAB／置顶等仍走 orange，不动。
+    static var bookmarkGold: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 204.0/255.0, blue: 0.0, alpha: 1) : UIColor(red: 184.0/255.0, green: 134.0/255.0, blue: 11.0/255.0, alpha: 1) } }
     /// 品牌橙上的固定前景色（深墨色，视觉清单第 5 项）：固定纯黑，不随深浅切换。
     /// 不用 ink——ink 深色下是近白，放在固定橙底上会变白字（白字/橙底对比度
     /// 仅约 2.20:1，见 #508 注释）；onBrand 在深浅两模式下恒为墨色，
@@ -23,15 +28,12 @@ enum BearyColors {
     /// 只用于删除类与错误文字前景；描边走 BearyColors.alpha(destructiveText, 0.45)。
     /// 失败徽标／横幅底等非文字语义红仍走 red，点赞填色仍走 likeRed，不动。
     static var destructiveText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 107.0/255.0, blue: 97.0/255.0, alpha: 1) : UIColor(red: 201.0/255.0, green: 42.0/255.0, blue: 42.0/255.0, alpha: 1) } }
-    /// 浅色 surface3 弹层上的错误文字专用（第 21 轮审计 B2，2026-11-14 Li 定版）：
-    /// 浅 #BD2424（surface3 #F5F5F5 底约 5.6:1）、深 #FF6B61（surface3 #18181C 底约 6.35:1），均 ≥4.5:1。
-    /// 只用于浅色 surface3 弹层上的错误文字（邀请页 messageLabel）；别处错误文字仍走 destructiveText。
-    /// 背景：旧底 #DFDFDF 上 destructiveText 浅 #C92A2A 仅约 4.10:1、不达标，故另立本 token；
-    /// 新底 #F5F5F5 上约 5.01:1，本 token 字色不动、仍保留。
-    static var surface3ErrorText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 107.0/255.0, blue: 97.0/255.0, alpha: 1) : UIColor(red: 189.0/255.0, green: 36.0/255.0, blue: 36.0/255.0, alpha: 1) } }
     /// 点赞填色：亮红 #ff3b30（2026-10-29 Li 定，明显亮于语义红 #e5484d；仅点赞入口用——
-    /// 删除按钮走 destructiveText，语义红仍走 red，收藏点亮仍走 orange，不动）。
+    /// 删除按钮走 destructiveText，语义红仍走 red，收藏点亮走 bookmarkGold（2026-11-21 v12），不动）。
     static var likeRed: UIColor { UIColor(red: 1.0, green: 59.0/255.0, blue: 48.0/255.0, alpha: 1) }
+    /// 已开通／禁用 CTA 置灰色（Plus 页已开通态与景深页禁用态共用，v32 定版：浅 #ECECEC 底＋#9A9A9A 字／深 #2C2C30 底＋#8E8E93 字）。
+    static var disabledCTAButtonBackground: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 44.0/255.0, green: 44.0/255.0, blue: 48.0/255.0, alpha: 1) : UIColor(red: 236.0/255.0, green: 236.0/255.0, blue: 236.0/255.0, alpha: 1) } }
+    static var disabledCTAButtonText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 147.0/255.0, alpha: 1) : UIColor(red: 154.0/255.0, green: 154.0/255.0, blue: 154.0/255.0, alpha: 1) } }
     /// 图片上的深色衬底：固定黑色半透明（与 ink 不同——深色下 ink 是近白，白字会看不清）。
     static var scrim: UIColor { UIColor(white: 0, alpha: 0.6) }
     /// 网页 --blue：浅 #007aff / 深 #0a84ff（深色 G 通道精确 132/255，勿再写 0.52）。
@@ -40,7 +42,7 @@ enum BearyColors {
     static var green: UIColor { UIColor(red: 47.0/255.0, green: 191.0/255.0, blue: 113.0/255.0, alpha: 1) }
     /// 正文用深橙（ChatGPT 审计第四类新 token）：浅 #C2410C / 深 #ff9500。
     /// 浅色白底对比约 5.18:1、橙底 0.12 浅底对比约 4.69:1；深色黑底对比约 9.55:1。
-    /// 只用于文字前景；图标/FAB/收藏/大号文字/描边仍走 orange，不动。
+    /// 只用于文字前景；图标/FAB/大号文字/描边仍走 orange，收藏选中走 bookmarkGold，不动。
     /// 唯一例外（第十轮 #13）：系统通知图标（19pt 信封，橙 14% 底）浅色对比仅
     /// 约 2.20:1，浅色改走本 token（深色与 orange 同值 #ff9500，不变）。
     static var deepOrangeText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) : UIColor(red: 194.0/255.0, green: 65.0/255.0, blue: 12.0/255.0, alpha: 1) } }
@@ -48,6 +50,23 @@ enum BearyColors {
     /// 浅色白底对比约 7.13:1、绿底 0.12 浅底对比约 6.42:1；深色黑底对比约 9.46:1。
     /// 只用于文字前景；语义绿填充 #2fbf71 底色不动。
     static var deepGreenText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 52.0/255.0, green: 199.0/255.0, blue: 89.0/255.0, alpha: 1) : UIColor(red: 22.0/255.0, green: 101.0/255.0, blue: 52.0/255.0, alpha: 1) } }
+    /// 正文用深蓝（G6 对比度修复，2026-11-21）：浅 #0066CC / 深 #0A84FF。
+    /// 浅色白底对比约 5.57:1、蓝 13% 底对比约 4.71:1；深色黑底对比约 5.39:1、
+    /// 蓝 13% 深底对比约 4.77:1，均 ≥4.5:1。只用于私密 pill 文字前景；
+    /// 图标／描边／填充仍走 blue，不动。
+    static var deepBlueText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 10.0/255.0, green: 132.0/255.0, blue: 1.0, alpha: 1) : UIColor(red: 0.0, green: 102.0/255.0, blue: 204.0/255.0, alpha: 1) } }
+    /// 限时紫（规范值，深浅同值 #AF52DE）：限时 pill 的紫底／紫字基色；时间线竖线圆点存活限时边亦走它。
+    static var limitedPurple: UIColor { UIColor(red: 175.0/255.0, green: 82.0/255.0, blue: 222.0/255.0, alpha: 1) }
+    /// 正文用深紫（G6 对比度修复，2026-11-21）：浅 #8E2FB8 / 深 #AF52DE。
+    /// 浅色白底对比约 6.46:1；深色黑底对比约 4.76:1，均 ≥4.5:1。
+    /// 只用于限时 pill 文字前景（无底／白底／黑底）；13% 紫底上的搜索 pill
+    /// 文字走 deepPurpleTextOnTint（深色 #AF52DE 在紫 13% 深底上仅 4.27:1）。
+    static var deepPurpleText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? BearyColors.limitedPurple : UIColor(red: 142.0/255.0, green: 47.0/255.0, blue: 184.0/255.0, alpha: 1) } }
+    /// 搜索 pill 限时文字专用（G6 对比度修复，2026-11-21）：浅 #8E2FB8 /
+    /// 深 #BE6FE8。深色 #AF52DE 在紫 13% 深底上仅约 4.27:1、未达 4.5:1，
+    /// 加亮为 #BE6FE8 后约 5.56:1；浅色紫 13% 底上约 5.52:1。
+    /// 只用于搜索页限时 pill 文字＋锁图标；卡片／详情限时 pill 走 deepPurpleText。
+    static var deepPurpleTextOnTint: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 190.0/255.0, green: 111.0/255.0, blue: 232.0/255.0, alpha: 1) : UIColor(red: 142.0/255.0, green: 47.0/255.0, blue: 184.0/255.0, alpha: 1) } }
     /// 网页 --line：浅 #dbdbdb / 深 #3a3a40（深色带蓝偏，单 white 值复现不了）。
     static var line: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 58.0/255.0, green: 58.0/255.0, blue: 64.0/255.0, alpha: 1) : UIColor(white: 0.86, alpha: 1) } }
     /// 网页 --bg：浅 #fff / 深 #0B0B0D（2026-11-07 微明度定版推翻 2026-10-27 纯黑决定：
@@ -70,14 +89,20 @@ enum BearyColors {
     static var hov: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 248.0/255.0, alpha: 0.08) : UIColor(red: 17.0/255.0, green: 17.0/255.0, blue: 20.0/255.0, alpha: 0.06) } }
     /// 限时日记虚线气泡四档色（2026-11-19 预览定版，Space xian-shi-ri-ji-yang-shi-yu-lan
     /// 源码值；深浅同值，浅色下虚线不另加深——预览源码亦如此）：
-    /// 充裕灰 #8f8f8c、临近暖黄 #e8b34b、紧急橙 #ff7a45、到期虚线 #55554f。
+    /// 充裕灰 #8f8f8c、临近暖黄 #b57f1e、紧急橙 #e05a1e、到期虚线 #55554f。
+    /// 临近／紧急两档 2026-11-23 按 HIG 审计 W1 加深：白底对比度 ≥3:1
+    ///（15pt semibold 大字门槛），色相保持暖黄／橙；深浅同值。
     static var limitedCalmDash: UIColor { UIColor(red: 143.0/255.0, green: 143.0/255.0, blue: 140.0/255.0, alpha: 1) }
-    static var limitedNear: UIColor { UIColor(red: 232.0/255.0, green: 179.0/255.0, blue: 75.0/255.0, alpha: 1) }
-    static var limitedUrgent: UIColor { UIColor(red: 1.0, green: 122.0/255.0, blue: 69.0/255.0, alpha: 1) }
+    static var limitedNear: UIColor { UIColor(red: 181.0/255.0, green: 127.0/255.0, blue: 30.0/255.0, alpha: 1) }
+    static var limitedUrgent: UIColor { UIColor(red: 224.0/255.0, green: 90.0/255.0, blue: 30.0/255.0, alpha: 1) }
     static var limitedExpiredDash: UIColor { UIColor(red: 85.0/255.0, green: 85.0/255.0, blue: 79.0/255.0, alpha: 1) }
-    /// 限时倒计时文字色（预览值）：充裕 #8e8e8a、到期 #6d6d68；临近／紧急与虚线同色。
-    static var limitedCalmCountdown: UIColor { UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 138.0/255.0, alpha: 1) }
-    static var limitedExpiredCountdown: UIColor { UIColor(red: 109.0/255.0, green: 109.0/255.0, blue: 104.0/255.0, alpha: 1) }
+    /// 限时倒计时文字色（G6 对比度修复，2026-11-21；倒计时在操作行，底为页面底
+    /// 白／#0B0B0D，不是气泡底）：充裕浅 #73736E（白底约 4.77:1；旧 #8E8E8A
+    /// 仅 3.29:1）、深 #8E8E8A（黑底约 5.98:1）；到期浅 #6D6D68（白底约
+    /// 5.20:1）、深 #8E8E8A（黑底约 5.98:1；旧 #6D6D68 深色仅 3.78:1）。
+    /// 临近／紧急与虚线同色（未动：浅色 1.91:1／2.59:1 未达标，见 NOTES 待定）。
+    static var limitedCalmCountdown: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 138.0/255.0, alpha: 1) : UIColor(red: 115.0/255.0, green: 115.0/255.0, blue: 110.0/255.0, alpha: 1) } }
+    static var limitedExpiredCountdown: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 138.0/255.0, alpha: 1) : UIColor(red: 109.0/255.0, green: 109.0/255.0, blue: 104.0/255.0, alpha: 1) } }
     /// 限时气泡底（预览值）：深 #1d1d1f／浅 #f4f4f2。
     static var limitedBubbleBg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 29.0/255.0, green: 29.0/255.0, blue: 31.0/255.0, alpha: 1) : UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 242.0/255.0, alpha: 1) } }
 
@@ -86,6 +111,24 @@ enum BearyColors {
     /// 不得对动态色直接 withAlphaComponent——后者会在生成时固化当前
     /// trait 的解析值，深浅切换后不再跟随。固定色（橙/红/绿）重解后不变，
     /// 同样可走本方法。
+
+    /// 失败横幅底色：底色混 12% 语义红（DM 会话列表与好友列表的刷新失败横幅共用）。
+    static func failureBannerBackground() -> UIColor {
+        UIColor { trait in
+            let base = BearyColors.bg.resolvedColor(with: trait)
+            let tint = BearyColors.red.resolvedColor(with: trait)
+            var baseR: CGFloat = 0, baseG: CGFloat = 0, baseB: CGFloat = 0, baseA: CGFloat = 0
+            var tintR: CGFloat = 0, tintG: CGFloat = 0, tintB: CGFloat = 0, tintA: CGFloat = 0
+            base.getRed(&baseR, green: &baseG, blue: &baseB, alpha: &baseA)
+            tint.getRed(&tintR, green: &tintG, blue: &tintB, alpha: &tintA)
+            let a: CGFloat = 0.12
+            return UIColor(red: tintR * a + baseR * (1 - a),
+                           green: tintG * a + baseG * (1 - a),
+                           blue: tintB * a + baseB * (1 - a),
+                           alpha: 1)
+        }
+    }
+
     static func alpha(_ color: UIColor, _ alpha: CGFloat) -> UIColor {
         return UIColor { trait in
             color.resolvedColor(with: trait).withAlphaComponent(alpha)
@@ -101,4 +144,16 @@ enum BearyColors {
 /// BearyPastSelf.swift 在 BearyCoreTests target 内用它，#790 修红（test 找不到 BearyCorners）。
 enum BearyCorners {
     static let single: CGFloat = 12
+}
+
+/// Application Support 目录共享入口（可复用扫查第七遍第 7 条）：
+/// 21 处原先各写 `FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first`，
+/// 目录一旦换位置（如迁 group container）只改这里。取不到目录时返回 nil，
+/// 各调用点保留自己的 else 分支（return nil／return），不一刀切。
+/// 放本文件不放 BearyNativeCommon.swift：后者不在 BearyCoreTests target 内，
+/// EntrySyncStore／DraftFiles／OfflineSaveStore 三处在测试 target 里编不过（#790 同款处理）。
+extension FileManager {
+    static var appSupportDirectory: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    }
 }

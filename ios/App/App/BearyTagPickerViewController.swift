@@ -2,12 +2,10 @@ import UIKit
 
 // ===== 标签选择器底 sheet（2026-11-18 标签完整版）=====
 // 写日记页功能栏 # 钮弹出：挑旧标签（我用过的，按篇数倒序）或输入新建；
-// 多选，点确定回传选中列。走共享底部弹窗容器 BearyBottomSheet（与输入型
-// 底 sheet 同款呈现与关闭流程：弹簧 0.38s 上升、背后缩 0.92、遮罩 0.45、
-// 下拖关/弹回；键盘跟随 presentation 子类照抄 BearyInputSheet 口径：
-// 只跟停靠键盘，sheet 底贴键盘顶边）。无叉叉关闭（弹窗规矩 2026-11-17：
-// 关闭走抓手下滑／点外收起／取消钮）；点确定先关 sheet、关完再跑回调。
-// 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
+// 多选，点确定回传选中列。走系统底部 sheet（UISheetPresentationController，
+// 见 BearySystemSheet）。无叉叉关闭（弹窗规矩 2026-11-17：
+// 关闭走抓手下滑／点外收起，不设取消钮）；点确定先关 sheet、关完再跑回调。
+// 部署目标 iOS 16.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 enum BearyTagPicker {
 
@@ -28,33 +26,21 @@ enum BearyTagPicker {
     static func show(from presenter: UIViewController, selected: [String], onConfirm: @escaping ([String]) -> Void) {
         guard presenter.presentedViewController == nil else { return }
         let sheet = BearyTagPickerViewController(selected: selected, onConfirm: onConfirm)
-        let delegate = BearyBottomSheetTransitioningDelegate { presented, presenting, _ in
-            BearyTagPickerPresentationController(presentedViewController: presented, presenting: presenting)
-        }
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }
 
-final class BearyTagPickerViewController: UIViewController {
+final class BearyTagPickerViewController: UIViewController, BearySystemSheetSizing {
 
     private let onConfirm: ([String]) -> Void
 
-    /// 只解析一次：点按任一按钮即定局，后到的直接丢弃，防确定/取消双跑。
+    /// 只解析一次：点确定即定局，防确定重复点按。
     private var resolved = false
 
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法），
-    /// 否则容器在呈现中途释放、进退场动画丢 delegate。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
+    /// 按钮组底边约束：停靠键盘时由 BearySheetKeyboardAvoidance 按键盘顶升改常量。
+    private var buttonStackBottomConstraint: NSLayoutConstraint?
+    /// 停靠键盘顶升（只跟停靠键盘，浮动/分屏不动，见 BearySystemSheet）。
+    private var keyboardAvoidance: BearySheetKeyboardAvoidance?
 
     /// 服务端回的历史标签（GET /beary/api/tags，按篇数倒序）。
     private var serverTags: [BearyTag] = []
@@ -70,7 +56,6 @@ final class BearyTagPickerViewController: UIViewController {
 
     private let scrollView = UIScrollView()
     private let scrollContentView = UIView()
-    private let grabberView = UIView()
     private let titleLabel = UILabel()
     private let messageLabel = UILabel()
     private let newTagField = UITextField()
@@ -100,7 +85,7 @@ final class BearyTagPickerViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.surface3
+        view.backgroundColor = .clear
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
@@ -109,11 +94,6 @@ final class BearyTagPickerViewController: UIViewController {
         view.addSubview(scrollView)
         scrollContentView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(scrollContentView)
-
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        scrollContentView.addSubview(grabberView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "标签"
@@ -135,7 +115,10 @@ final class BearyTagPickerViewController: UIViewController {
         newTagField.autocorrectionType = .no
         newTagField.autocapitalizationType = .none
         newTagField.returnKeyType = .done
-        newTagField.placeholder = "输入新标签"
+        newTagField.attributedPlaceholder = NSAttributedString(string: NSLocalizedString("tag.input_placeholder", comment: ""), attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: BearyDynamicType.fieldFont(),
+        ])
         newTagField.delegate = self
         let fieldContainer = BearyInputContainer(content: newTagField)
         fieldContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
@@ -179,19 +162,15 @@ final class BearyTagPickerViewController: UIViewController {
         confirmButton.bearyAddPressFeedback()
         buttonStack.addArrangedSubview(confirmButton)
         confirmButton.heightAnchor.constraint(equalToConstant: confirmButton.style.height).isActive = true
-        let cancelButton = BearyButton(style: .secondaryOutline(.regular))
-        cancelButton.translatesAutoresizingMaskIntoConstraints = false
-        cancelButton.setTitle("取消", for: .normal)
-        cancelButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        cancelButton.bearyAddPressFeedback()
-        buttonStack.addArrangedSubview(cancelButton)
-        cancelButton.heightAnchor.constraint(equalToConstant: cancelButton.style.height).isActive = true
         view.addSubview(buttonStack)
 
         let tagsAreaHeight = tagsAreaView.heightAnchor.constraint(equalToConstant: Self.rowHeight)
         tagsAreaHeightConstraint = tagsAreaHeight
         let scrollBottom = scrollView.bottomAnchor.constraint(equalTo: buttonStack.topAnchor)
         scrollBottom.priority = UILayoutPriority(rawValue: 999)
+        // 按钮组底边：贴安全区底边 -10（列表 sheet 底留白）；停靠键盘时由 keyboardAvoidance 按键盘顶升改常量。
+        let buttonBottom = buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -BearySheetChrome.listBottomPadding)
+        buttonStackBottomConstraint = buttonBottom
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -204,12 +183,8 @@ final class BearyTagPickerViewController: UIViewController {
             scrollContentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             scrollContentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
 
-            grabberView.topAnchor.constraint(equalTo: scrollContentView.topAnchor, constant: BearySheetChrome.listTopPadding),
-            grabberView.centerXAnchor.constraint(equalTo: scrollContentView.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            // 顶部留白与旧抓手区等高（列表顶留白 6＋抓手高 4＋标题间距 16）：系统抓手占顶区，标题位置不动。
+            titleLabel.topAnchor.constraint(equalTo: scrollContentView.topAnchor, constant: BearySheetChrome.listTopPadding + BearySheetChrome.grabberHeight + 16),
             titleLabel.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor, constant: 16),
             titleLabel.trailingAnchor.constraint(equalTo: scrollContentView.trailingAnchor, constant: -16),
 
@@ -243,11 +218,23 @@ final class BearyTagPickerViewController: UIViewController {
 
             buttonStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             buttonStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -BearySheetChrome.listBottomPadding),
+            buttonBottom,
         ])
 
         refreshConfirmTitle()
         loadMyTags()
+
+        // 停靠键盘顶升按钮组（只跟停靠键盘，浮动/分屏不动；顶升量＝键盘盖住安全区底边的部分）。
+        keyboardAvoidance = BearySheetKeyboardAvoidance(view: view) { [weak self] keyboardTop in
+            guard let self = self else { return }
+            let lift: CGFloat
+            if let top = keyboardTop {
+                lift = max(0, self.view.bounds.maxY - self.view.safeAreaInsets.bottom - top)
+            } else {
+                lift = 0
+            }
+            self.buttonStackBottomConstraint?.constant = -BearySheetChrome.listBottomPadding - lift
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -255,8 +242,8 @@ final class BearyTagPickerViewController: UIViewController {
         updatePreferredContentSize()
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高（与 BearyInputSheet 同款公式：
-    /// 滚动内容高＋按钮组高＋底边 16＋安全区底边；封顶仍由 presentation 控制器做）。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高（与 BearyInputSheet 同款公式：
+    /// 滚动内容高＋按钮组高＋底边 10＋安全区底边；系统 sheet 封顶 88%）。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
         let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
@@ -266,6 +253,7 @@ final class BearyTagPickerViewController: UIViewController {
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 
@@ -376,10 +364,6 @@ final class BearyTagPickerViewController: UIViewController {
             handler(tags)
         }
     }
-
-    @objc private func closeTapped() {
-        dismiss(animated: BearyMotion.animated(true))
-    }
 }
 
 extension BearyTagPickerViewController: UITableViewDataSource, UITableViewDelegate {
@@ -415,6 +399,17 @@ extension BearyTagPickerViewController: UITableViewDataSource, UITableViewDelega
         return cell
     }
 
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        guard indexPath.row < myTags.count else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         toggleTag(myTags[indexPath.row].tag)
     }
@@ -426,107 +421,5 @@ extension BearyTagPickerViewController: UITextFieldDelegate {
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         addTapped()
         return false
-    }
-}
-
-// MARK: - 键盘跟随 presentation 控制器
-
-/// 只跟停靠键盘的 presentation 控制器（照抄 BearyInputSheet 口径，
-/// 见 BearyInputSheetPresentationController）：sheet 底贴键盘顶边；
-/// 浮动/分屏键盘不动 sheet。本 sheet 无玻璃/阴影 chrome，动画只落布局。
-private final class BearyTagPickerPresentationController: BearyBottomSheetPresentationController {
-
-    /// sheet 顶距容器顶的最小留白（与容器默认帧同口径）。
-    private static let topMargin: CGFloat = 56
-
-    /// 停靠键盘顶边（容器坐标）；浮动/分屏键盘不置位。
-    private var keyboardTopY: CGFloat?
-
-    override init(presentedViewController: UIViewController, presenting presentingViewController: UIViewController?) {
-        super.init(presentedViewController: presentedViewController, presenting: presentingViewController)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    /// 默认帧改走键盘停靠：底贴键盘顶（无键盘时贴容器底），高跟内容走、顶留 56pt；
-    /// 宽：<821 全宽，≥821 居中 600（与容器默认帧同口径）。
-    override var frameOfPresentedViewInContainerView: CGRect {
-        guard let container = containerView else { return .zero }
-        let width: CGFloat
-        if container.bounds.width >= 821 {
-            width = min(600, container.bounds.width - 32)
-        } else {
-            width = container.bounds.width
-        }
-        let x = (container.bounds.width - width) / 2
-        let preferred = presentedViewController.preferredContentSize.height
-        let height = preferred > 0 ? preferred : container.bounds.height * 0.5
-        let bottomY = keyboardTopY ?? container.bounds.height
-        let maxHeight = bottomY - Self.topMargin
-        let h = max(0, min(height, maxHeight))
-        return CGRect(x: x, y: bottomY - h, width: width, height: h)
-    }
-
-    @objc private func keyboardWillShow(_ note: Notification) {
-        updateKeyboardTop(from: note)
-    }
-
-    @objc private func keyboardWillChangeFrame(_ note: Notification) {
-        updateKeyboardTop(from: note)
-    }
-
-    @objc private func keyboardWillHide(_ note: Notification) {
-        keyboardTopY = nil
-        animateLayoutForKeyboard(note)
-    }
-
-    /// 只跟停靠键盘：浮动/分屏键盘（底边未贴容器底）不动 sheet。
-    /// 停靠→悬浮只发 keyboardWillChangeFrame、不发 keyboardWillHide：键盘不再贴底时
-    /// 在这里把旧的停靠顶边清掉、落回容器底，否则 sheet 一直停在旧高度。
-    /// 与 Toast 同口径：帧须与容器相交且触到容器底边才认贴底；收起途中的
-    /// WillChangeFrame 终帧在屏外（minY 已过底边）同判为无，不再误认贴底。
-    /// （照抄 BearyInputSheetPresentationController.updateKeyboardTop。）
-    private func updateKeyboardTop(from note: Notification) {
-        guard let container = containerView,
-              let value = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
-        let frameInContainer = container.convert(value.cgRectValue, from: nil)
-        let bounds = container.bounds
-        guard frameInContainer.minY < bounds.maxY - 1,
-              frameInContainer.maxY >= bounds.maxY - 1,
-              frameInContainer.intersects(bounds) else {
-            // 键盘不再贴底（iPad 悬浮/分屏／已移出屏幕）：清掉旧的停靠顶边并重算落点；
-            // 已是 nil 时不重复布局。
-            guard keyboardTopY != nil else { return }
-            keyboardTopY = nil
-            animateLayoutForKeyboard(note)
-            return
-        }
-        keyboardTopY = frameInContainer.minY
-        animateLayoutForKeyboard(note)
-    }
-
-    private func animateLayoutForKeyboard(_ note: Notification) {
-        guard let container = containerView else { return }
-        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
-        let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
-        if UIAccessibility.isReduceMotionEnabled {
-            container.layoutIfNeeded()
-            return
-        }
-        // 拖动期间不叠加键盘动画：容器拖动只改 transform、不改帧，松手复位后
-        // containerViewWillLayoutSubviews 会按最新 keyboardTopY 落帧。
-        guard let presentedView = presentedView, presentedView.transform.isIdentity else {
-            container.layoutIfNeeded()
-            return
-        }
-        UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: {
-            container.layoutIfNeeded()
-        })
     }
 }

@@ -142,6 +142,26 @@ extension BearyDynamicType {
         scaledFont(for: serifDesign(for: UIFont.systemFont(ofSize: 24, weight: .heavy)))
     }
 
+    /// 语义：登录改版展示标题（欢迎页标语／登录区标题／邮箱页标题／资料页标题）。
+    /// 定版值：28 bold，scaled。登录改版（2026-11-26，预览 v3）新增，与预览里的大标题一致；
+    /// 不复用 heroNameFont（24 heavy 衬线——衬线只留规范列出的 10 处展示标题，登录改版标题不在其中）。
+    static func welcomeDisplayFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 28, weight: .bold))
+    }
+
+    /// 语义：登录流程内页标题（邮箱页／资料页）。定版值：25 bold，scaled；
+    /// 预览 v3 实测 25px（欢迎页标语仍走 welcomeDisplayFont 28）。
+    /// 新增：资料页按预览 v3 修对位（2026-11-27）。
+    static func loginPageTitleFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 25, weight: .bold))
+    }
+
+    /// 语义：输入框文字。定版值：16 regular，scaled。登录改版（2026-11-26）新增；
+    /// 与旧登录页字段字号同值（旧代码写 ofSize: 16，lint 只认语义入口，故立新入口）。
+    static func fieldFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 16))
+    }
+
     /// 语义：头像首字展示字。定版值：28 bold，scaled（规范第 11 节，2026-11-04 Li 定）。
     static func avatarInitialFont() -> UIFont {
         scaledFont(for: UIFont.systemFont(ofSize: 28, weight: .bold))
@@ -159,6 +179,11 @@ extension BearyDynamicType {
 
     /// 语义：实况角标（照片上「实况」小标签）。定版值：11 bold，scaled（规范第 11 节，2026-11-08 Li 定，T3-D2；与网页版 liveBadgeHtml 同款 11pt）。
     static func liveBadgeFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .bold))
+    }
+
+    /// 语义：未读角标数字（私信会话行与底栏消息角标圆点内数字）。定版值：11 bold，scaled（规范第 11 节 token:180，HIG 审计 W8，2026-11-23 Li 点选“都按建议修”；原 10 bold）。
+    static func unreadBadgeFont() -> UIFont {
         scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .bold))
     }
 }

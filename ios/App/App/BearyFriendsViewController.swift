@@ -22,6 +22,27 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     var onBackToMessages: (() -> Void)?
 
     private let tableView = UITableView(frame: .zero, style: .plain)
+    /// 自定义下拉指示器图标（32pt 官方刷新图标、灰色；平时 alpha 0，
+    /// 下拉时淡入＋跟随旋转，刷新中常亮连续旋转）。
+    private lazy var pullIconView = BearyRefreshIconView()
+
+    /// 自定义下拉指示器（通知页同款）：固定高 116、藏在表内容上方
+    /// （content y=-116..0），指示高按手指行程 ×0.48 阻尼（上限 116），
+    /// 不拦截触摸；刷新中改固定 84 高。
+    private lazy var pullView: UIView = {
+        let pull = UIView()
+        pull.backgroundColor = BearyColors.bg
+        pull.isUserInteractionEnabled = false
+        pull.frame = CGRect(x: 0, y: -116, width: 0, height: 116)
+        pull.addSubview(pullIconView)
+        NSLayoutConstraint.activate([
+            pullIconView.centerXAnchor.constraint(equalTo: pull.centerXAnchor),
+            pullIconView.bottomAnchor.constraint(equalTo: pull.bottomAnchor, constant: -14),
+            pullIconView.widthAnchor.constraint(equalToConstant: 32),
+            pullIconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        return pull
+    }()
     // 空／失败态走 BearyStateView（与首次加载态同槽位居中、互斥）。
     private let emptyStateView = BearyStateView()
     // 审计第 19 项：首次加载态复用 BearyStateView（转圈 +“加载中…”），不加骨架屏。
@@ -30,12 +51,23 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     private var firstLoadPending = true
     // 新行首次出现透明度过渡的已播记账（按好友 id/handle 键，已有行更新不重播）。
     private var fadedRowKeys = Set<String>()
+    // 取关在途去重：同一好友的取关请求在途时再次确认直接丢弃（私信删除
+    // deletingConversationPeerIds 同款口径）；请求结束（成功或失败）后移除。
+    private var unfollowingUserIds: Set<Int> = []
     private let titleLabel = UILabel()
     private var topBarTopConstraint: NSLayoutConstraint?
     private var backButton: UIButton?
     private var titleLeadingConstraint: NSLayoutConstraint?
     private var friends: [BearyAPI.FriendUser] = []
     private var loading = false
+    /// 自定义下拉头（通知页同款口径）：固定高 116、藏在表内容上方，指示高按
+    /// 手指行程 ×0.48 阻尼（上限 116），32pt 官方刷新图标；触发 140pt、
+    /// 刷新固定 84 高、进入／收回 0.38s。
+    private var isCustomPullRefreshing = false
+    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
+    private var customPullEndInFlight = false
+    /// 一次拖动的 engage 锚点：只锁一次，中途不再凭 offset/inset 阈值清掉。
+    private var pullEngageTranslation: CGFloat?
     private var needsReloadAfterUserChange = false
     private var loadFailed = false
     // 失败态全量·好友列表：已有内容时刷新失败的非阻断提示条，口径参照
@@ -77,14 +109,16 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.backgroundColor = BearyColors.bg
         tableView.separatorStyle = .none
-        tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 72
+        // 行高定死 72（44 头像＋上下各 14，设计定值），不再走
+        // automaticDimension 的拟合：拟合依赖 UIStackView 内在尺寸，
+        // 拟合一旦失败行高可塌成 0，行在数据源里、屏上却没有
+        // （好友 · 1 人零行实证）；本行内容固定单行名＋单行 handle，
+        // 72 即设计高。
+        tableView.rowHeight = 72
         tableView.delegate = self
         tableView.dataSource = self
         tableView.register(BearyFriendCell.self, forCellReuseIdentifier: "friendCell")
-        let refresh = UIRefreshControl()
-        refresh.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
-        tableView.refreshControl = refresh
+        tableView.addSubview(pullView)
         view.addSubview(tableView)
 
         // 已有内容刷新失败条：覆盖在顶栏下方、列表顶部之上（非弹框、非 toast，
@@ -93,19 +127,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         // 叠 12% 语义红，与旧“red 0.12 透在 bg 上”的观感一致（深浅模式各自
         // 按当前 trait 混合）。
         refreshFailedBanner.translatesAutoresizingMaskIntoConstraints = false
-        refreshFailedBanner.backgroundColor = UIColor { trait in
-            let base = BearyColors.bg.resolvedColor(with: trait)
-            let tint = BearyColors.red.resolvedColor(with: trait)
-            var baseR: CGFloat = 0, baseG: CGFloat = 0, baseB: CGFloat = 0, baseA: CGFloat = 0
-            var tintR: CGFloat = 0, tintG: CGFloat = 0, tintB: CGFloat = 0, tintA: CGFloat = 0
-            base.getRed(&baseR, green: &baseG, blue: &baseB, alpha: &baseA)
-            tint.getRed(&tintR, green: &tintG, blue: &tintB, alpha: &tintA)
-            let a: CGFloat = 0.12
-            return UIColor(red: tintR * a + baseR * (1 - a),
-                           green: tintG * a + baseG * (1 - a),
-                           blue: tintB * a + baseB * (1 - a),
-                           alpha: 1)
-        }
+        refreshFailedBanner.backgroundColor = BearyColors.failureBannerBackground()
         refreshFailedBanner.isHidden = true
         refreshFailedBanner.alpha = 0
         view.addSubview(refreshFailedBanner)
@@ -113,7 +135,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         refreshFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         refreshFailedLabel.adjustsFontForContentSizeCategory = true
         refreshFailedLabel.textColor = BearyColors.ink
-        refreshFailedLabel.text = "未能刷新"
+        refreshFailedLabel.text = NSLocalizedString("common.refresh_failed", comment: "")
         refreshFailedBanner.addSubview(refreshFailedLabel)
         refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
         refreshFailedRetryButton.setTitle("重试", for: .normal)
@@ -201,6 +223,9 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             tableView.contentInset.bottom = bottom
             tableView.scrollIndicatorInsets.bottom = bottom
         }
+        if tableView.bounds.width > 0 && pullView.frame.width != tableView.bounds.width {
+            pullView.frame.size.width = tableView.bounds.width
+        }
     }
 
     /// 容器顶栏显隐同步：顶栏显示时本页顶栏顶距 = 安全区顶 + 60（顶栏内容区高），
@@ -236,6 +261,69 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     }
 
     func refresh() {
+        if isCustomPullRefreshing || (firstLoadPending && loading) {
+            return
+        }
+        beginCustomPullRefresh()
+    }
+
+    /// 自定义下拉指示器跟随：手指行程（pan 手势自顶部锚点起算）× 0.48 阻尼、
+    /// 上限 116；指示高 ≥67.2 时转满一圈（= 触发行程 140pt × 0.48）。
+    /// 指示器是表内子视图：屏内底边固定为指示高，顶边随表回弹裁剪。
+    /// 锚点一次拖动只锁一次：中途不再凭 offset/inset 阈值清掉——顶栏显隐
+    /// 改 contentInset.top 或重载顶 offset，都会把阈值顶到手指下面，旧口径
+    /// 一清锚点 fingerRaw 即归零、指示高塌掉，图标还没触发就缩回去。
+    /// 锚点只在拖动结束清（scrollViewDidEndDragging 与下方 !isDragging 分支）。
+    private func updateCustomPullIndicator() {
+        if isCustomPullRefreshing {
+            return
+        }
+        if !tableView.isDragging {
+            pullEngageTranslation = nil
+            pullView.frame = CGRect(x: 0, y: -116, width: tableView.bounds.width, height: 116)
+            pullIconView.setPullProgress(0)
+            return
+        }
+        let contentRaw = max(0, -(tableView.contentOffset.y + tableView.contentInset.top))
+        let panTranslation = tableView.panGestureRecognizer.translation(in: tableView).y
+        if tableView.contentOffset.y <= -tableView.contentInset.top && pullEngageTranslation == nil {
+            pullEngageTranslation = panTranslation
+        }
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        let indicatorHeight = min(fingerRaw * 0.48, 116)
+        pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: tableView.bounds.width, height: 116)
+        if indicatorHeight <= 0 {
+            pullIconView.setPullProgress(0)
+        } else {
+            let progress = min(1, indicatorHeight / 67.2)
+            pullIconView.setPullProgress(progress)
+        }
+    }
+
+    /// 自定义下拉刷新进入：指示固定 84 高 + 转圈，回包到即收回
+    /// （无 0.5 秒最低展示）。load() 回包终点调 endCustomPullRefresh 收回；
+    /// load() 因在途直接返回时不收回——在途那次结束时收回，不丢刷新。
+    private func beginCustomPullRefresh() {
+        if isCustomPullRefreshing || (firstLoadPending && loading) {
+            return
+        }
+        isCustomPullRefreshing = true
+        pullIconView.startSpinning()
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”。
+        tableView.setContentOffset(tableView.contentOffset, animated: false)
+        let pullIn = {
+            self.tableView.contentInset.top = 84 // beary-lint: allow
+            self.tableView.scrollIndicatorInsets.top = 84
+            self.tableView.contentOffset = CGPoint(x: 0, y: -84)
+            self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullIn()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
+        }
         load()
     }
 
@@ -246,8 +334,61 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         load()
     }
 
-    @objc private func refreshPulled() {
-        load()
+    private func endCustomPullRefresh() {
+        if !isCustomPullRefreshing || customPullEndInFlight {
+            return
+        }
+        customPullEndInFlight = true
+        // 收回动画全程仍持刷新旗：跟随侧不中途重写 pullView.frame。
+        // 结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
+        // 不再把 contentOffset 拽回 0 顶部，只复位内边距、藏指示头，留在原位置；
+        // 仍停在下拉位的才按旧口径回到 0（指示区须收掉）。
+        // 下拉位 = -84（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
+        let stillAtPullPosition = !self.tableView.isDragging
+            && self.tableView.contentOffset.y <= -84 + 8
+        // 动量截断（进入侧同款）：只在仍停在下拉位时——此时收回动画要接管
+        // offset；松手后的表减速若还在跑，会与收回 easing 双路驱动
+        // contentOffset，图标先往下掉一下再上去；先掐断再播动画。
+        // 用户已滑走时 offset 不参与收回动画，不碰他的滚动。
+        if stillAtPullPosition {
+            tableView.setContentOffset(tableView.contentOffset, animated: false)
+        }
+        let pullOut = {
+            self.tableView.contentInset.top = 0
+            self.tableView.scrollIndicatorInsets.top = 0
+            if stillAtPullPosition {
+                self.tableView.contentOffset = CGPoint(x: 0, y: 0)
+            }
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullOut()
+            self.isCustomPullRefreshing = false
+            self.customPullEndInFlight = false
+            self.pullIconView.stopSpinning()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+                self.isCustomPullRefreshing = false
+                self.customPullEndInFlight = false
+                self.pullIconView.stopSpinning()
+            })
+        }
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateCustomPullIndicator()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        // 自定义下拉触发：手指原始行程满 140pt 松手才刷新。
+        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        pullEngageTranslation = nil
+        if fingerRaw >= 140 && !isCustomPullRefreshing && !(firstLoadPending && loading) {
+            // 自定义下拉触发（满 140pt 松手）给一次轻触觉；程序触发的 refresh() 不走这里。
+            BearyHaptics.press()
+            beginCustomPullRefresh()
+        }
     }
 
     @objc private func refreshFailedRetryTapped() {
@@ -300,7 +441,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
 
     private func load() {
         guard SessionManager.shared.isLoggedIn else {
-            tableView.refreshControl?.endRefreshing()
+            endCustomPullRefresh()
             onRequireLogin?()
             return
         }
@@ -309,7 +450,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         loadFailed = false
         // 审计第 19 项：首次无数据才显加载态（下拉刷新自带转圈时不叠加）；
         // 有旧数据时不遮内容，后台刷新完直接换行。
-        if firstLoadPending && friends.isEmpty && tableView.refreshControl?.isRefreshing != true {
+        if firstLoadPending && friends.isEmpty && !isCustomPullRefreshing {
             emptyStateView.isHidden = true
             firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
             firstLoadStateView.isHidden = false
@@ -324,7 +465,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.loading = false
-                self.tableView.refreshControl?.endRefreshing()
+                self.endCustomPullRefresh()
                 self.firstLoadStateView.isHidden = true
                 // 切号后到达的旧回包直接丢弃（账号 ID + 代次双重校验；
                 // A→B→A 时账号 ID 再次相等，代次不等仍丢弃）；若新号重拉挂起，补发一次。
@@ -433,6 +574,11 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "friendCell", for: indexPath) as! BearyFriendCell
         let user = friends[indexPath.row]
+        // 复用 cell 永不以不可见态起步：willDisplay 的入场淡入从
+        // alpha 0 起播，prepareForReuse 从不复位 alpha/transform，
+        // 中途打断的淡入会把近 0 的 alpha 带进下一行，行在却看不见。
+        cell.alpha = 1
+        cell.transform = .identity
         cell.configure(user: user) { [weak self] button in
             self?.presentFriendMenu(user: user, sourceButton: button)
         }
@@ -470,6 +616,17 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         })
     }
 
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        guard indexPath.row < friends.count else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         onOpenUser?(friends[indexPath.row])
@@ -487,6 +644,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                 BearyFriends.confirmUnfollowAlert(from: self, displayName: user.displayName ?? "", mutual: true) { [weak self] in
                     guard let self = self else { return }
                     guard self.friends.contains(where: { $0.id == userId }) else { return }
+                    guard !self.unfollowingUserIds.contains(userId) else { return }
+                    self.unfollowingUserIds.insert(userId)
                     // r28-4：取关失败回滚只认发起账号。发起时同拍账号 id＋代次
                     //（通知页／引用面板同款口径），切号后到达的旧号失败回包整单丢弃。
                     let requestAccountId = BearyAPI.shared.authAccountId
@@ -494,6 +653,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                     BearyAPI.shared.unfollowFriend(userId: userId) { [weak self] result in
                         DispatchQueue.main.async {
                             guard let self = self else { return }
+                            self.unfollowingUserIds.remove(userId)
                             switch result {
                             case .success:
                                 // N5(a)：等成功再删行。请求期间列表可能已重拉，人已不在时不删行。
@@ -510,10 +670,10 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                                       requestEpoch == BearyAPI.shared.authEpoch else { return }
                                 // N5：失败行保留原位，不插回；震动＋拒绝音不依赖 cell 是否可见，
                                 // 只有摇头仍只在行可见时执行。
-                                self.playDenyFeedback()
+                                BearyIconMotion.playDenyFeedback()
                                 if let currentIndex = self.friends.firstIndex(where: { $0.id == userId }),
                                    let cell = self.tableView.cellForRow(at: IndexPath(row: currentIndex, section: 0)) {
-                                    self.denyShake(on: cell)
+                                    BearyIconMotion.denyShake(on: cell, key: "bearyDenyShake")
                                 }
                                 BearyToast.show(in: self.view, message: "取消关注失败，请重试")
                             }
@@ -522,25 +682,6 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                 }
             },
         ])
-    }
-
-    /// 取关失败拒绝反馈：warning 震动＋拒绝音效，与 cell 是否可见无关；
-    /// 摇头只在行可见时由调用方另调 denyShake(on:) 执行。
-    /// 减动效时只跳过视觉抖动，震动与音效照常给。
-    private func playDenyFeedback() {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-    }
-
-    /// 仅视觉摇头（0.4s）；减动效时跳过。调用方须先调 playDenyFeedback 给震动＋音效。
-    private func denyShake(on view: UIView) {
-        if UIAccessibility.isReduceMotionEnabled { return }
-        view.layer.removeAnimation(forKey: "bearyDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        view.layer.add(shake, forKey: "bearyDenyShake")
     }
 }
 
@@ -552,6 +693,15 @@ private final class BearyFriendCell: UITableViewCell {
     private let avatarView = BearyAvatarView()
     private let nameLabel = UILabel()
     private let handleLabel = UILabel()
+    /// 名字＋handle 纵向栈：整块相对头像垂直居中（约束见 init）。
+    private let textStack: UIStackView = {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 1
+        stack.alignment = .fill
+        return stack
+    }()
     private let separatorView = UIView()
     private var moreHandler: ((UIButton) -> Void)?
 
@@ -586,34 +736,38 @@ private final class BearyFriendCell: UITableViewCell {
         separatorView.translatesAutoresizingMaskIntoConstraints = false
         separatorView.backgroundColor = BearyColors.line
         contentView.addSubview(avatarView)
-        contentView.addSubview(nameLabel)
-        contentView.addSubview(handleLabel)
+        textStack.addArrangedSubview(nameLabel)
+        textStack.addArrangedSubview(handleLabel)
+        contentView.addSubview(textStack)
         contentView.addSubview(moreButton)
         contentView.addSubview(separatorView)
+        // 名字＋handle 整块相对头像垂直居中：栈 centerY 钉头像 centerY（999，
+        // 大字号下上下守卫先 binding 时让位；守卫对称故回落时仍居中）；
+        // 无 handle 时栈自动收起单行名字，同样居中。行高仍由头像与栈共同决定，
+        // 头像垂直居中、上下各留最小 14（行高下限 72 兜底）。
+        let textStackCenterY = textStack.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor)
+        textStackCenterY.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            // 行高改文字栈决定：头像垂直居中，上下各留最小 14（行高下限 72 兜底）。
             avatarView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             avatarView.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 14),
             avatarView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
             avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),
-            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
-            nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: moreButton.leadingAnchor, constant: -8),
-            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
-            handleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: moreButton.leadingAnchor, constant: -8),
-            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
+            textStackCenterY,
+            textStack.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 14),
+            textStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
+            textStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
+            textStack.trailingAnchor.constraint(lessThanOrEqualTo: moreButton.leadingAnchor, constant: -8),
             moreButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             moreButton.widthAnchor.constraint(equalToConstant: 44),
             moreButton.heightAnchor.constraint(equalToConstant: 44),
-            // 审计低风险项：行底 1pt 分隔线（与日记行底边同口径）。
+            // 审计低风险项：行底 0.5pt 分隔线（与日记行底边同口径）。
             separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            separatorView.heightAnchor.constraint(equalToConstant: 1),
+            separatorView.heightAnchor.constraint(equalToConstant: 0.5),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
         ])
     }
@@ -624,14 +778,29 @@ private final class BearyFriendCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        // 复位入场淡入留下的视觉状态：不复位时，中途打断的淡入会把
+        // 近 0 的 alpha / 位移带进下一行，行在数据源里、屏上却看不见。
+        alpha = 1
+        transform = .identity
+        nameLabel.text = nil
         avatarView.reset()
         handleLabel.text = nil
+        handleLabel.isHidden = true
         moreHandler = nil
     }
 
     func configure(user: BearyAPI.FriendUser, onMore: @escaping (UIButton) -> Void) {
         moreHandler = onMore
-        let displayName = (user.displayName?.isEmpty == false) ? user.displayName! : "beary 用户"
+        // 无昵称的账号用 @handle 兜底（服务端 display_name 为空时），
+        // 再无 handle 才走通用「Beary 用户」；行绝不因缺昵称被丢。
+        let displayName: String
+        if let name = user.displayName, !name.isEmpty {
+            displayName = name
+        } else if let handle = user.handle, !handle.isEmpty {
+            displayName = "@\(handle)"
+        } else {
+            displayName = NSLocalizedString("emote.posters.fallback_display_name", comment: "")
+        }
         nameLabel.text = displayName
         if let handle = user.handle, !handle.isEmpty {
             handleLabel.text = "@\(handle)"

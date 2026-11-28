@@ -304,8 +304,8 @@ private final class WishRowView: UIView {
         }
         detailLabel.text = newDetail
         detailLabel.isHidden = newDetail.isEmpty
-        let author = item.authorName ?? "beary 用户"
-        let time = item.createdAt.map { BearyVisibilityText.publishedRelativeString(publishedAtMs: $0) ?? BearyDiaryCardCell.feedTimeString(ms: $0) } ?? ""
+        let author = item.authorName ?? NSLocalizedString("emote.posters.fallback_display_name", comment: "")
+        let time = item.createdAt.map { BearyVisibilityText.diaryTimeString(publishedAtMs: $0) ?? BearyDiaryCardCell.feedTimeString(ms: $0) } ?? ""
         metaLabel.text = time.isEmpty ? author : "\(author) · \(time)"
         let up = item.upCount ?? 0
         let down = item.downCount ?? 0
@@ -379,11 +379,7 @@ private final class WishRowView: UIView {
     /// 22(a)：补减动效早退——与标准 playDenyShake 一致，减动效时只跳视觉抖动；
     /// 本处调用点（voteTapped 失败分支）已另给 warning 震动，shake 本身不补震动/音效。
     func shake() {
-        if UIAccessibility.isReduceMotionEnabled { return }
-        let anim = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        anim.values = [0, -8, 8, -5, 5, 0]
-        anim.duration = BearyMotion.screen
-        layer.add(anim, forKey: "wish-row-shake")
+        BearyIconMotion.denyShake(on: self, key: "wish-row-shake")
     }
 }
 
@@ -406,7 +402,7 @@ final class BearyWishWallViewController: UIViewController {
         labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
-        labelValue.text = "显示的是上次的数据"
+        labelValue.text = NSLocalizedString("common.showing_previous_content", comment: "")
         labelValue.isHidden = true
         return labelValue
     }()
@@ -427,22 +423,14 @@ final class BearyWishWallViewController: UIViewController {
     private var markDoneGeneration: [Int: Int] = [:]
     /// 审计登录杂项：游客投票时存下的待重放意图（wishId, target），登录成功后补投。
     private var pendingVote: (wishId: Int, target: Int)?
-    /// 每条许愿最后服务端确认态（点赞 confirmedLiked/confirmedLikeCount 同款）：
-    /// 成功回包才刷新；最新一代请求失败时回滚到这里，不是回滚到本次点按前
-    /// 的中间态（快连点下中间态早已被更新的点按覆盖，回滚到它即错）。
-    // 注意不用 [Int: Int?] 存确认票：Swift 里 nil 票与“未播种”在字典取值上
-    // 无法区分，快连点下播种守卫会把中间态误当确认基线。故票只存 1/-1，
-    // 无票 = 字典缺 key；播种与否另用 confirmedSeeded 记（播种后缺 key 即真无票）。
-    private var confirmedVote: [Int: Int] = [:]
-    private var confirmedSeeded: Set<Int> = []
-    private var confirmedUp: [Int: Int] = [:]
-    private var confirmedDown: [Int: Int] = [:]
+    /// 每条许愿最后服务端确认态（共享协议，见 BearyNativeCommon.BearyConfirmedStatesById，
+    /// 点赞确认态同款）：成功回包才刷新；最新一代请求失败时回滚到这里，
+    /// 不是回滚到本次点按前的中间态（快连点下中间态早已被更新的点按覆盖，回滚到它即错）。
+    /// 字典里有 key 即已播种：票以 BearyVoteState 整存，nil 票与“未播种”
+    /// 不再混淆（旧三字典＋confirmedSeeded 的写法见 git 历史）。
+    private var voteStates = BearyConfirmedStatesById<Int, BearyVoteState>()
     private func seedConfirmedIfNeeded(wishId: Int, item: BearyAPI.WishItem) {
-        guard !confirmedSeeded.contains(wishId) else { return }
-        confirmedSeeded.insert(wishId)
-        confirmedVote[wishId] = item.myVote
-        confirmedUp[wishId] = item.upCount ?? 0
-        confirmedDown[wishId] = item.downCount ?? 0
+        voteStates.seedIfAbsent(for: wishId, value: BearyVoteState(vote: item.myVote, up: item.upCount ?? 0, down: item.downCount ?? 0))
     }
     private var isLoading = false
     /// 第八轮审计 07：加载在途时又有刷新请求（创建愿望成功、登录后补投），
@@ -598,13 +586,13 @@ final class BearyWishWallViewController: UIViewController {
     @objc private func retryTapped() { loadWishes() }
 
     /// App 侧 Plus 门三态（r17-C9）：仅决定发起钮显隐，真正校验在服务端
-    ///（plus_until > now 或永久阈值）。true 已确认是 Plus；false 已确认不是；
-    /// nil 未确认——冷启动快照的 plusUntil 为 nil，不得直接判非 Plus，须等
+    ///（plus_until > now 或永久阈值）。判定走统一门 BearyPlusGate（现在全开；
+    /// 真实口径为 plus 为 true 或 plusUntil 未过期）。true 已确认是 Plus；
+    /// false 已确认不是；nil 未确认——尚未登录、不得直接判非 Plus，须等
     /// /me（见 refreshPlusGate）。
     private func plusState() -> Bool? {
-        guard let until = SessionManager.shared.currentUser?.plusUntil else { return nil }
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        return until >= 4102444800000 || until > now
+        guard let user = SessionManager.shared.currentUser else { return nil }
+        return BearyPlusGate.canUsePlusFeature(user: user)
     }
 
     /// Plus 门刷新：已确认按结果显隐；未确认时先隐藏发起钮、等一次 /me
@@ -649,7 +637,6 @@ final class BearyWishWallViewController: UIViewController {
             // 降序、App 不重排”冲突，直到下次重进才纠正）；创建成功后重拉，
             // 以服务端顺序为准（确认态由 loadWishes 成功分支播种）。
             self.loadWishes()
-            BearyToast.show(in: self.view, message: "许愿已发布")
             self.onCreated?(wish)
         }
         // 117 终态偏离兜底：新建页无守卫，呈现完成时帧偏离就复位（与设置页 helper 同口径）。
@@ -761,10 +748,7 @@ final class BearyWishWallViewController: UIViewController {
                         // 写成功分支已把确认基线刷新到新值，旧快照会把它污染回旧值，
                         // 之后投票失败回滚就会滚到这个被污染的旧基线。
                         if (self.wishWriteVersion[item.id!] ?? 0) != (requestWriteVersions[item.id!] ?? 0) { continue }
-                        self.confirmedSeeded.insert(item.id!)
-                        self.confirmedVote[item.id!] = item.myVote
-                        self.confirmedUp[item.id!] = item.upCount ?? 0
-                        self.confirmedDown[item.id!] = item.downCount ?? 0
+                        self.voteStates.setConfirmed(for: item.id!, value: BearyVoteState(vote: item.myVote, up: item.upCount ?? 0, down: item.downCount ?? 0))
                     }
                     self.showingCachedWishes = false
                     self.wishStaleLabel.isHidden = true
@@ -812,10 +796,7 @@ final class BearyWishWallViewController: UIViewController {
             guard self.wishes.isEmpty, !self.wishesFreshConfirmed else { return }
             self.wishes = snap.items.map { $0.toWishItem() }
             for item in self.wishes where item.id != nil {
-                self.confirmedSeeded.insert(item.id!)
-                self.confirmedVote[item.id!] = item.myVote
-                self.confirmedUp[item.id!] = item.upCount ?? 0
-                self.confirmedDown[item.id!] = item.downCount ?? 0
+                self.voteStates.setConfirmed(for: item.id!, value: BearyVoteState(vote: item.myVote, up: item.upCount ?? 0, down: item.downCount ?? 0))
             }
             self.showingCachedWishes = true
             self.wishStateView.isHidden = true
@@ -916,9 +897,7 @@ final class BearyWishWallViewController: UIViewController {
         }
         guard let row = rowViews[targetId] else { return }
         let frame = row.convert(row.bounds, to: scrollView)
-        let minY = -scrollView.contentInset.top
-        let maxY = max(scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom, minY)
-        scrollView.contentOffset = CGPoint(x: scrollView.contentOffset.x, y: min(max(frame.minY - anchor.viewportY, minY), maxY))
+        scrollView.contentOffset = CGPoint(x: scrollView.contentOffset.x, y: BearyScrollAnchor.clampedOffsetY(in: scrollView, rowTop: frame.minY, viewportOffset: anchor.viewportY, contentInset: scrollView.contentInset))
     }
 
     private func indexOfWish(_ id: Int) -> Int? { wishes.firstIndex { $0.id == id } }
@@ -930,7 +909,7 @@ final class BearyWishWallViewController: UIViewController {
     /// 1/-1/0，0 = 取消本票），服务端不再收到乱序写入；代次仍只守 UI，过期回包
     /// （含过期失败）直接丢弃，不得覆盖更新的点按态、不得触发回滚；只有最新一代
     /// 回包生效：成功以服务端计数对齐并刷新确认态，失败回滚到最后确认态
-    /// （confirmedVote/confirmedUp/confirmedDown）+ 摇头 + toast。
+    /// （voteStates 确认态）+ 摇头 + toast。
     /// 审计 26 #35：absolute 为 true 时（登录补投）不走 toggle，直接提交目标票态；
     /// onSettled 在本次投票最终结算时回调（成功 true、失败 false），过期回包
     /// 被代次守卫丢弃时不回调。
@@ -1007,10 +986,11 @@ final class BearyWishWallViewController: UIViewController {
                     // R22 #8：中间态成功回包只刷新确认态（待发请求失败时回滚
                     // 到它）、不碰界面、不播音效。
                     if case .success(let resp) = result {
-                        self.confirmedSeeded.insert(wishId)
-                        self.confirmedVote[wishId] = resp.myVote
-                        self.confirmedUp[wishId] = resp.up ?? self.confirmedUp[wishId] ?? 0
-                        self.confirmedDown[wishId] = resp.down ?? self.confirmedDown[wishId] ?? 0
+                        var intermediate = self.voteStates.confirmedValue(for: wishId) ?? BearyVoteState(vote: nil, up: 0, down: 0)
+                        intermediate.vote = resp.myVote
+                        if let up = resp.up { intermediate.up = up }
+                        if let down = resp.down { intermediate.down = down }
+                        self.voteStates.setConfirmed(for: wishId, value: intermediate)
                         // 审计 26 #34：中间态写请求也已服务端确认，写入版本 +1。
                         self.wishWriteVersion[wishId, default: 0] += 1
                     }
@@ -1029,10 +1009,7 @@ final class BearyWishWallViewController: UIViewController {
                     confirmed.downCount = resp.down ?? confirmed.downCount
                     confirmed.myVote = resp.myVote
                     self.wishes[idx] = confirmed
-                    self.confirmedSeeded.insert(wishId)
-                    self.confirmedVote[wishId] = confirmed.myVote
-                    self.confirmedUp[wishId] = confirmed.upCount ?? 0
-                    self.confirmedDown[wishId] = confirmed.downCount ?? 0
+                    self.voteStates.setConfirmed(for: wishId, value: BearyVoteState(vote: confirmed.myVote, up: confirmed.upCount ?? 0, down: confirmed.downCount ?? 0))
                     self.rowViews[wishId]?.configure(item: confirmed, isAdmin: self.isAdmin)
                     // 审计 26 #34：写请求服务端确认成功，写入版本 +1（列表旧快照不得再覆盖）。
                     self.wishWriteVersion[wishId, default: 0] += 1
@@ -1041,14 +1018,16 @@ final class BearyWishWallViewController: UIViewController {
                     // 失败回滚口径（点赞同款）：滚到最后服务端确认态，不是本次
                     // 点按前的中间态——快连点下中间态已被更新点按覆盖，滚回去即错。
                     var rolledBack = self.wishes[idx]
-                    rolledBack.myVote = self.confirmedVote[wishId]
-                    rolledBack.upCount = self.confirmedUp[wishId] ?? rolledBack.upCount
-                    rolledBack.downCount = self.confirmedDown[wishId] ?? rolledBack.downCount
+                    if let confirmedState = self.voteStates.confirmedValue(for: wishId) {
+                        rolledBack.myVote = confirmedState.vote
+                        rolledBack.upCount = confirmedState.up
+                        rolledBack.downCount = confirmedState.down
+                    }
                     self.wishes[idx] = rolledBack
                     self.rowViews[wishId]?.configure(item: rolledBack, isAdmin: self.isAdmin)
                     self.rowViews[wishId]?.shake()
                     BearyHaptics.rejectionWarning()
-                    BearyToast.show(in: self.view, message: "投票失败，请稍后再试")
+                    BearyToast.show(in: self.view, message: NSLocalizedString("wish.vote_failed", comment: ""))
                     onSettled?(false)
                 }
             }
@@ -1076,7 +1055,6 @@ final class BearyWishWallViewController: UIViewController {
                 case .success:
                     // 审计 26 #34：标记完成服务端确认成功，写入版本 +1（列表旧快照不得再改回未完成）。
                     self.wishWriteVersion[wishId, default: 0] += 1
-                    BearyToast.show(in: self.view, message: "已标记完成")
                 case .failure:
                     // 只滚 status：其余字段（票数等）以当前显示态为准，
                     // 请求期间重载 / 票数变化带进来的新值不得被旧快照盖掉。
@@ -1087,7 +1065,7 @@ final class BearyWishWallViewController: UIViewController {
                     // 审计视觉 15：标记失败补摇头＋警告震动（toast 已有）；乐观 status＋失败回滚不动（R23 #5 定版）。
                     self.rowViews[wishId]?.shake()
                     BearyHaptics.rejectionWarning()
-                    BearyToast.show(in: self.view, message: "标记失败，请稍后再试")
+                    BearyToast.show(in: self.view, message: NSLocalizedString("wish.mark_failed", comment: ""))
                 }
             }
         }
@@ -1120,8 +1098,7 @@ final class BearyWishWallViewController: UIViewController {
                         //（同向票已显示时 toggle 会算出撤票）；“已补投”只在服务端成功
                         // 回包、且确认票等于目标票时才提示，失败或愿望不在列表时不提示。
                         self?.voteTapped(wishId: pending.wishId, target: pending.target, absolute: true) { [weak self] success in
-                            guard let self = self, success, self.confirmedVote[pending.wishId] == pending.target else { return }
-                            BearyToast.show(in: self.view, message: "已补投刚才那一票")
+                            guard let self = self, success, self.voteStates.confirmedValue(for: pending.wishId)?.vote == pending.target else { return }
                         }
                     }
                     if !messages.isEmpty, let view = self?.view {
@@ -1134,6 +1111,12 @@ final class BearyWishWallViewController: UIViewController {
         login.onCancelled = { [weak self] in
             SessionManager.shared.cancelAccountAddSession()
             self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
+        }
+        login.onGuestMode = { [weak self] in
+            // 游客入口：关登录页、进游客态（回许愿墙原地；投票仍按游客口径走登录门）。
+            self?.dismiss(animated: BearyMotion.animated(true)) {
+                SessionManager.shared.isGuestMode = true
+            }
         }
         present(login, animated: BearyMotion.animated(true), completion: nil)
     }
@@ -1156,7 +1139,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     private static let titleLimit = 100
     private static let detailLimit = 2000
     /// 11 轮审计第 10 项：表单级错误文案（服务端笼统 bad wish 时用，两框均不变红）。
-    private static let formErrorText = "标题需为 1–100 字，详情最多 2000 字，请检查后重试"
+    private static let formErrorText = NSLocalizedString("wishwall.form_error.both", comment: "")
     /// 11 轮审计第 10 项：错误定位拆三类——标题错只标标题框、详情错只标详情框、
     /// 表单级错误只显示错误行。旧的全局 fieldErrorShown 让任一错误都双框变红，
     /// 归因是错的，故拆掉。
@@ -1205,10 +1188,13 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         titleField.translatesAutoresizingMaskIntoConstraints = false
-        titleField.placeholder = "愿望标题"
         // 31：44 高单行框配 cappedFont（上限 20，行高不撑破 44 高）；详情框可滚动，
         // 故走 scaledFont（反馈页 160 框同款），超大字号下框内滚动而非截断。
         titleField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        titleField.attributedPlaceholder = NSAttributedString(string: NSLocalizedString("wish.create.title_placeholder", comment: ""), attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: titleField.font ?? BearyDynamicType.fieldFont(),
+        ])
         titleField.adjustsFontForContentSizeCategory = true
         titleField.textColor = BearyColors.ink
         // 审计视觉 10：标题框去系统描边，走 surface2 底＋12 圆角；聚焦走聚焦阴影（见 refreshTitleBorder）。
@@ -1349,13 +1335,13 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         for cap in colCapConstraints where cap.isActive != wantCap {
             cap.isActive = wantCap
         }
-        subpageLayoutGuard.applyIfNeeded(page: "新建许愿", view: view, topView: topBarView)
+        subpageLayoutGuard.applyIfNeeded(page: NSLocalizedString("wish.create.page_name", comment: ""), view: view, topView: topBarView)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 117 终态偏离兜底：动画结束后的最终帧再校一次。
-        subpageLayoutGuard.applyAfterAppearance(page: "新建许愿", view: view, topView: topBarView)
+        subpageLayoutGuard.applyAfterAppearance(page: NSLocalizedString("wish.create.page_name", comment: ""), view: view, topView: topBarView)
     }
 
     /// 13：表单字段居中列约束——宽 == 滚动容器 frame 宽-32（defaultHigh，≤820 全宽-32）
@@ -1435,11 +1421,11 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
             fieldErrorLabel.isHidden = true
             fieldErrorHeight?.isActive = true
         case .title:
-            fieldErrorLabel.text = "标题需为 1–100 字，请检查后重试"
+            fieldErrorLabel.text = NSLocalizedString("wishwall.form_error.title", comment: "")
             fieldErrorLabel.isHidden = false
             fieldErrorHeight?.isActive = false
         case .detail:
-            fieldErrorLabel.text = "详情最多 2000 字，请检查后重试"
+            fieldErrorLabel.text = NSLocalizedString("wishwall.form_error.detail", comment: "")
             fieldErrorLabel.isHidden = false
             fieldErrorHeight?.isActive = false
         case .form:
@@ -1681,7 +1667,7 @@ enum BearyWishWallCache {
     }
 
     private static func fileURL(bucket: String) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(filePrefix)\(bucket).json")
     }
 

@@ -109,7 +109,9 @@ enum BearyProfilePersonalLogic {
             slotCounts[(hour / 2) * 2, default: 0] += 1
             if let mood = entry.mood, !mood.isEmpty { moodCounts[mood, default: 0] += 1 }
             if let weather = entry.weather, !weather.isEmpty { weatherCounts[weather, default: 0] += 1 }
-            writtenDays.insert(calendar.startOfDay(for: date))
+            if let dayStart = BearyProfilePersonalLogic.startOfDay(for: createdAt, calendar: calendar) {
+                writtenDays.insert(dayStart)
+            }
         }
         var bestSlot: Int?
         var bestSlotCount = 0
@@ -222,7 +224,9 @@ enum BearyProfilePersonalLogic {
         for entry in entries {
             guard let createdAt = entry.createdAt else { continue }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-            let parts = calendar.dateComponents([.year, .month, .day], from: date)
+            // 日记时区（2026-11-21 v20 §二）：月日归属按各篇自身时区；
+            // “今天”仍走传入日历（调用方传查看设备日历）。
+            let parts = entry.diaryCalendar.dateComponents([.year, .month, .day], from: date)
             guard let year = parts.year, year < todayYear,
                   parts.month == todayMonth, parts.day == todayDay else { continue }
             byYear[year, default: []].append(entry)
@@ -249,13 +253,13 @@ enum BearyProfilePersonalLogic {
 
     // MARK: - 年度回顾
 
-    /// 当年条目（本地年），createdAt 降序。
+    /// 当年条目（按各篇自身时区算年，2026-11-21 v20 §二），createdAt 降序。
     /// 当年条目是年度回顾总篇数、最长连续、心情分布与词汇指纹的共同源头。
     static func yearEntries(entries: [Entry], year: Int, calendar: Calendar) -> [Entry] {
         entries.filter { entry in
             guard let createdAt = entry.createdAt else { return false }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-            return calendar.component(.year, from: date) == year
+            return entry.diaryCalendar.component(.year, from: date) == year
         }.sorted { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
     }
 
@@ -269,6 +273,21 @@ enum BearyProfilePersonalLogic {
             if $0.count != $1.count { return $0.count > $1.count }
             return $0.key < $1.key
         }
+    }
+
+    /// 每月正文总字数（年报趋势图用）：下标 0 = 1 月；字数 = 正文 content.count，
+    /// 标题不计；输入已是当年条目（调用方传 yearEntries 结果）；胶囊功能已删、
+    /// Entry 无胶囊标记，无额外排除项；时区跟传入的 calendar（年报页走北京时间）。
+    static func monthlyChars(entries: [Entry], calendar: Calendar) -> [Int] {
+        var monthlyChars = [Int](repeating: 0, count: 12)
+        for entry in entries {
+            guard let createdAt = entry.createdAt else { continue }
+            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+            if let month = calendar.dateComponents([.month], from: date).month, (1...12).contains(month) {
+                monthlyChars[month - 1] += (entry.content ?? "").count
+            }
+        }
+        return monthlyChars
     }
 
     /// 停用词（中文高频虚词 + 人称代词 + 时间副词骨架；只拦虚词，不拦实词——
@@ -306,12 +325,13 @@ enum BearyProfilePersonalLogic {
 
     /// 有词条目的年份（降序）：只取年份数字，不算任何一年的词表——
     /// 看当年不触发旧年重算；切到旧年时只算旧年那一张。
+    /// 年份按各篇自身时区算（2026-11-21 v20 §二）；传入 calendar 不再用于归属。
     static func availableYears(entries: [Entry], isOwn: Bool, calendar: Calendar) -> [Int] {
         var years = Set<Int>()
         for entry in visibleEntries(entries, isOwn: isOwn) {
             guard let createdAt = entry.createdAt else { continue }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-            years.insert(calendar.component(.year, from: date))
+            years.insert(entry.diaryCalendar.component(.year, from: date))
         }
         return years.sorted(by: >)
     }
@@ -343,7 +363,8 @@ enum BearyProfilePersonalLogic {
             guard let content = entry.content, !content.isEmpty,
                   let createdAt = entry.createdAt else { continue }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-            let month = calendar.component(.month, from: date)
+            // 词汇指纹月份按篇时区（2026-11-21 v20 §二）。
+            let month = entry.diaryCalendar.component(.month, from: date)
             var entryCounts: [String: Int] = [:]
             tokenizer.string = content
             tokenizer.enumerateTokens(in: content.startIndex..<content.endIndex) { range, _ in
@@ -581,13 +602,264 @@ enum BearyProfilePersonalLogic {
     }
 }
 
-// MARK: - 年报最小版（点年度回顾入口后呈现；定版第 8 条：只含四项＋页脚）
+/// 月柱点选容器：读屏双击（accessibilityActivate）与手势点选走同一 selectMonth(_:)，
+/// 不另写业务逻辑（审计 ①-P1）。
+private final class BearyMonthColumnView: UIStackView {
+    var onActivate: (() -> Void)?
+    override func accessibilityActivate() -> Bool {
+        onActivate?()
+        return true
+    }
+}
+
+/// 每月字数趋势图（纯 UIView，不引图表库；复用心情条形的 orange/surface2 配色）。
+/// 12 根柱按当月正文总字数归一（最高月 = 满高），柱顶标当月字数，柱下标月份；
+/// 颜色全走 BearyColors 动态色，深浅切换自动跟走。
+final class BearyMonthlyCharsChartView: UIView {
+    private var selectedMonth: Int?
+    private var monthValueLabels: [(month: Int, label: UILabel)] = []
+    private var monthValues: [Int] = []
+    /// 选中月完整数值行（图表上方，titleRow 内；无选中月时隐藏）。
+    private var selectedValueLabel: UILabel?
+
+    private var monthColumns: [UIStackView] = []
+    /// 点选浮层（点选／读屏激活时显示选中月完整数值）；点另一月移动、点浮层本身关闭、重建图表时移除。
+    private var valuePopover: UIView?
+    private var popoverMonth: Int?
+    /// 上次按实宽判定的窄屏状态；只在宽窄翻转时重刷柱顶数字，避免 layoutSubviews 里反复写 text。
+    private var lastNarrowState: Bool?
+
+    /// 柱顶数值文案：仅选中月显示完整数字；其余过万简写（1.2万），万以下完整。
+    /// 峰值月不再在柱顶写完整数——选中月的完整数值见图表上方独立行。
+    /// 本支不改这条规则，只决定柱顶常显“显／不显”（见 displayValueText）。
+    private func monthValueText(month: Int, value: Int, maxValue: Int) -> String {
+        if month == selectedMonth { return "\(value)" }
+        if value >= 10000 {
+            let text = String(format: "%.1f", Double(value) / 10000.0)
+            let compact = text.hasSuffix(".0") ? String(text.dropLast(2)) : text
+            return String(format: NSLocalizedString("year_review.compact_ten_thousand", comment: ""), compact)
+        }
+        return "\(value)"
+    }
+
+    /// 窄屏判定：12 列 fillEqually、间距 2，列宽 = (总宽 − 11×2) / 12；
+    /// 6 位完整数 9pt 约 30pt，列宽 < 34pt 时常显数字会超列宽。
+    private func isNarrowChart() -> Bool {
+        guard bounds.width > 0 else { return false }
+        return (bounds.width - 11 * 2) / 12 < 34
+    }
+
+    /// 柱顶常显文案：窄屏默认只留选中月与峰值月，其余留空（定高占位，柱形高度不动）；
+    /// 完整数值走点选浮层（showValuePopover）与读屏 label。宽屏沿用现行全部常显。
+    private func displayValueText(month: Int, value: Int, maxValue: Int) -> String {
+        if isNarrowChart(), month != selectedMonth, !(maxValue > 0 && value == maxValue) { return "" }
+        return monthValueText(month: month, value: value, maxValue: maxValue)
+    }
+
+    private func refreshMonthValueTexts() {
+        let maxValue = monthValues.max() ?? 0
+        for (month, label) in monthValueLabels {
+            let value = month <= monthValues.count ? monthValues[month - 1] : 0
+            label.text = displayValueText(month: month, value: value, maxValue: maxValue)
+        }
+        // R7-5：选中月的完整数值移到图表上方独立行显示。
+        if let selected = selectedMonth, selected >= 1, selected <= monthValues.count {
+            selectedValueLabel?.text = String(format: NSLocalizedString("year_review.month_chars", comment: ""), "\(selected)", "\(monthValues[selected - 1])")
+            selectedValueLabel?.isHidden = false
+        } else {
+            selectedValueLabel?.isHidden = true
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let narrow = isNarrowChart()
+        if lastNarrowState != narrow {
+            lastNarrowState = narrow
+            refreshMonthValueTexts()
+        }
+    }
+
+    /// 月柱点选唯一入口：手势（monthColumnTapped）与读屏激活（BearyMonthColumnView
+    /// .accessibilityActivate）共用，不另写业务逻辑（审计 ①-P1）。
+    private func selectMonth(_ month: Int) {
+        guard month >= 1, month <= 12 else { return }
+        selectedMonth = month
+        refreshMonthValueTexts()
+        showValuePopover(for: month)
+    }
+
+    @objc private func monthColumnTapped(_ sender: UITapGestureRecognizer) {
+        guard let month = sender.view?.tag else { return }
+        selectMonth(month)
+    }
+
+    /// 点选浮层：选中月完整数值，numberFont 12pt 半粗（审计 ② 的可展开数值展示）；
+    /// 浮层锚在选中月柱顶上方、横向夹在图表内，读屏激活时同步播报完整数值。
+    private func showValuePopover(for month: Int) {
+        guard month >= 1, month <= monthColumns.count, month <= monthValues.count else { return }
+        let value = monthValues[month - 1]
+        dismissValuePopover()
+        let bubble = UIView()
+        bubble.backgroundColor = BearyColors.surface3
+        bubble.layer.cornerRadius = 8
+        bubble.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel()
+        label.font = BearyDynamicType.numberFont()
+        label.textColor = BearyColors.ink
+        label.text = String(format: NSLocalizedString("year_review.month_chars", comment: ""), "\(month)", "\(value)")
+        label.translatesAutoresizingMaskIntoConstraints = false
+        bubble.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 10),
+            label.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -10),
+            label.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 4),
+            label.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -4),
+        ])
+        bubble.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(valuePopoverTapped)))
+        addSubview(bubble)
+        let column = monthColumns[month - 1]
+        NSLayoutConstraint.activate([
+            bubble.bottomAnchor.constraint(equalTo: column.topAnchor, constant: -4),
+            bubble.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),
+            bubble.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+        ])
+        let centerX = bubble.centerXAnchor.constraint(equalTo: column.centerXAnchor)
+        centerX.priority = .defaultHigh
+        centerX.isActive = true
+        valuePopover = bubble
+        popoverMonth = month
+        UIAccessibility.post(notification: .announcement, argument: String(format: NSLocalizedString("year_review.month_chars_announcement", comment: ""), "\(month)", "\(value)"))
+    }
+
+    @objc private func valuePopoverTapped() {
+        dismissValuePopover()
+    }
+
+    private func dismissValuePopover() {
+        valuePopover?.removeFromSuperview()
+        valuePopover = nil
+        popoverMonth = nil
+    }
+
+    func configure(monthlyChars: [Int]) {
+        for view in subviews { view.removeFromSuperview() }
+        selectedMonth = nil
+        monthValueLabels = []
+        monthColumns = []
+        valuePopover = nil
+        popoverMonth = nil
+        lastNarrowState = nil
+        monthValues = monthlyChars
+        let maxValue = monthlyChars.max() ?? 0
+        let titleRow = UIStackView()
+        titleRow.axis = .horizontal
+        titleRow.spacing = BearySpace.sm
+        titleRow.alignment = .center
+        let maxLabel = UILabel()
+        // 「最高 N 字」走 captionFont（12 regular scaled，审计 ②）。
+        maxLabel.font = BearyDynamicType.captionFont()
+        maxLabel.textColor = BearyColors.gray
+        maxLabel.text = maxValue > 0 ? String(format: NSLocalizedString("year_review.chart_max", comment: ""), "\(maxValue)") : NSLocalizedString("year_review.chart_empty", comment: "")
+        titleRow.addArrangedSubview(maxLabel)
+        // R7-5：选中月完整数值行（与最高字同款 12pt 灰字），无选中月时隐藏。
+        let selectedLabel = UILabel()
+        selectedLabel.font = BearyDynamicType.captionFont()
+        selectedLabel.textColor = BearyColors.gray
+        selectedLabel.isHidden = true
+        selectedValueLabel = selectedLabel
+        titleRow.addArrangedSubview(selectedLabel)
+        let columns = UIStackView()
+        columns.axis = .horizontal
+        columns.spacing = 2 // beary-lint: allow — 12 列几何间距，无 token 值；改 4 会改列宽与窄屏判定
+        columns.distribution = .fillEqually
+        columns.alignment = .bottom
+        for month in 1...12 {
+            let value = month <= monthlyChars.count ? monthlyChars[month - 1] : 0
+            let column = BearyMonthColumnView()
+            column.axis = .vertical
+            column.spacing = BearySpace.xs
+            column.alignment = .center
+            column.isUserInteractionEnabled = true
+            column.tag = month
+            column.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(monthColumnTapped(_:))))
+            // 读屏双击与手势点选走同一 selectMonth(_:)（审计 ①-P1）；浮层内有完整数值。
+            column.onActivate = { [weak self] in self?.selectMonth(month) }
+            column.isAccessibilityElement = true
+            column.accessibilityLabel = String(format: NSLocalizedString("year_review.month_chars_announcement", comment: ""), "\(month)", "\(value)")
+            column.accessibilityHint = NSLocalizedString("year_review.chart_hint", comment: "")
+            column.accessibilityTraits = .button
+            let valueLabel = UILabel()
+            // 12 列固定宽，柱顶数字走等宽数字入口（tabularDigitsFont，9pt）：
+            // 系统放大后由 adjustsFontSizeToFitWidth 收进柱宽；仅选中月显完整数，
+            // 其余过万简写（见 monthValueText）。完整数值走点选浮层（numberFont 12pt
+            // 半粗，见 showValuePopover，审计 ②／④-9）；窄屏默认只留选中月与峰值月
+            // （见 displayValueText）。单行＋按宽自缩＋定高，窄屏留空时不顶柱形。
+            valueLabel.font = BearyDynamicType.tabularDigitsFont(ofSize: 9)
+            valueLabel.numberOfLines = 1
+            valueLabel.adjustsFontSizeToFitWidth = true
+            valueLabel.minimumScaleFactor = 0.6
+            valueLabel.textAlignment = .center
+            valueLabel.textColor = BearyColors.gray
+            valueLabel.text = displayValueText(month: month, value: value, maxValue: maxValue)
+            valueLabel.heightAnchor.constraint(equalToConstant: valueLabel.font.lineHeight).isActive = true
+            monthValueLabels.append((month, valueLabel))
+            let track = UIView()
+            track.backgroundColor = BearyColors.surface2
+            track.layer.cornerRadius = 2 // 微元素小角（lint 放行值），视觉与原 3pt 几乎一致
+            track.clipsToBounds = true
+            track.heightAnchor.constraint(equalToConstant: 110).isActive = true
+            let fill = UIView()
+            fill.translatesAutoresizingMaskIntoConstraints = false
+            fill.backgroundColor = BearyColors.orange
+            track.addSubview(fill)
+            let fillHeight = maxValue > 0 ? CGFloat(value) / CGFloat(maxValue) * 110 : 0
+            NSLayoutConstraint.activate([
+                fill.leadingAnchor.constraint(equalTo: track.leadingAnchor),
+                fill.trailingAnchor.constraint(equalTo: track.trailingAnchor),
+                fill.bottomAnchor.constraint(equalTo: track.bottomAnchor),
+                fill.heightAnchor.constraint(equalToConstant: fillHeight),
+            ])
+            let monthLabel = UILabel()
+            // 月份走 12pt regular scaled（captionFont，审计 ②）；列宽有限时自动缩小、不裁字。
+            monthLabel.font = BearyDynamicType.captionFont()
+            monthLabel.numberOfLines = 1
+            monthLabel.adjustsFontSizeToFitWidth = true
+            monthLabel.minimumScaleFactor = 0.7
+            monthLabel.textAlignment = .center
+            monthLabel.textColor = BearyColors.gray
+            monthLabel.text = String(format: NSLocalizedString("year_review.month_label", comment: ""), "\(month)")
+            column.addArrangedSubview(valueLabel)
+            column.addArrangedSubview(track)
+            column.addArrangedSubview(monthLabel)
+            track.widthAnchor.constraint(equalTo: column.widthAnchor, multiplier: 0.6).isActive = true
+            columns.addArrangedSubview(column)
+            monthColumns.append(column)
+        }
+        let stack = UIStackView(arrangedSubviews: [titleRow, columns])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = BearySpace.md
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        isAccessibilityElement = false
+        accessibilityLabel = String(format: NSLocalizedString("year_review.chart_accessibility", comment: ""), "\(maxValue)")
+    }
+}
+
+
+// MARK: - 年度回顾页（点年度回顾入口后呈现；2026-11-23 Li 定恢复每月字数趋势：五项＋页脚）
 //
 // 只本人可见（入口卡只本人渲染，故本页不可达他人态）。内容全部来自调用方
-// 传入的当年可见条目，不拉新接口：总篇数 / 最长连续 / 心情分布 / 常出现的词。
+// 传入的当年可见条目，不拉新接口：总篇数 / 最长连续 / 心情分布 / 每月字数趋势 / 常出现的词。
 // 无词时词一节整节省略（不留空标题）。
 
-// MARK: - 年报最小版（词汇指纹为主视觉）
+// MARK: - 年度回顾页（词汇指纹为主视觉）
 //
 // 可达性：只本人可达——本人经年度回顾入口卡或写作统计卡（点整卡进本页），
 // 他人页模块组不渲染（#112），本页不可达他人态。传入的都是调用方已按
@@ -617,12 +889,13 @@ final class BearyYearReviewViewController: UIViewController {
     private let isOwnFlag: Bool
     private let availableYearValues: [Int]
     private var selectedYear: Int
-    /// 按年聚合结果缓存（同一次打开内有效）：摘要文案／心情分布只算一次，
+    /// 按年聚合结果缓存（同一次打开内有效）：摘要文案／心情分布／每月字数趋势只算一次，
     /// 切回看过的年份直接复用，不再从 filteredEntries 重算。
     /// 词汇指纹不另造缓存——它已有静态缓存（上限 16，按年＋指纹查）。
     private struct YearReviewAggregate {
         let summaryText: String
         let moodDistribution: [(key: String, count: Int)]
+        let monthlyChars: [Int]
     }
     private var yearAggregateCache: [Int: YearReviewAggregate] = [:]
     /// 各年上次的阅读位置（contentOffset.y）：切年时保存离开的年份，
@@ -636,6 +909,11 @@ final class BearyYearReviewViewController: UIViewController {
     /// 词汇指纹在途代次：renderSelectedYear 每调一次即 +1；过期回调
     /// （旧年 / 旧语料）到达时凭此丢弃，最终只留最后选中的年份。
     private var wordprintRequest = 0
+    /// 入场中暂存的词汇指纹：回调若在弹窗升起途中到达（isBeingPresented），
+    /// 先存下、不立即插回——插回动画（布局从零帧展开）会跟升起动画撞上，
+    /// 词行看起来从左滑入；等 viewDidAppear 再按代次／年份复核后插回，
+    /// 那时弹窗已落定，词行只淡入、下方内容平滑下移。
+    private var pendingWordprint: (value: BearyProfilePersonalLogic.Wordprint, request: Int)?
     /// 词汇指纹缓存的账号键：语料作者 id；取不到时退 isOwn 口径。
     /// 账号键只是纵深防御——语料指纹（篇 id + 正文）本身已区分不同
     /// 作者的语料，跨号串结果还须指纹也撞上才可能发生。
@@ -804,6 +1082,20 @@ final class BearyYearReviewViewController: UIViewController {
         renderSelectedYear()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 入场中暂存的词行到此才插回：弹窗已落定，插回动画不再跟升起撞。
+        // 代次／年份复核一次——升起途中用户若切了年，旧值直接丢弃。
+        guard let pending = pendingWordprint, view.window != nil else {
+            pendingWordprint = nil
+            return
+        }
+        pendingWordprint = nil
+        guard pending.request == wordprintRequest,
+              pending.value.year == selectedYear else { return }
+        insertWordprint(pending.value)
+    }
+
     /// [24] 小项 5：年报脚注唯一出处（空年与非空年共用，防两处文案漂移）。
     private func makeYearReviewFootnote() -> UILabel {
         let footnote = UILabel()
@@ -815,22 +1107,23 @@ final class BearyYearReviewViewController: UIViewController {
         return footnote
     }
 
-    /// 当年聚合计算（摘要文案／心情分布）：纯计算，
+    /// 当年聚合计算（摘要文案／心情分布／每月字数趋势）：纯计算，
     /// 结果进 yearAggregateCache，同一次打开内切回该年直接复用。
     private func yearAggregate(for yearEntriesValue: [Entry], year: Int, calendar: Calendar) -> YearReviewAggregate {
         // 总篇数 / 最长连续（当年）。
         var writtenDays = Set<Date>()
         for entry in yearEntriesValue {
-            if let createdAt = entry.createdAt {
-                let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-                writtenDays.insert(calendar.startOfDay(for: date))
+            if let createdAt = entry.createdAt,
+               let dayStart = BearyProfilePersonalLogic.startOfDay(for: createdAt, calendar: calendar) {
+                writtenDays.insert(dayStart)
             }
         }
         let longest = BearyProfilePersonalLogic.longestStreak(writtenDays: writtenDays, calendar: calendar)
         let summary = "\(year) 年共写 \(yearEntriesValue.count) 篇 · 最长连续 \(longest) 天"
         return YearReviewAggregate(
             summaryText: summary,
-            moodDistribution: BearyProfilePersonalLogic.moodDistribution(entries: yearEntriesValue)
+            moodDistribution: BearyProfilePersonalLogic.moodDistribution(entries: yearEntriesValue),
+            monthlyChars: BearyProfilePersonalLogic.monthlyChars(entries: yearEntriesValue, calendar: calendar)
         )
     }
 
@@ -979,6 +1272,18 @@ final class BearyYearReviewViewController: UIViewController {
             }
         }
 
+        // 每月字数趋势（底部；2026-11-23 Li 定从年报最小版恢复回年报页）。
+        let chartTitle = UILabel()
+        chartTitle.font = BearyDynamicType.sectionTitleFont()
+        chartTitle.adjustsFontForContentSizeCategory = true
+        chartTitle.textColor = BearyColors.ink
+        chartTitle.text = NSLocalizedString("year_review.chart_title", comment: "")
+        dynamicStack.addArrangedSubview(chartTitle)
+        let chartView = BearyMonthlyCharsChartView()
+        chartView.translatesAutoresizingMaskIntoConstraints = false
+        chartView.configure(monthlyChars: aggregate.monthlyChars)
+        dynamicStack.addArrangedSubview(chartView)
+
         dynamicStack.addArrangedSubview(makeYearReviewFootnote())
 
         // 词汇指纹后台算：指纹与分词都在后台，命中 / 未命中一律回主线程
@@ -995,82 +1300,97 @@ final class BearyYearReviewViewController: UIViewController {
             guard let self = self,
                   self.wordprintRequest == request,
                   self.selectedYear == wordprintValue.year else { return }
-            // 栈顶插入会把下方内容顶下去：先插行，再按插入高度补偿，
-            // 阅读锚点不动。wordprintAsync 命中缓存也是 DispatchQueue.main.async
-            // 回调，没有“同步插回”——恢复总在回调前跑过，补法按当时状态分：
-            // · 顶部场景（该年保存的位置就是顶部、用户未滚动）：不改偏移，
-            //   把布局放进动画，让摘要平滑滑下、词行随之淡入；
-            // · 恢复已跑且用户未滚动、保存了非顶部位置：按完整内容重算该年
-            //   保存的位置（插前恢复值在短内容上可能被夹过）；
-            // · 恢复已跑且用户已滚动：只补插入高度，保住当前阅读行。
-            let insertedRow: UIView
-            if !wordprintValue.items.isEmpty {
-                self.wordprintView.configure(with: wordprintValue)
-                insertedRow = self.wordprintView
-            } else {
-                // 无词时整节省略，只留口径行（与同步版一致）。
-                insertedRow = bearyMakeWordprintScopeBadge()
-            }
-            self.dynamicStack.insertArrangedSubview(insertedRow, at: 0)
-            // 顶部场景：该年保存的位置就是顶部，且用户自恢复后没有滚动
-            // （恢复未跑时以当前停在顶部为准）。此时屏幕上正看着摘要，
-            // 词行插在栈顶会把摘要顶下去 insertedHeight；旧路先 layoutIfNeeded
-            // 瞬间落位、再只给词行淡入，摘要是跳下去的。这里把布局放进
-            // 同一次动画，让下方内容平滑滑下、词行随之淡入，偏移保持 0，
-            // 词行最终仍在顶部可见。已滚动、或保存了非顶部位置的场景
-            // 走下面的偏移补偿，不动。
-            let savedOffset = self.yearScrollOffsets[self.selectedYear] ?? 0
-            let isTopScene: Bool = {
-                guard savedOffset == 0 else { return false }
-                if let restoredOffset = self.yearRestoreAppliedOffset {
-                    return self.contentScrollView.contentOffset.y == restoredOffset
-                }
-                return self.contentScrollView.contentOffset.y == 0
-            }()
-            if isTopScene {
-                self.yearRestoreAppliedOffset = self.contentScrollView.contentOffset.y
-                if UIAccessibility.isReduceMotionEnabled || insertedRow.window == nil {
-                    self.view.layoutIfNeeded()
-                    insertedRow.alpha = 1
-                } else {
-                    insertedRow.alpha = 0
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-                        self.view.layoutIfNeeded()
-                        insertedRow.alpha = 1
-                    })
-                }
+            // 入场未完（弹窗还在升起）：先存下，等 viewDidAppear 再插回。
+            // 立即插回会在升起动画里跑布局动画——词行从零帧展开，
+            // 看起来像从左滑入，与底部升起的方向撞上。
+            if self.isBeingPresented {
+                self.pendingWordprint = (value: wordprintValue, request: request)
                 return
             }
-            self.view.layoutIfNeeded()
-            let insertedHeight = insertedRow.frame.height + self.dynamicStack.spacing
-            if let restoredOffset = self.yearRestoreAppliedOffset {
-                if self.contentScrollView.contentOffset.y == restoredOffset {
-                    let maxOffset = max(0, self.contentScrollView.contentSize.height - self.contentScrollView.bounds.height)
-                    let targetOffset = min(max(savedOffset, 0), maxOffset)
-                    self.contentScrollView.setContentOffset(CGPoint(x: 0, y: targetOffset), animated: false)
-                    self.yearRestoreAppliedOffset = targetOffset
-                } else {
-                    let maxOffset = max(0, self.contentScrollView.contentSize.height - self.contentScrollView.bounds.height)
-                    let compensatedOffset = min(self.contentScrollView.contentOffset.y + insertedHeight, maxOffset)
-                    self.contentScrollView.contentOffset.y = compensatedOffset
-                    self.yearRestoreAppliedOffset = compensatedOffset
-                }
-            }
-            // 词行单独淡入（减动效或尚未上屏时直接显形）；与偏移补偿互不干扰。
-            if UIAccessibility.isReduceMotionEnabled || insertedRow.window == nil {
-                insertedRow.alpha = 1
-            } else {
-                insertedRow.alpha = 0
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-                    insertedRow.alpha = 1
-                })
-            }
+            self.insertWordprint(wordprintValue)
         }
 
         // 切回看过的年份恢复上次阅读位置；首次进入的年份回到顶部。
         // 词汇指纹一律异步回（命中缓存也不例外），此时内容尚未完整；
-        // 回调里再按锚点处理一次，见上。
+        // 入场途中到的回调先暂存，viewDidAppear 复核后插回（见上）；
+        // 其余回调直接插回，见 insertWordprint。
         restoreYearScrollOffset()
+    }
+
+    /// 词汇指纹插回栈顶（淡入＋锚点补偿）。只在弹窗落定后调——入场途中
+    /// 由回调暂存、viewDidAppear 复核后调；直接在升起途中跑会跟升起
+    /// 动画撞上（布局从零帧展开，词行看起来从左滑入）。
+    private func insertWordprint(_ wordprintValue: BearyProfilePersonalLogic.Wordprint) {
+        // 栈顶插入会把下方内容顶下去：先插行，再按插入高度补偿，
+        // 阅读锚点不动。wordprintAsync 命中缓存也是 DispatchQueue.main.async
+        // 回调，没有“同步插回”——恢复总在回调前跑过，补法按当时状态分：
+        // · 顶部场景（该年保存的位置就是顶部、用户未滚动）：不改偏移，
+        //   把布局放进动画，让摘要平滑滑下、词行随之淡入；
+        // · 恢复已跑且用户未滚动、保存了非顶部位置：按完整内容重算该年
+        //   保存的位置（插前恢复值在短内容上可能被夹过）；
+        // · 恢复已跑且用户已滚动：只补插入高度，保住当前阅读行。
+        let insertedRow: UIView
+        if !wordprintValue.items.isEmpty {
+            self.wordprintView.configure(with: wordprintValue)
+            insertedRow = self.wordprintView
+        } else {
+            // 无词时整节省略，只留口径行（与同步版一致）。
+            insertedRow = bearyMakeWordprintScopeBadge()
+        }
+        self.dynamicStack.insertArrangedSubview(insertedRow, at: 0)
+        // 顶部场景：该年保存的位置就是顶部，且用户自恢复后没有滚动
+        // （恢复未跑时以当前停在顶部为准）。此时屏幕上正看着摘要，
+        // 词行插在栈顶会把摘要顶下去 insertedHeight；旧路先 layoutIfNeeded
+        // 瞬间落位、再只给词行淡入，摘要是跳下去的。这里把布局放进
+        // 同一次动画，让下方内容平滑滑下、词行随之淡入，偏移保持 0，
+        // 词行最终仍在顶部可见。已滚动、或保存了非顶部位置的场景
+        // 走下面的偏移补偿，不动。
+        let savedOffset = self.yearScrollOffsets[self.selectedYear] ?? 0
+        let isTopScene: Bool = {
+            guard savedOffset == 0 else { return false }
+            if let restoredOffset = self.yearRestoreAppliedOffset {
+                return self.contentScrollView.contentOffset.y == restoredOffset
+            }
+            return self.contentScrollView.contentOffset.y == 0
+        }()
+        if isTopScene {
+            self.yearRestoreAppliedOffset = self.contentScrollView.contentOffset.y
+            if UIAccessibility.isReduceMotionEnabled || insertedRow.window == nil {
+                self.view.layoutIfNeeded()
+                insertedRow.alpha = 1
+            } else {
+                insertedRow.alpha = 0
+                UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+                    self.view.layoutIfNeeded()
+                    insertedRow.alpha = 1
+                })
+            }
+            return
+        }
+        self.view.layoutIfNeeded()
+        let insertedHeight = insertedRow.frame.height + self.dynamicStack.spacing
+        if let restoredOffset = self.yearRestoreAppliedOffset {
+            if self.contentScrollView.contentOffset.y == restoredOffset {
+                let maxOffset = max(0, self.contentScrollView.contentSize.height - self.contentScrollView.bounds.height)
+                let targetOffset = min(max(savedOffset, 0), maxOffset)
+                self.contentScrollView.setContentOffset(CGPoint(x: 0, y: targetOffset), animated: false)
+                self.yearRestoreAppliedOffset = targetOffset
+            } else {
+                let maxOffset = max(0, self.contentScrollView.contentSize.height - self.contentScrollView.bounds.height)
+                let compensatedOffset = min(self.contentScrollView.contentOffset.y + insertedHeight, maxOffset)
+                self.contentScrollView.contentOffset.y = compensatedOffset
+                self.yearRestoreAppliedOffset = compensatedOffset
+            }
+        }
+        // 词行单独淡入（减动效或尚未上屏时直接显形）；与偏移补偿互不干扰。
+        if UIAccessibility.isReduceMotionEnabled || insertedRow.window == nil {
+            insertedRow.alpha = 1
+        } else {
+            insertedRow.alpha = 0
+            UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+                insertedRow.alpha = 1
+            })
+        }
     }
 
     @objc private func prevYearTapped() {
@@ -1103,7 +1423,7 @@ final class BearyYearReviewViewController: UIViewController {
     }
 }
 
-// MARK: - 模块卡片容器（与墙同口径：圆角 14、1px 边线、标题 14 粗体）
+// MARK: - 模块卡片容器（与墙同口径：圆角 12、无描边、标题 14 粗体）
 //
 // 调用方（ProfileVC）只负责把卡片排进 modulesStack 并按显隐开关 isHidden；
 // 卡片自身不决定可见性（可见性由语料口径定，见 renderModules）。

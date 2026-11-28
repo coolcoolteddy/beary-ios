@@ -217,12 +217,13 @@ final class BearyThemeSettingsViewController: BearySettingsSubpageViewController
 
 // MARK: - 语言子页
 
-/// 语言：目前只有跟随系统、中国大陆两档；跟随系统即跟随系统语言，
-/// 中国大陆即强制简体中文。切换即时生效（Bundle 覆盖＋重建根界面，
+/// 语言：跟随系统、中国大陆、English 三档；跟随系统即跟随系统语言，
+/// 中国大陆即强制简体中文，English 即强制英文。切换即时生效（Bundle 覆盖＋重建根界面，
 /// 见 BearyAppLanguage；SceneDelegate 监听广播重建）。
 /// 注意：App 自身文案目前是硬编码中文（工程里没有 .xcstrings/.lproj，
 /// 没有任何 NSLocalizedString 调用），切换对 App 自身界面暂无可见变化，
-/// 只对走 Bundle 的第三方文案生效；完整切换须先做全站文案抽取，见 PR 说明。
+/// 只对走 Bundle 的第三方文案生效；English 档下已迁进 Catalog 的批显示英文，
+/// 未迁移的批仍显示中文原文；完整切换须先做全站文案抽取，见 PR 说明。
 final class BearyLanguageSettingsViewController: BearySettingsSubpageViewController {
     init() { super.init(title: "语言") }
 
@@ -241,7 +242,8 @@ final class BearyLanguageSettingsViewController: BearySettingsSubpageViewControl
         let mode = BearyAppLanguage.mode
         let systemRow = bearySettingsTappableRow(content: bearySettingsOptionContent(title: "跟随系统", isSelected: mode == .system), button: optionButton(action: #selector(systemTapped)))
         let mainlandRow = bearySettingsTappableRow(content: bearySettingsOptionContent(title: "中国大陆", isSelected: mode == .mainland), button: optionButton(action: #selector(mainlandTapped)))
-        contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: [systemRow, mainlandRow]))
+        let englishRow = bearySettingsTappableRow(content: bearySettingsOptionContent(title: "English", isSelected: mode == .english), button: optionButton(action: #selector(englishTapped)))
+        contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: [systemRow, mainlandRow, englishRow]))
     }
 
     private func optionButton(action: Selector) -> UIButton {
@@ -257,6 +259,11 @@ final class BearyLanguageSettingsViewController: BearySettingsSubpageViewControl
 
     @objc private func mainlandTapped() {
         BearyAppLanguage.setMode(.mainland)
+        render()
+    }
+
+    @objc private func englishTapped() {
+        BearyAppLanguage.setMode(.english)
         render()
     }
 }
@@ -438,7 +445,6 @@ final class BearyStorageSettingsViewController: BearySettingsSubpageViewControll
             BearyConfirmSheet.Action(title: "清除", style: .destructive, handler: { [weak self] in
                 self?.confirmClear()
             }),
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 
@@ -450,7 +456,6 @@ final class BearyStorageSettingsViewController: BearySettingsSubpageViewControll
             self.isClearing = false
             self.measurement = measurement
             self.render()
-            BearyToast.show(in: self.view, message: "已清除缓存")
         }
     }
 }
@@ -519,7 +524,6 @@ final class BearyDataUsageSettingsViewController: BearySettingsSubpageViewContro
                 self?.render()
             }, isSelected: option.value == current)
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: self, title: "高画质图片", message: "选择在什么网络下拉取原图", actions: actions)
     }
 }
@@ -636,7 +640,6 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
                 self?.render()
             }, isSelected: precision == current)
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: self, title: "定位地址精度", message: "国外按当地同级对应；精度由后端截断存储与展示，不只是本机显示", actions: actions)
     }
 
@@ -650,7 +653,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
                       let raw = resp.precision,
                       let server = BearyLocationPrecision(rawValue: raw),
                       server != BearyLocationPrecision.current else { return }
-                UserDefaults.standard.set(server.rawValue, forKey: "beary_location_precision")
+                UserDefaults.standard.set(server.rawValue, forKey: BearyLocationPrecision.key)
                 self.render()
             }
         }
@@ -666,7 +669,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
         // 服务端部署前的旧档位：只作回显，不再提供选择；新档位保存后即被替换。
         case "followers": return "仅关注我的人"
         case "friends": return "仅好友"
-        default: return "获取失败，点按重试"
+        default: return NSLocalizedString("settings.dm.level_load_failed", comment: "")
         }
     }
 
@@ -700,7 +703,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
                     }
                 case .failure:
                     if self.dmLevel == nil {
-                        self.dmDetailLabel?.text = "获取失败，点按重试"
+                        self.dmDetailLabel?.text = NSLocalizedString("settings.dm.level_load_failed", comment: "")
                     }
                 }
             }
@@ -753,7 +756,7 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
                     self.dmDetailLabel?.text = self.dmLevelText(saved)
                 case .failure:
                     self.dmLevel = previousLevel
-                    self.dmDetailLabel?.text = previousLevel.map { self.dmLevelText($0) } ?? "获取失败，点按重试"
+                    self.dmDetailLabel?.text = previousLevel.map { self.dmLevelText($0) } ?? NSLocalizedString("settings.dm.level_load_failed", comment: "")
                     self.playDenyShake()
                     BearyToast.show(in: self.view, message: "保存失败，请重试")
                 }
@@ -943,10 +946,11 @@ final class BearyNotificationSettingsViewController: BearySettingsSubpageViewCon
             view.removeFromSuperview()
         }
         let items: [(kind: BearyLocalNotifications.Kind, title: String, detail: String)] = [
-            (.dailyReminder, "写日记提醒", "每天 21:00（北京时间），还没写才提醒"),
+            (.dailyReminder, BearyLocalNotifications.Kind.dailyReminder.title, NSLocalizedString("local_notifications.daily_reminder.detail", comment: "")),
             (.limitedExpiry, "限时日记到期", "限时结束、转回私密时提醒"),
-            (.pastDay, "那年今日", "早上 9:00（北京时间），往年今天有日记才提醒"),
+            (.pastDay, BearyLocalNotifications.Kind.pastDay.title, NSLocalizedString("local_notifications.past_day.detail", comment: "")),
             (.pastSelfDelivery, "留给明年的自己", "留言送达当天早上 9:00（北京时间）提醒"),
+            (.dmUnread, BearyLocalNotifications.Kind.dmUnread.title, NSLocalizedString("local_notifications.dm_unread.detail", comment: "")),
         ]
         var rows: [UIView] = []
         for (index, item) in items.enumerated() {
@@ -963,10 +967,10 @@ final class BearyNotificationSettingsViewController: BearySettingsSubpageViewCon
         hintRowView.isHidden = true
         hintRow = hintRowView
         rows.append(hintRowView)
-        // 第 25 轮 59：广场有新日记的提醒不另设开关，纳入上面四类——任一类
-        // 开着才发，四类全关即停；说明放组末行。
+        // 第 25 轮 59：广场有新日记的提醒不另设开关，纳入上面五类——任一类
+        // 开着才发，五类全关即停；说明放组末行。
         let plazaNoteLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        plazaNoteLabel.text = "广场有新日记时也会发一条提醒；上面四类提醒全关时不再发。"
+        plazaNoteLabel.text = NSLocalizedString("local_notifications.plaza_note", comment: "")
         rows.append(plazaNoteLabel)
         contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: rows))
     }
@@ -1007,7 +1011,22 @@ final class BearyNotificationSettingsViewController: BearySettingsSubpageViewCon
     private func refreshHintRow() {
         BearyLocalNotifications.shared.fetchAuthorizationStatus { [weak self] status in
             DispatchQueue.main.async { [weak self] in
-                self?.hintRow?.isHidden = (status != .denied)
+                guard let self, let hintRow = self.hintRow else { return }
+                let showHint = (status == .denied)
+                hintRow.isHidden = !showHint
+                // makeGroupCard 把每行包在 wrap 里、分隔线是独立的 arrangedSubview，
+                // 只藏行本身不塌高度：行高＋上下 14 留白与两条分隔线全留着，就是
+                // 截图里「私信未读」与底部说明之间那块带线的空白。连同 wrap 与
+                // 它前面一条分隔线一起藏，UIStackView 才会把整行塌掉；权限被拒
+                // 时三处一起恢复，行回到原来的位置。
+                if let wrap = hintRow.superview,
+                   let stack = wrap.superview as? UIStackView,
+                   let index = stack.arrangedSubviews.firstIndex(of: wrap) {
+                    wrap.isHidden = !showHint
+                    if index > 0 {
+                        stack.arrangedSubviews[index - 1].isHidden = !showHint
+                    }
+                }
             }
         }
     }

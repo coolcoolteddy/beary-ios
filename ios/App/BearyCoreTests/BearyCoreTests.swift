@@ -140,7 +140,7 @@ final class BearyTrashItemTests: XCTestCase {
         XCTAssertEqual(decoded.title, "带猫的一天")
         XCTAssertEqual(decoded.imageKeys, ["1/abc.jpg", "1/def.jpg"])
 
-        // 与 BearyTrashSyncStore.makeEncoder 同口径：convertToSnakeCase
+        // 与 BearyJSON.encoder 同口径：convertToSnakeCase
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         let data = try encoder.encode(decoded)
@@ -182,7 +182,7 @@ final class BearyTrashItemTests: XCTestCase {
         XCTAssertEqual(item.visibility, "public")
         XCTAssertEqual(item.published, 1)
 
-        // 与 BearyTrashSyncStore.makeEncoder 同口径：convertToSnakeCase
+        // 与 BearyJSON.encoder 同口径：convertToSnakeCase
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         let data = try encoder.encode(item)
@@ -1265,7 +1265,7 @@ final class BearyDraftBackupTests: XCTestCase {
         // 坏数据拼成损坏库——文件里的好草稿保证是 BearyDraft 能解出的形状；
         // 写完当场自检：首条必须解出 BearyDraft，否则测试搭的库本身就不触发
         // “逐条恢复”分支（自检失败会在此报错，而不是在 loadAllResult 处误报）。
-        let goodDraft = BearyDraft(draftId: "d_good", content: "好草稿正文", images: [], clientReq: "req-1", updatedAt: 1762000000, notifyRecipient: false, quoteImages: [], quoteDeleted: false)
+        let goodDraft = BearyDraft(draftId: "d_good", content: "good draft body", images: [], clientReq: "req-1", updatedAt: 1762000000, quoteImages: [], quoteDeleted: false)
         let goodObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(goodDraft))
         let bad: [String: Any] = ["__notADraft": true]
         let data = try JSONSerialization.data(withJSONObject: [goodObject, bad])
@@ -1324,7 +1324,7 @@ final class BearyDraftBackupTests: XCTestCase {
         }
         XCTAssertEqual(drafts.count, 1)
         XCTAssertEqual(drafts.first?.draftId, "d_good")
-        XCTAssertEqual(drafts.first?.content, "好草稿正文")
+        XCTAssertEqual(drafts.first?.content, "good draft body")
         XCTAssertNil(BearyDraftStore.lastLoadError)
         // 好数据已回写（坏条目出库），原损坏内容只留在备份里。
         guard let backup = backupURLs.first else {
@@ -1669,5 +1669,36 @@ final class BearySearchSnippetTests: XCTestCase {
         let json = "{\"id\":\"b_snip1\",\"content\":\"今天天气很好。我去公园散步。\",\"snippet\":\"…公园散步…\",\"created_at\":1761000000000}"
         let entry = try bearyDecoder().decode(Entry.self, from: Data(json.utf8))
         XCTAssertEqual(entry.snippet, "…公园散步…")
+    }
+}
+
+// ===== Password login (demo accounts): contract response decoding =====
+// POST /api/account/login-password returns the same VerifyResponse shape as
+// /api/account/verify: {ok, is_new} on success, {pending_delete, delete_at}
+// while the account is in the deletion cooling-off period, and a generic
+// message on failure. The server never returns a password hash, and the
+// client never invents a demo email: the fixture below uses a placeholder.
+final class BearyLoginPasswordResponseTests: XCTestCase {
+    func testSuccessBodyDecodes() throws {
+        let json = #"{"ok":true,"is_new":false,"user":{"id":27,"email":"user@example.com","display_name":"User"}}"#
+        let resp = try bearyDecoder().decode(VerifyResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(resp.ok, true)
+        XCTAssertEqual(resp.isNew, false)
+        XCTAssertNil(resp.pendingDelete)
+    }
+
+    func testPendingDeleteBodyDecodes() throws {
+        let json = #"{"pending_delete":true,"delete_at":1796000000000}"#
+        let resp = try bearyDecoder().decode(VerifyResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(resp.pendingDelete, true)
+        XCTAssertEqual(resp.deleteAt, 1796000000000)
+        XCTAssertNil(resp.ok)
+    }
+
+    func testGenericFailureBodyDecodes() throws {
+        let json = #"{"ok":false,"message":"Incorrect email or password"}"#
+        let resp = try bearyDecoder().decode(VerifyResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(resp.ok, false)
+        XCTAssertEqual(resp.message, "Incorrect email or password")
     }
 }

@@ -137,12 +137,25 @@ enum BearyStarMap {
 
     // MARK: - 过滤（fail-closed；调用方漏过滤时 buildModel 会再滤一次）
 
-    /// 有效公开判定：与 BearyEphemeral.isEffectivelyPublic 同公式（isPublic 且
-    /// 限时未过期），此处本地复写一行以保持本文件测试 target 可独立编译；
-    /// 公式若改，两处须同步（见 VC 头注）。
+    /// 有效公开判定（isPublic 且限时未过期）：本函数是该公式的唯一来源，
+    /// BearyEphemeral.isEffectivelyPublic 委托到这里（App 侧只多解析
+    /// 开发者预览的强制过期／假时刻，见其注释）；本函数本身是纯函数，
+    /// 不读 BearyDevPreviewState，测试可注入 nowMs。
     static func isEffectivelyPublic(_ entry: Entry, nowMs: Int? = nil) -> Bool {
         guard entry.isPublic == true else { return false }
         if let until = entry.ephemeralUntil {
+            let now = nowMs ?? Int(Date().timeIntervalSince1970 * 1000)
+            if until <= now { return false }
+        }
+        return true
+    }
+
+    /// 引用有效公开判定：与 Entry 版同公式（isPublic 且限时未过期）。Quote 无
+    /// visibility 字段，isPublic 即服务端算好的有效公开态；nowMs 为 nil 时取
+    /// 真实时间，与 Quote 原实现逐字一致（原实现直接读 Date()）。
+    static func isEffectivelyPublic(quote: Quote, nowMs: Int? = nil) -> Bool {
+        guard quote.isPublic == true else { return false }
+        if let until = quote.ephemeralUntil {
             let now = nowMs ?? Int(Date().timeIntervalSince1970 * 1000)
             if until <= now { return false }
         }

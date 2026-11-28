@@ -2,7 +2,7 @@ name: iOS build
 
 on:
   push:
-    branches: [main]
+    branches: [main, spec-sideload/*]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -42,9 +42,9 @@ jobs:
           name: beary-simulator-app
           path: build/Build/Products/Debug-iphonesimulator/App.app
 
+  # 打包只在合入 main 时跑：PR 阶段 simulator 编译＋test 已足够验证，sideload 的
+  # Release 打包改由 main push 覆盖，PR 每个少占 1 个 macOS 槽。
   sideload:
-    # 打包只在合入 main 时跑：PR 阶段 simulator 编译＋test 已足够验证，sideload 的
-    # Release 打包改由 main push 覆盖，PR 每个少占 1 个 macOS 槽。
     if: github.event_name != 'pull_request'
     runs-on: macos-latest
     steps:
@@ -95,3 +95,29 @@ jobs:
           DEVICE=$(xcrun simctl list devices available | grep -oE 'iPhone [^()]+' | head -n 1 | sed 's/ *$//')
           echo "Using simulator device: $DEVICE"
           xcodebuild -project ios/App/App.xcodeproj -scheme BearyCoreTests -configuration Debug -destination "platform=iOS Simulator,name=$DEVICE" CODE_SIGNING_ALLOWED=NO test
+
+  # 多语言防回潮检查（地基 PR 新增）：只查本 PR diff 新增行里的硬编码中文，
+  # 不扫存量——队里排队 PR 不会因此变红。脚本见 scripts/check-i18n-hardcoded.py，
+  # 口径见 docs/i18n-plan.md。只在 pull_request 跑，push 到 main 不跑。
+  i18n-guard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check no new hardcoded Chinese copy
+        run: python3 scripts/check-i18n-hardcoded.py --base ${{ github.event.pull_request.base.sha }}
+
+  # 样式 token 增量 lint（H-P1-19，PR #2481）：只查本 PR diff 新增行里的裸字号／
+  # 裸间距／裸圆角／裸时长／裸日界（86400），不扫存量——存量不因此变红。
+  # 脚本见 tools/beary-lint.sh。只在 pull_request 跑，push 到 main 不跑。
+  style-lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Lint new style-token violations only
+        run: bash tools/beary-lint.sh --base ${{ github.event.pull_request.base.sha }}

@@ -29,6 +29,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// closeTrash 的 syncOpenSurfaces + setTrashCount(-1) 口径）。
     var onRestored: ((TrashItem) -> Void)?
     var onPurged: ((TrashItem) -> Void)?
+    /// 恢复成功 toast 的「查看日记」：调用方接详情页（与 onRequireLogin 同口径）。
+    var onOpenEntry: ((String) -> Void)?
 
     // MARK: - 状态
 
@@ -60,9 +62,17 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private var trashBucketLoading = false
     private var trashFirstLoadFailed = false
     private var trashLoginEmpty = false
+    /// 旧空缓存未确认态：本地桶为空、静默刷新失败（非 401），服务器未确认
+    /// 列表为空——此时不显示「回收站是空的」，改显「暂时无法确认回收站内容」
+    /// ＋重试；服务器确认（静默刷新成功提交／网络首拉成功）后清掉。
+    private var trashStaleEmpty = false
     private var trashBusyIdentifiers: Set<String> = []
-    private var restoreEntries: [(button: UIButton, trashValue: TrashItem)] = []
-    private var purgeEntries: [(button: UIButton, trashValue: TrashItem)] = []
+    /// 恢复请求网络失败后未确认态的 id：请求可能已送达、只是回包丢了，
+    /// 恢复与否未知——行按钮改成「重新检查」，点按先核对服务端状态，
+    /// 确认仍在回收站才可再次恢复；核对完成（在／不在）即清掉。
+    private var trashRecheckIdentifiers: Set<String> = []
+    private var restoreEntries = BearyRowButtonLookup<TrashItem>(id: \.entryIdentifier)
+    private var purgeEntries = BearyRowButtonLookup<TrashItem>(id: \.entryIdentifier)
     private var rowViewsByIdentifier: [String: UIView] = [:]
     /// A8：meta 行标签——复用行靠它找到 metaLabel 重算日期/天数（本文件内无其他 tag 使用）。
     private static let trashMetaLabelTag = 9917
@@ -103,7 +113,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     // B 批示范接入：失败态改走统一 BearyStateView（错误重试态），失败文案与重试动作不变；
     // 空态已走 BearyStateView（本批）；登录态 loginWrap 不动；Feed/Profile 各页的接入留给卡片线。
     private let failureStateView = BearyStateView()
-    private let moreSpinner = BearyRefreshIconView()
+    /// 翻页加载脚部（广场同款 BearyLoadMoreFooterView）：翻页请求在途时亮
+    /// 三个跳动点；失败仍走现有的 loadMoreRetryWrap 重试钮，不用脚部 failed 态；
+    /// 成功／无更多页时藏起（B-G14：已到底无尾部文案）。
+    private let loadMoreFooterView = BearyLoadMoreFooterView()
     /// 翻页失败尾部重试节（照片墙 #729 同款：仅失败时出现的一节入口，
     /// 平时隐藏；已到底时仍无尾部，沿用 B-G14 网页对照——列表直接结束）。
     private let loadMoreRetryWrap = UIStackView()
@@ -206,8 +219,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashSilentRefreshStartSequence = nil
         trashRemovedDuringSilentRefresh.removeAll()
         trashSilentRefreshDeferred = false
-        moreSpinner.stopSpinning()
-        moreSpinner.isHidden = true
+        updateTrashFooter()
         loadMoreRetryWrap.isHidden = true
         updateListRowsIncrementally()
         if SessionManager.shared.currentUser?.id != nil {
@@ -316,15 +328,17 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         failureStateView.translatesAutoresizingMaskIntoConstraints = false
         failureStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
 
-        // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
-        moreSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
-        moreSpinner.isHidden = true
+        // 翻页脚部：广场同款三点加载态；失败仍走 loadMoreRetryWrap，
+        // 不接脚部 onRetry。56 高与广场脚部同高；藏起时 stack 自动收起。
+        loadMoreFooterView.translatesAutoresizingMaskIntoConstraints = false
+        loadMoreFooterView.heightAnchor.constraint(equalToConstant: BearyLoadMoreFooterView.height).isActive = true
+        loadMoreFooterView.isHidden = true
 
         // 翻页失败尾部重试节：居中一钮，44 高热区；平时隐藏，失败时才出现。
         loadMoreRetryWrap.axis = .vertical
         loadMoreRetryWrap.alignment = .center
         loadMoreRetryWrap.isHidden = true
-        loadMoreRetryButton.setTitle("加载失败 · 重试", for: .normal)
+        loadMoreRetryButton.setTitle(NSLocalizedString("trash.load_failed.title", comment: ""), for: .normal)
         loadMoreRetryButton.setTitleColor(BearyColors.ink, for: .normal)
         loadMoreRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         loadMoreRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -378,7 +392,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         contentStack.addArrangedSubview(emptyStateView)
         contentStack.addArrangedSubview(failureWrap)
         contentStack.addArrangedSubview(loginWrap)
-        contentStack.addArrangedSubview(moreSpinner)
+        contentStack.addArrangedSubview(loadMoreFooterView)
         contentStack.addArrangedSubview(loadMoreRetryWrap)
         failureWrap.addArrangedSubview(failureStateView)
         contentStack.setCustomSpacing(6, after: headerRow)
@@ -453,6 +467,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
 
     /// 开发者模式回收站强制态（仅内存）：error / empty / loading 直接置旗渲染，不读桶、不发请求。
     private func applyDevForcedTrash() {
+        // 强制态是精确态：旧空缓存未确认态不带入。
+        trashStaleEmpty = false
         switch BearyDevPreviewState.forcedTrash {
         case .none:
             loadFirstPage()
@@ -539,6 +555,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashLoading = true
         trashFirstLoadFailed = false
         trashLoginEmpty = false
+        // 新一轮网络首拉即新的确认尝试：旧空缓存未确认态由本轮结果重新判定，
+        // 失败走 trashFirstLoadFailed（「加载失败」）、成功即服务器已确认。
+        trashStaleEmpty = false
         trashHasMore = false
         renderStateViews()
         // 在途切号门：发起时捕获账号 ID 与鉴权代际（与恢复/彻底删除同款口径）；
@@ -635,6 +654,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     self.trashRemovedDuringSilentRefresh.removeAll()
                     if case .unauthorized = error {
                         self.notifyTrashLoginOnce()
+                    } else if self.trashItems.isEmpty {
+                        // 其他失败静默：有旧条目时保留本地显示（现行口径不动）；
+                        // 旧空缓存时不把「空」当成当前结果——立未确认态，
+                        // 原位显示「暂时无法确认回收站内容」＋重试，下次进页重刷。
+                        // 401 不进此态（走登录门，重试只会反复 401）。
+                        self.trashStaleEmpty = true
+                        self.renderStateViews()
                     }
                     // 其他失败静默：保留本地显示，下次进页重刷。
                 case .success(let page):
@@ -643,7 +669,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         self.trashSilentRefreshing = false
                         // 去重保底（游标页理论上不交叠；重复 id 进桶会在页内渲染成两行，故先清掉）。
                         var seen: Set<String> = []
-                        let deduped = all.filter { seen.insert($0.id).inserted }
+                        let deduped = BearyCursorPageLoad.fresh(all, id: { $0.id }, seen: &seen)
                         // 代次 + 已移除双重守卫（旧快照回插修复，全量同步同款口径）：
                         // 刷新开始后发生过任何 trash.json 写盘，或本轮已恢复/删除
                         // 的 id 仍在迟到快照里——旧快照已过期，整批丢弃：
@@ -680,6 +706,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                             if !ok { NSLog("[BearyEntrySync] trash saveAll failed account=%d", accountId) }
                         }
                         // 增量更新：无变化时各行原地不动（见 updateListRowsIncrementally）。
+                        // 服务器已确认本轮列表：旧空缓存未确认态清掉——空即真空。
+                        self.trashStaleEmpty = false
                         self.trashItems = deduped
                         self.trashHasMore = false
                         self.updateListRowsIncrementally()
@@ -708,6 +736,18 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         }
     }
 
+    /// 翻页脚部显隐（广场同款三点）：仅翻页请求在途时亮 loading；
+    /// 失败仍亮现有的 loadMoreRetryWrap 重试钮，脚部藏起；成功后藏起。
+    private func updateTrashFooter() {
+        if trashLoadingMore {
+            loadMoreFooterView.isHidden = false
+            loadMoreFooterView.setState(.loading)
+        } else {
+            loadMoreFooterView.setState(.hidden)
+            loadMoreFooterView.isHidden = true
+        }
+    }
+
     private func loadMoreIfNeeded() {
         if trashLoading || trashLoadingMore || trashHasMore == false {
             return
@@ -730,8 +770,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         trashLoadMoreFailed = false
         loadMoreRetryWrap.isHidden = true
         trashLoadingMore = true
-        moreSpinner.isHidden = false
-        moreSpinner.startSpinning()
+        updateTrashFooter()
         // 在途切号门：发起时捕获账号 ID 与鉴权代际（与恢复/彻底删除同款口径）；
         // 回包先比对，失配即旧登录态回包，直接丢弃：不 append、不渲染，
         // 401 也不弹登录。
@@ -741,8 +780,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashLoadingMore = false
-                self.moreSpinner.stopSpinning()
-                self.moreSpinner.isHidden = true
+                self.updateTrashFooter()
                 if self.isStaleTrashRequest(requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch) {
                     return
                 }
@@ -804,13 +842,21 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         } else {
             loadingView.stopSpinning()
         }
-        emptyStateView.isHidden = hasItems || trashLoading || trashFirstLoadFailed || trashLoginEmpty
+        emptyStateView.isHidden = hasItems || trashLoading || trashFirstLoadFailed || trashLoginEmpty || trashStaleEmpty
         emptyTopSpacer.isHidden = emptyStateView.isHidden
         // B-G14: in empty state the 4pt spacing after noteRow would stack on top
         // of the 40pt pad (44 total), so empty state uses 0 there and the pad
         // alone gives exactly 40; non-empty state restores 4.
         contentStack.setCustomSpacing(emptyStateView.isHidden ? 4 : 0, after: noteRow)
-        failureWrap.isHidden = trashFirstLoadFailed == false || trashLoginEmpty
+        // 失败态复用 failureWrap：首拉失败仍是「加载失败」；旧空缓存未确认
+        // 时同一位置显示「暂时无法确认回收站内容」，重试同走 retryTapped。
+        // configure 可重调（同样式不重建按钮），此处按当前失败旗取值。
+        if trashFirstLoadFailed {
+            failureStateView.configure(kind: .error, title: NSLocalizedString("trash.load_failed.title", comment: ""), subtitle: nil, iconName: nil, actionTitle: NSLocalizedString("common.retry", comment: ""), onAction: { [weak self] in self?.retryTapped() })
+        } else if trashStaleEmpty {
+            failureStateView.configure(kind: .error, title: NSLocalizedString("trash.load_failed.unconfirmed", comment: ""), subtitle: nil, iconName: nil, actionTitle: NSLocalizedString("common.retry", comment: ""), onAction: { [weak self] in self?.retryTapped() })
+        }
+        failureWrap.isHidden = (trashFirstLoadFailed == false && trashStaleEmpty == false) || trashLoginEmpty
         loginWrap.isHidden = trashLoginEmpty == false
         if UIAccessibility.isReduceMotionEnabled == false {
             for (view, wasHidden) in [(emptyStateView, emptyWasHidden), (failureWrap, failureWasHidden), (loginWrap, loginWasHidden)] {
@@ -840,8 +886,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             arranged.removeFromSuperview()
         }
         // 未登记行只有无 identifier 的行：其按钮登记随行重建一并清掉，避免每刷攒一笔已离场按钮。
-        restoreEntries.removeAll(where: { $0.trashValue.entryIdentifier.isEmpty })
-        purgeEntries.removeAll(where: { $0.trashValue.entryIdentifier.isEmpty })
+        restoreEntries.removeAll { $0.entryIdentifier.isEmpty }
+        purgeEntries.removeAll { $0.entryIdentifier.isEmpty }
         let newIdentifiers = Set(trashItems.compactMap({ rowIdentifier(of: $0) }))
         for identifier in Array(rowViewsByIdentifier.keys) where newIdentifiers.contains(identifier) == false {
             if let rowView = rowViewsByIdentifier[identifier] {
@@ -849,8 +895,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 rowView.removeFromSuperview()
             }
             rowViewsByIdentifier[identifier] = nil
-            restoreEntries.removeAll(where: { $0.trashValue.entryIdentifier == identifier })
-            purgeEntries.removeAll(where: { $0.trashValue.entryIdentifier == identifier })
+            restoreEntries.removeAll(id: identifier)
+            purgeEntries.removeAll(id: identifier)
         }
         let staggerEnabled = UIAccessibility.isReduceMotionEnabled == false
         var placedIdentifiers = Set<String>()
@@ -1007,9 +1053,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 扫查组：量宽字体须与钮字体同为 cappedFont，且等宽改下限（广场失败行 R8 同款）——
         // 等宽 + adjusts 会在档位变化时把变大的标题裁掉，下限则允许钮随字号向外生长。
         let restoreButtonFont = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
+        // 「重新检查」态文案更宽，一并计入下限，否则网络失败后切到该态标题被裁。
         let restoreTitleWidth = max(
             ceil(("恢复" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
-            ceil(("恢复中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width)
+            ceil((NSLocalizedString("trash.recheck.restoring", comment: "") as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
+            ceil((NSLocalizedString("trash.recheck.recheck", comment: "") as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
+            ceil((NSLocalizedString("trash.recheck.checking", comment: "") as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width)
         )
         restoreButton.widthAnchor.constraint(greaterThanOrEqualToConstant: (restoreButton.currentImage?.size.width ?? 21) + 5 + restoreTitleWidth + 28).isActive = true
 
@@ -1063,8 +1112,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             innerStack.leadingAnchor.constraint(equalTo: rowView.leadingAnchor, constant: 16),
             innerStack.trailingAnchor.constraint(equalTo: rowView.trailingAnchor, constant: -16),
         ])
-        restoreEntries.append((button: restoreButton, trashValue: trashValue))
-        purgeEntries.append((button: purgeButton, trashValue: trashValue))
+        restoreEntries.append(button: restoreButton, value: trashValue)
+        purgeEntries.append(button: purgeButton, value: trashValue)
+        // 行是新建的，按钮文案回到「恢复」——若该篇曾留过未确认态标记，
+        // 一并清掉，否则按钮写「恢复」、点按却走「重新检查」，文案与行为对不上。
+        trashRecheckIdentifiers.remove(trashValue.entryIdentifier)
         // 真跟手左滑（扫 bug 第 7 项）：回收站为 stack 卡片、无 tableView
         // 滑动 API，故不用系统侧滑，改用每行一个 UIPanGestureRecognizer
         // 做 1:1 跟手拖动——手指左移卡片即左移，松手够 60pt 出菜单、
@@ -1166,12 +1218,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             actions: [
                 BearyConfirmSheet.Action(title: "恢复", style: .default) { [weak self] in
                     guard let self = self,
-                          let button = self.restoreEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button else { return }
+                          let button = self.restoreEntries.button(forID: identifier) else { return }
                     self.restoreTapped(button)
                 },
                 BearyConfirmSheet.Action(title: "彻底删除", style: .destructive) { [weak self] in
                     guard let self = self,
-                          let button = self.purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button else { return }
+                          let button = self.purgeEntries.button(forID: identifier) else { return }
                     self.purgeTapped(button)
                 },
             ]
@@ -1185,8 +1237,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// 也不弹登录，避免旧号 401 把新号界面踢向登录页（BearyAPI 侧已压住全局
     /// onUnauthorized，本地 notifyTrashLoginOnce 是另一条需同门控的路径）。
     private func isStaleTrashRequest(requestAccountId: Int?, requestAuthEpoch: Int) -> Bool {
-        return SessionManager.shared.currentUser?.id != requestAccountId
-            || BearyAPI.shared.authEpoch != requestAuthEpoch
+        return BearyAPI.isStaleAccountLoad(
+            requestAccountId: requestAccountId, requestEpoch: requestAuthEpoch,
+            currentAccountId: SessionManager.shared.currentUser?.id, currentEpoch: BearyAPI.shared.authEpoch)
     }
 
     /// 审计-时间线：回收站 401 登录门本页去重；回页时复位（见 viewWillAppear），取消登录后再次 401 仍可提醒。
@@ -1207,16 +1260,36 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         return "（无文字）"
     }
 
-    /// 审计-时间线：回收站按钮无障碍 label 带条目标识——TrashItem 无标题字段，以正文首行截断作标识（空正文时回落“这篇日记”）。
+    /// 回收站按钮无障碍 label 带条目标识——与卡片摘要同款命名顺序：
+    /// 标题优先 → 净化后的正文前 20 字 →「这篇日记」；当前列表里另有
+    /// 同名篇时补写作日期（标题字段服务端透传；旧缓存缺本键时按 nil 解码）。
     /// 读屏不读记号原文：[mood:]/[gif:] 记号（含尾部截断一半的）先去掉。
     private func trashRowTitle(_ trashValue: TrashItem) -> String {
-        var raw = (trashValue.content ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-        if let regex = try? NSRegularExpression(pattern: "\\[mood:[a-z]+\\]|\\[gif:[a-z0-9]+\\]|\\[(mood|gif):[a-z0-9]*$", options: []) {
-            raw = regex.stringByReplacingMatches(in: raw, options: [], range: NSRange(location: 0, length: (raw as NSString).length), withTemplate: "")
-            raw = raw.trimmingCharacters(in: .whitespaces)
+        let base = trashRowTitleBase(trashValue)
+        guard let createdAt = trashValue.createdAt,
+              trashItems.contains(where: { $0.id != trashValue.id && trashRowTitleBase($0) == base }) else {
+            return base
         }
-        if raw.isEmpty { return "这篇日记" }
-        return String(raw.prefix(20))
+        return "\(base) · \(TrashText.createdLabel(ms: createdAt, timeZone: trashValue.diaryTimeZone))"
+    }
+
+    /// 命名顺序本体：标题 → 净化后正文前 20 字 →「这篇日记」。
+    private func trashRowTitleBase(_ trashValue: TrashItem) -> String {
+        let title = sanitizedTrashLabelText(trashValue.title ?? "")
+        if !title.isEmpty { return title }
+        let body = sanitizedTrashLabelText(trashValue.content ?? "")
+        if body.isEmpty { return NSLocalizedString("trash.recheck.this_entry", comment: "") }
+        return String(body.prefix(20))
+    }
+
+    /// 读屏不读记号原文：[mood:]/[gif:] 记号（含尾部截断一半的）先去掉，换行折成空格。
+    private func sanitizedTrashLabelText(_ raw: String) -> String {
+        var text = raw.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        if let regex = try? NSRegularExpression(pattern: "\\[mood:[a-z]+\\]|\\[gif:[a-z0-9]+\\]|\\[(mood|gif):[a-z0-9]*$", options: []) {
+            text = regex.stringByReplacingMatches(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length), withTemplate: "")
+            text = text.trimmingCharacters(in: .whitespaces)
+        }
+        return text
     }
 
     // MARK: - 恢复 / 彻底删除
@@ -1229,10 +1302,14 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     }
 
     @objc private func restoreTapped(_ sender: UIButton) {
-        guard let matched = restoreEntries.first(where: { $0.button == sender }) else { return }
-        let trashValue = matched.trashValue
+        guard let trashValue = restoreEntries.value(for: sender) else { return }
         let identifier = trashValue.entryIdentifier
         if identifier.isEmpty || trashBusyIdentifiers.contains(identifier) {
+            return
+        }
+        // 未确认恢复态：按钮是「重新检查」，点按走核对流程，不再直接发恢复请求。
+        if trashRecheckIdentifiers.contains(identifier) {
+            recheckTrashRestore(identifier: identifier, trashValue: trashValue, button: sender)
             return
         }
         trashBusyIdentifiers.insert(identifier)
@@ -1240,7 +1317,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // 扫荡 B：同行另一钮（彻底删除）在途期间一并禁用，否则恢复在途时
         // 点彻底删除会弹出确认框，确认后与恢复双请求齐飞（见 purge 确认处
         // 的复验守卫）；标题不动，只禁点按，结束时与恢复钮一起恢复。
-        let purgeSibling = purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
+        let purgeSibling = purgeEntries.button(forID: identifier)
         purgeSibling?.isEnabled = false
         purgeSibling?.alpha = 0.5
         // 在途切号门：发起时捕获账号 ID 与鉴权代际（通知页 P1-21 同款口径）。
@@ -1265,14 +1342,20 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     // iCity：恢复回原可见性——服务端返回 published/isPublic 时按其分流，
                     // 均缺失时用通用文案，时间线重拉为准，不猜原态。
                     // 好友第一期：visibility=friends 时显“仅好友”文案（恢复回仅好友）。
+                    let restoredMessage: String
                     if resp.visibility == "friends" {
-                        self.showToast(message: "已恢复为仅好友")
+                        restoredMessage = NSLocalizedString("trash.restored.friends_only", comment: "")
                     } else if resp.published == 1 || resp.isPublic == true {
-                        self.showToast(message: "已恢复为公开")
+                        restoredMessage = NSLocalizedString("trash.restored.public", comment: "")
                     } else if resp.published == 0 || resp.isPublic == false {
-                        self.showToast(message: "已恢复为私密")
+                        restoredMessage = NSLocalizedString("trash.restored.private", comment: "")
                     } else {
-                        self.showToast(message: "已恢复")
+                        restoredMessage = NSLocalizedString("trash.restored.generic", comment: "")
+                    }
+                    // 恢复后行即移除、唯一一篇时随即变空态：toast 上挂「查看日记」，
+                    // 点了才打开刚恢复的那篇（不点则留在列表，连续恢复多篇不受影响）。
+                    self.showToast(message: restoredMessage, actionTitle: NSLocalizedString("trash.restored.view_entry", comment: "")) { [weak self] in
+                        self?.onOpenEntry?(identifier)
                     }
                     self.removeRow(identifier: identifier)
                     // 防回插：先在主线程记下本轮已移除 id（静默终态检查时
@@ -1298,6 +1381,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 case .failure(let error):
                     if case .unauthorized = error {
                         self.notifyTrashLoginOnce()
+                    } else if case .network = error {
+                        // 网络错误：请求可能已送达、只是回包丢了，恢复与否未确认——
+                        // 不报“恢复失败”，行按钮改成「重新检查」，点按先核对状态。
+                        self.trashRecheckIdentifiers.insert(identifier)
+                        sender.setTitle(NSLocalizedString("trash.recheck.recheck", comment: ""), for: .normal)
+                        sender.accessibilityLabel = String(format: NSLocalizedString("trash.recheck.recheck_entry_format", comment: ""), self.trashRowTitle(trashValue))
+                        self.showToast(message: NSLocalizedString("trash.recheck.unconfirmed", comment: ""))
                     } else {
                         self.shakeFailedRow(identifier: identifier)
                         self.showToast(message: "恢复失败，请刷新后重试")
@@ -1307,9 +1397,97 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         }
     }
 
+    /// 未确认恢复态的核对：点「重新检查」后翻页查服务端回收站列表，
+    /// 确认该篇是否仍在回收站——在才可再次恢复，不在则行已失效。
+    private func recheckTrashRestore(identifier: String, trashValue: TrashItem, button: UIButton) {
+        trashBusyIdentifiers.insert(identifier)
+        setRowButtonBusy(button, busy: true, busyTitle: NSLocalizedString("trash.recheck.checking", comment: ""), idleTitle: NSLocalizedString("trash.recheck.recheck", comment: ""))
+        // 扫荡 B 同款：核对期间同行彻底删除钮一并禁用，否则核对在途时
+        // 点彻底删除会弹出确认框，与核对结果双请求齐飞。
+        let purgeSibling = purgeEntries.button(forID: identifier)
+        purgeSibling?.isEnabled = false
+        purgeSibling?.alpha = 0.5
+        let requestAccountId = SessionManager.shared.currentUser?.id
+        let requestAuthEpoch = BearyAPI.shared.authEpoch
+        recheckTrashRestorePage(identifier: identifier, trashValue: trashValue, button: button, purgeSibling: purgeSibling, requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch, before: nil, beforeId: nil)
+    }
+
+    private func recheckTrashRestorePage(identifier: String, trashValue: TrashItem, button: UIButton, purgeSibling: UIButton?, requestAccountId: Int?, requestAuthEpoch: Int, before: String?, beforeId: String?) {
+        BearyAPI.shared.fetchTrash(before: before, beforeId: beforeId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if self.isStaleTrashRequest(requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch) {
+                    // 旧登录态回包：busy 复位仍执行（否则行按钮永久置灰），
+                    // 未确认态保留，下次点按可再核对。
+                    self.trashBusyIdentifiers.remove(identifier)
+                    self.setRowButtonBusy(button, busy: false, busyTitle: NSLocalizedString("trash.recheck.checking", comment: ""), idleTitle: NSLocalizedString("trash.recheck.recheck", comment: ""))
+                    purgeSibling?.isEnabled = true
+                    purgeSibling?.alpha = 1
+                    return
+                }
+                switch result {
+                case .success(let page):
+                    if page.items.contains(where: { $0.id == identifier }) {
+                        // 仍在回收站：回到可恢复态，按钮恢复「恢复」。
+                        self.trashRecheckIdentifiers.remove(identifier)
+                        self.trashBusyIdentifiers.remove(identifier)
+                        self.setRowButtonBusy(button, busy: false, busyTitle: NSLocalizedString("trash.recheck.checking", comment: ""), idleTitle: NSLocalizedString("trash.recheck.restore", comment: ""))
+                        button.accessibilityLabel = String(format: NSLocalizedString("trash.recheck.restore_entry_format", comment: ""), self.trashRowTitle(trashValue))
+                        purgeSibling?.isEnabled = true
+                        purgeSibling?.alpha = 1
+                        self.showToast(message: NSLocalizedString("trash.recheck.still_in_trash", comment: ""))
+                        return
+                    }
+                    if page.items.count < 50 {
+                        // 翻到底仍无该篇：已不在回收站，行失效——移除本行并清本地桶，
+                        // 下次进页不再从旧快照把它带回来。是否恢复过无法区分，
+                        // 不猜“已恢复”，只说不在回收站。
+                        self.trashRecheckIdentifiers.remove(identifier)
+                        self.trashBusyIdentifiers.remove(identifier)
+                        purgeSibling?.isEnabled = true
+                        purgeSibling?.alpha = 1
+                        self.removeRow(identifier: identifier)
+                        self.trashRemovedDuringSilentRefresh.insert(identifier)
+                        if let uid = requestAccountId {
+                            BearyEntrySync.shared.runDiskWrite(accountId: uid) {
+                                let ok = BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                                if !ok { NSLog("[BearyEntrySync] trash removeItem failed account=%d entry=%@", uid, identifier) }
+                            }
+                        }
+                        self.showToast(message: NSLocalizedString("trash.recheck.no_longer_in_trash", comment: ""))
+                        return
+                    }
+                    guard let last = page.items.last, let lastDeletedAt = last.deletedAt else {
+                        // 游标缺失无法续翻：状态仍未确认，留在「重新检查」态。
+                        self.trashBusyIdentifiers.remove(identifier)
+                        self.setRowButtonBusy(button, busy: false, busyTitle: NSLocalizedString("trash.recheck.checking", comment: ""), idleTitle: NSLocalizedString("trash.recheck.recheck", comment: ""))
+                        purgeSibling?.isEnabled = true
+                        purgeSibling?.alpha = 1
+                        self.showToast(message: NSLocalizedString("trash.recheck.unconfirmed", comment: ""))
+                        return
+                    }
+                    self.recheckTrashRestorePage(identifier: identifier, trashValue: trashValue, button: button, purgeSibling: purgeSibling, requestAccountId: requestAccountId, requestAuthEpoch: requestAuthEpoch, before: "\(lastDeletedAt)", beforeId: last.id)
+                case .failure(let error):
+                    self.trashBusyIdentifiers.remove(identifier)
+                    self.setRowButtonBusy(button, busy: false, busyTitle: NSLocalizedString("trash.recheck.checking", comment: ""), idleTitle: NSLocalizedString("trash.recheck.recheck", comment: ""))
+                    purgeSibling?.isEnabled = true
+                    purgeSibling?.alpha = 1
+                    if case .unauthorized = error {
+                        self.notifyTrashLoginOnce()
+                    } else if case .network = error {
+                        // 核对本身也断网：状态仍未确认，留在「重新检查」态。
+                        self.showToast(message: NSLocalizedString("trash.recheck.unconfirmed", comment: ""))
+                    } else {
+                        self.shakeFailedRow(identifier: identifier)
+                        self.showToast(message: NSLocalizedString("trash.recheck.check_failed", comment: ""))
+                    }
+                }
+            }
+        }
+    }
+
     @objc private func purgeTapped(_ sender: UIButton) {
-        guard let matched = purgeEntries.first(where: { $0.button == sender }) else { return }
-        let trashValue = matched.trashValue
+        guard let trashValue = purgeEntries.value(for: sender) else { return }
         let identifier = trashValue.entryIdentifier
         if identifier.isEmpty || trashBusyIdentifiers.contains(identifier) {
             return
@@ -1335,7 +1513,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             self.setRowButtonBusy(sender, busy: true, busyTitle: "删除中…", idleTitle: "彻底删除")
             // 扫荡 B：同行恢复钮在途期间一并禁用（与 restoreTapped 对称），
             // 标题不动，只禁点按，结束时与删除钮一起恢复。
-            let restoreSibling = self.restoreEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
+            let restoreSibling = self.restoreEntries.button(forID: identifier)
             restoreSibling?.isEnabled = false
             restoreSibling?.alpha = 0.5
             // 在途切号门：确认框可能横跨一次切号，故在真正发起处（而非
@@ -1394,8 +1572,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// 成功后原地移除该行：只动该行视图，不重建列表、不滚顶；空了则出空态。
     private func removeRow(identifier: String) {
         trashItems.removeAll(where: { $0.entryIdentifier == identifier })
-        restoreEntries.removeAll(where: { $0.trashValue.entryIdentifier == identifier })
-        purgeEntries.removeAll(where: { $0.trashValue.entryIdentifier == identifier })
+        restoreEntries.removeAll(id: identifier)
+        purgeEntries.removeAll(id: identifier)
         guard let rowView = rowViewsByIdentifier[identifier] else {
             renderStateViews()
             return
@@ -1446,8 +1624,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         rowView.layer.add(shake, forKey: "bearyTrashFailShake")
     }
 
-    private func showToast(message: String) {
-        BearyToast.show(in: view, message: message)
+    private func showToast(message: String, actionTitle: String? = nil, action: (() -> Void)? = nil) {
+        BearyToast.show(in: view, message: message, actionTitle: actionTitle, action: action)
     }
 }
 
@@ -1468,51 +1646,46 @@ private enum TrashText {
         return NSAttributedString(string: text, attributes: attributes)
     }
 
-    /// [24] 小项 6：7 天内相对时间、7 天外绝对时间（共用口径，M月d日 H:mm；
-    /// 小时不补零；ms 无效时回落下方的旧绝对格式）。
-    /// G8：显示用 formatter 统一设北京时区，与服务端日界一致。
-    static func createdLabel(ms: Int) -> String {
-        // #32：共用函数 7 天外也返回绝对串（M月d日 H:mm，设备时区、无跨年分支），
+    /// [24] 小项 6：7 天内相对时间、7 天外“/”绝对日期（见 BearyVisibilityText.diaryTimeString；
+    /// ms 无效时回落下方的“/”绝对格式）。
+    /// 2026-11-25：日记创建日期走 diaryTimeString（设备时区兜底，日记时区由 #2094 接线）；
+    /// 删除日期（deletedLabel）仍走 G8 北京口径，不动。
+    /// 日记时区（2026-11-21 v20 §二）：“写于”是日记时间，按原篇时区显示。
+    static func createdLabel(ms: Int, timeZone: TimeZone? = nil) -> String {
+        // #32：共用函数 7 天外也返回绝对串（“/”绝对日期，设备时区、无跨年分支），
         // 直接 early-return 会吞掉下方的跨年分支；只在 7 天内用它做相对显示，
-        // 7 天及以外落回下方的跨年分支（同年 M月d日 H:mm／跨年 yyyy年M月d日，北京时间）。
+        // 7 天及以外落回下方的跨年分支（同年 M/d、跨年 yyyy/M/d，按篇时区）。
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
-        if diff < 7 * 86400, let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+        if diff < 7 * 24 * 3600, let relative = BearyVisibilityText.diaryTimeString(publishedAtMs: ms, timeZone: timeZone) {
             return relative
         }
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        // 跨年显示年份（规范 §12）：同年 "M月d日 H:mm"，跨年 "yyyy年M月d日"；
-        // 年份判定走北京日历，与本文件 G8 时区口径一致。
-        let calendar = BearyBeijingDay.calendar
-        let year = calendar.component(.year, from: date)
-        let currentYear = calendar.component(.year, from: Date())
-        formatter.dateFormat = year == currentYear ? "M月d日 H:mm" : "yyyy年M月d日"
-        return formatter.string(from: date)
+        // 跨年显示年份（规范 §12）：同年 "M/d"，跨年 "yyyy/M/d"；
+        // 年份判定走篇时区日历（与 diaryTimeString 同口径）。
+        // 2026-11-25：绝对日期改“/”格式（见 slashDateString）。
+        return BearyLocalizedDate.slashDateString(from: date, timeZone: timeZone)
     }
 
     /// 网页 fmtDelLabel：今天 → 今天 H:mm；昨天 → 昨天；否则 M月d日。
     /// [24] 小项 6：今天态小时亦不补零，与上条同口径。
     /// G8：今天/昨天判定与显示均走北京日历/时区，不用设备时区。
+    /// 2026-11-21 日期完全本地化：今天／昨天词与日期跟 App 语言（见 BearyLocalizedDate），
+    /// 时区沿用既有 GMT+8；中文输出与改前一致。
     static func deletedLabel(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let calendar = BearyBeijingDay.calendar
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
         if calendar.isDateInToday(date) {
-            formatter.dateFormat = "H:mm"
-            return "今天 " + formatter.string(from: date)
+            return BearyLocalizedDate.todayWord(timeZone: BearyLocalizedDate.gmt8) + " " + BearyLocalizedDate.timeString(from: date, timeZone: BearyLocalizedDate.gmt8)
         }
         if calendar.isDateInYesterday(date) {
-            return "昨天"
+            return BearyLocalizedDate.yesterdayWord(timeZone: BearyLocalizedDate.gmt8)
         }
         // 跨年显示年份（规范 §12）：同年「M月d日」，跨年「yyyy年M月d日」。
         let year = calendar.component(.year, from: date)
         let currentYear = calendar.component(.year, from: Date())
-        formatter.dateFormat = year == currentYear ? "M月d日" : "yyyy年M月d日"
-        return formatter.string(from: date)
+        return year == currentYear
+            ? BearyLocalizedDate.monthDayString(from: date, timeZone: BearyLocalizedDate.gmt8)
+            : BearyLocalizedDate.yearMonthDayString(from: date, timeZone: BearyLocalizedDate.gmt8)
     }
 
     /// 网页 trash-meta：写于 … · 删除于 … · 还剩 N 天。
@@ -1520,15 +1693,15 @@ private enum TrashText {
     static func metaLine(trashValue: TrashItem) -> String {
         let createdPart: String
         if let createdAt = trashValue.createdAt {
-            createdPart = "写于 " + createdLabel(ms: createdAt)
+            createdPart = String(format: NSLocalizedString("trash.meta.created", comment: ""), createdLabel(ms: createdAt, timeZone: trashValue.diaryTimeZone))
         } else {
-            createdPart = "写于 —"
+            createdPart = String(format: NSLocalizedString("trash.meta.created", comment: ""), "—")
         }
         let deletedPart: String
         if let deletedAt = trashValue.deletedAt {
-            deletedPart = "删除于 " + deletedLabel(ms: deletedAt)
+            deletedPart = String(format: NSLocalizedString("trash.meta.deleted", comment: ""), deletedLabel(ms: deletedAt))
         } else {
-            deletedPart = "删除于 —"
+            deletedPart = String(format: NSLocalizedString("trash.meta.deleted", comment: ""), "—")
         }
         // 扫荡 B：倒计时按 deletedAt 现算，不直接沿用服务端快照。
         // 本地桶的 daysLeft 是上次同步时的快照：离线多日后再进回收站，

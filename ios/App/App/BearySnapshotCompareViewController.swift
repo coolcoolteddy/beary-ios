@@ -11,18 +11,15 @@ import UIKit
 // 故恢复前备份有兜底、不调 POST restore（它会直接写库，等于自动保存）。
 // 星标能力保留：右上角星形钮，点亮橙色＝已加星标，沿用原 star 接口。
 
-final class BearySnapshotPreviewViewController: UIViewController {
+final class BearySnapshotPreviewViewController: UIViewController, BearySystemSheetSizing {
     var onStarChanged: ((Int, Bool) -> Void)?
     var onRestoreToEditor: ((BearyEntrySnapshot) -> Void)?
 
     private let entryId: String
     private var snapshot: BearyEntrySnapshot
 
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页/公告同款做法）。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
     private var starRequestInFlight = false
 
-    private let grabberView = UIView()
     private let titleLabel = UILabel()
     private let starButton = UIButton(type: .system)
     private let subtitleLabel = UILabel()
@@ -54,19 +51,15 @@ final class BearySnapshotPreviewViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.surface3
+        view.backgroundColor = .clear
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.layer.masksToBounds = true
 
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        view.addSubview(grabberView)
-
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "快照预览"
-        titleLabel.font = BearyDynamicType.pageTitleFont()
+        titleLabel.font = BearyDynamicType.smallActionFont()
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         view.addSubview(titleLabel)
 
@@ -79,6 +72,7 @@ final class BearySnapshotPreviewViewController: UIViewController {
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.font = BearyDynamicType.captionFont()
+        subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.text = snapshot.displayDateString.isEmpty ? "保存成功" : "\(snapshot.displayDateString) · 保存成功"
         view.addSubview(subtitleLabel)
@@ -89,17 +83,12 @@ final class BearySnapshotPreviewViewController: UIViewController {
         contentTextView.backgroundColor = .clear
         contentTextView.textContainerInset = .zero
         contentTextView.textContainer.lineFragmentPadding = 0
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.6
-        paragraph.lineBreakMode = .byCharWrapping
-        // 快照正文里的 [mood:] 记号走卡片同款渲染（原先纯文本直显，
-        // 记号原文会露出来）；行高/断行口径与原来一致。快照不存图片，
-        // [gif:] 记号按既有兜底留原文。
-        contentTextView.attributedText = BearyText.inlineAttributedText(from: Self.displayText(title: snapshot.title, content: snapshot.content ?? ""), font: BearyDynamicType.smallBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: nil)
+        applyContentText()
         view.addSubview(contentTextView)
 
         noteLabel.translatesAutoresizingMaskIntoConstraints = false
         noteLabel.font = BearyDynamicType.captionFont()
+        noteLabel.adjustsFontForContentSizeCategory = true
         noteLabel.textColor = BearyColors.gray
         noteLabel.numberOfLines = 0
         noteLabel.text = "请先核对快照内容。恢复前会备份当前非空文字，恢复后需手动保存。"
@@ -113,12 +102,8 @@ final class BearySnapshotPreviewViewController: UIViewController {
         let textHeight = contentTextView.heightAnchor.constraint(equalToConstant: Self.minTextHeight)
         textHeightConstraint = textHeight
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-
-            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 16),
+            // 顶部留白与旧抓手区等高（抓手顶 10＋高 4＋标题间距 16）：系统抓手占顶区，标题位置不动。
+            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 16),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
 
             starButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
@@ -143,7 +128,7 @@ final class BearySnapshotPreviewViewController: UIViewController {
             restoreButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             restoreButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             restoreButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.orange).height),
-            restoreButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            restoreButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -BearySystemSheet.contentBottomPadding),
         ])
     }
 
@@ -159,6 +144,9 @@ final class BearySnapshotPreviewViewController: UIViewController {
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
             lastTextMeasuredWidth = -1
             lastMeasuredWidth = -1
+            // 大字号实时变化：正文富文本按当前字号重算重赋
+            // （标题／副行／提示走 adjustsFontForContentSizeCategory 自动跟随）。
+            applyContentText()
         }
     }
 
@@ -178,7 +166,7 @@ final class BearySnapshotPreviewViewController: UIViewController {
         }
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高；宽/字号档变化时跟帧补齐。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     /// 同列表层：只有宽／正文高／底安全区变了才重算 systemLayoutSizeFitting，
     /// 其余布局轮次复用上次量到的高，不再每轮整树量一遍。
@@ -202,6 +190,7 @@ final class BearySnapshotPreviewViewController: UIViewController {
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
     }
 
@@ -209,6 +198,17 @@ final class BearySnapshotPreviewViewController: UIViewController {
     private static func displayText(title: String?, content: String) -> String {
         guard let title = title, !title.isEmpty else { return content }
         return content.isEmpty ? title : "\(title)\n\(content)"
+    }
+
+    /// 正文富文本按当前字号生成（smallBodyFont 走 scaledFont，字号档变了须重算重赋）。
+    private func applyContentText() {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.6
+        paragraph.lineBreakMode = .byCharWrapping
+        // 快照正文里的 [mood:] 记号走卡片同款渲染（原先纯文本直显，
+        // 记号原文会露出来）；行高/断行口径与原来一致。快照不存图片，
+        // [gif:] 记号按既有兜底留原文。
+        contentTextView.attributedText = BearyText.inlineAttributedText(from: Self.displayText(title: snapshot.title, content: snapshot.content ?? ""), font: BearyDynamicType.smallBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: nil)
     }
 
     private func refreshStarButton() {
@@ -251,17 +251,6 @@ extension BearySnapshotPreviewViewController {
         let sheet = BearySnapshotPreviewViewController(entryId: entryId, snapshot: snapshot)
         sheet.onStarChanged = onStarChanged
         sheet.onRestoreToEditor = onRestoreToEditor
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
-        sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
     }
 }

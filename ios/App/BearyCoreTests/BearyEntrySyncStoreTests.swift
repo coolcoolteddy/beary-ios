@@ -18,36 +18,20 @@ import XCTest
 final class BearyEntrySyncStoreTests: XCTestCase {
     private let testAccountId = 987654321
 
-    private func makeEntry(id: String, createdAtMs: Int) -> Entry {
-        let json = """
-        {"id": "\(id)", "created_at": \(createdAtMs), "content": "test \(id)"}
-        """
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try! decoder.decode(Entry.self, from: Data(json.utf8))
-    }
-
-    private func makeTrashItem(id: String, deletedAtMs: Int) -> TrashItem {
-        TrashItem(id: id, content: "trash \(id)", createdAt: nil, publishAt: nil,
-                  deletedAt: deletedAtMs, daysLeft: 30)
-    }
-
     override func setUp() {
         super.setUp()
-        BearyEntrySyncStore.purgeAccount(accountId: testAccountId)
-        BearyTrashSyncStore.purgeAccount(accountId: testAccountId)
+        BearySyncTestHelpers.purgeSyncStores(accountId: testAccountId)
     }
 
     override func tearDown() {
-        BearyEntrySyncStore.purgeAccount(accountId: testAccountId)
-        BearyTrashSyncStore.purgeAccount(accountId: testAccountId)
+        BearySyncTestHelpers.purgeSyncStores(accountId: testAccountId)
         super.tearDown()
     }
 
     // MARK: - 日文件写盘
 
     func testSaveDayRoundTripReturnsTrue() {
-        let entry = makeEntry(id: "e1", createdAtMs: 1735689600000)
+        let entry = BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)
         XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2025-01-01", entries: [entry]))
         let loaded = BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2025-01-01")
         XCTAssertEqual(loaded?.count, 1)
@@ -58,7 +42,7 @@ final class BearyEntrySyncStoreTests: XCTestCase {
         // 账号目录位置被一个普通文件占住：建目录与写盘都失败，须报 false。
         let dir = BearyEntrySyncStore.accountDir(accountId: testAccountId)!
         XCTAssertTrue(FileManager.default.createFile(atPath: dir.path, contents: Data("x".utf8)))
-        let entry = makeEntry(id: "e1", createdAtMs: 1735689600000)
+        let entry = BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)
         XCTAssertFalse(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2025-01-01", entries: [entry]))
         XCTAssertNil(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2025-01-01"))
     }
@@ -69,9 +53,9 @@ final class BearyEntrySyncStoreTests: XCTestCase {
         // 先留一个不在新集合里的旧日文件，提交成功后该日应变空数组文件
         // （= 已同步、该日为空），而不是被删掉（r17-C2 空日约定：文件缺失
         // 只代表从未同步/写盘失败，与确认空可区分）。
-        XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2024-12-31", entries: [makeEntry(id: "old", createdAtMs: 1735657200000)]))
+        XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2024-12-31", entries: [BearySyncTestHelpers.makeEntry(id: "old", createdAtMs: 1735657200000)]))
         let committed = BearyEntrySyncStore.commitFullSync(accountId: testAccountId, grouped: [
-            "2025-01-01": [makeEntry(id: "e1", createdAtMs: 1735689600000)],
+            "2025-01-01": [BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)],
         ])
         XCTAssertTrue(committed)
         XCTAssertEqual(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2024-12-31")?.count, 0)
@@ -83,14 +67,14 @@ final class BearyEntrySyncStoreTests: XCTestCase {
 
     func testCommitFullSyncPartialFailurePublishesNothing() {
         // 旧日文件（不在新集合里）先落盘。
-        XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2024-12-31", entries: [makeEntry(id: "old", createdAtMs: 1735657200000)]))
+        XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2024-12-31", entries: [BearySyncTestHelpers.makeEntry(id: "old", createdAtMs: 1735657200000)]))
         // 非法日键（带 /）让 staging 写盘失败：全有或全无——整体报 false，
         // 好日期也不发布，活盘原样不动（旧日文件仍读得到旧内容），不写标记。
         // 注：直接堵活盘日文件路径测不到失败——staging 是全新目录，换盘会把
         // 堵路的目录整个搬进 .bak；故用非法日键做 staging 写盘失败的故障注入。
         let committed = BearyEntrySyncStore.commitFullSync(accountId: testAccountId, grouped: [
-            "2025-01-01": [makeEntry(id: "e1", createdAtMs: 1735689600000)],
-            "bad/key": [makeEntry(id: "e2", createdAtMs: 1735776000000)],
+            "2025-01-01": [BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)],
+            "bad/key": [BearySyncTestHelpers.makeEntry(id: "e2", createdAtMs: 1735776000000)],
         ])
         XCTAssertFalse(committed)
         XCTAssertNil(BearyEntrySyncStore.loadDay(accountId: testAccountId, dayKey: "2025-01-01"))
@@ -106,8 +90,8 @@ final class BearyEntrySyncStoreTests: XCTestCase {
         noDateDecoder.keyDecodingStrategy = .convertFromSnakeCase
         let noDate = try! noDateDecoder.decode(Entry.self, from: Data("{\"id\": \"no-date\", \"content\": \"x\"}".utf8))
         let result = BearyEntrySyncStore.groupByDay([
-            makeEntry(id: "new-year", createdAtMs: 1735689600000),
-            makeEntry(id: "eve", createdAtMs: 1735657200000),
+            BearySyncTestHelpers.makeEntry(id: "new-year", createdAtMs: 1735689600000),
+            BearySyncTestHelpers.makeEntry(id: "eve", createdAtMs: 1735657200000),
             noDate,
         ])
         XCTAssertEqual(result.grouped["2025-01-01"]?.map({ $0.id }), ["new-year"])
@@ -134,8 +118,8 @@ final class BearyEntrySyncStoreTests: XCTestCase {
         // 两日全量提交（标记总数 2）；随后把其中一日活盘文件写坏
         // （本支是全新账号、无 .bak 可回落，该日不可恢复）。
         XCTAssertTrue(BearyEntrySyncStore.commitFullSync(accountId: testAccountId, grouped: [
-            "2025-01-01": [makeEntry(id: "e1", createdAtMs: 1735689600000)],
-            "2025-01-02": [makeEntry(id: "e2", createdAtMs: 1735776000000)],
+            "2025-01-01": [BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)],
+            "2025-01-02": [BearySyncTestHelpers.makeEntry(id: "e2", createdAtMs: 1735776000000)],
         ]))
         XCTAssertTrue(BearyEntrySyncStore.isArchiveComplete(accountId: testAccountId))
         let badURL = BearyEntrySyncStore.dayFileURL(accountId: testAccountId, dayKey: "2025-01-02")!
@@ -153,9 +137,9 @@ final class BearyEntrySyncStoreTests: XCTestCase {
         // 一日全量提交（标记总数 1）；再直接落第二日（不维护标记计数），
         // 标记总数对不上实际篇数。
         XCTAssertTrue(BearyEntrySyncStore.commitFullSync(accountId: testAccountId, grouped: [
-            "2025-01-01": [makeEntry(id: "e1", createdAtMs: 1735689600000)],
+            "2025-01-01": [BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)],
         ]))
-        writeDayFileRaw(dayKey: "2025-01-02", entries: [makeEntry(id: "e2", createdAtMs: 1735776000000)])
+        writeDayFileRaw(dayKey: "2025-01-02", entries: [BearySyncTestHelpers.makeEntry(id: "e2", createdAtMs: 1735776000000)])
         // 全量读盘整体 nil（总数对不上）；部分读盘返回全部可读日，不判 nil。
         XCTAssertNil(BearyEntrySyncStore.loadAllEntries(accountId: testAccountId))
         XCTAssertEqual(BearyEntrySyncStore.loadReadableEntries(accountId: testAccountId)?.map({ $0.id }), ["e2", "e1"])
@@ -163,7 +147,7 @@ final class BearyEntrySyncStoreTests: XCTestCase {
 
     func testLoadReadableEntriesNilWithoutMarker() {
         // 只有落盘日、无完整性标记：不认部分态（fail-closed），调用方走服务端。
-        XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2025-01-01", entries: [makeEntry(id: "e1", createdAtMs: 1735689600000)]))
+        XCTAssertTrue(BearyEntrySyncStore.saveDay(accountId: testAccountId, dayKey: "2025-01-01", entries: [BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)]))
         XCTAssertFalse(BearyEntrySyncStore.isArchiveComplete(accountId: testAccountId))
         XCTAssertNil(BearyEntrySyncStore.loadAllEntries(accountId: testAccountId))
         XCTAssertNil(BearyEntrySyncStore.loadReadableEntries(accountId: testAccountId))
@@ -172,7 +156,7 @@ final class BearyEntrySyncStoreTests: XCTestCase {
     func testLoadReadableEntriesNilWhenNoDayReadable() {
         // 归档损坏：唯一一日不可恢复——部分读盘同样 nil，维持 fail-closed。
         XCTAssertTrue(BearyEntrySyncStore.commitFullSync(accountId: testAccountId, grouped: [
-            "2025-01-01": [makeEntry(id: "e1", createdAtMs: 1735689600000)],
+            "2025-01-01": [BearySyncTestHelpers.makeEntry(id: "e1", createdAtMs: 1735689600000)],
         ]))
         let badURL = BearyEntrySyncStore.dayFileURL(accountId: testAccountId, dayKey: "2025-01-01")!
         try! Data("not json".utf8).write(to: badURL, options: .atomic)
@@ -183,7 +167,7 @@ final class BearyEntrySyncStoreTests: XCTestCase {
     // MARK: - 回收站整桶写盘
 
     func testTrashSaveAllRoundTripReturnsTrue() {
-        let item = makeTrashItem(id: "t1", deletedAtMs: 1735689600000)
+        let item = BearySyncTestHelpers.makeTrashItem(id: "t1", deletedAtMs: 1735689600000)
         XCTAssertTrue(BearyTrashSyncStore.saveAll(accountId: testAccountId, items: [item]))
         XCTAssertEqual(BearyTrashSyncStore.loadAll(accountId: testAccountId)?.first?.id, "t1")
     }
@@ -191,7 +175,7 @@ final class BearyEntrySyncStoreTests: XCTestCase {
     func testTrashSaveAllFailsWhenAccountDirectoryBlocked() {
         let dir = BearyTrashSyncStore.accountDir(accountId: testAccountId)!
         XCTAssertTrue(FileManager.default.createFile(atPath: dir.path, contents: Data("x".utf8)))
-        XCTAssertFalse(BearyTrashSyncStore.saveAll(accountId: testAccountId, items: [makeTrashItem(id: "t1", deletedAtMs: 1735689600000)]))
+        XCTAssertFalse(BearyTrashSyncStore.saveAll(accountId: testAccountId, items: [BearySyncTestHelpers.makeTrashItem(id: "t1", deletedAtMs: 1735689600000)]))
         XCTAssertNil(BearyTrashSyncStore.loadAll(accountId: testAccountId))
     }
 

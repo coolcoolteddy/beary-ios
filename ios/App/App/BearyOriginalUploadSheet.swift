@@ -7,10 +7,9 @@ import UIKit
 // （文案「原图上传是 Plus 功能」，可改用压缩或了解 Plus）。
 // 两项都显示大小：原图（原始文件大小）、压缩（预估大小，本地压图字节）。
 // 单张原图超 5MB（服务端上限）不参与选择：已自动按压缩上传，弹窗计入总数并打标提示。
-// 走共享底部弹窗容器 BearyBottomSheet（弹簧 0.4s 上升、背后缩 0.92、
-// 遮罩 0.45、下拖超 80pt 或速度 >600pt/s 关闭、否则 0.30s/damping 0.7
-// 弹回；减动效瞬时）。高度上限 88% 容器高（规范 §6）。
-// 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
+// 走系统底部 sheet（UISheetPresentationController，见 BearySystemSheet）。
+// 高度上限 88% 容器高（规范 §6）。
+// 部署目标 iOS 16.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 /// 上传方式标记（挂 ComposerImageItem 上，并持久化进 BearyDraftImageItem）。
 /// nil＝未确认。设计上让 #1451（发布时统一上传）合入后变基好接：
@@ -43,21 +42,11 @@ enum BearyOriginalUploadSheet {
                      onPickOriginal: @escaping () -> Void, onPickCompressed: @escaping () -> Void,
                      onShowPlus: @escaping () -> Void) -> BearyOriginalUploadSheetViewController {
         let sheet = BearyOriginalUploadSheetViewController(model: model, onPickOriginal: onPickOriginal, onPickCompressed: onPickCompressed, onShowPlus: onShowPlus)
-        let delegate = BearyBottomSheetTransitioningDelegate()
-        sheet.sheetDelegate = delegate
-        sheet.transitioningDelegate = delegate
-        sheet.modalPresentationStyle = .custom
         // 进场前先算一次内容高，首帧不拿容器一半高回退、随后不再大跳变；
         // 安全区此时未进窗口为 0，落窗后 viewDidLayoutSubviews 按真实安全区跟帧补齐。
         sheet.loadViewIfNeeded()
-        let presenterWidth = presenter.view.bounds.width
-        let sheetWidth: CGFloat = presenterWidth >= 821 ? min(600, presenterWidth - 32) : presenterWidth
-        sheet.view.frame = CGRect(x: 0, y: 0, width: max(sheetWidth, 1), height: 800)
-        sheet.view.setNeedsLayout()
-        sheet.view.layoutIfNeeded()
         sheet.containerHeight = presenter.view.bounds.height
-        sheet.updatePreferredContentSize(extraBottomInset: presenter.view.safeAreaInsets.bottom)
-        presenter.present(sheet, animated: BearyMotion.animated(true))
+        BearySystemSheet.present(sheet, from: presenter)
         return sheet
     }
 
@@ -73,33 +62,26 @@ enum BearyOriginalUploadSheet {
     }
 }
 
-final class BearyOriginalUploadSheetViewController: UIViewController, BearyBottomSheetVoiceOver {
+final class BearyOriginalUploadSheetViewController: UIViewController, BearySystemSheetSizing {
 
     private let model: BearyOriginalUploadSheetModel
     private let onPickOriginal: () -> Void
     private let onPickCompressed: () -> Void
     private let onShowPlus: () -> Void
 
-    /// transitioningDelegate 是弱引用，须由本页自己强持有（登录页同款做法），
-    /// 否则容器在呈现中途释放、进退场动画丢 delegate。
-    var sheetDelegate: BearyBottomSheetTransitioningDelegate?
-    /// 关闭回调：×/下拉/无障碍退出等任一关闭路径都会走 viewDidDisappear，
+    /// 关闭回调：抓手下滑/点外收起/无障碍退出等任一关闭路径都会走 viewDidDisappear，
     /// 调用方据此复位“弹窗在场”旗标；选原图/压缩的回调另在关闭动画完成后触发。
     var onDismiss: (() -> Void)?
     /// 容器高（进场前取 presenter 高，落窗后由 viewDidLayoutSubviews 按 window 高刷新）：
     /// 88% 高度上限的计算基准。
     var containerHeight: CGFloat = 800
 
-    private let grabberView = UIView()
     private let titleLabel = UILabel()
     private let originalButton = UIButton(type: .custom)
     private let compressedButton = UIButton(type: .custom)
     private let footnoteLabel = UILabel()
     private var lastLayoutWidth: CGFloat = 0
     private var lastLayoutContainerHeight: CGFloat = 0
-
-    /// BearyBottomSheetVoiceOver：出现时首焦点落标题。
-    var bottomSheetInitialAccessibilityElement: AnyObject? { titleLabel }
 
     init(model: BearyOriginalUploadSheetModel, onPickOriginal: @escaping () -> Void, onPickCompressed: @escaping () -> Void, onShowPlus: @escaping () -> Void) {
         self.model = model
@@ -115,15 +97,10 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.surface3
+        view.backgroundColor = .clear
         view.layer.cornerRadius = BearySheetChrome.topCornerRadius
         view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.clipsToBounds = true
-
-        grabberView.backgroundColor = BearyColors.gray
-        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        grabberView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(grabberView)
 
         titleLabel.text = "选择上传方式"
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
@@ -154,24 +131,22 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         view.addSubview(footnoteLabel)
 
         NSLayoutConstraint.activate([
-            grabberView.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding),
-            grabberView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-            titleLabel.topAnchor.constraint(equalTo: grabberView.bottomAnchor, constant: 14),
-            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            // 顶部留白与旧抓手区等高（列表顶留白 6＋抓手高 4＋标题间距 14）：系统抓手占顶区，标题位置不动；
+            // 一律不要 ×，标题右缘放回内容边 -16。
+            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.listTopPadding + BearySheetChrome.grabberHeight + 14),
+            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: BearySpace.lg),
+            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -BearySpace.lg),
             originalButton.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
-            originalButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            originalButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            originalButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: BearySpace.lg),
+            originalButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -BearySpace.lg),
             originalButton.heightAnchor.constraint(equalToConstant: 64),
             compressedButton.topAnchor.constraint(equalTo: originalButton.bottomAnchor, constant: 12),
-            compressedButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            compressedButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            compressedButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: BearySpace.lg),
+            compressedButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -BearySpace.lg),
             compressedButton.heightAnchor.constraint(equalToConstant: 64),
             footnoteLabel.topAnchor.constraint(equalTo: compressedButton.bottomAnchor, constant: 12),
-            footnoteLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            footnoteLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            footnoteLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: BearySpace.lg),
+            footnoteLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -BearySpace.lg),
         ])
     }
 
@@ -203,7 +178,7 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
             subtitleLabel.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 16),
             subtitleLabel.bottomAnchor.constraint(lessThanOrEqualTo: button.bottomAnchor, constant: -BearySheetChrome.listRowVerticalPadding),
         ]
-        if showsCrown, let crownImage = UIImage(named: "crown") {
+        if showsCrown, let crownImage = UIImage(named: BearyAssets.crown) {
             let crownView = UIImageView(image: crownImage)
             crownView.tintColor = BearyColors.orange
             crownView.contentMode = .scaleAspectFit
@@ -238,7 +213,7 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         updatePreferredContentSize()
     }
 
-    /// 任一关闭路径（×/下拉/无障碍退出/选完选项）都会走这里，调用方据此复位旗标。
+    /// 任一关闭路径（抓手下滑/点外收起/无障碍退出/选完选项）都会走这里，调用方据此复位旗标。
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         onDismiss?()
@@ -252,8 +227,8 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         }
     }
 
-    /// 按当前宽度算内容高，推给容器当 sheet 高；宽/字号档变化时跟帧补齐。
-    /// 高 = 抓手＋标题＋两行（64＋12＋64）＋脚注（有则 12＋文案高）＋底部留白。
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高；宽/字号档变化时跟帧补齐。
+    /// 高 = 顶留白＋标题＋两行（64＋12＋64）＋脚注（有则 12＋文案高）＋底部留白。
     /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
     func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
         let width = view.bounds.width > 0 ? view.bounds.width : 375
@@ -261,26 +236,23 @@ final class BearyOriginalUploadSheetViewController: UIViewController, BearyBotto
         let safeBottom = view.safeAreaInsets.bottom > 0 ? view.safeAreaInsets.bottom : extraBottomInset
         let bottomPad = safeBottom + BearySheetChrome.listBottomPadding
         let titleHeight = titleLabel.intrinsicContentSize.height
-        let chrome = BearySheetChrome.listTopPadding + BearySheetChrome.grabberHeight + 14 + titleHeight + 12
+        let topHeight = BearySheetChrome.listTopPadding + BearySheetChrome.grabberHeight + 14 + titleHeight + 12
         var contentHeight: CGFloat = 64 + 12 + 64
         if !footnoteLabel.isHidden {
             let footnoteHeight = footnoteLabel.sizeThatFits(CGSize(width: max(width - 40, 0), height: CGFloat.greatestFiniteMagnitude)).height
             contentHeight += 12 + footnoteHeight
         }
-        let height = min(chrome + contentHeight + bottomPad, maxHeight)
+        let height = min(topHeight + contentHeight + bottomPad, maxHeight)
         let preferred = CGSize(width: width, height: height)
         if preferredContentSize != preferred {
             preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
-    }
-
-    @objc private func closeTapped() {
-        dismiss(animated: BearyMotion.animated(true))
     }
 
     /// VoiceOver 双指 scrub（无障碍退出手势）：走同一关闭路径。
     override func accessibilityPerformEscape() -> Bool {
-        closeTapped()
+        dismiss(animated: BearyMotion.animated(true))
         return true
     }
 

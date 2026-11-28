@@ -484,7 +484,8 @@ final class BearyEntrySync {
     func enqueuePendingRefetch(entryId: String, accountId: Int) {
         queue.async { [weak self] in
             guard let self = self else { return }
-            let dayKey = BearyBeijingDay.dayKey(ofMs: Int(Date().timeIntervalSince1970 * 1000)) ?? ""
+            // 待发布回取的当日桶 key：按查看设备时区（与时间线 device-today 一致）。
+            let dayKey = BearyBeijingDay.dayKey(ofMs: Int(Date().timeIntervalSince1970 * 1000), tzName: TimeZone.current.identifier) ?? ""
             if BearyEntrySyncStore.addPendingPublishRefetch(accountId: accountId, entryId: entryId, dayKey: dayKey) {
                 NSLog("[BearyEntrySync] pending refetch enqueued account=%d entry=%@", accountId, entryId)
             } else {
@@ -1286,5 +1287,40 @@ final class BearySharedEntryLoader {
             return
         }
         waiter.completion(load)
+    }
+}
+
+// MARK: - 星图／地图全量取数共用起步（十六遍第 7 条）
+
+extension BearySharedEntryLoader {
+    /// 星图与地图 `fetchAllEntries` 的共用起步：代次＋游标复位＋共用加载＋代次守卫分发。
+    /// 游标字段仍归各页持有——两页可同时在导航栈上，共享单例不能代持各页游标；
+    /// 各页的成图／成表消费（`applySharedLoad`）与加载态各留自己的。
+    /// 语义与两处原代码逐行一致：`load` 的 completion 本已在主线程调一次，
+    /// 原代码仍包一层 `DispatchQueue.main.async`，这里照旧保留。
+    static func startFreshLoad(
+        scope: BearyAPI.Scope,
+        generation: inout Int,
+        collected: inout [Entry],
+        resumeBefore: inout Int?,
+        resumeBeforeId: inout String?,
+        resumePage: inout Int,
+        interrupted: inout Bool,
+        isCurrentGeneration: @escaping (Int) -> Bool,
+        apply: @escaping (SharedEntryLoad?) -> Void
+    ) {
+        generation += 1
+        collected = []
+        resumeBefore = nil
+        resumeBeforeId = nil
+        resumePage = 1
+        interrupted = false
+        let capturedGeneration = generation
+        shared.load(scope: scope) { load in
+            DispatchQueue.main.async {
+                guard isCurrentGeneration(capturedGeneration) else { return }
+                apply(load)
+            }
+        }
     }
 }

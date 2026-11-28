@@ -58,22 +58,8 @@ enum BearySyncStateStore {
 enum BearyEntrySyncStore {
     static let directoryPrefix = "beary_entry_sync"
 
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        // 与 BearyAPI 解码端配对：解码用 convertFromSnakeCase，编码用 convertToSnakeCase，
-        // 落盘 JSON 与服务端字段口径一致，往返不丢字段。
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        return encoder
-    }
-
-    private static func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return decoder
-    }
-
     static func accountDir(accountId: Int) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(directoryPrefix)_\(accountId)", isDirectory: true)
     }
 
@@ -95,7 +81,7 @@ enum BearyEntrySyncStore {
 
     /// staging 桶：新版本先写这里，校验通过后才换盘成活盘。
     static func stagingDir(accountId: Int) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(directoryPrefix)_\(accountId).staging", isDirectory: true)
     }
 
@@ -125,7 +111,7 @@ enum BearyEntrySyncStore {
         guard let dir = directory else { return nil }
         let url = dir.appendingPathComponent("\(dayKey).json")
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? makeDecoder().decode([Entry].self, from: data)
+        return try? BearyJSON.decoder.decode([Entry].self, from: data)
     }
 
     /// 读某日落盘：命中返回数组（含空数组文件），缺失/损坏返回 nil（调用方走网络）。
@@ -278,7 +264,7 @@ enum BearyEntrySyncStore {
     /// 标记只在发布成功后由 commitFullSync / finishDiaryRun 统一写）。
     private static func saveDayToDirectory(dayKey: String, entries: [Entry], directory: URL?) -> Bool {
         guard let dir = directory else { return false }
-        guard let data = try? makeEncoder().encode(entries) else { return false }
+        guard let data = try? BearyJSON.encoder.encode(entries) else { return false }
         let url = dir.appendingPathComponent("\(dayKey).json")
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -415,7 +401,11 @@ enum BearyEntrySyncStore {
         marker.syncedAtMs = Int(Date().timeIntervalSince1970 * 1000)
         guard let url = completionMarkerURL(accountId: accountId),
               let data = try? JSONEncoder().encode(marker) else { return }
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            NSLog("[BearyEntrySync] adjustCompletionCount write failed: accountId=%d error=%@", accountId, String(describing: error))
+        }
     }
 
     // MARK: - 归档修订号（搜索增量更新的快查门）
@@ -453,7 +443,7 @@ enum BearyEntrySyncStore {
 
     private static let revisionLock = NSLock()
 
-    /// 活盘日内容变化后记一次修订号（只增不减；写失败静默——修订号滞后
+    /// 活盘日内容变化后记一次修订号（只增不减；写失败记诊断日志——修订号滞后
     /// 时搜索侧指纹门仍会挡下，不会误认未变）。
     private static func bumpRevision(accountId: Int) {
         revisionLock.lock()
@@ -462,7 +452,11 @@ enum BearyEntrySyncStore {
         guard let url = revisionMarkerURL(accountId: accountId),
               let data = try? JSONEncoder().encode(ArchiveRevision(revision: next)) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            NSLog("[BearyEntrySync] bumpRevision write failed: accountId=%d revision=%d error=%@", accountId, next, String(describing: error))
+        }
     }
 
     /// 按北京日分组的结果。skippedCount = 无法归日的条目数（缺 createdAt、
@@ -474,13 +468,13 @@ enum BearyEntrySyncStore {
         var skippedCount: Int = 0
     }
 
-    /// 按北京日分组（无法归日的条目跳过并计数，不静默丢弃）。
+    /// 按篇时区日分组（2026-11-21 v20 §二：每篇按其自身时区定日组；无法归日的条目跳过并计数，不静默丢弃）。
     /// 组内按服务端序重排：created_at DESC, id DESC。
     static func groupByDay(_ entries: [Entry]) -> GroupedDays {
         var result = GroupedDays()
         for entry in entries {
             guard let createdAt = entry.createdAt, entry.id != nil,
-                  let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt) else {
+                  let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt, tzName: entry.tzName) else {
                 // 5-30：静默丢条改记一条日志——若服务端某天漏发或改名字段，
                 // 联调时能从日志发现，而不是无声少篇。
                 NSLog("[BearyEntrySync] groupByDay dropped entry without createdAt or id: id=%@", entry.id ?? "-")
@@ -731,7 +725,9 @@ enum BearyEntrySyncStore {
     }
 
     /// 单条最多重拉次数：触顶即摘待办（不再无限重发；下次全量同步仍会拉回）。
-    static let publishRefetchMaxAttempts = 10
+    /// 口径见 BearyRetryPolicy.refetchMaxAttempts；10 次无退避是刻意的——
+    /// attempts 每 kick 最多 +1，不存在紧循环（详见 BearyRetryPolicy）。
+    static let publishRefetchMaxAttempts = BearyRetryPolicy.refetchMaxAttempts
 
     private static let publishRefetchFileName = "beary_publish_refetch.json"
 
@@ -812,12 +808,12 @@ enum BearyEntrySyncStore {
         return ok
     }
 
-    /// 发布/编辑 upsert：按 createdAt 定北京日，日文件内同 id 替换、否则追加并按服务端序重排。
+    /// 发布/编辑 upsert：按篇时区定日，日文件内同 id 替换、否则追加并按服务端序重排。
     /// 编辑不改 createdAt，故日归属恒定；发布的新篇 createdAt 即当日。
     /// 返回 false 仅当无法归日或写盘失败。
     @discardableResult
     static func upsertEntry(accountId: Int, entry: Entry) -> Bool {
-        guard let createdAt = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt) else { return false }
+        guard let createdAt = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt, tzName: entry.tzName) else { return false }
         var entries = loadDay(accountId: accountId, dayKey: dayKey) ?? []
         if let idx = entries.firstIndex(where: { $0.id == entry.id }) {
             entries[idx] = entry
@@ -838,20 +834,8 @@ enum BearyEntrySyncStore {
 enum BearyTrashSyncStore {
     static let directoryPrefix = "beary_trash_sync"
 
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        return encoder
-    }
-
-    private static func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return decoder
-    }
-
     static func accountDir(accountId: Int) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(directoryPrefix)_\(accountId)", isDirectory: true)
     }
 
@@ -868,13 +852,13 @@ enum BearyTrashSyncStore {
 
     /// 同步状态文件（BearySyncStateRecord）：与回收站目录平行的单文件，不进桶目录。
     static func stateFileURL(accountId: Int) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(directoryPrefix)_\(accountId)_state.json")
     }
 
     private static func loadAllFile(url: URL?) -> [TrashItem]? {
         guard let url = url, let data = try? Data(contentsOf: url) else { return nil }
-        return try? makeDecoder().decode([TrashItem].self, from: data)
+        return try? BearyJSON.decoder.decode([TrashItem].self, from: data)
     }
 
     /// 读整桶：命中返回数组（含空数组），缺失/损坏返回 nil（调用方走网络）。
@@ -949,7 +933,7 @@ enum BearyTrashSyncStore {
     private static func writeTrashFile(accountId: Int, items: [TrashItem], noteWrite: Bool) -> Bool {
         if noteWrite { noteTrashWrite() }
         guard let url = fileURL(accountId: accountId),
-              let data = try? makeEncoder().encode(items) else { return false }
+              let data = try? BearyJSON.encoder.encode(items) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
@@ -969,7 +953,7 @@ enum BearyTrashSyncStore {
     /// 中间写仍走直接写盘；提交/进桶/清桶走这里（与原来 saveAll 同款）。
     private static func publishTrashFileAtomically(accountId: Int, items: [TrashItem]) -> Bool {
         guard let url = fileURL(accountId: accountId),
-              let data = try? makeEncoder().encode(items) else { return false }
+              let data = try? BearyJSON.encoder.encode(items) else { return false }
         let dir = url.deletingLastPathComponent()
         let tmpURL = dir.appendingPathComponent("trash.json.tmp.\(UUID().uuidString)")
         do {
@@ -981,7 +965,7 @@ enum BearyTrashSyncStore {
         }
         // 写盘校验：回读 tmp 解码成功才发布。
         guard let checkData = try? Data(contentsOf: tmpURL),
-              (try? makeDecoder().decode([TrashItem].self, from: checkData)) != nil else {
+              (try? BearyJSON.decoder.decode([TrashItem].self, from: checkData)) != nil else {
             try? FileManager.default.removeItem(at: tmpURL)
             return false
         }
@@ -1157,7 +1141,7 @@ enum BearyTrashSyncStore {
         // 不接收这三个字段，本地删帖进桶的条目从构造时就没有标题与图片数，
         // 即便编码补齐也无从恢复；质保三轮 T3-C1：published 取 isPublic
         //（nil 按私密 0，fail-closed），恢复文案走 visibility。
-        let item = TrashItem(id: entryId, content: entry.content, createdAt: entry.createdAt, publishAt: entry.publishAt, deletedAt: nowMs, daysLeft: 30, published: entry.isPublic == true ? 1 : 0, visibility: entry.visibility, title: entry.title, imageKeys: entry.images)
+        let item = TrashItem(id: entryId, content: entry.content, createdAt: entry.createdAt, publishAt: entry.publishAt, deletedAt: nowMs, daysLeft: 30, published: entry.isPublic == true ? 1 : 0, visibility: entry.visibility, title: entry.title, imageKeys: entry.images, tzName: entry.tzName)
         items.insert(item, at: 0)
         noteTrashWrite()
         return publishTrashFileAtomically(accountId: accountId, items: items)

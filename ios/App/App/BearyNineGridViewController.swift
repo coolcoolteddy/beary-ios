@@ -8,7 +8,6 @@ final class BearyNineGridViewController: UIViewController {
 
     private let imageKeys: [String]
     private let liveVideos: [String: String]?
-    private var lastImageViewerAt: Date?
 
     init(imageKeys: [String], liveVideos: [String: String]?) {
         self.imageKeys = imageKeys
@@ -135,8 +134,7 @@ extension BearyNineGridViewController: UICollectionViewDataSource, UICollectionV
     }
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
-        let widthValue = collectionView.bounds.width > 0 ? collectionView.bounds.width : view.bounds.width
-        let side = floor((widthValue - BearySpace.lg * 2 - 8 * 2) / 3)
+        let side = bearyGridSide(width: collectionView.bounds.width, fallbackWidth: view.bounds.width, horizontalDeduction: BearySpace.lg * 2 + 8 * 2)
         return CGSize(width: side, height: side)
     }
 
@@ -148,43 +146,64 @@ extension BearyNineGridViewController: UICollectionViewDataSource, UICollectionV
             return
         }
         guard presentedViewController == nil else { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
-        let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: liveVideos, startIndex: indexPath.item)
-        viewer.initialThumbnail = (collectionView.cellForItem(at: indexPath) as? BearyProfilePhotoCell)?.displayedThumbnail
-        viewer.originFrameInWindow = collectionView.cellForItem(at: indexPath).map { $0.convert($0.bounds, to: nil) }
-        // C3：关场回当前照片——按下标找网格里对应的格；在视口内才给
-        // 矩形与焦点视图，格不在视口内时返回 nil、走淡出兜底（照片页同款）。
-        viewer.dismissOriginProvider = { [weak self] index in
-            guard let self = self, index >= 0, index < self.imageKeys.count else { return nil }
-            let path = IndexPath(item: index, section: 0)
-            guard let cell = self.collectionView.cellForItem(at: path) else { return nil }
-            let frame = cell.convert(cell.bounds, to: nil)
-            return (frame: frame, element: cell)
+        presentImageViewer(imageKeys: imageKeys, liveVideos: liveVideos, startIndex: indexPath.item, thumbnail: (collectionView.cellForItem(at: indexPath) as? BearyProfilePhotoCell)?.displayedThumbnail, originFrame: collectionView.cellForItem(at: indexPath).map { $0.convert($0.bounds, to: nil) }) { [weak self] viewer in
+            // C3：关场回当前照片——按下标找网格里对应的格；在视口内才给
+            // 矩形与焦点视图，格不在视口内时返回 nil、走淡出兜底（照片页同款）。
+            viewer.dismissOriginProvider = { [weak self] index in
+                guard let self = self, index >= 0, index < self.imageKeys.count else { return nil }
+                let path = IndexPath(item: index, section: 0)
+                guard let cell = self.collectionView.cellForItem(at: path) else { return nil }
+                let frame = cell.convert(cell.bounds, to: nil)
+                return (frame: frame, element: cell)
+            }
         }
-        viewer.modalPresentationStyle = .fullScreen
-        present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
 }
 
 /// 九宫格入口唯一门控与打开点：卡片、时间线、个人页、详情四处共用。
 enum BearyNineGridPresenter {
 
-    /// Plus 专属（2026-11-03 Li 定版：九宫格版式只给 Plus 开）；非 Plus 走景深背景
-    /// 同款 Plus 专属提示口径，不开网格。图片上限 9 张与图片条一致。
+    /// 门控走统一门 BearyPlusGate（现在全开）；未开通时走景深背景同款 Plus 专属
+    /// 提示口径，不开网格。图片上限 9 张与图片条一致。
     /// r22 A6：未登录先走登录门（登录态未知时不弹登录页，改网络 toast，与卡片
     /// onRequireLogin 汇点同款）；A7：非 Plus 拒绝只摇触发入口，不摇整页。
     static func present(from viewController: UIViewController, anchorView: UIView? = nil, imageKeys: [String], liveVideos: [String: String]?) {
         if SessionManager.shared.isLoggedIn == false {
             if SessionManager.shared.authUnknown {
-                BearyToast.show(in: viewController.view, message: "网络不稳定，请稍后再试")
+                BearyToast.show(in: viewController.view, message: NSLocalizedString("common.network_unstable", comment: ""))
             } else {
-                viewController.present(BearyLoginSheet.make(), animated: BearyMotion.animated(true), completion: nil)
+                let login = BearyLoginSheet.make()
+                login.onLoggedIn = { [weak login, weak viewController] referralText in
+                    // 登录成功后回到九宫格入口：盲盒 loginTapped 同款——成功先解 arm；
+                    // 关登录页、刷新 /me，再按原参数重走一次门控（登录＋Plus 门重算），开网格。
+                    SessionManager.shared.completeAccountAddSession()
+                    login?.dismiss(animated: BearyMotion.animated(true)) {
+                        SessionManager.shared.refreshMe { _ in
+                            DispatchQueue.main.async {
+                                guard let viewController else { return }
+                                BearyNineGridPresenter.present(from: viewController, anchorView: anchorView, imageKeys: imageKeys, liveVideos: liveVideos)
+                                // 邀请绑定反馈：落在最顶层页（刚开的九宫格）上，
+                                // 不直接贴原页——全屏网格会盖住原页的 toast。
+                                if let referralText, !referralText.isEmpty {
+                                    var top = viewController
+                                    while let presented = top.presentedViewController { top = presented }
+                                    BearyToast.show(in: top.view, message: BearyReferralFeedback.toastText(base: referralText, plusUntil: SessionManager.shared.currentUser?.plusUntil))
+                                }
+                            }
+                        }
+                    }
+                }
+                login.onGuestMode = { [weak login] in
+                    // 游客入口：关登录页、进游客态（回日记原地，不开九宫格）。
+                    login?.dismiss(animated: BearyMotion.animated(true)) {
+                        SessionManager.shared.isGuestMode = true
+                    }
+                }
+                viewController.present(login, animated: BearyMotion.animated(true), completion: nil)
             }
             return
         }
-        guard BearyDeveloperMode.effectivePlus(SessionManager.shared.currentUser?.plus == true) else {
+        guard BearyPlusGate.canUsePlusFeature(user: SessionManager.shared.currentUser) else {
             if let anchorView {
                 playDenyShake(on: anchorView)
             }
@@ -216,14 +235,6 @@ enum BearyNineGridPresenter {
     /// 非 Plus 拒绝动效：0.38s 摇头＋warning 震动＋拒绝音效（与详情 playDenyShake 同口径；
     /// 减动效时只跳视觉抖动），只摇触发入口。
     private static func playDenyShake(on view: UIView) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled { return }
-        view.layer.removeAnimation(forKey: "bearyNineGridDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        view.layer.add(shake, forKey: "bearyNineGridDenyShake")
+        BearyIconMotion.playDenyShake(on: view, key: "bearyNineGridDenyShake")
     }
 }

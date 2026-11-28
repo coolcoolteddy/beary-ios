@@ -100,19 +100,18 @@ enum BearyIconMotion {
         UIView.animate(withDuration: duration, animations: { imageView.transform = transform })
     }
 
-    /// 通用按压反馈（80 包 W6 全量推广）：按下缩 0.95，松手弹簧回 1。
+    /// 通用按压反馈（80 包 W6 全量推广）：按下缩 0.95，松手弹簧回 1。（2026-11-19 震动精简：轻震去掉）
     /// 第十四轮审计二-2（Li 2026-11-12 定版：按审计建议来）：按下 0.1s＋回弹
     /// 按下 0.95 缩放、单段 0.18s（micro 档，合规范 §6「按压反馈 0.18s」）；
     /// 0.32s 两段式合成单段 0.18s——按下与回弹同为 0.18s 单段动画，视觉仍是轻缩后回弹。
     /// 时长走 BearyMotion.micro（#1414 已合入）。
-    /// 口径（2026-11-21 改抬起确认，改 2026-11-19 震动精简）：按压视觉只留缩放，
-    /// 轻震不在按下时发，改到 touchUpInside 点按确认时发一次（见 bearyAddPressFeedback）；
+    /// 口径（2026-11-19 震动精简，改 2026-10-28 定版）：按压只留视觉缩放，不发轻震；
     /// 点赞/发布/拒绝三处专属反馈（成功/警告）另算。
     /// 缩放一律走按钮层（button.transform）：图标层 pop 与粒子 overlay 不受影响，
     /// 三层叠加不抢 transform；行级全宽钮与 imageView 自带旋转的钮不用它。
     /// 减动效：缩放直达终值（普通按压）。
-    /// 审计第 30 项（已随震动改抬起失效）：touchDown 与重新滑入都只恢复视觉按压态，
-    /// 不发触感；触感只在 touchUpInside 发一次，无需另存序列状态。
+    /// 审计第 30 项的分流保留：touchDown 与重新滑入都只恢复视觉按压态；
+    /// touchDragEnter 只在已开始的触摸序列内触发。
     /// 成功/警告反馈按实际结果触发（publishSuccess/rejectionWarning），不受此分流影响。
     /// 审计 M1：两项动画选项补齐 .allowUserInteraction（回弹窗口内的下一按
     /// 不被吞）与 .beginFromCurrentState（新按压从当前态起播，中断旧回弹）。
@@ -145,6 +144,34 @@ enum BearyIconMotion {
         })
     }
 
+    /// 行级极轻按压态（HIG W9）：只降透明度到 0.9，不缩放。按下 0.1s
+    /// （Li 2026-11-21 定版按压时长），松手回弹走 motion.micro 0.18s；
+    /// 减动效时直达终值。调用方：表行 didHighlight／didUnhighlight、
+    /// 集合格 didHighlightItem／didUnhighlightItem、
+    /// UIView.bearyAddRowPressFeedback。
+    static func rowPressDown(on view: UIView) {
+        guard BearyMotion.animated(true) else {
+            view.alpha = 0.9
+            return
+        }
+        // Li 2026-11-21 定版：按压按下 0.1s；token 表只有 micro 0.18 一档，0.1 无 token，用具名常量。
+        let pressDownDuration: TimeInterval = 0.1
+        UIView.animate(withDuration: pressDownDuration, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
+            view.alpha = 0.9
+        })
+    }
+
+    /// 行级按压松手：透明度回 1，走 motion.micro 0.18s；减动效直达终值。
+    static func rowPressUp(on view: UIView) {
+        guard BearyMotion.animated(true) else {
+            view.alpha = 1
+            return
+        }
+        UIView.animate(withDuration: BearyMotion.micro, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: {
+            view.alpha = 1
+        })
+    }
+
     /// 无限旋转（网页 .spin 1s / .official-spin .9s 由调用方传 duration；
     /// 减动效不转，见网页 prefers-reduced-motion 下 .spin{animation:none}）。
     static func startSpin(on view: UIView, duration: TimeInterval, key: String) {
@@ -161,28 +188,46 @@ enum BearyIconMotion {
     static func stopSpin(on view: UIView, key: String) {
         view.layer.removeAnimation(forKey: key)
     }
+
+    /// 拒绝摇头（0.38s，values [0,-8,8,-5,5,0]／keyTimes 0／0.2／0.4／0.6／0.8／1）：
+    /// 先清同 key 在途动画再播；key 作参数，各调用点原 key 不变；
+    /// 减动效时跳过视觉摇头（震动／音效由调用方另给，不在此补；三件套走 playDenyShake）。
+    static func denyShake(on view: UIView?, key: String) {
+        guard let view = view else { return }
+        guard BearyMotion.animated(true) else { return }
+        view.layer.removeAnimation(forKey: key)
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = BearyMotion.screen
+        view.layer.add(shake, forKey: key)
+    }
+
+    /// 拒绝反馈（震动＋拒绝音）：不拿减动效门控，减动效时震动与音效照常给；
+    /// 摇头不在此播（视觉部分另走 denyShake；时序分开的调用点如草稿箱／好友取关只调它）。
+    static func playDenyFeedback() {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+    }
+
+    /// 拒绝反馈三件套（震动＋拒绝音＋摇头）：震动与音效照常给，摇头只在减动效关时播；
+    /// view 为 nil 时只给震动＋音效、不摇头。
+    static func playDenyShake(on view: UIView?, key: String) {
+        playDenyFeedback()
+        denyShake(on: view, key: key)
+    }
 }
 
 extension UIButton {
-    /// W6：挂通用按压反馈（touchDown 只缩 0.95 视觉；轻震改到 touchUpInside
-    /// 点按确认时发一次；松手/滑出/取消回弹）。不改原有 touchUpInside
-    /// 业务逻辑与布局；钮自身作 target，不依赖所在 VC 的方法。
-    /// 震动改抬起确认的根因：手指按在行上开始滑动时，按下瞬间就震、
-    /// touchCancel 只回弹视觉、震收不回，滚动容器内滑动误震；滑出/取消
-    /// 不震，点按确认才震，每点按只震一次。
-    /// 减动效：缩放直达终值（普通按压）；震动不拿减动效门控
-    ///（BearyHaptics 头注释既定口径：两者不是一回事）。
+    /// W6：挂通用按压反馈（touchDown 缩放；松手/滑出/取消回弹）。不改原有
+    /// touchUpInside 逻辑与布局；钮自身作 target，不依赖所在 VC 的方法。
     /// 审计 15 项第 12 项：补 touchDragExit（滑出恢复）与 touchDragEnter
     /// （滑入恢复按压态）；业务动作仍只由 touchUpInside 执行；滚动容器
     /// 内滑动时 touchCancel 仍兜底（原有行为不动）。
-    /// 触感只在 touchUpInside 发：同一次触摸最多震一次，无需另存序列状态；
-    /// touchDragEnter 只恢复视觉按压态，不发触感（原审计第 30 项“每序列
-    /// 首次才震”的分流口径随震动改抬起而失效，不再适用）。
-    /// 轻震走 BearyHaptics.press()（复用缓存的反馈生成器，不现建现扔）；
-    /// 成功/警告反馈按实际结果触发（publishSuccess/rejectionWarning），不受此改动影响。
+    /// 审计第 30 项：touchDragEnter 改挂 bearyPressDownVisual——同一次按压
+    /// 滑出再滑入只恢复视觉按压态。（2026-11-19 震动精简：按压轻震去掉。）
     func bearyAddPressFeedback() {
         addTarget(self, action: #selector(bearyPressDownVisual), for: .touchDown)
-        addTarget(self, action: #selector(bearyPressDownHapticOnly), for: .touchUpInside)
         addTarget(self, action: #selector(bearyPressUp), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
         addTarget(self, action: #selector(bearyPressDownVisual), for: .touchDragEnter)
     }
@@ -190,5 +235,30 @@ extension UIButton {
     /// 重新滑入只恢复视觉按压态，不发触感。
     @objc func bearyPressDownVisual() { BearyIconMotion.pressDownVisual(on: self) }
     @objc func bearyPressUp() { BearyIconMotion.pressUp(on: self) }
-    @objc func bearyPressDownHapticOnly() { BearyHaptics.press() }
+}
+
+extension UIView {
+    /// 行级极轻按压态（HIG W9）：给无 UIControl 按压态的可点行／卡片挂
+    /// 0 秒长按手势，touch-down 时整体透明度降到 0.9，松手／取消时恢复。
+    /// 只动 alpha，不动 transform（行 transform 另有用途：草稿卡拖动、
+    /// 个人页行跟移）；不延迟、不拦截原有 tap 手势与按钮触摸。
+    func bearyAddRowPressFeedback() {
+        let press = UILongPressGestureRecognizer(target: self, action: #selector(bearyRowPressChanged(_:)))
+        press.minimumPressDuration = 0
+        press.cancelsTouchesInView = false
+        press.delaysTouchesBegan = false
+        press.delaysTouchesEnded = false
+        addGestureRecognizer(press)
+    }
+
+    @objc func bearyRowPressChanged(_ gesture: UILongPressGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            BearyIconMotion.rowPressDown(on: self)
+        case .ended, .cancelled, .failed:
+            BearyIconMotion.rowPressUp(on: self)
+        default:
+            break
+        }
+    }
 }

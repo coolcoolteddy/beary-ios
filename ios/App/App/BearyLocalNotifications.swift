@@ -3,7 +3,9 @@ import UserNotifications
 import UIKit
 
 /// 本地通知（2026-11-08 新增）：纯本机 UNUserNotificationCenter，不走后端、不需 $99 账号。
-/// 四种：每晚写日记提醒 / 限时日记到期 / 那年今日 / 过去的自己送达。
+/// 五种：每晚写日记提醒 / 限时日记到期 / 那年今日 / 过去的自己送达 / 私信未读。
+/// 私信未读是事件型（后台刷新拉到新未读才发一条），不进下面的定时重算；
+/// 其余四种按本地数据定时重算。
 /// 刷新幂等：按本地数据 + 开关重算，失效的待发送一律清掉再重排。
 /// 文案为初稿，Li 定夺后可改（见 PR 说明）。
 /// 已知局限：判定只读本机日文件；发布后单篇落盘是异步拉取（upsertPublished），
@@ -17,6 +19,7 @@ final class BearyLocalNotifications: NSObject {
         case limitedExpiry
         case pastDay
         case pastSelfDelivery
+        case dmUnread
 
         var defaultsKey: String { "beary.localNotifications.\(rawValue)" }
 
@@ -27,17 +30,20 @@ final class BearyLocalNotifications: NSObject {
             case .limitedExpiry: return "限时日记到期"
             case .pastDay: return "那年今日"
             case .pastSelfDelivery: return "留给明年的自己"
+            case .dmUnread: return NSLocalizedString("local_notifications.dm_unread.title", comment: "")
             }
         }
 
         /// 专属通知音效（Sounds/*.wav，音乐盒风；与 App 内 UI 音效同系但各不相同）。
         /// 通知音效不跟 App 内「音效」开关：响不响由系统静音键与本种类的通知开关定。
+        /// notif_dm.wav 暂与每日提醒同音（待配专属私信音后直接换文件，不改代码）。
         var soundFileName: String {
             switch self {
             case .dailyReminder: return "notif_daily.wav"
             case .limitedExpiry: return "notif_limited.wav"
             case .pastDay: return "notif_pastday.wav"
             case .pastSelfDelivery: return "notif_pastself.wav"
+            case .dmUnread: return "notif_dm.wav"
             }
         }
     }
@@ -48,6 +54,11 @@ final class BearyLocalNotifications: NSObject {
     private static let pastDayIdentifier = "beary.local.past-day"
     private static let limitedPrefix = "beary.local.limited-"
     private static let pastSelfPrefix = "beary.local.pastself-"
+
+    /// 私信未读提醒 id：走 beary.background-refresh. 前缀（与广场新提醒同款），
+    /// 不进 beary.local. 前缀——重算的差分清理只清 beary.local. 待发送，1 秒后
+    /// 即触发的这条事件提醒不得被重算吞掉；关开关时仍由 cancelKinds 按本 id 清掉。
+    static let dmUnreadIdentifier = "beary.background-refresh.dm-unread"
 
     private static let dailyHour = 21
     private static let morningHour = 9
@@ -116,25 +127,38 @@ final class BearyLocalNotifications: NSObject {
     /// 门槛 4：首启不再问；只在用户写完第一篇日记后、由 promptAfterFirstEntryIfNeeded
     /// 经自建说明卡调一次（系统弹窗）。问过就不再问；被拒时走 onDenied（App 内引导去设置）；
     /// 弹窗出错（如被系统打断）不记已问、不走 onDenied，下次满足条件可再问。
-    func requestAuthorizationIfNeeded(force: Bool = false, onDenied: (() -> Void)? = nil) {
-        guard force || !UserDefaults.standard.bool(forKey: Self.permissionRequestedKey) else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
+    /// options 默认 [.alert, .sound]（现行共享入口值）；引导页传 [.alert, .sound, .badge]。
+    /// completion 在系统框出结果后（授权／拒绝／出错）与已问过直接返回时都回调，
+    /// 主线程；已问过时按当前系统态回（已授权 true、其余 false）。
+    /// 注意参数顺序：onDenied 必须留在最后一位，现有尾随闭包调用
+    /// （设置页 force: true、首篇提示）才能继续绑定到 onDenied 而非 completion。
+    func requestAuthorizationIfNeeded(force: Bool = false, options: UNAuthorizationOptions = [.alert, .sound], completion: ((Bool) -> Void)? = nil, onDenied: (() -> Void)? = nil) {
+        guard force || !UserDefaults.standard.bool(forKey: Self.permissionRequestedKey) else {
+            fetchAuthorizationStatus { status in
+                DispatchQueue.main.async { completion?(status == .authorized) }
+            }
+            return
+        }
+        UNUserNotificationCenter.current().requestAuthorization(options: options) { [weak self] granted, error in
             if granted {
                 UserDefaults.standard.set(true, forKey: Self.permissionRequestedKey)
                 self?.refreshAll(force: true)
+                DispatchQueue.main.async { completion?(true) }
             } else if error != nil {
                 // 弹窗出错：不记已问、不按拒绝处理，下次满足条件可再问。
+                DispatchQueue.main.async { completion?(false) }
             } else {
                 UserDefaults.standard.set(true, forKey: Self.permissionRequestedKey)
-                if let onDenied = onDenied {
-                    DispatchQueue.main.async { onDenied() }
+                DispatchQueue.main.async {
+                    onDenied?()
+                    completion?(false)
                 }
             }
         }
     }
 
     /// 门槛 4：写完第一篇日记后问一次。先弹自建说明卡，点了「好」再调系统框；
-    /// 系统态已决定（已授权／已拒绝）或卡已弹过，均不再弹。说明卡先讲清四类
+    /// 系统态已决定（已授权／已拒绝）或卡已弹过，均不再弹。说明卡先讲清五类
     /// 提醒都会启用；卡被已有弹窗挡住时不记已展示，稍后重试。
     func promptAfterFirstEntryIfNeeded(from presenter: UIViewController) {
         promptAfterFirstEntryIfNeeded(from: presenter, retryCount: 0)
@@ -156,7 +180,7 @@ final class BearyLocalNotifications: NSObject {
                     }
                     return
                 }
-                BearyConfirmSheet.show(from: presenter, title: "晚上 9 点提醒你写一句", message: "开启后会提醒这四类（都可在设置里单独开关）：每晚 21:00（北京时间）写日记提醒、限时日记到期、早上 9:00（北京时间）那年今日、留给明年的自己送达提醒。", actions: [
+                BearyConfirmSheet.show(from: presenter, title: NSLocalizedString("local_notifications.first_entry_prompt.title", comment: ""), message: NSLocalizedString("local_notifications.first_entry_prompt.message", comment: ""), actions: [
                     BearyConfirmSheet.Action(title: "好", style: .default) { [weak self, weak presenter] in
                         guard let self = self, let presenter = presenter else { return }
                         self.requestAuthorizationIfNeeded {
@@ -178,6 +202,12 @@ final class BearyLocalNotifications: NSObject {
         UNUserNotificationCenter.current().getNotificationSettings { completion($0.authorizationStatus) }
     }
 
+    /// “已授权”口径：.authorized 与 .provisional 都算已授权。
+    /// refreshAll 与开发者模式通知测试共用此判定；未授权后的动作各留自己的。
+    static func isAuthorized(_ settings: UNNotificationSettings) -> Bool {
+        settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+    }
+
     func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
@@ -190,13 +220,15 @@ final class BearyLocalNotifications: NSObject {
         let content = UNMutableNotificationContent()
         switch kind {
         case .dailyReminder:
-            content.body = "今天还没有写日记，写一点，留一点。（测试）"
+            content.body = NSLocalizedString("local_notifications.daily_reminder.body", comment: "")
         case .limitedExpiry:
             content.body = "限时结束了，这篇日记已自动转回私密。（测试）"
         case .pastDay:
             content.body = "往年今天，你写过日记，打开看看吧。（测试）"
         case .pastSelfDelivery:
             content.body = "一年前留给自己的话到了，打开看看吧。（测试）"
+        case .dmUnread:
+            content.body = NSLocalizedString("local_notifications.dm_unread.test_body", comment: "")
         }
         content.sound = UNNotificationSound(named: UNNotificationSoundName(kind.soundFileName))
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
@@ -225,7 +257,7 @@ final class BearyLocalNotifications: NSObject {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { [weak self] settings in
             guard let self = self else { return }
-            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+            guard Self.isAuthorized(settings) else {
                 self.setLatestAccountId(nil)
                 self.removeAllLocalPending(center: center, generation: gen)
                 return
@@ -273,6 +305,7 @@ final class BearyLocalNotifications: NSObject {
         case dailyReminder
         case entry(String)
         case pastDay
+        case dmConversations
     }
 
     /// 最近一次排程失败的记录（第 25 轮 61：add 回调记下；下次 refreshAll
@@ -289,7 +322,9 @@ final class BearyLocalNotifications: NSObject {
         let now = Date()
         let nowMs = Int(now.timeIntervalSince1970 * 1000)
         let calendar = BearyBeijingDay.calendar
-        let todayKey = BearyBeijingDay.dayKey(ofMs: nowMs) ?? ""
+        // 21:00 写日记提醒与 9:00 那年今日按设备本地时间排；
+        // 过去的自己送达仍按北京时间（送达日按北京时间算），仍用 calendar。
+        let localCalendar = Calendar.current
         // 存档读盘失败则本轮不重算（保留已排提醒，下次重算补上）；
         // 主线 loadAllEntries 自 #1069 起返回可选（读盘失败为 nil）。
         // 注意：已关种类的取消在上面已做完，不受这次 return 影响（第 4 项）。
@@ -307,32 +342,38 @@ final class BearyLocalNotifications: NSObject {
             NSLog("[BearyLocalNotifications] past-self store corrupt; keeping scheduled notifications")
             return
         }
+        // 私信未读是事件型，不排定时提醒：只由后台刷新拉到新未读时即时发一条
+        //（见 BearyBackgroundRefresh.refreshDMs）；关了开关时上面的 cancelKinds
+        // 仍会按 dmUnreadIdentifier 清掉待发送的。
         var desired: [DesiredRequest] = []
 
-        // 1. 每晚写日记提醒：下一个 21:00（北京）；今天已写则排明晚 21:00，不留空窗——
+        // 1. 每晚写日记提醒：下一个 21:00（本地时间）；今天已写则排明晚 21:00，不留空窗——
         // 单次触发不重复，差分删了今晚的就没人补明晚的，不再依赖之后 rebuild。
+        // “今天已写”按本地日历判，与提醒同一时钟，否则跨时区会错判。
         if enabled[.dailyReminder] == true {
-            var nextEvening = Self.nextOccurrence(hour: Self.dailyHour, after: now, calendar: calendar)
-            let isToday = calendar.isDate(nextEvening, inSameDayAs: now)
+            var nextEvening = Self.nextOccurrence(hour: Self.dailyHour, after: now, calendar: localCalendar)
+            let isToday = localCalendar.isDate(nextEvening, inSameDayAs: now)
             let hasEntryToday = entries.contains { entry in
                 guard let createdAt = entry.createdAt else { return false }
-                return BearyBeijingDay.dayKey(ofMs: createdAt) == todayKey
+                return localCalendar.isDate(Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000), inSameDayAs: now)
             }
             if isToday && hasEntryToday {
-                nextEvening = calendar.date(byAdding: .day, value: 1, to: nextEvening) ?? nextEvening
+                nextEvening = localCalendar.date(byAdding: .day, value: 1, to: nextEvening) ?? nextEvening
             }
-            desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: "今天还没写日记", kind: .dailyReminder, userInfo: ["kind": Kind.dailyReminder.rawValue, "accountId": accountId]))
+            desired.append(DesiredRequest(identifier: Self.dailyIdentifier, fireDate: nextEvening, body: NSLocalizedString("local_notifications.daily_reminder.body", comment: ""), kind: .dailyReminder, userInfo: ["kind": Kind.dailyReminder.rawValue, "accountId": accountId]))
         }
 
-        // 2. 那年今日：往后 30 天内每个 9:00（北京），那天往年有日记才排一条；
+        // 2. 那年今日：往后 30 天内每个 9:00（本地时间），那天往年有日记才排一条；
         // 只看下一个早上会漏掉更晚的纪念日（没有后续重算时尤其如此）。
         // 每日一条独立 id（旧单 id 待发送由差分清掉）。
         if enabled[.pastDay] == true {
-            let nextMorning = Self.nextOccurrence(hour: Self.morningHour, after: now, calendar: calendar)
+            let nextMorning = Self.nextOccurrence(hour: Self.morningHour, after: now, calendar: localCalendar)
             for offset in 0..<30 {
-                guard let morning = calendar.date(byAdding: .day, value: offset, to: nextMorning) else { continue }
-                guard BearyProfilePersonalLogic.thisDayInHistory(entries: entries, today: morning, calendar: calendar) != nil else { continue }
-                let dayKey = BearyBeijingDay.dayKey(ofMs: Int(morning.timeIntervalSince1970 * 1000)) ?? ""
+                guard let morning = localCalendar.date(byAdding: .day, value: offset, to: nextMorning) else { continue }
+                guard BearyProfilePersonalLogic.thisDayInHistory(entries: entries, today: morning, calendar: localCalendar) != nil else { continue }
+                let morningParts = localCalendar.dateComponents([.year, .month, .day], from: morning)
+                guard let year = morningParts.year, let month = morningParts.month, let day = morningParts.day else { continue }
+                let dayKey = BearyBeijingDay.dayKey(year: year, month: month, day: day)
                 desired.append(DesiredRequest(identifier: Self.pastDayIdentifier + "-" + dayKey, fireDate: morning, body: "往年今天，你写过日记，打开看看吧。", kind: .pastDay, userInfo: ["kind": Kind.pastDay.rawValue, "accountId": accountId, "dayKey": dayKey]))
             }
         }
@@ -357,6 +398,8 @@ final class BearyLocalNotifications: NSObject {
         }
 
         // 第 5 项：差分提交走串行队列，提交前再验代次与账号；旧重算直接丢弃。
+        // fireDate 是绝对时刻，commitDesired 拆分用的日历不改变触发时刻；
+        // 本地／北京的区别只在上面推算 fireDate 时的日历。
         let desiredSnapshot = desired
         commitQueue.async { [weak self] in
             guard let self = self else { return }
@@ -387,6 +430,7 @@ final class BearyLocalNotifications: NSObject {
         case .pastDay: return id == pastDayIdentifier || id.hasPrefix(pastDayIdentifier + "-")
         case .limitedExpiry: return id.hasPrefix(limitedPrefix)
         case .pastSelfDelivery: return id.hasPrefix(pastSelfPrefix)
+        case .dmUnread: return id == dmUnreadIdentifier
         }
     }
 
@@ -415,6 +459,9 @@ final class BearyLocalNotifications: NSObject {
                     }
                     let content = UNMutableNotificationContent()
                     content.body = item.body
+                    if item.kind == .limitedExpiry {
+                        content.title = item.kind.title
+                    }
                     content.sound = UNNotificationSound(named: UNNotificationSoundName(item.kind.soundFileName))
                     content.userInfo = item.userInfo
                     // 限时到期含秒：保留秒（UNCalendarNotificationTrigger 支持秒级），
@@ -439,7 +486,8 @@ final class BearyLocalNotifications: NSObject {
     // willPresent 负责，点按由 SceneDelegate 的 didReceive 转发到这里）
 
     /// 点按落点：写日记提醒进编辑器；限时到期与留话送达进对应单篇（仍走
-    /// gotoEntry 的拉取＋可见性门）；那年今日进个人页（那年今日模块所在页）。
+    /// gotoEntry 的拉取＋可见性门）；那年今日进个人页（那年今日模块所在页）；
+    /// 私信未读进消息页。
     private static func openTarget(_ target: NotificationTarget) {
         guard let chrome = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
@@ -467,7 +515,7 @@ final class BearyLocalNotifications: NSObject {
 
     // MARK: - 日期
 
-    /// 当天 hour:00 已过则取明天同一时刻（北京日历）。
+    /// 当天 hour:00 已过则取明天同一时刻（按传入的日历）。
     private static func nextOccurrence(hour: Int, after date: Date, calendar: Calendar) -> Date {
         var comps = calendar.dateComponents([.year, .month, .day], from: date)
         comps.hour = hour
@@ -523,6 +571,8 @@ extension BearyLocalNotifications: UNUserNotificationCenterDelegate {
                       let message = messages.first(where: { $0.id == messageId }),
                       message.revokedAtMs == nil else { return nil }
                 return .entry(entryId)
+            case .dmUnread:
+                return .dmConversations
             }
         }()
         guard let target = target else { return }

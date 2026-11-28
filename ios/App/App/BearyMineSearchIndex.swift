@@ -193,7 +193,7 @@ final class BearyMineSearchIndex {
     // MARK: - 索引维护
 
     private func dbURL(accountId: Int) -> URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+        FileManager.appSupportDirectory?
             .appendingPathComponent("beary_mine_search_\(accountId).sqlite3")
     }
 

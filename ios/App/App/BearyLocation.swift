@@ -190,6 +190,16 @@ enum BearyLocationDisplay {
         }
         return text
     }
+
+    /// 编辑器定位行短名（单行显示）：名字里含区级时只留区级往后的部分
+    /// （省市前缀去掉，如“浙江省宁波市鄞州区天童南路 123 号”→“鄞州区天童南路 123 号”）；
+    /// 不含区级（店名/地名）或无区级时原样返回。去重口径与 dedupedAddressName 一致。
+    static func shortenedAddressName(_ raw: String, district: String?) -> String {
+        let text = dedupedAddressName(raw)
+        guard let district = district?.trimmingCharacters(in: .whitespacesAndNewlines), !district.isEmpty,
+              let range = text.range(of: district) else { return text }
+        return String(text[range.lowerBound...])
+    }
 }
 
 /// 按当前系统语言重取地名（2026-11-14 Li 定，推翻方案 A“只存地点文字、不存经纬度”口径）：
@@ -286,6 +296,60 @@ enum BearyLocationDisplayNames {
                                     country: names.country, region: names.region, city: names.city, street: names.street),
             isPublic: BearyEphemeral.isEffectivelyPublic(entry),
             viewerIsAuthor: BearyLocationDisplay.viewerIsAuthor(entry: entry))
+    }
+}
+
+/// 卡片与详情共用的底行（地址＋天气）渲染：位置行刷新与底行显隐。
+/// 两处原先各写一套，流程逐字相同，只差标签／行视图标识符与异步回包的
+/// id 守卫（卡片凭 cellEntryId，详情凭 entry.id）；抽成 helper 后标签与
+/// 行视图作参数传入，id 守卫与弱引用各留调用方。
+/// BearyLocationDisplay.display 与 BearyLocationDisplayNames 本已共享，不动。
+enum BearyBottomRow {
+    /// 底行（地址＋天气）显隐：地址与天气任一有内容即显，全无即整行隐藏、
+    /// 不占位；无地址时地址组与间隔同藏，天气顶到左边缘。
+    static func updateVisibility(locationLabel: UILabel, locationIconView: UIView, weatherSpacer: UIView, locationStack: UIView, weatherWrapLabel: UILabel, weatherNameLabel: UILabel, weatherTempLabel: UILabel) {
+        let hasLocation = !(locationLabel.text ?? "").isEmpty
+        let hasWeather = !weatherWrapLabel.isHidden || !weatherNameLabel.isHidden || !weatherTempLabel.isHidden
+        locationIconView.isHidden = !hasLocation
+        locationLabel.isHidden = !hasLocation
+        weatherSpacer.isHidden = !hasLocation
+        locationStack.isHidden = !hasLocation && !hasWeather
+    }
+
+    /// 位置行刷新（同步部分）：文案与脱敏全走 BearyLocationDisplay.display；
+    /// display 返回 nil 时清文＋刷新显隐；缓存命中时首帧直接用解析后的行文，
+    /// 不等异步回包，天气组首帧即在终位。返回 true 表示缓存未命中、调用方
+    /// 仍需走 BearyLocationDisplayNames.displayLine 异步回包（回包应用见
+    /// applyResolvedLine，id 守卫由调用方在闭包里先做）。
+    @discardableResult
+    static func refreshLocationRow(entry: Entry, locationLabel: UILabel, updateVisibility: () -> Void) -> Bool {
+        guard let line = BearyLocationDisplay.display(entry: entry) else {
+            locationLabel.text = nil
+            updateVisibility()
+            return false
+        }
+        locationLabel.text = line
+        updateVisibility()
+        // 跳动审计第 12 条：缓存命中时首帧直接用解析后的行文，不等异步回包，
+        // 天气组首帧即在终位；缓存未命中才走异步回包。
+        if let cached = BearyLocationDisplayNames.cachedDisplayLine(for: entry) {
+            locationLabel.text = cached
+            updateVisibility()
+            return false
+        }
+        return true
+    }
+
+    /// 位置行异步回包应用：文案没变不碰布局；变了用 0.18s 局部过渡推天气组，
+    /// 不瞬间横移（减动效／未进窗口时直设终值）。
+    static func applyResolvedLine(_ resolved: String, locationLabel: UILabel, locationLineRow: UIView, updateVisibility: () -> Void) {
+        guard resolved != locationLabel.text else { return }
+        locationLabel.text = resolved
+        updateVisibility()
+        guard !UIAccessibility.isReduceMotionEnabled, locationLineRow.window != nil else { return }
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: {
+            locationLineRow.layoutIfNeeded()
+        })
     }
 }
 

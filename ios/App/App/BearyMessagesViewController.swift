@@ -137,6 +137,10 @@ final class BearyMessagesViewController: UIViewController {
         userListButton.accessibilityLabel = "好友列表"
         userListButton.addTarget(self, action: #selector(userListTapped), for: .touchUpInside)
         userListButton.bearyAddPressFeedback()
+        // 图标与标题对齐：标题 21 bold 顶沿 +18、视觉中心约在顶栏 +30.5，
+        // 顶栏中心 +22，图标下移 8.5 与标题同高；按钮本身仍 44×44 锚在
+        // 顶栏中央（触区不变、不探出顶栏压列表首行），只动图标位置。
+        userListButton.imageEdgeInsets = UIEdgeInsets(top: BearySpace.sm, left: 0, bottom: -BearySpace.sm, right: 0)
         topBar.addSubview(userListButton)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
@@ -172,7 +176,7 @@ final class BearyMessagesViewController: UIViewController {
         staleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         staleLabel.adjustsFontForContentSizeCategory = true
         staleLabel.textColor = BearyColors.gray
-        staleLabel.text = "未读数可能已过期"
+        staleLabel.text = NSLocalizedString("messages.unread_may_not_be_latest", comment: "")
         staleBanner.addSubview(staleLabel)
         staleRetryButton.translatesAutoresizingMaskIntoConstraints = false
         staleRetryButton.setTitle("重试", for: .normal)
@@ -198,8 +202,8 @@ final class BearyMessagesViewController: UIViewController {
             titleLabel.topAnchor.constraint(equalTo: topBar.topAnchor, constant: 18),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: userListButton.leadingAnchor, constant: -8),
             userListButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
-            // 好友钮锚在顶栏中央，不再跟标题走——标题下移后跟标题会让 44 高的
-            // 钮底沿探出顶栏、压到列表首行。
+            // 好友钮 44×44 锚在顶栏中央，触区不探出顶栏；图标另用
+            // imageEdgeInsets 下移 8.5 与标题视觉中心对齐（见创建处注释）。
             userListButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             userListButton.widthAnchor.constraint(equalToConstant: 44),
             userListButton.heightAnchor.constraint(equalToConstant: 44),
@@ -222,8 +226,8 @@ final class BearyMessagesViewController: UIViewController {
             stateContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             stateView.centerXAnchor.constraint(equalTo: stateContainer.centerXAnchor),
             stateView.centerYAnchor.constraint(equalTo: stateContainer.centerYAnchor),
-            stateView.leadingAnchor.constraint(greaterThanOrEqualTo: stateContainer.leadingAnchor, constant: 32),
-            stateView.trailingAnchor.constraint(lessThanOrEqualTo: stateContainer.trailingAnchor, constant: -32),
+            stateView.leadingAnchor.constraint(greaterThanOrEqualTo: stateContainer.leadingAnchor, constant: BearySpace.xl),
+            stateView.trailingAnchor.constraint(lessThanOrEqualTo: stateContainer.trailingAnchor, constant: -BearySpace.xl),
         ])
 
         // 通知组接线与铃铛页同口径（onSystemNotificationSelected 不接线，
@@ -653,12 +657,24 @@ final class BearyMessagesViewController: UIViewController {
             // 但同样按锚点保位。旧表为空时不能走 batch：表从未向 dataSource
             // 要过行数，batch 里 UIKit 读到的更新前行数已是新值，行数对不
             // 上直接 abort（消息页首开闪退即此坑）。
+            // 135 闪退：reloadData＋layoutIfNeeded 会同步走 willDisplay，
+            // 近底即触发子页 loadMore，快照变化同步调 updateMergedRows；
+            // 这里若直接走 batch，performBatchUpdates 就嵌套进正在跑的
+            // reloadData 布局里，UIKit 报行数不一致直接 abort（与 batch
+            // 路径同坑；#2555 只修了子页哨兵行、没堵容器这头）。
+            // 与 batch 路径同口径：在途期间把更新挂起，布局跑完再应用。
+            mergedBatchInFlight = true
             tableView.reloadData()
             tableView.layoutIfNeeded()
+            mergedBatchInFlight = false
             restoreAnchor(anchor, responseOffsetY: responseOffsetY)
             updateMergedVisibility()
             playStaggeredEntranceIfNeeded()
             checkNotifSeenIfVisible()
+            if let pending = pendingMergedRows {
+                pendingMergedRows = nil
+                applyMergedRows(pending)
+            }
         }
     }
 
@@ -1060,6 +1076,25 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
         }
     }
 
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        guard indexPath.row < mergedRows.count else { return }
+        switch mergedRows[indexPath.row] {
+        case .sentinel(let state):
+            guard state == .failed else { return }
+        case .notifFailure, .dmFailure:
+            return
+        default:
+            break
+        }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
         guard indexPath.row < mergedRows.count else { return }
@@ -1087,8 +1122,9 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
         }
     }
 
-    /// 左滑删除单条：信件行删该条通知，会话行删该会话；卡片（系统消息／
-    /// 互动消息）与失败行／哨兵行不给左滑。行消失／回来走子页快照变化的
+    /// 左滑删除单条：信件行删该条通知，会话行删该会话（删前先二次确认，
+    /// HIG W4；通知行即删不动）；卡片（系统消息／互动消息）与失败行／
+    /// 哨兵行不给左滑。行消失／回来走子页快照变化的
     /// diff，容器不直接改行；失败时子页回滚＋toast，diff 把行插回来。
     /// 删除调用延后一拍：等左滑收起后再走快照 diff，免得在 swipe 进行中
     /// 做 batch 更新。
@@ -1099,7 +1135,6 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             guard let notificationId = item.id else { return nil }
             let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
                 guard let self = self else { done(false); return }
-                BearyHaptics.press()
                 done(true)
                 DispatchQueue.main.async {
                     self.notifChild.deleteNotification(id: notificationId) { _ in }
@@ -1111,10 +1146,9 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
             guard let peerId = conv.peer?.id else { return nil }
             let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
                 guard let self = self else { done(false); return }
-                BearyHaptics.press()
                 done(true)
                 DispatchQueue.main.async {
-                    self.conversationsChild.deleteConversation(peerId: peerId) { _ in }
+                    self.conversationsChild.confirmDeleteConversation(peerId: peerId, sourceView: tableView.cellForRow(at: indexPath) ?? tableView)
                 }
             }
             delete.accessibilityLabel = "删除这个会话"
@@ -1152,8 +1186,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
         // 近底预取（子页原口径：距底 900px；contentSize 0 时不触发）。
         let snap = notifChild.mergeSnapshot
         if snap.hasMore && !snap.isLoadingMore && !snap.loadMoreFailed {
-            let contentHeight = scrollView.contentSize.height
-            if contentHeight > 0 && scrollView.contentOffset.y + scrollView.bounds.height >= contentHeight - 900 {
+            if BearyLoadMorePrefetch.isNearBottom(scrollView) {
                 notifChild.loadMoreForMerge()
             }
         }
@@ -1173,7 +1206,7 @@ extension BearyMessagesViewController: UITableViewDelegate, UITableViewDataSourc
     }
 }
 
-// MARK: - 合并失败行 cell（内含 BearyStateView，上下 12、左右 32 钉住，自动高）
+// MARK: - 合并失败行 cell（内含 BearyStateView，上下 12、左右 20 钉住，自动高）
 
 private final class MergedFailureCell: UITableViewCell {
 
@@ -1189,8 +1222,8 @@ private final class MergedFailureCell: UITableViewCell {
         NSLayoutConstraint.activate([
             stateView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
             stateView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
-            stateView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 32),
-            stateView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -32),
+            stateView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: BearySpace.xl),
+            stateView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -BearySpace.xl),
         ])
     }
 

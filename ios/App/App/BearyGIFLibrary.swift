@@ -62,11 +62,12 @@ enum BearyGIFLibrary {
     enum AddResult { case added, alreadyAdded, full, notViewable, failed }
 
     /// 加进我的库（按 key 去重；服务端是权威——缓存未命中但服务端已有
-    /// 时回 added:false，仍把 key 补进缓存）。
-    static func add(key: String, completion: @escaping (AddResult) -> Void) {
+    /// 时回 added:false，仍把 key 补进缓存）。fingerprint（可选）：压完
+    /// 文件的 SHA-256 hex，只自定义表情上传路传，服务端存进行供去重查。
+    static func add(key: String, fingerprint: String? = nil, completion: @escaping (AddResult) -> Void) {
         let accountId = BearyDraftStore.currentAccountId
         if contains(key, accountId: accountId) { completion(.alreadyAdded); return }
-        BearyAPI.shared.gifLibraryAdd(key: key) { result in
+        BearyAPI.shared.gifLibraryAdd(key: key, fingerprint: fingerprint) { result in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let resp):

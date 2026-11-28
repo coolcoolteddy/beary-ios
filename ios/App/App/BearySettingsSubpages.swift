@@ -49,8 +49,8 @@ final class BearySubpageLayoutGuard {
               frameOff ? "Y" : "N", transformOff ? "Y" : "N", topOff ? "Y" : "N", topHeightOff ? "Y" : "N",
               contentFrames, presentation ?? "nil")
         guard frameOff || transformOff || topOff else { return false }
-        if frameOff { view.frame = bounds }
         if transformOff { view.transform = .identity }
+        if frameOff { view.frame = bounds }
         view.setNeedsLayout()
         view.layoutIfNeeded()
         NSLog("[Diag] subpage-layout-reset page=%@", page)
@@ -282,7 +282,7 @@ class BearySettingsSubpageViewController: UIViewController {
                 let separator = UIView()
                 separator.translatesAutoresizingMaskIntoConstraints = false
                 separator.backgroundColor = BearyColors.line
-                NSLayoutConstraint.activate([separator.heightAnchor.constraint(equalToConstant: 1)])
+                NSLayoutConstraint.activate([separator.heightAnchor.constraint(equalToConstant: 0.5)])
                 stack.addArrangedSubview(separator)
             }
             let wrap = UIView()
@@ -783,7 +783,7 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
 
         if records.isEmpty {
             let empty = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
-            empty.text = "在日记详情页 ⋯ 菜单里点“离线保存”，或点上方保存全部本人日记。"
+            empty.text = NSLocalizedString("settings.offline_save.empty_hint", comment: "")
             contentStack.addArrangedSubview(makeGroupCard(title: "已保存的日记", rows: [empty]))
         } else {
             contentStack.addArrangedSubview(makeGroupCard(title: "已保存的日记", rows: records.enumerated().map { recordRow($0.element, index: $0.offset) }))
@@ -792,7 +792,9 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
 
     private func recordRow(_ record: BearyOfflineSaveRecord, index: Int) -> UIView {
         let titleLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink, lines: 0)
-        titleLabel.text = record.title
+        // 标题走转换器：记号转回熊脸附件。存量标题在保存时已按原文截 24 字，
+        // 尾部半截记号先去掉（否则原文露出）；读屏标签保持纯文本。
+        titleLabel.attributedText = BearyText.inlineAttributedText(from: BearyText.stripTrailingPartialInlineToken(record.title), font: titleLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         let statusLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
         statusLabel.text = Self.statusText(for: record)
         let dateLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray)
@@ -862,8 +864,6 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
                 BearyToast.show(in: self.view, message: "已保存 \(result.saved) 篇，\(result.failed) 篇失败")
             } else if result.partial > 0 {
                 BearyToast.show(in: self.view, message: "已保存 \(result.saved) 篇，\(result.partial) 篇部分保存")
-            } else {
-                BearyToast.show(in: self.view, message: "已保存 \(result.saved) 篇")
             }
         })
     }
@@ -877,7 +877,6 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
                 BearyToast.show(in: self.view, message: cleared ? "已清除全部离线保存" : "清除失败，请重试")
                 self.render()
             },
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 }

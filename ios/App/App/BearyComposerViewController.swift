@@ -61,10 +61,61 @@ import CoreText
 /// 汉字行约 14.8pt，光标高直接取墨水高则数字行看着短一截（133 截图「111」实测）；
 /// 高改取字体度量 ascender − descender（约 19.1pt），顶 = 墨水顶 − (高 − 墨水高)/2，
 /// 上下一样长、居中在文字上，各行光标同高、同一顶。
+/// 光标顶改按基线锚定（本支，2026-11-27 Li 报“空态光标输入后下移”）：#1978 的
+/// 墨水居中只让光标同高，没让光标同顶——墨水框随字形变，小写拉丁（拼音组词态）
+/// 墨水顶比汉字低约 5pt，居中后光标顶跟着字形走，空态（代表字“永”）与落字态
+/// 差约 1.7pt（带降部的字母约 2.5pt），输入瞬间即见下移；基线在三态一致，改按
+/// 基线锚定（顶 = 片段顶 + ascender × (倍数 − 1)，与 #853 公式同值）后空行/
+/// 组词/落字同一顶；墨水探针整段删除，占位顶与光标顶同值，空态两者对齐。
 private final class BearyBodyTextView: UITextView {
     /// 正文编辑器恒定的行高倍数，由 Composer 在 buildTextArea 里与 typingAttributes
     /// 用同一个 bodyParagraph 一并设定；本类只用于正文编辑器，倍数恒定。
     var fixedLineHeightMultiple: CGFloat?
+    /// 粘贴被拦图片时的回调（规范 v15 §三）：由 Composer 接到后弹 toast
+    /// “图片请用图片按钮添加”；纯文本／记号附件粘贴不触发。
+    var onBlockedImagePaste: (() -> Void)?
+
+    /// 粘贴拦截（规范 v15 §三）：无记号的图片附件不插入，粘贴时立即提示，
+    /// 不留到保存时再丢。默认粘贴会把照片／截图当附件插进正文，保存时
+    /// inlinePlainText 又把无记号附件直接丢掉（见 BearyText.inlinePlainText），
+    /// 用户写完才发现图没了。带 [mood:]/[gif:] 记号的附件
+    /// （inlineMoodKeyAttribute／inlineGifKeyAttribute）按原记号还原，不动；
+    /// 纯文本粘贴不动。
+    /// 做法：先让系统完成粘贴，再扫描本次插入区间，把无记号附件删掉
+    /// （同一 undo 组内，撤销即回到粘贴前，不会把图“撤销回来”）；
+    /// 删掉过附件才回调提示。
+    override func paste(_ sender: Any?) {
+        let start = selectedRange.location
+        undoManager?.beginUndoGrouping()
+        super.paste(sender)
+        let end = selectedRange.location
+        var removedAny = false
+        if end > start {
+            let text = attributedText ?? NSAttributedString()
+            let scanEnd = min(end, text.length)
+            if scanEnd > start {
+                var doomed: [NSRange] = []
+                text.enumerateAttribute(.attachment, in: NSRange(location: start, length: scanEnd - start), options: []) { value, range, _ in
+                    guard value != nil else { return }
+                    let hasMood = text.attribute(BearyText.inlineMoodKeyAttribute, at: range.location, effectiveRange: nil) != nil
+                    let hasGif = text.attribute(BearyText.inlineGifKeyAttribute, at: range.location, effectiveRange: nil) != nil
+                    if !hasMood && !hasGif { doomed.append(range) }
+                }
+                if !doomed.isEmpty {
+                    let storage = textStorage
+                    storage.beginEditing()
+                    for range in doomed.reversed() {
+                        storage.deleteCharacters(in: range)
+                    }
+                    storage.endEditing()
+                    removedAny = true
+                }
+            }
+        }
+        undoManager?.endUndoGrouping()
+        if removedAny { onBlockedImagePaste?() }
+    }
+
     /// 光标行实际渲染字体：优先取光标处 attributedText 的字体属性（粘贴/
     /// 回填后该处字体可能与 typingAttributes 不一致时，以渲染字体为准），
     /// 取不到时回退 typingAttributes，再回退 textView.font。
@@ -108,21 +159,20 @@ private final class BearyBodyTextView: UITextView {
         guard rect.height > 0, let caretFont = caretFont(at: position), caretFont.lineHeight > 0 else { return rect }
         let multiple = fixedLineHeightMultiple ?? lineHeightMultiple(at: position)
         if let multiple = multiple, multiple > 1.0 {
-            // 光标高与墨水脱钩、并在墨水框上垂直居中（本支）：高取字体度量
-            // ascender − descender（约 19.1pt）；顶 = 墨水顶 − (高 − 墨水高)/2，
-            // 上下一样长、居中在文字上——纯数字行墨水仅约 11.3pt、汉字行约 14.8pt，
-            // 直接取墨水高光标看着短一截；居中后数字／汉字／小写行光标同高、同一顶。
-            // 拉丁度量公式只作取不到墨水框时的回退。
+            // 光标顶改按基线锚定，不再按行内墨水框居中（本支）：墨水框随字形变——
+            // 小写拉丁墨水顶比汉字低约 5pt（x 高约 8.3pt 对汉字 13.2pt），居中后光标顶
+            // 跟着字形走：空态按代表字“永”锚在基线 −15.35pt，拼音组词/小写落字后锚到
+            // 基线 −13.7pt 附近，输入瞬间光标下掉约 1.7pt（带降部的字母约 2.5pt），
+            // 正是本支报的“空态光标输入后下移”；#1978“居中后各行同一顶”的说法只在墨水
+            // 顶相同的行之间成立，跨字形并不成立。基线在三态一致（片段顶 + ascender ×
+            // 倍数，132 截图反推验证），按它锚定则空行/组词/落字同一顶，光标不动。
+            // 高仍取 ascender − descender（约 19.1pt，#1978 口径），各行同高；
+            // 顶 = 基线 − ascender = 片段顶 + ascender × (倍数 − 1)，与占位顶
+            // （ascender × (倍数 − 1)，见 buildTextArea）同值，空态光标与占位对齐。
+            // 墨水探针（inkCaretRect 等）随本支删除，不再使用。
             let height = caretFont.ascender - caretFont.descender
             guard height > 0 else { return rect }
-            if let ink = inkCaretRect(for: position, caretX: rect.origin.x, font: caretFont, multiple: multiple) {
-                rect.origin.y = ink.origin.y - (height - ink.height) / 2
-                rect.size.height = height
-                return rect
-            }
-            // #853 基线公式回退：顶 = 片段顶 + ascender × (倍数 − 1)，
-            // 高 = ascender − descender；super 的 y 不参与。
-            if let fragmentTop = lineFragmentTop(for: position, caretX: rect.origin.x) {
+            if let fragmentTop = currentLineFragmentTop(for: position, caretX: rect.origin.x) {
                 rect.origin.y = fragmentTop + caretFont.ascender * (multiple - 1)
                 rect.size.height = height
                 return rect
@@ -182,162 +232,20 @@ private final class BearyBodyTextView: UITextView {
         return nil
     }
 
-    /// 光标行墨水框（textView 坐标系，调用方取其 y 与高作垂直居中的基准，见 caretRect；
-    /// x 与宽仍取 super）。
-    /// 取不到时返回 nil，调用方回退 #853 基线公式。
-    private func inkCaretRect(for position: UITextPosition, caretX: CGFloat, font: UIFont, multiple: CGFloat) -> CGRect? {
-        guard let probeGlyph = caretLineGlyph(for: position, caretX: caretX) else {
-            return emptyLineInkRect(for: position, font: font, multiple: multiple)
-        }
-        if let ink = inkRectForLine(containingGlyph: probeGlyph, font: font) { return ink }
-        // 本行无墨水（如仅含附件）：复用邻行几何。
-        if let ink = nearestLineInkRect(fromGlyph: probeGlyph, font: font) { return ink }
-        return emptyLineInkRect(for: position, font: font, multiple: multiple)
-    }
-
-    /// 光标所在行的一个字形下标；光标落在空行时返回 nil。
-    /// 折行边界以前后字符的片段顶判定归属：x 贴左缘（行首）归后一行，
-    /// 否则归前一行（同 lineFragmentTop 的口径）。
-    private func caretLineGlyph(for position: UITextPosition, caretX: CGFloat) -> Int? {
-        let text = attributedText ?? NSAttributedString()
-        let offset = self.offset(from: beginningOfDocument, to: position)
-        guard offset >= 0 else { return nil }
-        let nsText = text.string as NSString
-        let prevIsNewline = offset > 0 && offset - 1 < text.length && nsText.character(at: offset - 1) == 0x000A
-        if !prevIsNewline, offset > 0, offset - 1 < text.length {
-            if offset < text.length {
-                let prevGlyph = layoutManager.glyphIndexForCharacter(at: offset - 1)
-                let nextGlyph = layoutManager.glyphIndexForCharacter(at: offset)
-                var prevRange = NSRange(location: 0, length: 0)
-                var nextRange = NSRange(location: 0, length: 0)
-                let prevTop = layoutManager.lineFragmentRect(forGlyphAt: prevGlyph, effectiveRange: &prevRange).origin.y
-                let nextTop = layoutManager.lineFragmentRect(forGlyphAt: nextGlyph, effectiveRange: &nextRange).origin.y
-                if abs(prevTop - nextTop) >= 0.5 {
-                    return caretX <= textContainerInset.left + 2 ? nextGlyph : prevGlyph
-                }
-            }
-            return layoutManager.glyphIndexForCharacter(at: offset - 1)
-        }
-        if offset < text.length, nsText.character(at: offset) != 0x000A {
-            return layoutManager.glyphIndexForCharacter(at: offset)
-        }
-        return nil
-    }
-
-    /// 指定字形所在行的墨水框（textView 坐标系，只取 y 与高）。
-    /// 行内无文字 run（如仅含附件）时返回 nil，调用方复用邻行几何。
-    private func inkRectForLine(containingGlyph glyphIndex: Int, font: UIFont) -> CGRect? {
-        let layoutManager = self.layoutManager
-        guard glyphIndex >= 0, glyphIndex < layoutManager.numberOfGlyphs else { return nil }
-        var effectiveRange = NSRange(location: 0, length: 0)
-        _ = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &effectiveRange)
-        guard effectiveRange.length > 0 else { return nil }
-        let charRange = layoutManager.characterRange(forGlyphRange: effectiveRange, actualGlyphRange: nil)
-        let text = attributedText ?? NSAttributedString()
-        guard charRange.location >= 0, NSMaxRange(charRange) <= text.length, charRange.length > 0 else { return nil }
-        let ctLine = CTLineCreateWithAttributedString(text.attributedSubstring(from: charRange))
-        // 行基线原点（容器坐标）：首字形的绘制原点即基线位置，实测，不经倍数换算。
-        let baselineOrigin = layoutManager.location(forGlyphAt: effectiveRange.location)
-        // 逐 run 取墨水框并取并集；附件 run（心情/GIF 图）跳过，免得图高拉长光标。
-        let runs = (CTLineGetGlyphRuns(ctLine) as NSArray) as? [CTRun] ?? []
-        var ink: CGRect?
-        for run in runs {
-            let attrs = CTRunGetAttributes(run) as NSDictionary
-            // 附件 run（心情/GIF 图）：属性键为 NSAttachment 字符串，跳过。
-            if attrs["NSAttachment"] != nil { continue }
-            let runInk = CTRunGetImageBounds(run, nil, CFRangeMake(0, 0))
-            if runInk.isNull || runInk.height <= 0 { continue }
-            ink = ink == nil ? runInk : ink!.union(runInk)
-        }
-        guard let ink = ink, ink.height > 0 else { return nil }
-        // image bounds 以行原点（基线）为原点、y 向上：墨水顶 = 基线 y − maxY。
-        let top = baselineOrigin.y + textContainerInset.top - ink.maxY
-        return CGRect(x: 0, y: top, width: 0, height: ink.height)
-    }
-
-    /// 复用邻行墨水几何：墨水相对片段顶的偏移只取决于字体与倍数，同文档
-    /// 内各行一致；空行（或仅含附件的行）以前后最近有墨水的行对齐。
-    private func nearestLineInkRect(fromGlyph glyphIndex: Int, font: UIFont) -> CGRect? {
-        let layoutManager = self.layoutManager
-        let glyphCount = layoutManager.numberOfGlyphs
-        guard glyphCount > 0 else { return nil }
-        var myRange = NSRange(location: 0, length: 0)
-        let myFragment = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &myRange)
-        var forward = myRange.location + myRange.length
-        var backward = myRange.location - 1
-        while forward < glyphCount || backward >= 0 {
-            if backward >= 0 {
-                var range = NSRange(location: 0, length: 0)
-                let fragment = layoutManager.lineFragmentRect(forGlyphAt: backward, effectiveRange: &range)
-                if let ink = inkRectForLine(containingGlyph: backward, font: font) {
-                    let offset = ink.origin.y - (fragment.origin.y + textContainerInset.top)
-                    return CGRect(x: 0, y: myFragment.origin.y + textContainerInset.top + offset, width: 0, height: ink.height)
-                }
-                backward = range.location - 1
-            }
-            if forward < glyphCount {
-                var range = NSRange(location: 0, length: 0)
-                let fragment = layoutManager.lineFragmentRect(forGlyphAt: forward, effectiveRange: &range)
-                if let ink = inkRectForLine(containingGlyph: forward, font: font) {
-                    let offset = ink.origin.y - (fragment.origin.y + textContainerInset.top)
-                    return CGRect(x: 0, y: myFragment.origin.y + textContainerInset.top + offset, width: 0, height: ink.height)
-                }
-                forward = range.location + range.length
-            }
-        }
-        return nil
-    }
-
-    /// 空行墨水框：行片段顶 + 代表字墨水框。基线 = 片段顶 + ascender × 倍数
-    /// ——该式已由 132 截图反推验证（基线 − 片段顶 = 25.89pt = SF ascender
-    /// 15.23 × 1.7，与字形墨水位置吻合）；空行与有字行共用同一 ascender
-    /// （SF 0.952em 压过 PingFang typo 0.86em），故落字前后光标不跳。
-    /// 取不到片段时返回 nil，调用方回退 #853 旧口径。
-    private func emptyLineInkRect(for position: UITextPosition, font: UIFont, multiple: CGFloat) -> CGRect? {
-        let layoutManager = self.layoutManager
-        var fragmentTop: CGFloat?
+    /// 当前行片段顶（textView 坐标系）：有字行走 lineFragmentTop 的选区探针；
+    /// 全空文档无字符可探针，走 extra 行片段顶（容器坐标，需加 inset.top 换算
+    /// 成 textView 坐标；lineFragmentTop 给的已是 textView 坐标，不再加）。
+    private func currentLineFragmentTop(for position: UITextPosition, caretX: CGFloat) -> CGFloat? {
+        if let top = lineFragmentTop(for: position, caretX: caretX) { return top }
         if layoutManager.numberOfGlyphs == 0 {
-            fragmentTop = layoutManager.extraLineFragmentRect.origin.y
-        } else {
-            let offset = self.offset(from: beginningOfDocument, to: position)
-            let text = attributedText ?? NSAttributedString()
-            let nsText = text.string as NSString
-            if offset > 0, offset - 1 < text.length {
-                let prevGlyph = layoutManager.glyphIndexForCharacter(at: offset - 1)
-                var range = NSRange(location: 0, length: 0)
-                let fragment = layoutManager.lineFragmentRect(forGlyphAt: prevGlyph, effectiveRange: &range)
-                let prevIsNewline = nsText.character(at: offset - 1) == 0x000A
-                fragmentTop = prevIsNewline ? fragment.origin.y + fragment.height : fragment.origin.y
-            } else if offset < text.length {
-                let nextGlyph = layoutManager.glyphIndexForCharacter(at: offset)
-                var range = NSRange(location: 0, length: 0)
-                fragmentTop = layoutManager.lineFragmentRect(forGlyphAt: nextGlyph, effectiveRange: &range).origin.y
-            } else {
-                fragmentTop = layoutManager.extraLineFragmentRect.origin.y
-            }
+            return layoutManager.extraLineFragmentRect.origin.y + textContainerInset.top
         }
-        guard let fragmentTop = fragmentTop, let cjkInk = representativeCJKInkRect(font: font) else { return nil }
-        // cjkInk 以基线为原点、y 向上：墨水顶 = 基线 y − maxY。
-        let baselineY = fragmentTop + textContainerInset.top + font.ascender * multiple
-        return CGRect(x: 0, y: baselineY - cjkInk.maxY, width: 0, height: cjkInk.height)
+        return nil
     }
 
-    /// 代表字 CJK 墨水框（相对基线，y 向上）：经字体级联拿到实际渲染字形
-    /// 的字体，取“永”的墨水框；16pt PingFang 下约基线上 13.2pt、基线下
-    /// 1.6pt、高 14.8pt。取不到时返回 nil。
-    private func representativeCJKInkRect(font: UIFont) -> CGRect? {
-        let ctFont = CTFontCreateForString(font as CTFont, "永" as CFString, CFRangeMake(0, 0))
-        var glyph = CGGlyph(0)
-        var ch: UniChar = 0x6C38 // 永
-        guard CTFontGetGlyphsForCharacters(ctFont, &ch, &glyph, 1) else { return nil }
-        var boundingRect = CGRect.zero
-        CTFontGetBoundingRectsForGlyphs(ctFont, .horizontal, &glyph, &boundingRect, 1)
-        guard boundingRect.height > 0 else { return nil }
-        return boundingRect
-    }
 }
 
-/// U3：编辑器工具栏七钮专用热区钮（图片／定位／自定义／天气／@／引用／标签）。
+/// U3：编辑器工具栏六钮专用热区钮（图片／定位／表情／@／引用／标签）。
 /// 根因：七钮视觉帧 24pt，父类 BearyHit44Button 对称各扩 10pt 至 44pt；
 /// 工具行间距 16 时中心距 24+16=40 < 44，相邻热区重叠 4pt，窄屏间距压到 8 时
 /// 中心距 32、重叠 12pt，交界处点按落到后加的右钮。
@@ -498,7 +406,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
     /// 编辑原篇的标签列（首次回填时拍定；PUT 只在 selectedTags 与它不同时发 tags）。
     private var originalTags: [String] = []
-    /// 插入式图片的上次焦点框：点选自定义钮/弹出框选项时焦点可能已被
+    /// 插入式图片的上次焦点框：点选表情钮/弹出框选项时焦点可能已被
     /// 拾取动作带走，单靠 isFirstResponder 会误判；本字段记最后一次
     /// 获焦的框（标题/正文），兜底时仍插到上次光标所在的框。
     private enum ComposerInput { case headline, body }
@@ -524,11 +432,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var originalLocation: DiaryLocation?
     /// 新建模式的 @ 对象（编辑模式经 selectedRecipient 改选，见 refreshRecipientRow 编辑分支）。
     private var selectedRecipient: SearchUser? {
-        didSet { editorEditVersion += 1 }
-    }
-    /// 通知对方：iCity @ 提醒无按篇开关——选人面板的开关值不再用于发布，
-    /// 仅作面板初值占位保留，不触发重渲染、不进请求。
-    private var notifyRecipient = true {
         didSet { editorEditVersion += 1 }
     }
     /// 新建模式的引用（编辑模式不用它，引用锁定，见 lockedQuote）。
@@ -573,11 +476,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑回填补拉在途态：true 时引用区失败行暂隐（防重复点重试）、保存钮同样
     /// 禁用（回填未完成时 PUT 同样会误清原引用与原图）；成功或失败回落时清掉。
     private var editQuoteFetchInFlight = false
+    /// 检查点引用换篇恢复失败后待重试的被引篇 id（restoreCheckpointQuote
+    /// 失败时记下，成功时清掉；用户手动改引用时清掉并连同 editQuoteFetchFailed
+    /// 一并复位，防重试拉回已放弃的旧篇）。didTapRetryEditQuoteFetch 凭它
+    /// 区分两种失败：有值 → 重拉检查点引用；为空 → 重拉被编日记补引用体。
+    private var pendingCheckpointQuoteId: String?
     /// C1：工具栏上方选择条：同一时刻最多展开一条（写给），nil=全部收起。
     /// 心情/天气旧条带已删（见下），入口只走天气尖角弹出框（心情入口已删），不再走本值；
     /// 旧附加栏三态随双重入口删除而整组拆除，不再有“附加栏撑着显示天气行”的压制状态机。
     private enum ToolStrip {
-        case mood, weather, recipient
+        case recipient
     }
     private var activeToolStrip: ToolStrip?
     /// C11：删图撤销缓冲（单槽，只留最近一次删除）：项本身不改字段（key/localFile/
@@ -633,6 +541,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.uploadTask = nil
     }
     private var draftClientReq: String?
+    /// 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识，
+    /// 草稿创建时取一次、之后全程复用（与 clientReq/draftId 同款“创建时生成”口径）；
+    /// 从箱内/恢复打开时取草稿存下的值，无记录的旧草稿为 nil、发布时取设备时区回落。
+    private var draftTimeZoneName: String?
     /// 当前正在写的草稿篇 id（v3 多槽键）：恢复/从箱打开时取该篇 draftId，
     /// 首次保存时生成；发布成功与丢弃只删这一篇，不碰其他篇。
     private var currentDraftId: String?
@@ -666,8 +578,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 直接 toast，不并行）。
     private var gifUploadInFlight = false
     /// 自定义心情图上传发起时的草稿篇 id（#49）：finishGIFUpload /
-    /// finishImageUpload 发起时记下 currentDraftId，回包成功时只认发起那篇
-    /// （nil 表示发起时还是空白未落盘篇，沿 pickDraftId 口径不设防）；
+    /// finishImageUpload 发起时记下 currentDraftId，回包成功时只认发起那篇；
+    /// 空白未落盘篇发起时先落一个新 id 再记（makePublishSnapshot 同款口径），
+    /// 否则回包守卫无 id 可比、切篇后回包仍会插进当前篇。回包成功时先拍下
+    /// 本次发起 id 再清掉——清完再比恒为 nil，守卫即失效（旧写法即此 bug）。
     /// 切篇后回包仍进自定义库/首帧缓存，只不插进当前篇正文。
     private var gifUploadDraftId: String?
     /// B2：关闭进行中守卫——didTapCancel（取消钮）与边缘关闭共用同一入口，
@@ -822,6 +736,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if currentDraftId == nil {
             currentDraftId = BearyDraftStore.newDraftId()
             clearedCurrentDraftId = nil
+            // 日记时区：未经过保存直发时在此取一次（见 saveDraftNow 同款口径）——
+            // 正常路径保存已取过，这里不再重复取；编辑模式取原日记的时区（编辑不改时区）。
+            if draftTimeZoneName == nil {
+                draftTimeZoneName = editingEntry?.tzName ?? TimeZone.current.identifier
+            }
         }
         guard let req = draftClientReq else { return nil }
         return PublishSnapshot(
@@ -844,6 +763,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             locationRegion: selectedLocation?.region,
             locationCity: selectedLocation?.city,
             locationStreet: selectedLocation?.street,
+            // 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识
+            //（草稿创建时取一次，之后编辑/发布都不改；无记录的旧草稿回落发布时设备时区）。
+            tzName: draftTimeZoneName ?? TimeZone.current.identifier,
             clientReq: req,
             originAccountId: currentAccountIdForPublish(),
             draftId: currentDraftId,
@@ -875,7 +797,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 后台冲刷失败待提示：保存回调在后台触发时 toast 用户看不到，记下来
     /// 回前台时再提示；只记编辑模式——新建态失败已有失败红字状态行，不重复提示。
     private var backgroundFlushFailed = false
-    private var editTimer: Timer?
     private var imageItems: [ComposerImageItem] = [] {
         didSet { editorEditVersion += 1 }
     }
@@ -940,7 +861,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 109 标题重写（从零新写，不复用 #244 前的旧标题实现）
     /// 设计（先写清再施工）：
     /// - 输入位置：内容栈首项、正文 textView 上方，一行独立输入区
-    ///   （headlineWrap：单行输入框 + 底部 1pt 细线），不进顶栏、不叠正文。
+    ///   （headlineWrap：单行输入框 + 底部 0.5pt 细线），不进顶栏、不叠正文。
     /// - 长度上限：30 字——与服务端 normalizeEntryTitle 口径一致
     ///   （>30 字服务端 400），前端输入时即截断到 30 字，不靠服务端报错。
     /// - 显示位置与样式：卡片与详情已有标题行（16.5 粗体，空标题整行
@@ -993,7 +914,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private static let emojiOnlyFontScale: CGFloat = 2
     /// 当前正文是否处于“仅表情放大”态（textViewDidChange / 回填时更新）。
     private var bodyEmojiOnlyEnlarged = false
-    /// 正文当前生效字号：仅表情（≤3 个、无其他文字、无附件）时 2 倍，否则 bodyFont。
+    /// 正文当前生效字号：仅表情（≤3 个、无其他文字、无无记号附件）时 2 倍，否则 bodyFont。
     private var effectiveBodyFont: UIFont {
         bodyEmojiOnlyEnlarged ? bodyFont.withSize(bodyFont.pointSize * Self.emojiOnlyFontScale) : bodyFont
     }
@@ -1051,6 +972,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let pendingUploadBar = UIButton(type: .custom)
     private let pendingUploadBarLabel = UILabel()
     private let pendingUploadBarChevron = UIImageView()
+    /// 浮条容器：待上传条与撤销条的浮层（2026-11-27 Li 定：不占内容栈，浮在工具栏上方）。
+    /// 底边与工具栏顶边之间留 12pt（Li 定：跟工具栏图标顶到分割线的 toolRowTopToSeparator 12pt 一致；约束定死；键盘升起时随工具栏一起抬，间隙不变）。
+    private let transientBarContainer = UIView()
+    private let transientBarStack = UIStackView()
     // C1：工具栏贴键盘上方（见 buildLayout：底锚 keyboardLayoutGuide.topAnchor），
     // 不随正文滚动；选择条（toolStripStack）贴在它上方，引用面板打开时两者同藏，
     // scrollView 底锚随之在准备发布行/选择条/整页三档切换（见 updateScrollBottomAnchoring）。
@@ -1110,16 +1035,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 行高仍由子项固有高撑着、会把工具行顶下去；隐藏时钉 0、显示时停用。
     private var draftStatusBannerHeightConstraint: NSLayoutConstraint?
     private let imageToolButton = BearyComposerToolButton(type: .system)
-    /// 批 E 定位钮：工具栏左组第 2 位（图片右边、自定义之前，预览 v2 定版；v1 的心情/天气并列位置已作废）。
+    /// 批 E 定位钮：工具栏左组第 2 位（图片右边、表情之前，预览 v2 定版；v1 的心情/天气并列位置已作废）。
     private let locationToolButton = BearyComposerToolButton(type: .system)
-    private let gifToolButton = BearyComposerToolButton(type: .system)
-    /// 自定义入口钮（点开底部弹窗自定义图片选择器，见 presentGIFPickerSheet）。
-    /// 2026-11-18：写日记页心情选择器已删（心情改为正文键入 [mood:xxx]），
-    /// 本钮只开“自定义”组（个人自定义心情图库，GIF 与常规图）。
-    private weak var gifPickerSheet: BearyMoodPickerSheetViewController?
-    /// 自定义选择器是否正开着：半屏弹窗下键盘回来会盖住弹窗下半与正文，
+    private let emoteToolButton = BearyComposerToolButton(type: .system)
+    /// 表情入口钮（点开统一表情选择器，见 presentEmotePickerSheet）。
+    /// 2026-11-20 Li 定：工具栏“自定义”钮换成表情钮，选择器里内置表情
+    /// 与自定义表情都有，都可插进正文；旧自定义图片选择器
+    /// BearyMoodPickerSheet 不再从这里打开。
+    private weak var emotePickerSheet: BearyEmotePickerSheetViewController?
+    /// 表情选择器是否正开着：弹窗下键盘回来会盖住弹窗下半与正文，
     /// 插图后键盘保持收起、表情直接落在可见的正文区；关弹窗后再点正文继续输。
-    private var isGIFPickerOpen: Bool { gifPickerSheet?.view.window != nil }
+    private var isEmotePickerOpen: Bool { emotePickerSheet?.view.window != nil }
     private let recipientToolButton = BearyComposerToolButton(type: .system)
     private let quoteToolButton = BearyComposerToolButton(type: .system)
     /// 标签完整版（2026-11-18）：工具栏 # 钮（文字 #，无官方 hashtag 图标资产）；
@@ -1131,26 +1057,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑模式隐藏（编辑不改可见性）；限时态即公开语义，不再另设锁定开关。
     private let visibilityButton = UIButton(type: .system)
     /// 任务2：准备发布行——工具栏正上方固定行，正文非空的
-    /// “准备发布”态才显；四档直接平铺点选（不再只藏进顶栏可见性菜单），
-    /// 限时后果同行常驻可见（发布前即看得见，不只靠选档后 toast）。
+    /// “准备发布”态才显；四档直接平铺点选（不再只藏进顶栏可见性菜单）。
     /// 2026-11-22 纵向位置修：此前在顶栏正下方，行一出现即把滚动区顶顶下 42pt、
     /// 标题上方空出一大段（134 实测）；改到底部后只收滚动区底，标题不动。
     private let publishVisibilityRow = UIStackView()
     private let publishVisibilityChipRow = UIStackView()
-    private let publishVisibilityNoteLabel = UILabel()
     private var publishVisibilityRowHeightConstraint: NSLayoutConstraint?
     private var publishVisibilityButtons: [VisibilityChoice: BearyHit44Button] = [:]
-    /// 准备发布行高：chip 行 30 ＋上下边距各 6；限时态另加注行 16 ＋间距 4。
+    /// 准备发布行高：chip 行 30 ＋上下边距各 6。
     private static let publishVisibilityRowHeight: CGFloat = 42
-    private static let publishVisibilityRowNoteHeight: CGFloat = 20
-    /// 底部元信息行（2026-11-18 定位重做，预览 v2）：内容栈最末（引用卡下方、
-    /// 工具栏上方）：定位钮（图钉＋地名，点按重开选地点面板）＋天气 chip
+    /// 底部元信息行（2026-11-18 定位重做，预览 v2）：引用卡下方、@ chips 行与
+    /// 标签行上方（2026-11-27 起 @ 与标签行挪到内容栈最末）：定位钮（图钉＋地名，点按重开选地点面板）＋天气 chip
     /// （图标＋天气名＋气温，仅展示、不可点）。无地点时天气 chip 在左下角；
     /// 有地点时天气 chip 在定位右边（见 refreshMetaRow）。
     private let metaRowStack = UIStackView()
     private let locationMetaButton = BearyHit44Button(type: .system)
     private let metaRowSpacer = UIView()
-    // C1：已选中项轻量 Chip 行（正文下方）：写给一枚，点 chip 打开对应选择条；
+    // C1：已选中项轻量 Chip 行（内容栈底部，定位行下方）：写给一枚，点 chip 打开对应选择条；
     // 天气已移到底部元信息行（见 buildMetaRow），只展示、不可点。
     private let selectedChipsRow = UIStackView()
     /// 标签完整版（2026-11-18）：标签 chips 横向滚动行（selectedChipsRow 下方），
@@ -1164,7 +1087,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var toolStripTransitionGeneration = 0
     private let weatherChipButton = BearyHit44Button(type: .system)
     private let recipientChipButton = BearyHit44Button(type: .system)
-    // C11：删图撤销条（图片条下方）：文案 + 撤销钮，10 秒到期自动消失并提交删除。
+    // C11：删图撤销条（浮在工具栏上方，2026-11-27 改）：文案 + 撤销钮，10 秒到期自动消失并提交删除。
     private let imageUndoBar = UIView()
     private let imageUndoLabel = UILabel()
     private let imageUndoButton = BearyHit44Button(type: .system)
@@ -1184,7 +1107,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 否则隐藏的 arranged 子项仍被自身 44 最小高撑住、与 stack 的隐藏折叠冲突
     ///（同图片条 96 约束先例）。
     private var pendingUploadBarHeightConstraint: NSLayoutConstraint?
-    private let editTimerLabel = UILabel()
     private let draftStatusGroup = UIStackView()
     private let draftStatusIcon = UIImageView()
     private let draftStatusLabel = UILabel()
@@ -1202,9 +1124,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let recipientChipFallback = UILabel()
     private let recipientChipName = UILabel()
     private let recipientClearButton = BearyHit44Button(type: .system)
-    private let notifyGroup = UIStackView()
-    private let notifyCheckButton = BearyHit44Button(type: .system)
-    private let notifyLabel = UILabel()
     // 顶部 @ 提示行（顶栏下方固定行，写字时始终可见；点按同底部 chip，走 openToolStrip(.recipient)）。
     private let mentionTopRow = UIView()
     private let mentionTopPill = BearyHit44Button(type: .system)
@@ -1267,8 +1186,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     override func viewDidLoad() {
         super.viewDidLoad()
         NSLog("[Diag] composer-viewDidLoad-enter")
-        // 临时诊断（81 包，定根因后删除）。
-        DiagFile.mark("viewDidLoad-enter")
         // 编辑器页底改与首页（广场）同色：玻璃背板已撤，实色 bg 底（浅白／深纯黑）；
         // 顶栏／标题／正文／工具栏均为 clear，自动跟页底走；后续 build* 加的
         // 子视图自然在其上；呈现层文件不动，卡片内按钮点亮色与功能全不动。
@@ -1279,7 +1196,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         buildMentionTopRow()
         // 109：内容栈首项为新标题输入区（见 buildHeadlineField），其下为正文。
         buildTextArea()
-        buildSelectedChipsRow()
         buildImageRow()
         buildImageUndoBar()
         buildToolbarRow()
@@ -1287,9 +1203,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         buildRecipientRow()
         buildQuoteSection()
         buildQuotePanel()
-        // 底部元信息行（定位＋天气）进内容栈最末（引用卡下方、工具栏上方，
-        // 见 buildMetaRow），须在 buildQuotePanel 之后建，顺序即栈顺序。
+        // 底部元信息行（定位＋天气）见 buildMetaRow，须在 buildQuotePanel 之后建；
+        // @ chips 行与标签行（见 buildSelectedChipsRow）最后建，进内容栈最末
+        // （定位行下方），顺序即栈顺序（2026-11-27 Li 定：与发布后卡片顺序一致）。
         buildMetaRow()
+        buildSelectedChipsRow()
         // 第三轮审计第 5 项：打开编辑器即绑定原账号（先于 setupEditContent /
         // restoreDraft 记下，检查点读写与编辑 PUT 都认它，不随重登改写；
         // 见 composerOriginAccountId，与 #1009 P0-1 同一绑定）。
@@ -1321,14 +1239,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 开发者模式 Plus 开关变化：清掉本会话缓存的 Plus 态，下次取时重拉并按新开关算。
         NotificationCenter.default.addObserver(self, selector: #selector(handleDeveloperPlusChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         NSLog("[Diag] composer-viewDidLoad-exit")
-        // 临时诊断（81 包，定根因后删除）。
-        DiagFile.mark("viewDidLoad-exit")
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         // 深浅切换时 CGColor 只在赋值时解析一次，必须重赋：
-        // 天气 chip 描边、通知复选框描边、草稿 pill 描边、字数圆环轨道色
+        // 天气 chip 描边、草稿 pill 描边、字数圆环轨道色
         // 全走已有刷新函数重算。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshSelectedChips()
@@ -1337,8 +1253,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // （补丁叠加留下的重复调用），已删——一次刷新即含图标与换行重算。
             refreshInlineMoodImages()
             headlineHeightConstraint?.constant = max(28, ceil(headlineFont.lineHeight) + 2)
-            refreshNotifyCheck()
-            notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
             draftPillButton.layer.bearyDynamicBorderColor = BearyColors.line
             charTrackLayer?.strokeColor = BearyColors.line.cgColor
             updateCountLabel()
@@ -1393,8 +1307,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshDraftPillWidth()
         // 109：工具栏宽变化（旋转/分屏/居中列切换）时重算草稿状态适配，320 宽下只留对勾、宽回升恢复文案。
         applyDraftStatusToolbarFit()
-        // 临时诊断（82 包追加，定根因后删除）：入口每调一次记一次，不节流。
-        DiagFile.mark("composer-layout")
         let w = view.bounds.width
         // 审计 7-9：视口高也进重算门——键盘升降只动工具栏锚点（keyboardLayoutGuide），
         // view 帧不动、滚动区帧变，旧宽门会把纯高变跳过，正文高滞留旧视口值。
@@ -1402,8 +1314,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 只改内容高、不改滚动区帧，不成环。
         let h = scrollView.bounds.height
         guard w > 0, w != lastLayoutWidth || abs(h - lastLayoutHeight) > 0.5 else {
-            // 临时诊断（86 包，定根因后删除）：布局方法出口（宽/高门挡住的早退路径）。
-            DiagFile.mark("composer-layout-exit")
             return
         }
         lastLayoutWidth = w
@@ -1413,8 +1323,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 0.5pt 防抖门限，高度不变不赋值，不会与布局轮次成环）。
         updateTextViewHeight()
         updatePreferredContentSize()
-        // 临时诊断（86 包，定根因后删除）：布局方法出口。
-        DiagFile.mark("composer-layout-exit")
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -1426,12 +1334,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toolbarBottomToKeyboardConstraint?.isActive = true
             toolbarBottomToSafeAreaConstraint?.isActive = false
         }
-        // 临时诊断（86 包，定根因后删除）。
-        DiagFile.mark("composer-willAppear")
-        // 编辑模式回到页面时重调 startEditTimer（只藏倒计时 label + 刷新状态行），
-        // 从选图/弹窗回来后状态行显隐不错位；startEditTimer 本身幂等。
+        // 编辑模式回到页面时重调刷新状态行，从选图/弹窗回来后状态行显隐不错位。
         if isEditMode {
-            startEditTimer()
+            refreshStatusRowVisibility()
         }
     }
 
@@ -1442,12 +1347,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if isBeingDismissed {
             reanchorToolbarForDismiss()
         }
-        // B5-3：编辑计时器（已取消倒计时，见 startEditTimer）在页面关闭/被 modal
-        // 盖住时即失效，不再只靠 deinit；editTimer 现恒为 nil，本处只作对称清理。
         // draftTimer 是 0.4s 一次性防抖，到点自释，不在这里失效（否则会丢
         // 一笔待保存的草稿）；deinit 仍保留作兜底。
-        editTimer?.invalidate()
-        editTimer = nil
     }
 
     /// 关闭退场 B 修法：退场开始时把工具栏底锚从键盘顶换成自身 safeArea 底，
@@ -1476,8 +1377,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         maybePresentStoredQuotePrompt()
         maybePresentEditCheckpointPrompt()
         NSLog("[Diag] composer-viewDidAppear")
-        // 临时诊断（81 包，定根因后删除）。
-        DiagFile.mark("viewDidAppear")
         // 打开即聚焦正文：编辑器唯一目的就是写，首屏就绪后直接可打字；只做一次，
         // 从选图/弹窗回来不抢焦点；有草稿时光标置末尾，接着写。
         // 与草稿恢复/图片续传无冲突：恢复在 viewDidLoad 已完成，续传是后台任务。
@@ -1502,7 +1401,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     deinit {
         draftTimer?.invalidate()
-        editTimer?.invalidate()
         pendingUndoTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
@@ -1536,13 +1434,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.spacing = 0
         contentStack.alignment = .fill
         contentStack.isLayoutMarginsRelativeArrangement = true
-        contentStack.layoutMargins = UIEdgeInsets(top: BearySpace.lg, left: BearySpace.lg, bottom: BearySpace.lg, right: BearySpace.lg)
+        contentStack.layoutMargins = UIEdgeInsets(top: BearySpace.lg, left: BearySpace.lg, bottom: BearySpace.md, right: BearySpace.lg)
         view.addSubview(topBar)
         view.addSubview(publishVisibilityRow)
         view.addSubview(toolbarContainer)
         view.addSubview(toolStripStack)
         view.addSubview(mentionTopRow)
         view.addSubview(scrollView)
+        view.addSubview(transientBarContainer)
         scrollView.addSubview(contentView)
         contentView.addSubview(contentStack)
         // C1：正文从顶栏下方直接开始（scrollView 顶锚顶栏）；工具栏贴键盘上方，
@@ -1564,6 +1463,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolStripStack.spacing = 0
         toolStripStack.alignment = .fill
         toolStripStack.translatesAutoresizingMaskIntoConstraints = false
+        // 浮条容器：竖栈装两条，间距 8；初始全藏、不占位。
+        transientBarContainer.translatesAutoresizingMaskIntoConstraints = false
+        transientBarStack.axis = .vertical
+        transientBarStack.spacing = BearySpace.sm
+        transientBarStack.alignment = .fill
+        transientBarStack.translatesAutoresizingMaskIntoConstraints = false
+        transientBarContainer.addSubview(transientBarStack)
+        transientBarContainer.isHidden = true
         // 92 包整页列宽：贴边约束与居中约束二选一，由 updateColumnConstraints 按宽切换
         //（个人主页同款：lazy 式成对约束、状态变化时才切换）。居中约束初始不激活。
         // 窄屏分支：左右锚横向安全区（非 view 边缘）——竖屏安全区左右 inset 为 0，
@@ -1614,6 +1521,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toolStripStack.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             // 选择条底贴准备发布行顶（行高 0 时即工具栏顶；2026-11-22 随行移到底部改锚，原直接贴工具栏顶）。
             toolStripStack.bottomAnchor.constraint(equalTo: publishVisibilityRow.topAnchor),
+            // 浮条容器：左右跟工具栏同宽；底边与工具栏顶边留 12pt
+            //（2026-11-27 Li 定：跟 toolRowTopToSeparator 的 12pt 一致，约束定死；工具栏底锚键盘顶，键盘升起时浮条一起抬，间隙不变）。
+            transientBarContainer.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            transientBarContainer.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
+            transientBarContainer.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -BearySpace.md),
+            transientBarStack.topAnchor.constraint(equalTo: transientBarContainer.topAnchor),
+            transientBarStack.leadingAnchor.constraint(equalTo: transientBarContainer.leadingAnchor),
+            transientBarStack.trailingAnchor.constraint(equalTo: transientBarContainer.trailingAnchor),
+            transientBarStack.bottomAnchor.constraint(equalTo: transientBarContainer.bottomAnchor),
             toolbarLeadingConstraint!,
             toolbarTrailingConstraint!,
             scrollLeadingConstraint!,
@@ -1699,17 +1615,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 任务2：准备发布行同样不在内容栈里：出现时 sheet 高另加它。
         let publishVisibilityHeight = publishVisibilityRow.isHidden ? 0 : (publishVisibilityRowHeightConstraint?.constant ?? 0)
         let total = fitted.height + 60 + toolbarHeight + mentionTopHeight + publishVisibilityHeight
-        // 临时诊断（82 包追加，定根因后删除）：total 每轮都记，看是否漂移。
-        DiagFile.mark("composer-prefSize total=\(String(format: "%.1f", total))")
         guard abs(preferredContentSize.height - total) > 0.5 else {
-            // 临时诊断（86 包，定根因后删除）：方法出口（0.5pt 门限挡住的早退路径）。
-            DiagFile.mark("composer-prefSize-exit")
             return
         }
         preferredContentSize = CGSize(width: fittingWidth, height: total)
         setNeedsLayoutUnlessPresenting()
-        // 临时诊断（86 包，定根因后删除）：方法出口。
-        DiagFile.mark("composer-prefSize-exit")
     }
 
     /// 87 包修法：转场进行中只改 preferredContentSize，不同步触发 superview 布局。
@@ -1719,10 +1629,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 不新增状态（呈现控制器类是 SceneDelegate.swift 文件私有的，跨文件读 flag
     /// 要改可见性，反而更重）。
     private func setNeedsLayoutUnlessPresenting() {
-        if isBeingPresented {
-            // 临时诊断（87 包，定根因后删除）：证明转场里确实走了跳过分支。
-            DiagFile.mark("composer-prefSize-skipTrans")
-        } else {
+        if !isBeingPresented {
             view.superview?.setNeedsLayout()
         }
     }
@@ -1869,7 +1776,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             topSeparator.leadingAnchor.constraint(equalTo: topBar.leadingAnchor),
             topSeparator.trailingAnchor.constraint(equalTo: topBar.trailingAnchor),
             topSeparator.bottomAnchor.constraint(equalTo: topBar.bottomAnchor),
-            // 8-4 例外：编辑器顶栏分隔线保持 0.5pt（iOS 细线惯例），不收进 1pt 行间分隔档。
+            // 全站分隔线统一 0.5pt（2026-11-21 Li 定），顶栏线与行间线同档。
             topSeparator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
         // 清单第 15 项：发布钮显式宽度约束（初值由 refreshPublishButtonWidth 按当前标题算出，
@@ -2003,7 +1910,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             headlineRule.topAnchor.constraint(equalTo: headlineField.bottomAnchor, constant: 6),
             headlineRule.leadingAnchor.constraint(equalTo: headlineWrap.leadingAnchor),
             headlineRule.trailingAnchor.constraint(equalTo: headlineWrap.trailingAnchor),
-            headlineRule.heightAnchor.constraint(equalToConstant: 1),
+            headlineRule.heightAnchor.constraint(equalToConstant: 0.5),
             headlineRule.bottomAnchor.constraint(equalTo: headlineWrap.bottomAnchor),
         ])
         // 审计三轮第 2 项：命中钮不进 headlineWrap（44 高以标题行为中心会伸出 wrap
@@ -2118,6 +2025,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func buildTextArea() {
         buildHeadlineField()
         textView.delegate = self
+        textView.onBlockedImagePaste = { [weak self] in self?.showToast(message: NSLocalizedString("composer.paste_image_use_button", comment: "")) }
         textView.font = bodyFont
         textView.textColor = BearyColors.ink
         // 无框正文：透明底。正式修法（2026-10-26，微信输入法×编辑器隔离结论）：
@@ -2329,21 +2237,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientClearButton.layer.masksToBounds = true
         recipientClearButton.addTarget(self, action: #selector(didTapClearRecipient), for: .touchUpInside)
         recipientClearButton.bearyAddPressFeedback()
-        notifyCheckButton.layer.cornerRadius = 4
-        notifyCheckButton.layer.masksToBounds = true
-        notifyCheckButton.layer.borderWidth = 1
-        notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
-        notifyCheckButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
-        notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
-        notifyCheckButton.bearyAddPressFeedback()
-        notifyLabel.text = "通知对方"
-        notifyLabel.font = UIFont.systemFont(ofSize: 13)
-        notifyLabel.textColor = BearyColors.ink
-        notifyGroup.axis = .horizontal
-        notifyGroup.spacing = 6
-        notifyGroup.alignment = .center
-        notifyGroup.addArrangedSubview(notifyCheckButton)
-        notifyGroup.addArrangedSubview(notifyLabel)
         recipientSection.translatesAutoresizingMaskIntoConstraints = false
         recipientLine.translatesAutoresizingMaskIntoConstraints = false
         recipientChipView.translatesAutoresizingMaskIntoConstraints = false
@@ -2351,11 +2244,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientChipFallback.translatesAutoresizingMaskIntoConstraints = false
         recipientChipName.translatesAutoresizingMaskIntoConstraints = false
         recipientClearButton.translatesAutoresizingMaskIntoConstraints = false
-        notifyCheckButton.translatesAutoresizingMaskIntoConstraints = false
         toolStripStack.addArrangedSubview(recipientSection)
         recipientSection.isHidden = true
         recipientSection.addArrangedSubview(recipientLine)
-        recipientSection.addArrangedSubview(notifyGroup)
         recipientLine.addArrangedSubview(recipientChipView)
         recipientChipView.addSubview(recipientChipAvatar)
         recipientChipView.addSubview(recipientChipFallback)
@@ -2378,18 +2269,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             recipientClearButton.widthAnchor.constraint(equalToConstant: 18),
             recipientClearButton.heightAnchor.constraint(equalToConstant: 18),
             recipientChipView.heightAnchor.constraint(equalToConstant: 30),
-            notifyCheckButton.widthAnchor.constraint(equalToConstant: 16),
-            notifyCheckButton.heightAnchor.constraint(equalToConstant: 16),
         ])
         refreshRecipientRow()
     }
 
     /// @ 行状态：新建未选 → 区内无内容（高度塌为 0）；新建已选 → chip + ×；
     /// 编辑模式 → 可改选可清除：已清除且未重选 → 区内无内容；已改选 → 新 chip + ×；
-    /// 未动 → 原 @ chip + ×；编辑且无 @ → 区内无内容。@ 提醒无按篇开关，通知行一律隐藏。
+    /// 未动 → 原 @ chip + ×；编辑且无 @ → 区内无内容。
     private func refreshRecipientRow() {
         if isEditMode {
-            notifyGroup.isHidden = true
             if editMentionCleared, selectedRecipient == nil {
                 recipientChipView.isHidden = true
             } else if let user = selectedRecipient {
@@ -2447,27 +2335,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             recipientChipName.text = "@" + name
             recipientClearButton.isHidden = false
-            // iCity：@ 提醒无按篇开关，选择条内不显示通知行。
-            notifyGroup.isHidden = true
         } else {
             recipientChipView.isHidden = true
-            notifyGroup.isHidden = true
         }
-        refreshNotifyCheck()
         refreshSelectedChips()
-    }
-
-    /// 通知复选框只改本地状态与自身外观，不重建行（网页版同款规矩）。
-    private func refreshNotifyCheck() {
-        if notifyRecipient {
-            notifyCheckButton.backgroundColor = BearyColors.ink
-            // I6：通知复选改用 icon_check 资产；底是 ink、对勾须取反色 bg（深色下 ink 近白）。
-            notifyCheckButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
-            notifyCheckButton.tintColor = BearyColors.bg
-        } else {
-            notifyCheckButton.backgroundColor = UIColor.clear
-            notifyCheckButton.setImage(nil, for: .normal)
-        }
     }
 
     @objc private func didTapPickRecipient() {
@@ -2480,12 +2351,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // first responder 不发 WillShow，不传则搜索框会被键盘盖住（见选人器
         // applyInitialKeyboardLiftIfNeeded）；键盘没起时传 0，走正常通知路径。
         picker.initialKeyboardHeight = currentKeyboardHeight
-        picker.notifyRecipient = self.notifyRecipient
-        picker.onPick = { [weak self] user, notify in
+        picker.onPick = { [weak self] user in
             guard let self = self else { return }
             self.selectedRecipient = user
-            // iCity：@ 提醒无按篇开关——面板回传的开关值忽略，不进发布请求。
-            _ = notify
             self.editMentionCleared = false
             self.refreshRecipientRow()
             self.updatePublishState()
@@ -2496,9 +2364,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 网页选人即 saveDraftQuiet 立即落盘，不走防抖（500ms 内杀 App 会丢改动）。
             self.saveDraftNow()
         }
-        present(picker, animated: !UIAccessibility.isReduceMotionEnabled) { [weak self] in
-            self?.isRecipientPickerPresenting = false
-        }
+        // 系统 sheet 呈现（见 BearySystemSheet）：present 即置 presentedViewController，
+        // 连点仍由上方守卫挡住，在途标记随即清掉。
+        BearySystemSheet.present(picker, from: self)
+        isRecipientPickerPresenting = false
     }
 
     @objc private func didTapClearRecipient() {
@@ -2512,13 +2381,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshToolStrip()
         saveDraftNow()
         updatePublishState()
-    }
-
-    @objc private func didTapNotifyCheck() {
-        if isEditMode { return }
-        notifyRecipient.toggle()
-        refreshNotifyCheck()
-        saveDraftNow()
     }
 
     // MARK: - 引用 lite 卡（网页 diaryCardLite：头像 40 + 名 + 正文 + 图片 +
@@ -2606,10 +2468,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteFetchFailedRow.addArrangedSubview(fetchFailedSpacer)
         quoteFetchFailedRow.addArrangedSubview(quoteFetchFailedRetryButton)
         quoteFetchFailedRow.isHidden = true
-        // 引用卡置顶：插到标题下方、正文上方（原在内容栈末尾，须下滑才完整可见）。
-        // 以 textView 定位插入点，不依赖固定下标；textView 不在栈内时兜底追加。
-        if let textIndex = contentStack.arrangedSubviews.firstIndex(of: textView) {
-            contentStack.insertArrangedSubview(quoteSection, at: textIndex)
+        // 引用区放图片块后面（2026-11-27 Li 定：图片是自己的内容在前，引用是外部的在后，
+        // 与发布后卡片顺序一致——卡片栈：标题、正文、图片、九宫格、引用卡、定位、标签）。
+        // pendingUploadBar 自 #2753 起已移出内容栈、改放浮层 transientBarStack，以它定位恒回 nil；
+        // 改以图片块定位插入点，不依赖固定下标；图片块不在栈内时兜底追加。
+        if let imageIndex = contentStack.arrangedSubviews.firstIndex(of: imageScrollView) {
+            contentStack.insertArrangedSubview(quoteSection, at: imageIndex + 1)
         } else {
             contentStack.addArrangedSubview(quoteSection)
         }
@@ -2642,14 +2506,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 共享卡口径变化（相对原自绘卡）：正文 13.5 且最多 3 行（原不限行 16.5）、
     /// 图条 42（原 118）、日期走共享卡 feedTimeString（原 BearyText.timeString）。
     private func refreshQuoteSection() {
-        // 2026-11-22 纵向位置修（问题 A）：引用区插在标题与正文之间（见 buildQuoteSection），
+        // 2026-11-22 纵向位置修（问题 A）：引用区插在图片块后面（见 buildQuoteSection），
         // 无引用时四行全藏、区高塌为 0，但 setCustomSpacing(12, after: quoteSection) 的 12pt
-        // 仍与标题后的间距叠加——UIStackView 里塌掉的 arranged 子项两侧间距照算，
-        // 正文被多顶下 12pt（134 实测：标题分隔线→正文首行 36pt，设计值约 24pt）。
+        // 仍照算——UIStackView 里塌掉的 arranged 子项两侧间距照算，下面的内容被多顶下 12pt
+        // （旧位置 134 实测：标题分隔线→正文首行 36pt，设计值约 24pt）。
         // 故区空时间距归 0、有内容时才留 12；defer 使四条返回路径都走同一口径。
         defer {
             let sectionVisible = !quoteCardWrap.isHidden || !quoteDeletedRow.isHidden || !quoteUnavailableRow.isHidden || !quoteFetchFailedRow.isHidden
             contentStack.setCustomSpacing(sectionVisible ? 12 : 0, after: quoteSection)
+            // 引用卡/状态行显隐改内容栈高（选引用、清引用、删引用、验权回包都走这里）：
+            // 正文高按旧 othersHeight 滞留，底部留空；defer 使四条返回路径都重算。
+            updateTextViewHeight()
         }
         let quote = isEditMode ? lockedQuote : selectedQuote
         // C6：编辑模式引用可改可删（有引用露共享卡 + ×，无引用则本区塌掉）；
@@ -2705,6 +2572,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     @objc private func didTapRemoveQuote() {
         if isEditMode {
             lockedQuote = nil
+            clearPendingCheckpointQuoteRetry()
         } else {
             selectedQuote = nil
             saveDraftNow()
@@ -2745,9 +2613,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }, onDeleteQuote: { [weak self] in
             guard let self = self else { return }
             self.lockedQuote = nil
+            self.clearPendingCheckpointQuoteRetry()
             self.refreshQuoteSection()
             self.updatePublishState()
-            self.showToast(message: "引用已移除，保存后生效")
         }, onKeepPrivate: {})
     }
 
@@ -2890,7 +2758,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 现在面板全幅展开，不再是内缩容器；tab 条仍为独立控制行、未动）。
         quotePanel.backgroundColor = BearyColors.surface1
         quotePanel.isHidden = true
-        contentStack.setCustomSpacing(16, after: quotePanel)
+        // 面板关着（isHidden）时 16pt 间距照算，底部多一段空；藏起来归 0（同 refreshQuoteSection 口径）。
+        contentStack.setCustomSpacing(quotePanel.isHidden ? 0 : 16, after: quotePanel)
     }
 
     /// 审计 R9 A：状态容器与行栈互斥撑高——任一状态可见时状态容器参与
@@ -2962,9 +2831,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quoteSheet = sheet
             quotePanelOpen = true
             quoteSheetTransitioning = true
-            present(sheet, animated: BearyMotion.animated(true)) { [weak self] in
-                self?.quoteSheetTransitioning = false
-            }
+            // 系统 sheet 呈现（见 BearySystemSheet）：present 即置 presentedViewController，
+            // 重入仍由上方守卫挡住，在途标记随即清掉。
+            BearySystemSheet.present(sheet, from: self)
+            quoteSheetTransitioning = false
             refreshQuoteTabs()
             loadQuotePanelTab()
         } else {
@@ -2981,6 +2851,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 return
             }
             quoteSheetTransitioning = true
+            if sheet.presentingViewController == nil {
+                // 系统手势／点外已关掉 sheet（didDismiss 已回编辑器）：无须再 dismiss，直接卸载。
+                uninstallQuotePanelFromSheet()
+                quoteSheet = nil
+                quoteSheetTransitioning = false
+                return
+            }
             sheet.dismiss(animated: BearyMotion.animated(true)) { [weak self] in
                 self?.uninstallQuotePanelFromSheet()
                 self?.quoteSheet = nil
@@ -3036,7 +2913,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanel.removeFromSuperview()
         quotePanel.isHidden = true
         contentStack.insertArrangedSubview(quotePanel, at: min(quotePanelStackIndex, contentStack.arrangedSubviews.count))
-        contentStack.setCustomSpacing(16, after: quotePanel)
+        // 面板已关回栈里仍是隐藏态，16pt 间距照算即底部多一段空；藏起来归 0（同 buildQuotePanel）。
+        contentStack.setCustomSpacing(quotePanel.isHidden ? 0 : 16, after: quotePanel)
     }
 
     /// C1：scrollView 底锚两档切换——选择条展开时锚选择条顶（条不盖住正文尾部）；
@@ -3045,7 +2923,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 2026-10-31：限时行已删，原“锚限时行顶”档并入工具栏档（心情/天气旧条带
     /// 已删、入口只走弹出框，不再为其预留行高；新建态滚动区因此下探 48pt）。
     private func updateScrollBottomAnchoring() {
-        let otherStripOpen = activeToolStrip != nil && activeToolStrip != .mood && activeToolStrip != .weather
+        let otherStripOpen = activeToolStrip != nil
         scrollBottomToPublishRowConstraint?.isActive = !otherStripOpen
         scrollBottomToStripConstraint?.isActive = otherStripOpen
         scrollBottomToViewConstraint?.isActive = false
@@ -3129,7 +3007,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 下方小字副标题「24 小时后自动私密」；切回其他档或编辑模式时恢复单行
     /// 「新日记」／「编辑日记」。顶栏高 60 不变，两行塞进现有高度。
     /// 调用点：refreshVisibilityButton 末尾（一切改旗标的路径都经它：
-    /// 菜单选档、草稿恢复、清空重开、胶囊确认／清除）。
+    /// 菜单选档、草稿恢复、清空重开）。
     private func refreshTopTitle() {
         titleLabel.text = !isEditMode && isEphemeral ? "限时日记" : (isEditMode ? "编辑日记" : "新日记")
         syncLimitedSubtitle()
@@ -3163,7 +3041,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             visibilityButton.accessibilityValue = published ? "公开" : "私密"
         }
         visibilityButton.menu = makeVisibilityMenu()
-        // 任务2：选档变化时准备发布行 chip 选中态与限时注行同步变。
+        // 任务2：选档变化时准备发布行 chip 选中态同步变。
         refreshPublishVisibilityRow()
         refreshTopTitle()
     }
@@ -3415,7 +3293,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     lockedSeparator.topAnchor.constraint(equalTo: lockedLabel.bottomAnchor, constant: 16),
                     lockedSeparator.leadingAnchor.constraint(equalTo: lockedButton.leadingAnchor, constant: 16),
                     lockedSeparator.trailingAnchor.constraint(equalTo: lockedButton.trailingAnchor, constant: -16),
-                    lockedSeparator.heightAnchor.constraint(equalToConstant: 2),
+                    lockedSeparator.heightAnchor.constraint(equalToConstant: 0.5),
                     lockedSeparator.bottomAnchor.constraint(equalTo: lockedButton.bottomAnchor),
                 ])
                 quotePanelRows.addArrangedSubview(lockedButton)
@@ -3493,7 +3371,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             dateLabel.textColor = BearyColors.gray
             dateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
             if let ms = entry.createdAt {
-                dateLabel.text = quoteRowDate(ms: ms)
+                dateLabel.text = quoteRowDate(ms: ms, timeZone: entry.diaryTimeZone)
             } else {
                 dateLabel.text = nil
             }
@@ -3675,7 +3553,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 2026-10-29 第 26 项：行间分隔线按详情页口径用 2pt（原 1pt）；
                 // leading/trailing 不动（行内内容：头像、名字、时间、正文一字不动）。
                 // 第二轮增量审计第 10 项：统一为 1pt（Li 点选）；只改高度，其余不动。
-                separator.heightAnchor.constraint(equalToConstant: 1),
+                // 2026-11-21 全站分隔线统一 0.5pt（Li 定），此行随之改 0.5。
+                separator.heightAnchor.constraint(equalToConstant: 0.5),
                 separator.bottomAnchor.constraint(equalTo: rowButton.bottomAnchor),
             ])
             rowButton.addTarget(self, action: #selector(didTapQuotePanelRow(_:)), for: .touchUpInside)
@@ -3837,6 +3716,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if currentSelectedQuoteId != nil && entryId == currentSelectedQuoteId {
             if isEditMode {
                 lockedQuote = nil
+                clearPendingCheckpointQuoteRetry()
             } else {
                 selectedQuote = nil
                 saveDraftNow()
@@ -3853,6 +3733,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let quote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, authorId: entry.authorId, isMine: entry.isMine, authorHandle: entry.authorHandle, images: entry.images ?? [], isPublic: BearyEphemeral.isEffectivelyPublic(entry), publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false, visibility: entry.visibility, ephemeralUntil: entry.ephemeralUntil)
         if isEditMode {
             lockedQuote = quote
+            clearPendingCheckpointQuoteRetry()
         } else {
             selectedQuote = quote
             // 网页选篇后 saveDraftQuiet 立即落盘，不走防抖。
@@ -3881,16 +3762,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return parts.joined(separator: "，")
     }
 
-    /// 面板行日期：7 天内相对时间、7 天外绝对时间（共用口径；小时不补零）。
-    private func quoteRowDate(ms: Int) -> String {
-        if let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: ms) {
+    /// 面板行日期：7 天内相对时间、7 天外“/”绝对日期（见 BearyVisibilityText.diaryTimeString）。
+    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；兜底沿用
+    /// 原来的“/”绝对日期（不带年时分）；时区按被引篇的日记时区显示。
+    private func quoteRowDate(ms: Int, timeZone: TimeZone? = nil) -> String {
+        if let relative = BearyVisibilityText.diaryTimeString(publishedAtMs: ms, timeZone: timeZone) {
             return relative
         }
-        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "M月d日 H:mm"
-        return fmt.string(from: date)
+        return BearyDiaryCardCell.feedTimeString(ms: ms, timeZone: timeZone)
     }
 
     // MARK: - 图片预览（网页 img-preview：无标题、无 + 块，空时整条隐藏）
@@ -3918,8 +3797,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             imageStackView.trailingAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.trailingAnchor),
         ])
         refreshImageStripVisibility()
-        contentStack.setCustomSpacing(4, after: imageScrollView)
-        // 原图确认待确认条：插在图片条下方，默认隐藏；有未确认项时显示
+        // 图片条无图时隐藏，写死的 4pt 间距照算；藏起来归 0（refreshImageStripVisibility 内已同步写，此处同口径）。
+        contentStack.setCustomSpacing(imageScrollView.isHidden ? 0 : 4, after: imageScrollView)
+        // 原图确认待确认条：浮在工具栏上方（2026-11-27 改，不再插图片条下方），默认隐藏；有未确认项时显示
         //「N 张照片待确认上传方式」，点按重开确认弹窗（见 refreshPendingUploadBar）。
         pendingUploadBar.backgroundColor = BearyColors.surface2
         pendingUploadBar.layer.cornerRadius = 12
@@ -3940,7 +3820,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         pendingUploadBarChevron.contentMode = .scaleAspectFit
         pendingUploadBarChevron.translatesAutoresizingMaskIntoConstraints = false
         pendingUploadBar.addSubview(pendingUploadBarChevron)
-        contentStack.addArrangedSubview(pendingUploadBar)
+        // 2026-11-27 浮条：待确认条不再进内容栈，改放浮层容器（见 transientBarContainer）。
+        transientBarStack.addArrangedSubview(pendingUploadBar)
         // 第 20 轮 A4：最小高约束（≥44）单独存引用——隐藏整条时停用它（同图片条先例）。
         let pendingUploadBarHeight = pendingUploadBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         pendingUploadBarHeightConstraint = pendingUploadBarHeight
@@ -3954,7 +3835,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             pendingUploadBarChevron.widthAnchor.constraint(equalToConstant: 14),
             pendingUploadBarChevron.heightAnchor.constraint(equalToConstant: 14),
         ])
-        contentStack.setCustomSpacing(4, after: pendingUploadBar)
     }
 
     /// 图片条显隐：有图才显示（网页 img-preview 空时 display:none）。
@@ -3962,6 +3842,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// arranged 子项仍被自身必需高撑住、与 stack 的隐藏折叠冲突（UISV-hiding）。
     private func refreshImageStripVisibility() {
         let shouldShow = !imageItems.isEmpty
+        // 藏起来的条不占间距（同 refreshQuoteSection 口径）：有图留 4，无图归 0；
+        // 放函数头、无条件写，动画中途的早返也不留旧间距。
+        contentStack.setCustomSpacing(shouldShow ? 4 : 0, after: imageScrollView)
         let heightActive = imageStripHeightConstraint?.isActive ?? false
         // 减弱动效开启时不做动画，直接落到终态。
         let duration = UIAccessibility.isReduceMotionEnabled ? 0 : BearyMotion.normal
@@ -3990,9 +3873,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
             })
         }
+        // 图片条显隐改内容栈高（96 高约束启停）：正文高滞留则底部留空；
+        // 插图/删图/撤销恢复都走本函数，一处重算全覆盖（insert/remove 两处另有直调）。
+        updateTextViewHeight()
     }
 
-    // MARK: - 工具栏（C1：左 [图片][定位][自定义][天气][@][引用][标签]、右 [字数圆环]；
+    // MARK: - 工具栏（C1：左 [图片][引用][定位][@][标签][表情]、右 [字数圆环]；
     // 草稿 pill 已随编辑器改版（2026-10-29）移到顶栏发布钮左边，不再在此处；
     // 容器贴键盘上方、不在内容栈里，见 buildLayout；本函数只布容器内部，
     // 分隔线 + 工具行约束不变，工具行左右仍与内容栈边距同宽 16）
@@ -4017,17 +3903,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageToolButton.tintColor = BearyColors.ink
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
         imageToolButton.bearyAddPressFeedback()
-        // 批 E：定位钮插在图片钮右边、自定义钮之前（左组顺序：图片 → 定位 → 自定义 → @ → 引用 → #；天气钮已删，天气自动显示在底部元信息行）。
+        // 左组顺序：图片 → 引用 → 定位 → @ → 标签 → 表情（2026-11-27 Li 定：工具栏按内容顺序排，表情无对应内容区、放最后；天气钮已删，天气自动显示在底部元信息行）。
         locationToolButton.setImage(BearyLocationIcon.image(pointSize: 24), for: .normal)
         locationToolButton.accessibilityLabel = "添加位置"
         locationToolButton.tintColor = BearyColors.ink
         locationToolButton.addTarget(self, action: #selector(didTapLocationTool), for: .touchUpInside)
         locationToolButton.bearyAddPressFeedback()
-        gifToolButton.setImage(BearyIconImages.image(named: "icon_image", pointSize: 24), for: .normal)
-        gifToolButton.accessibilityLabel = "自定义"
-        gifToolButton.tintColor = BearyColors.ink
-        gifToolButton.addTarget(self, action: #selector(didTapGIFTool), for: .touchUpInside)
-        gifToolButton.bearyAddPressFeedback()
+        emoteToolButton.setImage(BearyIconImages.image(named: "icon_mood", pointSize: 24), for: .normal)
+        emoteToolButton.accessibilityLabel = NSLocalizedString("emote_picker.composer_title", comment: "")
+        emoteToolButton.tintColor = BearyColors.ink
+        emoteToolButton.addTarget(self, action: #selector(didTapEmoteTool), for: .touchUpInside)
+        emoteToolButton.bearyAddPressFeedback()
         recipientToolButton.setImage(BearyIconImages.image(named: "icon_at", pointSize: 24), for: .normal)
         recipientToolButton.accessibilityLabel = "@ 谁"
         recipientToolButton.tintColor = BearyColors.ink
@@ -4046,7 +3932,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
-        for button in [imageToolButton, locationToolButton, gifToolButton, recipientToolButton, quoteToolButton, tagToolButton] {
+        for button in [imageToolButton, quoteToolButton, locationToolButton, recipientToolButton, tagToolButton, emoteToolButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -4092,13 +3978,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.addSubview(draftStatusBanner)
         toolbarContainer.addSubview(toolRow)
         toolRow.addArrangedSubview(imageToolButton)
-        toolRow.addArrangedSubview(locationToolButton)
-        toolRow.addArrangedSubview(gifToolButton)
-        toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(quoteToolButton)
+        toolRow.addArrangedSubview(locationToolButton)
+        toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(tagToolButton)
+        toolRow.addArrangedSubview(emoteToolButton)
         // v6-5：字数圆环并进左侧图标组——不再被 spacer 顶到右端；圆环本身不是按钮，
-        // 与标签钮之间无热区重叠问题，故标签→圆环用自定义间距 8（见下方 setCustomSpacing），
+        // 与表情钮之间无热区重叠问题，故表情→圆环用自定义间距 8（见下方 setCustomSpacing），
         // 不占 toolRow.spacing 的 20；数字已隐藏，只留圆环。
         // v6-6：正文区草稿保存文案组（draftStatusGroup，图标＋文案＋级别逻辑全在 buildStatusRow/
         // updateDraftStatusLabel）挪到工具栏右端（spacer 之后）；109：已保存态文案优先保全、
@@ -4119,11 +4005,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolRow.addArrangedSubview(draftStatusGroup)
         // 第 7 轮属实项 4：只有 6 段工具钮之间的间距参与热区重叠，正常为 20（toolRow.spacing）。
         // 其余 3 段不夹两个热区，可收窄以保窄屏装得下，spacer 本身吸 slack：
-        // 标签→圆环 8（圆环不可点），圆环→spacer 0、spacer→草稿组 0。
+        // 表情→圆环 8（圆环不可点），圆环→spacer 0、spacer→草稿组 0。
         // 按此算：320 宽容器 288 时只留对勾态、字数未超限总宽 = 7×24 + 6×20 + 8 + 18 + 15 = 329 > 288，
         // 间距自适应收到约 13.2 装下；字数超限（圆环组约 59）时只留对勾也约 322 > 288，
         // 草稿状态改走独立行（见 applyDraftStatusToolbarFit）。
-        toolRow.setCustomSpacing(8, after: tagToolButton)
+        toolRow.setCustomSpacing(8, after: emoteToolButton)
         toolRow.setCustomSpacing(0, after: charGroupStack)
         toolRow.setCustomSpacing(0, after: spacer)
         toolbarToolRow = toolRow
@@ -4143,7 +4029,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toolbarSeparator.topAnchor.constraint(equalTo: toolbarContainer.topAnchor),
             toolbarSeparator.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             toolbarSeparator.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            toolbarSeparator.heightAnchor.constraint(equalToConstant: 1),
+            toolbarSeparator.heightAnchor.constraint(equalToConstant: 0.5),
             draftStatusBanner.topAnchor.constraint(equalTo: toolbarSeparator.bottomAnchor, constant: 8),
             draftStatusBanner.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             draftStatusBanner.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
@@ -4206,6 +4092,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard !selectedTags.isEmpty else {
             tagsScrollView.isHidden = true
             contentStack.setCustomSpacing(0, after: tagsScrollView)
+            // 标签行塌掉改内容栈高，正文高滞留则底部留空（同 refreshQuoteSection）。
+            updateTextViewHeight()
+            updatePreferredContentSize()
             return
         }
         for (index, tag) in selectedTags.enumerated() {
@@ -4228,7 +4117,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             tagsStackView.addArrangedSubview(chip)
         }
         tagsScrollView.isHidden = false
-        contentStack.setCustomSpacing(8, after: tagsScrollView)
+        // 标签行现为内容栈最末一行（2026-11-27 @ 与标签行挪到底部），
+        // 有标签时也不留 after 间距，不在滚动区底留尾巴空白。
+        contentStack.setCustomSpacing(0, after: tagsScrollView)
+        // 标签行出现改内容栈高，正文高滞留则底部留空（同 refreshQuoteSection）。
+        updateTextViewHeight()
+        updatePreferredContentSize()
     }
 
     /// 标签 chip 点按：按下标移除该标签（标题含 × 后缀，不从标题反解析原文）。
@@ -4247,9 +4141,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             showToast(message: "请先关闭引用面板")
             return
         }
-        let oldStrip = activeToolStrip
         activeToolStrip = (activeToolStrip == strip) ? nil : strip
-        DiagFile.mark("weather-diag setToolStrip \(String(describing: oldStrip)) -> \(String(describing: activeToolStrip))")
         refreshToolStrip()
     }
 
@@ -4470,7 +4362,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let locationName: String?
         if let location = selectedLocation, !location.isEmpty {
             hasLocation = true
-            locationName = BearyLocationDisplay.dedupedAddressName(location.name ?? location.district ?? "")
+            locationName = BearyLocationDisplay.shortenedAddressName(location.name ?? location.district ?? "", district: location.district)
         } else {
             hasLocation = false
             locationName = nil
@@ -4489,6 +4381,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         metaRowStack.isHidden = locationMetaButton.isHidden && weatherChipButton.isHidden
         updatePreferredContentSize()
+        // 元信息行在内容栈最底部、其高度计入 updateTextViewHeight 的 othersHeight：
+        // 定位选定/清除、天气自动填回都会改它（显隐或 chip 高），却只调本函数、
+        // 从不重算正文高，正文高滞留旧值、编辑器底部多一段死空白（定位后打字即见）。
+        // 在此统一重算（恢复/重置流程已有各自的重算，本处再算一次只走 0.5pt 防抖门限）。
+        updateTextViewHeight()
         guard animated, !UIAccessibility.isReduceMotionEnabled, view.window != nil,
               !weatherChipButton.isHidden, hadLocation != hasLocation,
               chipFrameBefore.width > 0 else {
@@ -4589,15 +4486,86 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         fetchWeatherWith(latitude: latitude, longitude: longitude, generation: generation)
     }
 
-    /// 弹出自定义图片底部选择器（2026-11-18：心情组已删，只剩“自定义”组）：
+    /// 表情钮（统一表情入口）：内置 40 只＋自定义组，点选即插正文光标处；
+    /// 回应侧的 BearyEmotePickerSheet 不动（本入口只开 composer 模式）。
     /// 引用面板打开时不弹出。
-    private func presentGIFPickerSheet() {
+    private func presentEmotePickerSheet() {
         if quotePanelOpen { return }
-        gifPickerSheet = BearyMoodPickerSheet.show(from: self, gifKeys: BearyGIFLibrary.cachedKeys()) { [weak self] key in
+        let sheet = BearyEmotePickerSheetViewController()
+        sheet.mode = .composer
+        sheet.onPick = { [weak self] key in
+            self?.didSelectMoodEmote(key)
+        }
+        sheet.onPickCustomGIF = { [weak self] key in
             self?.didSelectGIF(key)
-        } onUploadGIF: { [weak self] in
+        }
+        sheet.onUploadCustomGIF = { [weak self] in
             self?.didTapUploadGIF()
         }
+        emotePickerSheet = sheet
+        BearySystemSheet.present(sheet, from: self)
+    }
+
+    /// 内置表情点选：按 [mood:<key>] 记号插进光标处（与手打 [mood:xxx] 同口径；
+    /// 8 只物件 key 已进记号集，见 BearyText.bearMoodKeys）。
+    private func didSelectMoodEmote(_ key: String) {
+        guard BearyText.bearMoodKeys.contains(key) else { return }
+        insertMoodAttachmentAtCursor(key: key)
+    }
+
+    /// 把一个内置表情附件插进指定框当前选区：与 insertGIFAttachmentAtCursor
+    /// 同款焦点口径（获焦插该框、两框都没焦点按上次焦点框兜底；选择器正开着
+    /// 时不抢焦点，表情落在可见的正文区）。
+    private func insertMoodAttachmentAtCursor(key: String) {
+        let dark = traitCollection.userInterfaceStyle == .dark
+        if headlineField.isFirstResponder || lastFocusedComposerInput == .headline {
+            if !isEmotePickerOpen, !headlineField.isFirstResponder {
+                headlineField.becomeFirstResponder()
+                headlineField.selectedRange = NSRange(location: headlineField.attributedText.length, length: 0)
+            }
+            if headlineField.markedTextRange != nil {
+                headlineField.unmarkText()
+            }
+            insertMoodAttachment(into: headlineField, key: key, font: headlineFont, dark: dark)
+            headlineDidChange()
+            return
+        }
+        if textView.isFirstResponder || lastFocusedComposerInput == .body {
+            if !isEmotePickerOpen, !textView.isFirstResponder {
+                textView.becomeFirstResponder()
+            }
+            if textView.markedTextRange != nil {
+                textView.unmarkText()
+            }
+            insertMoodAttachment(into: textView, key: key, font: bodyFont, dark: dark)
+            textViewDidChange(textView)
+            return
+        }
+        if !isEmotePickerOpen {
+            textView.becomeFirstResponder()
+        }
+        textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)
+        insertMoodAttachment(into: textView, key: key, font: bodyFont, dark: dark)
+        textViewDidChange(textView)
+    }
+
+    /// 把一个内置表情附件插进指定 UITextView 的当前选区（有选区则替换选区），
+    /// 插完光标落在图后 1 格，并把 typingAttributes 复位回该框的正文字体
+    /// （与 insertGIFAttachment 同款，免得图后打字跟了附件字体）。
+    private func insertMoodAttachment(into textView: UITextView, key: String, font: UIFont, dark: Bool) {
+        guard let attachment = BearyText.inlineAttachment(for: key, font: font, dark: dark) else { return }
+        let range = textView.selectedRange
+        let mutable = NSMutableAttributedString(attributedString: textView.attributedText ?? NSAttributedString())
+        let safeLocation = min(range.location, mutable.length)
+        let safeLength = min(range.length, mutable.length - safeLocation)
+        mutable.replaceCharacters(in: NSRange(location: safeLocation, length: safeLength), with: attachment)
+        textView.attributedText = mutable
+        if textView === headlineField {
+            textView.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
+        } else {
+            textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
+        }
+        textView.selectedRange = NSRange(location: safeLocation + 1, length: 0)
     }
 
     /// 天气动态图标覆盖层（BearyEmoteView，底层静态图作 fallback；与落点行同款）。
@@ -4674,6 +4642,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshMentionTopRow()
         let anyChipVisible = !recipientChipButton.isHidden || !selectedTags.isEmpty
         contentStack.setCustomSpacing(anyChipVisible ? 8 : 0, after: selectedChipsRow)
+        // @ chip 行显隐改内容栈高，正文高滞留则底部留空（同 refreshQuoteSection）。
+        updateTextViewHeight()
     }
 
     private func buildSelectedChipsRow() {
@@ -4750,7 +4720,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageUndoBar.translatesAutoresizingMaskIntoConstraints = false
         imageUndoLabel.translatesAutoresizingMaskIntoConstraints = false
         imageUndoButton.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(imageUndoBar)
+        // 2026-11-27 浮条：撤销条不再进内容栈，改放浮层容器（见 transientBarContainer）。
+        transientBarStack.addArrangedSubview(imageUndoBar)
         imageUndoBar.addSubview(imageUndoLabel)
         imageUndoBar.addSubview(imageUndoButton)
         NSLayoutConstraint.activate([
@@ -4762,11 +4733,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             imageUndoButton.leadingAnchor.constraint(greaterThanOrEqualTo: imageUndoLabel.trailingAnchor, constant: 8),
         ])
         imageUndoBar.isHidden = true
-        contentStack.setCustomSpacing(0, after: imageUndoBar)
     }
 
-    @objc private func didTapGIFTool() {
-        presentGIFPickerSheet()
+    @objc private func didTapEmoteTool() {
+        presentEmotePickerSheet()
     }
 
     /// 天气取数（GPS 链路与 IP 回落链路共用）：成功填类型与气温、回落成功提示一句；
@@ -4808,7 +4778,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 任务2：准备发布行搭建——工具栏正上方固定行，四档 chip 直接平铺
     /// （标签 chip 同款：13 regular、圆角 999、内边距 7/12、高 30，点按热区
-    /// 44 靠 BearyHit44Button）；限时后果注行只在限时态出现，发布前即看得见。
+    /// 44 靠 BearyHit44Button）。
     /// 顶栏可见性菜单钮保留（同旗标、同步刷新），本行是“准备发布”态的直显入口。
     private func buildPublishVisibilityRow() {
         publishVisibilityRow.translatesAutoresizingMaskIntoConstraints = false
@@ -4822,14 +4792,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishVisibilityChipRow.axis = .horizontal
         publishVisibilityChipRow.spacing = 8
         publishVisibilityChipRow.alignment = .center
-        publishVisibilityNoteLabel.translatesAutoresizingMaskIntoConstraints = false
-        publishVisibilityNoteLabel.font = BearyDynamicType.captionFont()
-        publishVisibilityNoteLabel.adjustsFontForContentSizeCategory = true
-        publishVisibilityNoteLabel.textColor = BearyColors.gray
-        publishVisibilityNoteLabel.text = "公开 24 小时后自动转私密"
-        publishVisibilityNoteLabel.numberOfLines = 1
-        publishVisibilityNoteLabel.isHidden = true
-        publishVisibilityNoteLabel.accessibilityLabel = "限时：公开 24 小时后自动转私密"
         let tiers: [(title: String, choice: VisibilityChoice)] = [
             ("私密", .privateTier),
             ("仅好友", .friendsTier),
@@ -4854,10 +4816,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             publishVisibilityChipRow.addArrangedSubview(chip)
         }
         publishVisibilityRow.addArrangedSubview(publishVisibilityChipRow)
-        publishVisibilityRow.addArrangedSubview(publishVisibilityNoteLabel)
         NSLayoutConstraint.activate([
             publishVisibilityChipRow.heightAnchor.constraint(equalToConstant: 30),
-            publishVisibilityNoteLabel.heightAnchor.constraint(equalToConstant: 16),
         ])
         refreshPublishVisibilityRow()
     }
@@ -4870,7 +4830,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 任务2：准备发布行显隐与选中态——只在新建态、正文非空（可发布）、
     /// 引用面板未开时出现；编辑态不改可见性、空正文无可发布内容，均不显。
     /// 选中 chip 走 surface2 底＋墨字（标签 chip 同款选中态），其余灰字透明底；
-    /// 限时态注行常驻显示后果，发布前即看得见。行高进 sheet 高
+    /// 行高进 sheet 高
     /// （updatePreferredContentSize 的非面板分支另加本行高）；面板打开时
     /// 高度走视口档，不在此更新。
     private func refreshPublishVisibilityRow() {
@@ -4883,10 +4843,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             chip.setTitleColor(selected ? BearyColors.ink : BearyColors.gray, for: .normal)
             chip.accessibilityValue = selected ? "已选" : nil
         }
-        publishVisibilityNoteLabel.isHidden = !isEphemeral
         let wasHidden = publishVisibilityRow.isHidden
         publishVisibilityRow.isHidden = !visible
-        publishVisibilityRowHeightConstraint?.constant = !visible ? 0 : (isEphemeral ? Self.publishVisibilityRowHeight + Self.publishVisibilityRowNoteHeight : Self.publishVisibilityRowHeight)
+        publishVisibilityRowHeightConstraint?.constant = !visible ? 0 : Self.publishVisibilityRowHeight
         if wasHidden != publishVisibilityRow.isHidden, !quotePanelOpen {
             updatePreferredContentSize()
         }
@@ -4918,9 +4877,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 状态行（编辑倒计时 + 草稿状态；字数圆环已移入工具栏右端）
 
     private func buildStatusRow() {
-        editTimerLabel.font = BearyDynamicType.numberFont()
-        editTimerLabel.textColor = BearyColors.gray
-        editTimerLabel.isHidden = true
         // P2-12：工具栏内联状态行同缺陷一并改——captionFont（12 regular scaled，
         // 规范 §11）＋跟随系统字号，宽度不足时换行、不截尾。
         draftStatusLabel.font = BearyDynamicType.captionFont()
@@ -4952,7 +4908,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         statusRow.alignment = .center
         statusRow.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(statusRow)
-        statusRow.addArrangedSubview(editTimerLabel)
         statusRow.addArrangedSubview(statusRowSpacer)
         // v6-6：草稿保存文案组已挪到工具栏右端（buildToolbarRow），不再进状态行；
         // 状态行只留编辑倒计时。组内图标／文案／级别逻辑（updateDraftStatusLabel）一字不动。
@@ -4988,9 +4943,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         charRingView.layer.addSublayer(progress)
         charTrackLayer = track
         charProgressLayer = progress
-        // 窄屏 5 项之 4：建完即按实际内容定显隐与间距——新建模式倒计时隐藏，
-        // 整行直接隐藏＋间距清零，不留 18＋8＝26pt 空白；编辑模式由 startEditTimer
-        // 经本函数恢复（见下）。
+        // 窄屏 5 项之 4：建完即按实际内容定显隐与间距——无实际内容时
+        // 整行直接隐藏＋间距清零，不留 18＋8＝26pt 空白；编辑模式下调用本函数恢复显隐。
         refreshStatusRowVisibility()
     }
 
@@ -5107,7 +5061,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// D4：工具行间距自适应。fixedWidth 是工具行里除 6 段工具间距外的固定总宽
-    /// （7×24 图标 + 标签→圆环 8 + 圆环组 + 尾部草稿组）；containerWidth 是容器宽。
+    /// （7×24 图标 + 表情→圆环 8 + 圆环组 + 尾部草稿组）；containerWidth 是容器宽。
     /// 20 间距装得下就返回 20；装不下时收窄到刚好装下，下限 12——320 宽、字数超限
     /// （圆环组约 59）只留对勾态时固定部分约 250，(288−250)/6 ≈ 6.3 < 12，装不下，
     /// 走独立行兜底（见 applyDraftStatusToolbarFit）。
@@ -5133,7 +5087,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func setToolbarToolRowSpacing(_ spacing: CGFloat, in toolRow: UIStackView) {
         if toolRow.spacing != spacing { toolRow.spacing = spacing }
         let cap = max(0, spacing / 2)
-        for button in [imageToolButton, locationToolButton, gifToolButton, recipientToolButton, quoteToolButton] {
+        // 热区 cap 只给除末钮外的 5 个钮：末钮右侧是字数圆环（不可点），左侧邻钮已 cap，两边都不叠。
+        for button in [imageToolButton, quoteToolButton, locationToolButton, recipientToolButton, tagToolButton] {
             button.maxSideExpansion = cap
         }
     }
@@ -5141,7 +5096,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 109：草稿状态在工具栏里的宽度适配（只动 lvl2 文案显隐，不动图标与圆环）。
     /// D4：工具间距正常 20；仅当 20 间距下装不下容器时自适应收窄（下限 12），
     /// 字数环本身永不隐藏；窄屏仍由文案显隐兜底。
-    /// 390 宽：容器 358，7×24 图标 + 6 段工具间距 20 + 标签→圆环 8 + 圆环 18
+    /// 390 宽：容器 358，7×24 图标 + 6 段工具间距 20 + 表情→圆环 8 + 圆环 18
     /// + 状态组（对勾 15 + gap 5 + 文案约 39）= 约 373，20 间距下装不下，
     /// 间距自适应收到约 17.5，完整排下「✓ 已保存」。
     /// 320 宽：容器 288，只留对勾态、字数未超限 = 7×24 + 6×12 + 8 + 18 + 15 = 281 ≤ 288，
@@ -5208,7 +5163,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // level 2：文案显隐与分流按最小间距 12 判定——12 下装得下文案就显文案、
         // 间距自适应收窄兜底；只留对勾在 12 下仍装不下时，草稿状态改走独立行。
         let labelWidth = draftStatusLabel.intrinsicContentSize.width
-        // 只留对勾态在最小间距下的定宽：7×24 图标 + 6 段工具间距 12 + 标签→圆环 8
+        // 只留对勾态在最小间距下的定宽：7×24 图标 + 6 段工具间距 12 + 表情→圆环 8
         // + 圆环组 + 对勾 15；spacer 两侧自定义间距为 0、spacer 本身吸 slack，不进算式。
         let withoutLabel: CGFloat = 7 * 24 + 6 * 12 + 8 + charGroupWidth + 15
         if width >= withoutLabel + 5 + labelWidth {
@@ -5234,17 +5189,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             setDraftStatusBannerVisible(true)
             setToolbarToolRowSpacing(adaptiveToolbarToolRowSpacing(fixedWidth: 7 * 24 + 8 + charGroupWidth, containerWidth: width), in: toolRow)
         }
-    }
-
-    // MARK: - 编辑倒计时（已取消：冲突清单第 4 条取消 15 分钟锁，编辑永久可改。
-    // 本函数只剩隐藏倒计时 label + 刷新状态行显隐（调用点不动）；计时器不再启动。
-
-    private func startEditTimer() {
-        editTimer?.invalidate()
-        editTimer = nil
-        editTimerLabel.isHidden = true
-        // 窄屏 5 项之 4：倒计时显隐即状态行显隐，编辑模式这里把整行藏掉。
-        refreshStatusRowVisibility()
     }
 
 
@@ -5299,10 +5243,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 正文仅表情放大（2026-11-18 Li 定）
 
-    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情字符、个数 1...3。
-    /// 空白（空格/换行）不计；[mood:]/[gif:] 记号是文字，不算表情。
+    /// 正文是否“仅含 ≤3 个表情”：除空白外只剩表情、个数 1...3。
+    /// 空白（空格/换行）不计；[mood:]/[gif:] 记号各算一个表情（2026-11-22
+    /// Li 定）：先把记号换成单个表情占位再数，正则与 inlineAttributedText
+    /// 的记号正则相同。口径与 BearyText 的同名实现一字相同（两处在表情
+    /// 放大支里同步改）；#1964 合入后两处统一到 BearyText，删本私有副本。
     private static func isEmojiOnlyBodyText(_ plain: String) -> Bool {
-        let meaningful = plain.filter { !$0.isWhitespace }
+        let replaced: String
+        if let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]|\\[gif:([a-z0-9]+)\\]", options: []) {
+            let ns = plain as NSString
+            replaced = regex.stringByReplacingMatches(in: plain, options: [], range: NSRange(location: 0, length: ns.length), withTemplate: "🙂")
+        } else {
+            replaced = plain
+        }
+        let meaningful = replaced.filter { !$0.isWhitespace }
         guard (1...3).contains(meaningful.count) else { return false }
         return meaningful.allSatisfy { isEmojiCluster($0) }
     }
@@ -5323,13 +5277,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 正文有无任何附件（内联图/熊脸/粘贴图）：有附件即不是纯表情。
+    /// 正文有无“无记号附件”（粘贴进来的图片）：[mood:]/[gif:] 记号转成的
+    /// 附件不算在内——它们是表情；放大门只防粘贴图误触发（#2148 后记号
+    /// 算表情，门须同口径，否则记号正文永远进不了放大态）。
     /// 注意 inlinePlainText 会把无记号的粘贴图直接丢掉，故不能只凭纯文本判断。
-    private static func bodyHasAttachment(_ attributed: NSAttributedString?) -> Bool {
+    private static func bodyHasNonTokenAttachment(_ attributed: NSAttributedString?) -> Bool {
         guard let attributed = attributed, attributed.length > 0 else { return false }
         var found = false
-        attributed.enumerateAttribute(.attachment, in: NSRange(location: 0, length: attributed.length), options: []) { value, _, stop in
-            if value != nil {
+        attributed.enumerateAttributes(in: NSRange(location: 0, length: attributed.length), options: []) { attrs, _, stop in
+            if attrs[.attachment] != nil
+                && attrs[BearyText.inlineMoodKeyAttribute] == nil
+                && attrs[BearyText.inlineGifKeyAttribute] == nil {
                 found = true
                 stop.pointee = true
             }
@@ -5338,17 +5296,43 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 按当前正文重算“仅表情放大”态并落字体：态变了才动（不打断输入）；
-    /// 组词中不切，落字后下一轮 textViewDidChange 补上。
+    /// 已是放大态时新插的记号附件按需重建尺寸；组词中不切，落字后下一轮
+    /// textViewDidChange 补上。
     private func updateBodyEmojiOnlyFont() {
         guard textView.markedTextRange == nil else { return }
-        let only = Self.isEmojiOnlyBodyText(committedContent()) && !Self.bodyHasAttachment(textView.attributedText)
-        guard only != bodyEmojiOnlyEnlarged else { return }
-        bodyEmojiOnlyEnlarged = only
+        let only = Self.isEmojiOnlyBodyText(committedContent()) && !Self.bodyHasNonTokenAttachment(textView.attributedText)
+        if only != bodyEmojiOnlyEnlarged {
+            bodyEmojiOnlyEnlarged = only
+            applyEffectiveBodyFont()
+        } else if only {
+            // 已是放大态：新插的记号附件按基础字号建，须按生效字号重建尺寸。
+            rebuildTokenAttachmentSizesIfNeeded()
+        }
+    }
+
+    /// 已是放大态时：新插的记号附件按基础字号建，须按生效字号重建尺寸；
+    /// 附件自带的 .font 与生效字号一致时不动，免得每次敲字都重建附件。
+    private func rebuildTokenAttachmentSizesIfNeeded() {
+        let font = effectiveBodyFont
+        let current = textView.attributedText ?? NSAttributedString()
+        guard current.length > 0 else { return }
+        var stale = false
+        current.enumerateAttributes(in: NSRange(location: 0, length: current.length), options: []) { attrs, _, stop in
+            if attrs[.attachment] != nil,
+               (attrs[BearyText.inlineMoodKeyAttribute] != nil || attrs[BearyText.inlineGifKeyAttribute] != nil),
+               let runFont = attrs[.font] as? UIFont, runFont.pointSize != font.pointSize {
+                stale = true
+                stop.pointee = true
+            }
+        }
+        guard stale else { return }
         applyEffectiveBodyFont()
     }
 
-    /// 把当前生效字号落到正文：全文文字格换字体、附件格不动；typingAttributes 同步；
-    /// 字符偏移不变，光标与选区原地保留（程序化重建不触发 textViewDidChange，不重入）。
+    /// 把当前生效字号落到正文：全文文字格换字体、记号附件按生效字号重建
+    /// 尺寸（放大态 60pt／回落 30pt）、无记号附件原样保留；typingAttributes
+    /// 同步；字符偏移不变，光标与选区原地保留（程序化重建不触发
+    /// textViewDidChange，不重入）。
     private func applyEffectiveBodyFont() {
         let font = effectiveBodyFont
         let current = textView.attributedText ?? NSAttributedString()
@@ -5356,9 +5340,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if current.length > 0 {
             let styled = NSMutableAttributedString()
             let fullString = current.string as NSString
+            let dark = traitCollection.userInterfaceStyle == .dark
             current.enumerateAttributes(in: NSRange(location: 0, length: current.length), options: []) { attrs, range, _ in
                 if attrs[.attachment] != nil {
-                    styled.append(current.attributedSubstring(from: range))
+                    // 记号附件按生效字号重建（心情／GIF 同款）；重建失败
+                    // （未知 key）或无记号附件（粘贴图）原样保留。
+                    if let key = attrs[BearyText.inlineMoodKeyAttribute] as? String,
+                       let rebuilt = BearyText.inlineAttachment(for: key, font: font, dark: dark) {
+                        styled.append(rebuilt)
+                    } else if let rand = attrs[BearyText.inlineGifKeyAttribute] as? String,
+                              let rebuilt = BearyText.inlineGIFAttachment(randKey: rand, font: font, firstFrame: gifFirstFrames[rand]) {
+                        styled.append(rebuilt)
+                    } else {
+                        styled.append(current.attributedSubstring(from: range))
+                    }
                 } else {
                     var newAttrs = attrs
                     newAttrs[.font] = font
@@ -5383,7 +5378,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func setBodyAttributedText(_ plain: String?) {
-        // 回填也按仅表情口径取字号：纯表情草稿恢复后仍放大；含记号的正文是文字，走正常字号。
+        // 回填也按仅表情口径取字号：纯表情草稿恢复后仍放大；仅含 ≤3 个表情（含 [mood:]/[gif:] 记号）的正文同样放大。
         let text = plain ?? ""
         bodyEmojiOnlyEnlarged = Self.isEmojiOnlyBodyText(text)
         let font = effectiveBodyFont
@@ -5585,12 +5580,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteToolButton.isEnabled = !frozen
         recipientChipButton.isEnabled = !frozen
         recipientClearButton.isEnabled = !frozen
-        // 例外：通知复选框编辑态本就禁用（refreshRecipientRow 的编辑锁定），
-        // 冻结恢复时不得误解开；新建态才随冻结恢复。
-        notifyCheckButton.isEnabled = !frozen && !isEditMode
         quoteCardRemoveButton.isEnabled = !frozen
         quoteDeletedRemoveButton.isEnabled = !frozen
-        gifToolButton.isEnabled = !frozen
+        emoteToolButton.isEnabled = !frozen
         recipientToolButton.isEnabled = !frozen
         // 底部元信息行定位钮同理补齐（其 handler 本就有 isPublishing 第二道守卫，此处是第一道禁用）。
         headlineClearButton.isEnabled = !frozen
@@ -5653,16 +5645,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// “自定义”组首格 ＋ 添加格：一次只传一张；9 张满（照片＋已插自定义图合计）或
-    /// 上传中时 toast 拦截；自定义 sheet 是已弹出的 VC，等它退场完再弹相册，
-    /// 否则 present 会撞上退场动画。相册不过滤 GIF（.images 全选，见 handleGIFPickerResults）。
+    /// “自定义”组首格 ＋ 添加格：一次只传一张；上传中时 toast 拦截；自定义
+    /// sheet 是已弹出的 VC，等它退场完再弹相册，否则 present 会撞上退场动画。
+    /// 表情不占 9 张照片名额（2026-11-20 Li 定），这里不查 9 张上限。
+    /// 相册不过滤 GIF（.images 全选，见 handleGIFPickerResults）。
     private func didTapUploadGIF() {
         if gifUploadInFlight {
             showToast(message: "图片正在上传")
-            return
-        }
-        if imageItems.count + referencedGifKeys().count >= Self.maxImages {
-            showToast(message: "最多 9 张图片")
             return
         }
         let presentPicker = { [weak self] in
@@ -5677,7 +5666,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             picker.delegate = self
             self.present(picker, animated: true)
         }
-        if let sheet = gifPickerSheet {
+        if let sheet = emotePickerSheet {
             sheet.dismiss(animated: BearyMotion.animated(true), completion: presentPicker)
         } else {
             presentPicker()
@@ -5686,9 +5675,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// PHPicker 回调的自定义心情图片分流（picker 代理开头先判 gifPickerActive）：
     /// picker 自身先 dismiss（自定义 sheet 已在弹相册前退场）；空选/取消直接复位；
-    /// 只取第 1 个结果。GIF 走原始文件数据不转码（1MB 上限，见 finishGIFUpload）；
+    /// 只取第 1 个结果。GIF 上传前逐帧缩到表情尺寸（见 finishGIFUpload）；
     /// 其余图片取注册类型里第一个图片类型标识读原始文件（fetchOriginalFile 同款
-    /// 取法），解成 UIImage 后走照片口径（见 finishImageUpload）。
+    /// 取法），解成 UIImage 后走表情尺寸上传（见 finishImageUpload）。
     private func handleGIFPickerResults(picker: PHPickerViewController, results: [PHPickerResult]) {
         picker.dismiss(animated: BearyMotion.animated(true))
         defer { gifPickerActive = false }
@@ -5729,12 +5718,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// GIF 校验＋上传：原始字节直接传 data:image/gif;base64（不走 JPEG 转码）；
-    /// 本地先验 magic/宽高/帧数/1MB（超了直接 toast，不发请求）；服务端 413
+    /// GIF 校验＋上传：上传前逐帧缩放到表情尺寸（最长边 240px，动画保留，
+    /// 见 BearyGIF.resizedEmojiGIFData），不再原样传 1000px／1MB；
+    /// 本地先验 magic/宽高/帧数/1MB（超了直接 toast，不发请求）；缩放后
+    /// 仍超 1MB 时回落原数据（长动图极少数情况，不拒传）；服务端 413
     /// 'gif too large' 同样 toast「GIF 不能超过 1MB」；上传成功后记 key、
-    /// 插进光标处；库满时服务端仍回 key，GIF 照插、另 toast 提醒删库。
+    /// 插进光标处；库满时服务端仍回 key，GIF 照插、另 toast 提醒删库；
+    /// 去重命中（服务端 duplicate）时 toast「已经添加过了」，照插旧 key。
     /// 线程：1MB 字节上限先在主线程预检（只读 count，O(1)）；GIF 结构
-    /// 遍历、首帧解码、缩略图、两次 Base64 编码全在 imagePrepQueue（照片
+    /// 遍历、逐帧缩放、首帧解码、缩略图、两次 Base64 编码全在 imagePrepQueue（照片
     /// 预处理同款后台队列）上做，主线程只更新界面。旧实现在主线程先遍历
     /// GIF 结构再查 1MB、随后首帧解码＋缩略图＋编码，1MB GIF 会卡主线程一拍。
     private func finishGIFUpload(data: Data) {
@@ -5750,6 +5742,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         gifUploadInFlight = true
+        // #49：空白未落盘篇 currentDraftId 为 nil 时先落一个新 id 再记发起篇，
+        // 否则回包守卫无 id 可比；新 id 只作本次上传的身份，不落盘。
+        if currentDraftId == nil {
+            currentDraftId = BearyDraftStore.newDraftId()
+            clearedCurrentDraftId = nil
+        }
         gifUploadDraftId = currentDraftId
         imagePrepQueue.async { [weak self] in
             guard BearyGIF.isGIFData(data), let info = BearyGIF.info(data), info.w > 0, info.h > 0, info.frames > 0 else {
@@ -5768,7 +5766,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 return
             }
-            guard let firstFrame = BearyGIF.firstFrameImage(data) else {
+            // 上传前压成小表情：逐帧缩放到最长边 240px（动画保留）；
+            // 缩放失败或压完仍超 1MB 时回落原数据（不拒传、不只传首帧）。
+            let resized = BearyGIF.resizedEmojiGIFData(data)
+            let payload: (data: Data, w: Int, h: Int)
+            if let r = resized, r.data.count <= BearyGIF.maxBytes {
+                payload = r
+            } else {
+                payload = (data, info.w, info.h)
+            }
+            guard let firstFrame = BearyGIF.firstFrameImage(payload.data) else {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     self.gifUploadInFlight = false
@@ -5777,14 +5784,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 return
             }
             let thumbData = BearyImagePrep.thumbData(firstFrame)
-            let dataUrl = "data:image/gif;base64,\(data.base64EncodedString())"
+            // 去重指纹：对压完后的文件算 SHA-256，服务端命中旧 key 时直接
+            // 回旧 key + duplicate，不再存一份（只表情路传，照片不传）。
+            let fingerprint = BearyGIF.sha256Hex(payload.data)
+            let dataUrl = "data:image/gif;base64,\(payload.data.base64EncodedString())"
             let thumbDataUrl = thumbData.map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: info.w, height: info.h, thumbDataUrl: thumbDataUrl) { [weak self] result in
+                BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: payload.w, height: payload.h, thumbDataUrl: thumbDataUrl, fingerprint: fingerprint) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.gifUploadInFlight = false
+                        // #49：先拍下本次发起篇 id 再清掉——清完再比恒为 nil，
+                        // 旧写法下守卫恒真、切篇后回包照插不误。
+                        let startedDraftId = self.gifUploadDraftId
                         self.gifUploadDraftId = nil
                         switch result {
                         case .success(let response):
@@ -5795,10 +5808,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             if response.libraryFull == true {
                                 self.showToast(message: "表情库满了，先删掉一些再添加")
                             }
+                            if response.duplicate == true {
+                                self.showToast(message: NSLocalizedString("composer.custom_emoji.already_added", comment: ""))
+                            }
                             self.gifFirstFrames[rand] = firstFrame
                             // #49：回包只认发起那篇——切篇后回包仍进库（服务端 GIF
                             // 上传自动进库）与首帧缓存，只不插进当前篇正文。
-                            if self.gifUploadDraftId == nil || self.currentDraftId == self.gifUploadDraftId {
+                            // 发起时已落 id，startedDraftId 恒非空；nil 只作防御，不插。
+                            if let startedDraftId = startedDraftId, self.currentDraftId == startedDraftId {
                                 self.insertGIFAttachmentAtCursor(key: key, randKey: rand)
                             }
                         case .failure(let error):
@@ -5814,22 +5831,30 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 常规图片上传（自定义心情的非 GIF 图）：照片口径——JPEG 转码
-    /// （最长边 1600、q0.92，与日记图片上传同款）、data:image/jpeg;base64、
-    /// 5MB 上限（服务端非 GIF 上限同值）；成功后显式调库接口进库（服务端
+    /// 常规图片上传（自定义心情的非 GIF 图）：表情尺寸——JPEG 转码
+    /// （最长边 240px、q0.85，见 BearyGIF.emojiMaxSide，不再用照片口径
+    /// 1600／0.92）、data:image/jpeg;base64、5MB 上限（服务端非 GIF
+    /// 上限同值；压完几乎不可能超）；成功后显式调库接口进库（服务端
     /// 只对 GIF 上传自动进库，部署前 add 会 400、静默忽略、不阻断插入）；
-    /// 失败 toast 用图片口径。线程口径与 finishGIFUpload 同款（编码在
-    /// imagePrepQueue，主线程只更新界面）。
+    /// 去重命中（服务端 duplicate）时 toast「已经添加过了」、不再调 add，
+    /// 照插旧 key。失败 toast 用图片口径。线程口径与 finishGIFUpload
+    /// 同款（编码在 imagePrepQueue，主线程只更新界面）。
     private func finishImageUpload(image: UIImage) {
         guard gifUploadInFlight == false else {
             showToast(message: "图片正在上传")
             return
         }
         gifUploadInFlight = true
+        // #49：空白未落盘篇 currentDraftId 为 nil 时先落一个新 id 再记发起篇，
+        // 否则回包守卫无 id 可比；新 id 只作本次上传的身份，不落盘。
+        if currentDraftId == nil {
+            currentDraftId = BearyDraftStore.newDraftId()
+            clearedCurrentDraftId = nil
+        }
         gifUploadDraftId = currentDraftId
         imagePrepQueue.async { [weak self] in
             guard let self = self else { return }
-            guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.92),
+            guard let full = BearyImagePrep.jpegData(image, maxSide: BearyGIF.emojiMaxSide, quality: BearyGIF.emojiJPEGQuality),
                   let thumbData = BearyImagePrep.thumbData(image),
                   let firstFrame = UIImage(data: full.data) else {
                 DispatchQueue.main.async { [weak self] in
@@ -5848,14 +5873,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 return
             }
+            // 去重指纹：对压完后的 JPEG 文件算 SHA-256（只表情路传，照片不传）。
+            let fingerprint = BearyGIF.sha256Hex(full.data)
             let dataUrl = "data:image/jpeg;base64,\(full.data.base64EncodedString())"
             let thumbDataUrl = "data:image/jpeg;base64,\(thumbData.base64EncodedString())"
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: full.w, height: full.h, thumbDataUrl: thumbDataUrl) { [weak self] result in
+                BearyAPI.shared.uploadImage(dataUrl: dataUrl, width: full.w, height: full.h, thumbDataUrl: thumbDataUrl, fingerprint: fingerprint) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.gifUploadInFlight = false
+                        // #49：先拍下本次发起篇 id 再清掉——清完再比恒为 nil，
+                        // 旧写法下守卫恒真、切篇后回包照插不误。
+                        let startedDraftId = self.gifUploadDraftId
                         self.gifUploadDraftId = nil
                         switch result {
                         case .success(let response):
@@ -5863,13 +5893,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 self.showToast(message: "图片上传失败，请重试")
                                 return
                             }
-                            // 非 GIF 上传服务端不自动进库：显式调 add；部署前 400
-                            // 静默忽略——图照插进正文，只是不进自定义库。
-                            BearyGIFLibrary.add(key: key) { _ in }
+                            if response.duplicate == true {
+                                // 指纹已在库里：服务端直接回了旧 key，不再存一份；
+                                // 行已存在，不再调 add，toast 后照插旧 key。
+                                self.showToast(message: NSLocalizedString("composer.custom_emoji.already_added", comment: ""))
+                            } else {
+                                // 非 GIF 上传服务端不自动进库：显式调 add；部署前 400
+                                // 静默忽略——图照插进正文，只是不进自定义库。
+                                BearyGIFLibrary.add(key: key, fingerprint: fingerprint) { _ in }
+                            }
                             self.gifFirstFrames[rand] = firstFrame
                             // #49：回包只认发起那篇——切篇后回包仍进自定义库
                             // 与首帧缓存，只不插进当前篇正文。
-                            if self.gifUploadDraftId == nil || self.currentDraftId == self.gifUploadDraftId {
+                            // 发起时已落 id，startedDraftId 恒非空；nil 只作防御，不插。
+                            if let startedDraftId = startedDraftId, self.currentDraftId == startedDraftId {
                                 self.insertGIFAttachmentAtCursor(key: key, randKey: rand)
                             }
                         case .failure(let error):
@@ -5892,7 +5929,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if inlineGifKeys.contains(key) == false { inlineGifKeys.append(key) }
         let firstFrame = gifFirstFrames[randKey]
         if headlineField.isFirstResponder || lastFocusedComposerInput == .headline {
-            if !isGIFPickerOpen, !headlineField.isFirstResponder {
+            if !isEmotePickerOpen, !headlineField.isFirstResponder {
                 headlineField.becomeFirstResponder()
                 headlineField.selectedRange = NSRange(location: headlineField.attributedText.length, length: 0)
             }
@@ -5904,7 +5941,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         if textView.isFirstResponder || lastFocusedComposerInput == .body {
-            if !isGIFPickerOpen, !textView.isFirstResponder {
+            if !isEmotePickerOpen, !textView.isFirstResponder {
                 textView.becomeFirstResponder()
             }
             if textView.markedTextRange != nil {
@@ -5914,7 +5951,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             textViewDidChange(textView)
             return
         }
-        if !isGIFPickerOpen {
+        if !isEmotePickerOpen {
             textView.becomeFirstResponder()
         }
         textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)
@@ -5942,7 +5979,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 正文/标题里实际引用的 GIF key（按 inlineGifKeys 顺序过滤引用）：
-    /// 删掉 GIF 后 key 不再进 images，GC 可回收；9 张上限与发布都按此口径计。
+    /// 删掉 GIF 后 key 不再进 images，GC 可回收；发布 images 仍按此口径带，
+    /// 但 9 张上限只数照片、不数这里（2026-11-20 Li 定：表情不占照片名额）。
     private func referencedGifKeys() -> [String] {
         let text = headlineText + "\n" + committedContent()
         return inlineGifKeys.filter { key in
@@ -5951,9 +5989,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 9 张上限的剩余名额：普通图＋已引用的内联图合计（与发布口径 uploadedImageKeys 一致）。
+    /// 9 张上限的剩余名额：只数照片条（自定义表情不占名额，2026-11-20 Li 定）。
     private func remainingImageSlots() -> Int {
-        Self.maxImages - imageItems.count - referencedGifKeys().count
+        Self.maxImages - imageItems.count
     }
 
     private func createImageItem(localImage: UIImage?, key: String?, uploading: Bool, localFile: String?, failed: Bool) -> ComposerImageItem {
@@ -5992,7 +6030,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         failIcon.translatesAutoresizingMaskIntoConstraints = false
         let failLabel = UILabel()
         failLabel.translatesAutoresizingMaskIntoConstraints = false
-        failLabel.text = "上传失败，点按重试"
+        failLabel.text = NSLocalizedString("composer.upload_failed", comment: "")
         failLabel.font = BearyDynamicType.captionFont()
         failLabel.textColor = BearyColors.destructiveText
         failLabel.textAlignment = .center
@@ -6092,15 +6130,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.spinner.stopSpinning()
         item.removeButton.accessibilityLabel = "删除图片"
         refreshAttachmentAccessibilityLabels()
-    }
-
-    /// 新模型：本地图就绪（已显示本地图、已落盘）——停转圈、清上传态，
-    /// 发布钮恢复由调用方调 updatePublishState。编辑模式不用本函数
-    ///（上传态由 markUploaded/markFailed 接管）。
-    private func markLocalReady(_ item: ComposerImageItem) {
-        item.uploading = false
-        item.spinner.stopSpinning()
-        item.removeButton.accessibilityLabel = "删除图片"
     }
 
     private func markFailed(_ item: ComposerImageItem) {
@@ -6210,6 +6239,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshImageStripVisibility()
         updatePublishState()
         updatePreferredContentSize()
+        // 加图改内容栈高（图片条 96 高出现）：只调 updatePreferredContentSize
+        // 不重算正文高，正文还按加图前的高度撑着，底部留空；与 refreshMetaRow 同病。
+        updateTextViewHeight()
     }
 
 
@@ -6253,6 +6285,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updatePublishState()
         scheduleDraftSave()
         updatePreferredContentSize()
+        // 删图改内容栈高（图片条塌掉）：同 insertImageItem，正文高须同步重算。
+        updateTextViewHeight()
     }
 
     /// C11：删图不再弹确认：先入单槽缓冲、条内即时消失、撤销条可见 10 秒。
@@ -6379,7 +6413,47 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func refreshImageUndoBar() {
         let visible = pendingRemovedImage != nil
         imageUndoBar.isHidden = !visible
-        contentStack.setCustomSpacing(visible ? 8 : 0, after: imageUndoBar)
+        refreshTransientBarContainer()
+    }
+
+    /// 浮层容器显隐：两条全藏时容器藏起；任一条出现时淡入＋上滑
+    ///（减动效或未进窗口时直设终值；条已不在内容栈，不再改内容高）。
+    private func refreshTransientBarContainer() {
+        guard isViewLoaded else { return }
+        let visible = !pendingUploadBar.isHidden || !imageUndoBar.isHidden
+        if visible {
+            guard transientBarContainer.isHidden || transientBarContainer.alpha < 1 else { return }
+            transientBarContainer.layer.removeAllAnimations()
+            transientBarContainer.isHidden = false
+            if UIAccessibility.isReduceMotionEnabled || transientBarContainer.window == nil {
+                transientBarContainer.alpha = 1
+                transientBarContainer.transform = .identity
+            } else {
+                transientBarContainer.alpha = 0
+                transientBarContainer.transform = CGAffineTransform(translationX: 0, y: 8)
+                UIView.animate(withDuration: BearyMotion.localStateDuration, animations: {
+                    self.transientBarContainer.alpha = 1
+                    self.transientBarContainer.transform = .identity
+                })
+            }
+        } else {
+            guard !transientBarContainer.isHidden else { return }
+            transientBarContainer.layer.removeAllAnimations()
+            if UIAccessibility.isReduceMotionEnabled || transientBarContainer.window == nil {
+                transientBarContainer.alpha = 0
+                transientBarContainer.isHidden = true
+            } else {
+                UIView.animate(withDuration: BearyMotion.localStateDuration, animations: {
+                    self.transientBarContainer.alpha = 0
+                    self.transientBarContainer.transform = CGAffineTransform(translationX: 0, y: 8)
+                }, completion: { _ in
+                    // 动画期间若又有条要显示，不抢藏。
+                    if self.pendingUploadBar.isHidden && self.imageUndoBar.isHidden {
+                        self.transientBarContainer.isHidden = true
+                    }
+                })
+            }
+        }
     }
 
     @objc private func didTapRemoveImage(_ sender: UIButton) {
@@ -6522,8 +6596,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     @objc private func didTapAddImage() {
         // P2：9 图上限到达时不再完全静默，给 toast（不改按钮置灰口径）。
-        // GIF 也占 1 张：照片条＋已插 GIF 合计满 9 即拦（发布时服务端同口径）。
-        if imageItems.count + referencedGifKeys().count >= BearyComposerViewController.maxImages {
+        // 9 张只数照片条，自定义表情不占名额（2026-11-20 Li 定；发布时
+        // 服务端同口径，内联 [gif:] key 不进 9 张计数）。
+        if imageItems.count >= BearyComposerViewController.maxImages {
             showToast(message: "最多 9 张图片")
             return
         }
@@ -6547,7 +6622,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         picker.dismiss(animated: BearyMotion.animated(true))
         for result in results {
-            if imageItems.count + referencedGifKeys().count >= BearyComposerViewController.maxImages {
+            if imageItems.count >= BearyComposerViewController.maxImages {
                 break
             }
             let provider = result.itemProvider
@@ -6567,7 +6642,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         DispatchQueue.main.async {
                             guard let self = self, let item = item else { return }
                             self.removeImageItem(item)
-                            self.showToast(message: "未能读取实况视频，未添加")
+                            self.showToast(message: NSLocalizedString("composer.livephoto.unread_video_not_added", comment: ""))
                         }
                         return
                     }
@@ -6576,7 +6651,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         DispatchQueue.main.async {
                             guard let self = self, let item = item else { return }
                             self.removeImageItem(item)
-                            self.showToast(message: "未能读取实况视频，未添加")
+                            self.showToast(message: NSLocalizedString("composer.livephoto.unread_video_not_added", comment: ""))
                         }
                         return
                     }
@@ -6590,7 +6665,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         DispatchQueue.main.async {
                             guard let self = self, let item = item else { return }
                             self.removeImageItem(item)
-                            self.showToast(message: "实况视频读取失败，未添加")
+                            self.showToast(message: NSLocalizedString("composer.livephoto.read_failed_not_added", comment: ""))
                         }
                         return
                     }
@@ -6641,22 +6716,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             }
                             if videoOverLimit {
                                 self.removeImageItem(item)
-                                self.showToast(message: "实况视频超过 10MB，未添加")
+                                self.showToast(message: NSLocalizedString("composer.livephoto.oversize_not_added", comment: ""))
                                 return
                             }
                             if error != nil || videoStripFailed {
                                 self.removeImageItem(item)
-                                self.showToast(message: "实况视频读取失败，未添加")
+                                self.showToast(message: NSLocalizedString("composer.livephoto.read_failed_not_added", comment: ""))
                                 return
                             }
                             guard let videoData = videoData, !videoData.isEmpty else {
                                 self.removeImageItem(item)
-                                self.showToast(message: "实况视频读取失败，未添加")
+                                self.showToast(message: NSLocalizedString("composer.livephoto.read_failed_not_added", comment: ""))
                                 return
                             }
                             if videoData.count > BearyLivePhoto.maxVideoBytes {
                                 self.removeImageItem(item)
-                                self.showToast(message: "实况视频超过 10MB，未添加")
+                                self.showToast(message: NSLocalizedString("composer.livephoto.oversize_not_added", comment: ""))
                                 return
                             }
                             item.liveVideoData = videoData
@@ -6952,7 +7027,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // B1：实况视频已丢的项不起传——无视频重传会把实况静默降级为静态，
         // 须用户重新选择；续传入口已跳过本态，此处是点图重试的第二道守卫。
         if item.liveVideoMissing {
-            showToast(message: "这张实况需重新选择")
+            showToast(message: NSLocalizedString("composer.livephoto.reselect", comment: ""))
             return
         }
         // 原图确认：已选原图的项走原图路（读 .orig、剥 GPS、按实测格式发）；
@@ -7041,7 +7116,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 此处再 guard let 会因“非 Optional 不能条件绑定”编译失败，
                 // 故直接用已解包的 item/self（与本函数其他同步段同款）。
                 self.markFailed(item)
-                self.showToast(message: "实况视频超过 10MB，未上传")
+                self.showToast(message: NSLocalizedString("composer.livephoto.oversize_not_uploaded", comment: ""))
                 self.saveDraftNow()
                 self.updatePublishState()
             }
@@ -7253,9 +7328,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         pendingUploadBar.accessibilityLabel = "\(count) 张照片待确认上传方式，点按选择上传方式"
         // 第 20 轮 A4：44 高约束与显隐同步——隐藏时停用，显示时恢复（同图片条先例）。
         pendingUploadBarHeightConstraint?.isActive = shouldShow
+        // 藏起来的条不占间距（同 refreshQuoteSection 口径）：显示留 4，隐藏归 0。
         if pendingUploadBar.isHidden != !shouldShow {
             pendingUploadBar.isHidden = !shouldShow
-            updatePreferredContentSize()
+            // 2026-11-27 浮条：条已不在内容栈，显隐不再改内容高，只刷新浮层。
+            refreshTransientBarContainer()
         }
     }
 
@@ -7344,10 +7421,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// Plus 判定（九宫格 BearyNineGridPresenter 同款口径：/me 的 plus 字段）：
+    /// Plus 判定走统一门 BearyPlusGate（现在全开）：
     /// 本编辑器会话内缓存一次；只缓存成功拉到的结果，拉取失败不缓存、不判定，
     /// 下次再拉——已开通用户遇网络失败不再被误认为非 Plus。
-    /// completion(nil) 表示拉取失败；未登录（/me 回 nil）按非 Plus 计。
+    /// completion(nil) 表示拉取失败；未登录（/me 回 nil）时统一门仍按全开放行，
+    /// 登录态由编辑器入口另拦，不在这里判。
     private func ensurePlusStatus(completion: @escaping (Bool?) -> Void) {
         if let cached = cachedPlusStatus {
             completion(cached)
@@ -7357,7 +7435,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             DispatchQueue.main.async {
                 switch result {
                 case .success(let user):
-                    let isPlus = BearyDeveloperMode.effectivePlus(user?.plus == true)
+                    let isPlus = BearyPlusGate.canUsePlusFeature(user: user)
                     self?.cachedPlusStatus = isPlus
                     completion(isPlus)
                 case .failure:
@@ -7458,7 +7536,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 令牌校验作废，不起传。
     private func startOriginalUpload(for item: ComposerImageItem) {
         if item.liveVideoMissing {
-            showToast(message: "这张实况需重新选择")
+            showToast(message: NSLocalizedString("composer.livephoto.reselect", comment: ""))
             return
         }
         let previewImage = item.imageView.image
@@ -7756,7 +7834,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshQuoteSection()
         refreshToolStrip()
         maybePresentStoredQuotePrompt()
-        startEditTimer()
+        refreshStatusRowVisibility()
         // 2026-11-14（132 真机）：编辑回填按 key 去重后追加——补拉二次调用
         // setupEditContent 时图片回填段无守卫（正文/心情等段有 editQuoteFetchAttempted
         // 守卫），重复回填会把同一张图插两遍，条里看起来像“编辑一次多一张图”；
@@ -7822,11 +7900,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    /// 用户手动改引用（选篇／取消／移除）时，检查点引用重试即作废：失败态
+    /// 与待重试 id 一并复位——失败的旧篇已不在局内，不再禁发、不再重试拉回。
+    /// 只在编辑态清（两旗标本就是编辑回填／检查点恢复专用）。
+    private func clearPendingCheckpointQuoteRetry() {
+        guard isEditMode else { return }
+        pendingCheckpointQuoteId = nil
+        editQuoteFetchFailed = false
+        updatePublishState()
+    }
+
     /// 补拉失败行“重试”：只在失败态重拉，不碰其他编辑器功能；点击时若已在途
     /// （失败行在途暂隐，正常点按到不了这里）或已非编辑态，直接返回。
+    /// #47：检查点引用换篇拉取失败后的重试只重拉该被引篇——旧口径重拉
+    /// 被编日记会走 setupEditContent 全量回填（editQuoteFetchAttempted
+    /// 在检查点恢复路径上从未立起），把检查点恢复的改动盖回服务端旧值，
+    /// 防抖随后判不脏清掉检查点，换篇改动就丢了。
     @objc private func didTapRetryEditQuoteFetch() {
-        guard isEditMode, editQuoteFetchFailed, !editQuoteFetchInFlight,
-              let entryId = editingEntry?.id, !entryId.isEmpty else { return }
+        guard isEditMode, editQuoteFetchFailed, !editQuoteFetchInFlight else { return }
+        if let quoteId = pendingCheckpointQuoteId {
+            restoreCheckpointQuote(quoteId: quoteId)
+            return
+        }
+        guard let entryId = editingEntry?.id, !entryId.isEmpty else { return }
         fetchEditEntryForMissingQuote(entryId: entryId)
     }
 
@@ -7890,6 +7986,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             self.draftTimer = nil
             self.saveDraftNow()
         }
+    }
+
+    /// Y6：切语言换根前冲刷待保存草稿——与切后台同款路径（新建态 saveDraftNow／
+    /// 编辑态 saveEditCheckpointNow）。换根会同步释放编辑器，deinit 只作废 timer
+    /// 不落盘；必须在换根前调。写盘已入队 BearyDraftStore.ioQueue，调完即可换根，
+    /// 不必等回调。
+    func flushDraftBeforeLanguageChange() {
+        flushDraftBeforeBackground()
     }
 
     /// 审计四轮 07：失活/入后台时立即冲刷一次未落盘的草稿——防抖 timer 只有
@@ -8033,6 +8137,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if currentDraftId == nil {
             currentDraftId = BearyDraftStore.newDraftId()
             clearedCurrentDraftId = nil
+            // 日记时区：草稿创建时取一次（见 saveDraftNow 同款口径）——退出保存先建 id 时一并取，
+            // 之后 saveDraftNow 不再重复取；编辑模式取原日记的时区（编辑不改时区）。
+            if draftTimeZoneName == nil {
+                draftTimeZoneName = editingEntry?.tzName ?? TimeZone.current.identifier
+            }
         }
         let snapshotDraftId = currentDraftId
         setDraftExitSaving(true)
@@ -8145,6 +8254,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if currentDraftId == nil {
             currentDraftId = BearyDraftStore.newDraftId()
             clearedCurrentDraftId = nil
+            // 日记时区：与 draftId 同款创建时取一次——编辑模式取原日记的时区（编辑不改时区）。
+            if draftTimeZoneName == nil {
+                draftTimeZoneName = editingEntry?.tzName ?? TimeZone.current.identifier
+            }
         }
         guard let req = draftClientReq, let draftIdValue = currentDraftId else {
             // 上文刚生成过两者，此分支实际不可达；沿旧口径照常回调，不拦后续流程。
@@ -8172,6 +8285,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             currentDraftId = nil
             clearedCurrentDraftId = nil
             draftClientReq = nil
+            draftTimeZoneName = nil
             // 删篇走 deleteAsyncReporting（ioQueue 内删，完成后回主线程刷新状态与 pill，
             // 并回传成败——此前 deleteAsync 不回传，删篇失败会被关闭路径当成功关掉）。
             // 状态只在仍是空篇时清：删盘期间用户已开始写新篇（currentDraftId 已换）
@@ -8257,7 +8371,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             recipientId: recipientUserId,
             recipientName: recipientNameValue,
             recipientAvatar: selectedRecipient?.avatarUrl,
-            notifyRecipient: notifyRecipient,
             quoteId: selectedQuote?.entryId,
             quoteAuthorName: selectedQuote?.authorName,
             quoteAuthorAvatar: selectedQuote?.authorAvatar,
@@ -8267,7 +8380,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quoteIsPublic: selectedQuote?.isPublic,
             quoteVisibility: selectedQuote?.visibility,
             quoteEphemeralUntil: selectedQuote?.ephemeralUntil,
-            quoteDeleted: selectedQuote?.isDeleted ?? false)
+            quoteDeleted: selectedQuote?.isDeleted ?? false,
+            tzName: draftTimeZoneName)
         // 快照里的图片在途态拍在主线程（内存态），整库写 + 回读验证走后台队列。
         var hasUnsavedImageSnapshot = false
         for item in imageItems {
@@ -8392,6 +8506,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.currentDraftId = draft.draftId
                 self.clearedCurrentDraftId = nil
                 self.draftClientReq = draft.clientReq
+                self.draftTimeZoneName = draft.tzName
                 // 内联图预填：先从 draft.images 里分出内联图片键（只进 inlineGifKeys，
                 // 不进图片条；[gif:] 记号引用的才是内联图，见 BearyGIF.isInlineImageKey），
                 // 再 setBody/setHeadline——否则首渲时 [gif:] 解析不到 key。
@@ -8418,7 +8533,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.refreshTagsRow()
                 self.restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
                 self.selectedRecipient = self.restoredRecipient(from: draft)
-                self.notifyRecipient = draft.notifyRecipient
                 self.selectedQuote = self.restoredQuote(from: draft)
                 // 原日记已公开态：同 loadDraftFromBox，只认本篇草稿的持久标记。
                 self.sourceAlreadyPublishedQuoteId = draft.sourcePublished ? draft.quoteId : nil
@@ -8478,10 +8592,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 流程收尾时发布态不是最后一句，恢复后发布钮仍留空态灰，直到用户
                 // 重新输入触发 textViewDidChange 才变白；放末尾保证收尾态即终态。
                 self.updatePublishState()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                    guard let self = self, self.view.window != nil else { return }
-                    self.showToast(message: "已恢复上次的草稿")
-                }
                 // 本地图后台解码：失败态不解码（重试时再读盘）；解码失败且有 key 时退回远程缩略图。
                 // B1：待传实况视频同批读回内存（见 decodeRestoredImages），
                 // 读不到的记 liveVideoMissing，续传时跳过、不静默变静态。
@@ -8659,6 +8769,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         currentDraftId = nil
         clearedCurrentDraftId = nil
         draftClientReq = nil
+        draftTimeZoneName = nil
         // 发布绑定与打开时绑定随篇清掉：丢弃/发布成功后不再有“本篇发起账号”，
         // 下一篇发布重新捕获，不被旧绑定误拦。原日记已公开态同清。
         publishOriginAccountId = nil
@@ -8712,9 +8823,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             if self.presentedViewController != nil || self.isDraftBoxPresenting { return }
             self.isDraftBoxPresenting = true
-            // 弹窗审计 E1-18：草稿箱内部已统一退场——新建/打开先播同一
-            // 0.26s 退场、dismiss 后再调回调，故编辑器侧不再另行 dismiss
-            // （旧 dismiss 经 BearyDraftBoxInstantAnimator 瞬时消失，绕过了退场动画）。
+            // 弹窗审计 E1-18：草稿箱内部已统一退场——新建/打开先退场、
+            // dismiss 后再调回调，故编辑器侧不再另行 dismiss。
             let box = BearyDraftBoxViewController(
                 onNew: { [weak self] in
                     self?.openBlankDraftFromBox()
@@ -8762,6 +8872,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 落盘，覆盖箱内撤销刚写回的旧键；与 loadDraftFromBox /
                     // restoreDraft 的成对绑回一致。
                     self.draftClientReq = draft.clientReq
+                    self.draftTimeZoneName = draft.tzName
                     // 2026-11-14：删时已把编辑器清成空白（防落盘复活），撤销
                     // 后把内容接回来；编辑器已有新内容时不动，恢复的篇仍在
                     // 箱里、点开即是原有 onOpen 路径。
@@ -8770,7 +8881,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                 }
             }
-            self.present(box, animated: !UIAccessibility.isReduceMotionEnabled) { [weak self] in
+            BearySystemSheet.present(box, from: self) { [weak self] in
                 self?.isDraftBoxPresenting = false
             }
         }
@@ -8819,16 +8930,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.saveDraftVersionedForExit { [weak self] result in
                         guard let self = self else { return }
                         guard result.succeeded else {
-                            BearyHaptics.rejectionWarning()
-                            BearySoundPlayer.play(.refuseBonk)
-                            if !UIAccessibility.isReduceMotionEnabled {
-                                self.cancelButton.layer.removeAnimation(forKey: "bearyDenyShake")
-                                let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-                                shake.values = [0, -8, 8, -5, 5, 0]
-                                shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-                                shake.duration = BearyMotion.screen
-                                self.cancelButton.layer.add(shake, forKey: "bearyDenyShake")
-                            }
+                            BearyIconMotion.playDenyShake(on: self.cancelButton, key: "bearyDenyShake")
                             self.showToast(message: result.hadPreviousSavedVersion
                                 ? "草稿保存失败，当前内容仍保留在此页，上次保存的草稿未受影响，再点一次保留并新建重试"
                                 : "草稿保存失败，当前内容仍保留在此页，再点一次保留并新建重试")
@@ -8880,7 +8982,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 切空白：上一篇在途自动填天气回包即过期作废，不写进新篇（见 weatherFetchGeneration）。
         weatherFetchGeneration += 1
         selectedRecipient = nil
-        notifyRecipient = true
         selectedQuote = nil
         // 批 E：重置为空白时位置与编辑原快照同清，行随之隐藏。
         selectedLocation = nil
@@ -8903,6 +9004,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 删本篇，保留路径先调 saveDraftNow 落盘本篇）；这里再整库清会误删其他篇。
         currentDraftId = nil
         draftClientReq = nil
+        draftTimeZoneName = nil
         // P1-4：空白新篇重新计，已发布标记清掉。
         publishedCurrentDraft = false
         // 空白新篇不再继承上一篇的发布绑定与部分成功态。
@@ -8967,6 +9069,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishedCurrentDraft = false
         currentDraftId = draft.draftId
         draftClientReq = draft.clientReq
+        draftTimeZoneName = draft.tzName
         // 内联图预填：先从 draft.images 里分出内联图片键（只进 inlineGifKeys，
         // 不进图片条；[gif:] 记号引用的才是内联图，见 BearyGIF.isInlineImageKey），
         // 再 setBody/setHeadline——否则首渲时 [gif:] 解析不到 key。
@@ -8986,7 +9089,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshTagsRow()
         restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
         selectedRecipient = restoredRecipient(from: draft)
-        notifyRecipient = draft.notifyRecipient
         selectedQuote = restoredQuote(from: draft)
         // 原日记已公开态：只认本篇草稿的持久标记，引用仍是同一篇原日记
         // 时点发布跳过门禁、只发新篇（见 didTapPublish）。
@@ -9178,6 +9280,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         let checkpoint = buildEditCheckpoint(entryId: entryId, accountId: accountId)
+        // 空检查点（标题正文双空）不存盘：正文空时发布被禁、提交不到 PUT，
+        // 快照无可恢复的修改；有旧检查点一并清掉，防它留到下次打开误弹恢复框。
+        guard !checkpoint.isEmptyText else {
+            BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: editCheckpointAccountId())
+            completion?(true)
+            return
+        }
         BearyDraftStore.ioQueue.async {
             let ok = BearyDraftStore.saveEditCheckpoint(checkpoint, forAccount: accountId)
             DispatchQueue.main.async {
@@ -9214,6 +9323,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 guard self.isEditMode, self.editingEntry?.id == entryId,
                       self.editorEditVersion == baselineVersion,
                       self.pendingEditCheckpoint == nil else { return }
+                // 空检查点（标题正文双空）直接丢弃、不弹恢复框：它是更早一次
+                // 删光正文后防抖存下的快照，恢复只会把原文盖空；正文空本就发不出去。
+                if checkpoint.isEmptyText {
+                    BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: accountId)
+                    return
+                }
                 guard self.editCheckpointDiffersFromOriginal(checkpoint) else {
                     BearyDraftStore.clearEditCheckpointAsync(entryId: entryId, forAccount: accountId)
                     return
@@ -9376,16 +9491,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 case .success(let entry):
                     guard let entryId = entry.id, let content = entry.content else {
                         self.editQuoteFetchFailed = true
+                        self.pendingCheckpointQuoteId = quoteId
                         self.refreshQuoteSection()
                         self.updatePublishState()
                         return
                     }
                     self.editQuoteFetchFailed = false
+                    self.pendingCheckpointQuoteId = nil
                     self.lockedQuote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, authorId: entry.authorId, isMine: entry.isMine, authorHandle: entry.authorHandle, images: entry.images ?? [], isPublic: BearyEphemeral.isEffectivelyPublic(entry), publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false, visibility: entry.visibility, ephemeralUntil: entry.ephemeralUntil)
                     self.refreshQuoteSection()
                     self.updatePublishState()
                 case .failure:
                     self.editQuoteFetchFailed = true
+                    self.pendingCheckpointQuoteId = quoteId
                     self.refreshQuoteSection()
                     self.updatePublishState()
                 }
@@ -9624,16 +9742,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // B2：留页即复位关闭标记并解冻输入（见函数头）。
                 self.isClosing = false
                 self.updatePublishState()
-                BearyHaptics.rejectionWarning()
-                BearySoundPlayer.play(.refuseBonk)
-                if !UIAccessibility.isReduceMotionEnabled {
-                    self.cancelButton.layer.removeAnimation(forKey: "bearyDenyShake")
-                    let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-                    shake.values = [0, -8, 8, -5, 5, 0]
-                    shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-                    shake.duration = BearyMotion.screen
-                    self.cancelButton.layer.add(shake, forKey: "bearyDenyShake")
-                }
+                BearyIconMotion.playDenyShake(on: self.cancelButton, key: "bearyDenyShake")
                 // 审计 M2：保存失败留页——边缘跟手若已把视图滑出，滑回原位
                 //（与 BearyEdgeDismiss 的复位同口径：拖拽收尾统一弹簧 0.26s／
                 // damping 0.7；保存回调里无松手速度可传，初速度取 0；减动效瞬时归位）。
@@ -9719,7 +9828,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if !SessionManager.shared.isLoggedIn {
             // G26：登录态未知（网络失败）时不弹登录页，改给网络不稳定提示。
             if SessionManager.shared.authUnknown {
-                showToast(message: "网络不稳定，请稍后再试")
+                showToast(message: NSLocalizedString("common.network_unstable", comment: ""))
                 return
             }
             onRequireLogin?()
@@ -9750,7 +9859,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // B1：实况视频已丢的图拦截不发（与失败图同口径）：视频不在了还发，
         // 等于把用户明确选中的实况静默降级为静态图；须重新选择后再发布。
         if hasLiveVideoMissingImage() {
-            showToast(message: "有实况视频已丢失，重新选择该图片后再发布")
+            showToast(message: NSLocalizedString("composer.livephoto.lost_reselect", comment: ""))
             return
         }
         // 原图确认：有未确认上传方式的图时先弹确认弹窗，不直接发布；
@@ -10015,7 +10124,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func showLiveVideoMissingToast() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self, self.view.window != nil else { return }
-            self.showToast(message: "这张实况需重新选择")
+            self.showToast(message: NSLocalizedString("composer.livephoto.reselect", comment: ""))
         }
     }
 
@@ -10142,13 +10251,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func message(forUpdateError error: APIError) -> String {
         if case .server(let code, _) = error {
+            if let shared = BearyServerErrorMessages.sharedMessage(forServerCode: code) {
+                return shared
+            }
             switch code {
-            case "content too long":
-                return "正文最多 2000 字"
-            case "title too long":
-                return "标题最多 30 字"
-            case "image unavailable":
-                return "图片已失效，请重新添加"
             case "invalid image ownership":
                 return "图片归属异常，请重新添加"
             case "edit_expired":
@@ -10272,8 +10378,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     @objc private func keyboardWillShow(_ notification: Notification) {
         NSLog("[Diag] composer-keyboard-willShow")
-        // 临时诊断（81 包，定根因后删除）。
-        DiagFile.mark("keyboard-willShow")
         applyKeyboard(notification, showing: true)
     }
 
@@ -10640,7 +10744,16 @@ private final class BearyQuoteStatusPillView: UIView {
         super.layoutSubviews()
         if style == .limited {
             dashedLayer.frame = bounds
-            dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
+            // 与草稿箱虚线钮（#2019）同病：描边以 path 为中心，path 贴 bounds 边时
+            // 外侧一半落在 layer 外被裁掉（本 pill 另有 masksToBounds，必裁），
+            // 顶边只剩一半粗、底边却近全粗，上下不一。path 内缩半个线宽，
+            // 整条描边落进 layer 内，四边同粗；外沿仍贴 bounds、圆角同步减半个
+            // 线宽（height / 2 - 0.75），外形不动。线宽 1.5、pattern [4, 3] 不动。
+            let halfLine = dashedLayer.lineWidth / 2
+            dashedLayer.path = UIBezierPath(
+                roundedRect: bounds.insetBy(dx: halfLine, dy: halfLine),
+                cornerRadius: bounds.height / 2 - halfLine
+            ).cgPath
         }
     }
 

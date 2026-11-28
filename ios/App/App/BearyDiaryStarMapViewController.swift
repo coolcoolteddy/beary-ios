@@ -95,12 +95,19 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private let statusLabel = StarMapStatusRetryLabel()
     private let sheetCard = UIView()
     private let sheetStack = UIStackView()
-    /// 审计三轮第 2 项：连线列表虚拟化——只建可见行，初始封顶＋加载更多。
+    /// 审计三轮第 2 项：连线列表虚拟化——只建可见行，初始封顶＋滑到底自动续出。
     /// 关联度 = 共享原因数（越多关系越强），同数按 id 排定、展示顺序稳定。
     private var edgeListEdges: [StarMapEdge] = []
     private var edgeListShownCount = 0
     private let edgeListInitialCount = 30
     private let edgeListPageStep = 50
+    /// 连线列表脚部：复用广场同款共享脚部 BearyLoadMoreFooterView，不另写一套。
+    /// 底卡是半透明夜空底，脚部自带的不透明 bg 会露一块实色底，改透明融入底卡。
+    private let edgeListLoadMoreFooterView: BearyLoadMoreFooterView = {
+        let footer = BearyLoadMoreFooterView()
+        footer.backgroundColor = .clear
+        return footer
+    }()
     private let edgeListMaxHeight: CGFloat = 352
     private var edgeListTableHeight: NSLayoutConstraint?
     private lazy var edgeListTableView: UITableView = {
@@ -214,6 +221,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var sheetBottom: NSLayoutConstraint?
     private var emptyBottom: NSLayoutConstraint?
     private var failureBottom: NSLayoutConstraint?
+    /// 夜巡布局：列表列（日期入口／年／月／筛选行、状态行、底卡、空态、失败态）
+    /// iPad 宽 ≥821 时收 600 居中，星图画布保持满宽不动；Feed 同款
+    /// BearyDesktop.isWide 开关（viewDidLayoutSubviews 切换，状态不变不开关）。
+    private let listColumnGuide = UILayoutGuide()
+    private var listColumnCapConstraint: NSLayoutConstraint?
     /// P1-4：加载态独占时的内容底锚（与扫荡 C 的三选一底部约束同款，
     /// 同一时刻只激活一个；其余三态恢复时由 applyModelToSky 关掉）。
     /// 第十轮 #20：加载期夜空先行，底锚改锚 skyView 底（原 loadingView 已删），
@@ -323,6 +335,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         navigationController?.navigationBar.tintColor = previousNavBarTintColor
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 夜巡布局：600 上限只在 iPad 且宽 ≥821 时激活，iPhone 横屏仍走全宽
+        //（与 Feed 同口径）；状态不变不开关，避免布局循环。
+        let wantColCap = BearyDesktop.isWide(view.bounds.width)
+        if listColumnCapConstraint?.isActive != wantColCap {
+            listColumnCapConstraint?.isActive = wantColCap
+        }
     }
 
     @objc private func didTapClose() {
@@ -544,7 +566,22 @@ final class BearyDiaryStarMapViewController: UIViewController {
         failureView.addSubview(retryButton)
         contentView.addSubview(failureView)
 
+        contentView.addLayoutGuide(listColumnGuide)
+        // 夜巡布局：列表列宽——窄屏跟内容宽 −32（即左右各 16，与改前一致），
+        // 宽屏时 600 上限（见 viewDidLayoutSubviews 的 isWide 开关）居中；
+        // 星图画布仍锚 contentView 全宽，不动。
+        let listColumnFullWidth = listColumnGuide.widthAnchor.constraint(equalTo: contentView.widthAnchor, constant: -32)
+        listColumnFullWidth.priority = .defaultHigh
+        let listColumnCap = listColumnGuide.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        listColumnCapConstraint = listColumnCap
         NSLayoutConstraint.activate([
+            listColumnGuide.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            listColumnGuide.topAnchor.constraint(equalTo: contentView.topAnchor),
+            listColumnGuide.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            listColumnGuide.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 16),
+            listColumnGuide.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
+            listColumnFullWidth,
+            listColumnCap,
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             // 横向安全区：scrollView 左右锚 safeArea 而非 view 边缘。内容各行
             // 仍保留距 content 边缘 16 的现有间距（即 safeArea 内再缩 16），
@@ -560,48 +597,48 @@ final class BearyDiaryStarMapViewController: UIViewController {
             contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
 
             dateEntryButton.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
-            dateEntryButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            dateEntryButton.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
             legendButton.centerYAnchor.constraint(equalTo: dateEntryButton.centerYAnchor),
-            legendButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            legendButton.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
 
-            sliceCalendarIcon.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            sliceCalendarIcon.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
             sliceCalendarIcon.centerYAnchor.constraint(equalTo: yearScrollView.centerYAnchor),
             sliceCalendarIcon.widthAnchor.constraint(equalToConstant: 20),
             sliceCalendarIcon.heightAnchor.constraint(equalToConstant: 20),
 
             yearScrollView.leadingAnchor.constraint(equalTo: sliceCalendarIcon.trailingAnchor, constant: 8),
-            yearScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            yearScrollView.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
 
-            monthScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            monthScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            monthScrollView.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
+            monthScrollView.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
 
-            filterScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            filterScrollView.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
             filterScrollView.trailingAnchor.constraint(equalTo: edgeListButton.leadingAnchor, constant: -8),
             filterScrollView.heightAnchor.constraint(equalToConstant: 44),
 
             // P2-11：「查看连线」入口贴在筛选行右侧，与筛选行同高居中。
             edgeListButton.centerYAnchor.constraint(equalTo: filterScrollView.centerYAnchor),
-            edgeListButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            edgeListButton.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
 
             skyView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
             skyView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             skyView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
             statusLabel.topAnchor.constraint(equalTo: skyView.bottomAnchor, constant: 10),
-            statusLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            statusLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            statusLabel.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
+            statusLabel.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
 
             sheetCard.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 10),
-            sheetCard.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            sheetCard.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            sheetCard.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
+            sheetCard.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
             sheetStack.topAnchor.constraint(equalTo: sheetCard.topAnchor, constant: 12),
             sheetStack.leadingAnchor.constraint(equalTo: sheetCard.leadingAnchor, constant: 14),
             sheetStack.trailingAnchor.constraint(equalTo: sheetCard.trailingAnchor, constant: -14),
             sheetStack.bottomAnchor.constraint(equalTo: sheetCard.bottomAnchor, constant: -12),
 
             emptyView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
-            emptyView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            emptyView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            emptyView.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
+            emptyView.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
             emptyView.heightAnchor.constraint(equalToConstant: 340),
             emptyIcon.topAnchor.constraint(equalTo: emptyView.topAnchor, constant: 96),
             emptyIcon.centerXAnchor.constraint(equalTo: emptyView.centerXAnchor),
@@ -611,17 +648,17 @@ final class BearyDiaryStarMapViewController: UIViewController {
             emptyLabel.leadingAnchor.constraint(equalTo: emptyView.leadingAnchor),
             emptyLabel.trailingAnchor.constraint(equalTo: emptyView.trailingAnchor),
             emptySubLabel.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 8),
-            emptySubLabel.leadingAnchor.constraint(equalTo: emptyView.leadingAnchor, constant: 24),
-            emptySubLabel.trailingAnchor.constraint(equalTo: emptyView.trailingAnchor, constant: -24),
+            emptySubLabel.leadingAnchor.constraint(equalTo: emptyView.leadingAnchor, constant: BearySpace.xl),
+            emptySubLabel.trailingAnchor.constraint(equalTo: emptyView.trailingAnchor, constant: -BearySpace.xl),
 
             failureView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
-            failureView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            failureView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            failureView.leadingAnchor.constraint(equalTo: listColumnGuide.leadingAnchor),
+            failureView.trailingAnchor.constraint(equalTo: listColumnGuide.trailingAnchor),
             failureView.heightAnchor.constraint(equalToConstant: 200),
             failureLabel.centerXAnchor.constraint(equalTo: failureView.centerXAnchor),
             failureLabel.centerYAnchor.constraint(equalTo: failureView.centerYAnchor, constant: -20),
-            failureLabel.leadingAnchor.constraint(equalTo: failureView.leadingAnchor, constant: 24),
-            failureLabel.trailingAnchor.constraint(equalTo: failureView.trailingAnchor, constant: -24),
+            failureLabel.leadingAnchor.constraint(equalTo: failureView.leadingAnchor, constant: BearySpace.xl),
+            failureLabel.trailingAnchor.constraint(equalTo: failureView.trailingAnchor, constant: -BearySpace.xl),
             retryButton.topAnchor.constraint(equalTo: failureLabel.bottomAnchor, constant: 16),
             retryButton.centerXAnchor.constraint(equalTo: failureView.centerXAnchor),
         ])
@@ -1022,9 +1059,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
         var status = "共 \(filteredEntries.count) 颗星 · \(rangeText)"
         if fetchPartialNote {
-            status += " · 仅展示已加载的部分，点按重试"
+            status += " · " + NSLocalizedString("starmap.status.partial", comment: "")
         } else if fetchStaleNote {
-            status += " · 数据未更新，点按重试"
+            status += " · " + NSLocalizedString("starmap.status.not_updated", comment: "")
         }
         if !viewerIsAuthor {
             status += " · 他人视角：只显示公开篇"
@@ -1240,7 +1277,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // 审计登录杂项：无标题篇底卡只显日期，不再拼出“ · M月d日”前导空标题。
         let title = sheetEntryTitle(entry)
         let date = sheetDateString(entry)
-        button.setTitle(title.isEmpty ? date : "\(title) · \(date)", for: .normal)
+        if title.isEmpty {
+            button.setTitle(date, for: .normal)
+        } else {
+            // 标题走转换器、日期拼在后面：标题部分先渲染（记号变附件格），
+            // 再拼 " · 日期" 纯文本；读屏标签保持原纯文本。
+            let buttonFont = button.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+            let titleAttributed = NSMutableAttributedString(attributedString: sheetEntryTitleAttributed(entry, font: buttonFont))
+            titleAttributed.append(NSAttributedString(string: " · \(date)", attributes: [.font: buttonFont, .foregroundColor: BearyStarMapNight.primaryText]))
+            button.setAttributedTitle(titleAttributed, for: .normal)
+        }
         button.accessibilityLabel = "打开日记：\(title)"
         button.addTarget(self, action: #selector(didTapSheetEntry(_:)), for: .touchUpInside)
         // id 经 tag 无法传字符串：用 accessibilityIdentifier 搭载，点按时再查表。
@@ -1286,7 +1332,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
         sheetStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         // 审计登录杂项：无标题篇底卡标题只显日期（与行按钮同口径）。
         let starTitle = sheetEntryTitle(entry)
-        sheetStack.addArrangedSubview(sheetTitleLabel(starTitle.isEmpty ? sheetDateString(entry) : starTitle))
+        let starTitleLabel = sheetTitleLabel(starTitle.isEmpty ? sheetDateString(entry) : starTitle)
+        if !starTitle.isEmpty {
+            starTitleLabel.attributedText = sheetEntryTitleAttributed(entry, font: starTitleLabel.font)
+        }
+        sheetStack.addArrangedSubview(starTitleLabel)
         var meta = sheetDateString(entry)
         if let moodKey = entry.mood, !moodKey.isEmpty {
             meta += " · 心情 \(BearyText.moodNames[moodKey] ?? moodKey)"
@@ -1301,8 +1351,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
             meta += " · \(place)"
         }
         sheetStack.addArrangedSubview(sheetBodyLabel(meta))
-        // 可见性行：公开 = 地球橙，私密 = 锁蓝，仅好友 = 双人锁墨
-        // （与引用面板 pill／时间线圆点／搜索页 pill 的仅好友墨色同口径）；
+        // 可见性行：公开 = 地球橙，私密 = 锁蓝，仅好友 = 双人锁（夜景体文色）
+        // （仅好友墨色与引用面板 pill／时间线圆点／搜索页 pill 同口径，但底卡是
+        // 固定深夜底、墨色 ink 在浅色下是黑字、落在深底上仅 1.23:1 基本不可见，
+        // 故此处改用与行文案同色的夜景 bodyText（白 85%，12.09:1），两模式同值）；
         // 文案按实际档位：仅好友不再误标私密，存活限时篇补限时剩余信息。
         // （星图只对作者本人放行非公开篇，故仅好友档只在作者视角出现。）
         let visRow = UIStackView()
@@ -1313,7 +1365,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let isPublic = visValue == "public"
         let isFriendsOnly = visValue == "friends"
         visIcon.image = BearyIconImages.image(named: isPublic ? "icon_globe" : (isFriendsOnly ? "icon_friends_lock" : "icon_lock"), pointSize: 13)
-        visIcon.tintColor = isPublic ? BearyColors.orange : (isFriendsOnly ? BearyColors.ink : BearyColors.blue)
+        visIcon.tintColor = isPublic ? BearyColors.orange : (isFriendsOnly ? BearyStarMapNight.bodyText : BearyColors.blue)
         visIcon.contentMode = .scaleAspectFit
         visRow.addArrangedSubview(visIcon)
         var visText = BearyVisibility.title(for: visValue)
@@ -1379,7 +1431,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         overlapEntryIds = nil
         skyView.setSelected(starId: nil, edgeId: nil)
         // 审计三轮第 2 项：列表改 UITableView 复用——只建可见行；按关联度
-        // （共享原因数）降序先展示少量，其余点“加载更多”按需续出。
+        // （共享原因数）降序先展示少量，其余滑到底自动续出。
         // 本支不动显隐（显隐是第 1 项的范围）。
         edgeListEdges = sortedListedEdges()
         edgeListShownCount = min(edgeListInitialCount, edgeListEdges.count)
@@ -1403,6 +1455,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private func rebuildEdgeListContent() {
         sheetStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if edgeListEdges.isEmpty {
+            edgeListTableView.tableFooterView = nil
             sheetStack.addArrangedSubview(sheetTitleLabel("暂无连线"))
             sheetStack.addArrangedSubview(sheetBodyLabel("当前筛选下没有连线。"))
         } else {
@@ -1434,27 +1487,27 @@ final class BearyDiaryStarMapViewController: UIViewController {
         rebuildEdgeListContent()
     }
 
-    /// 连线列表“加载更多”脚部：还有未展示的行才留入口，全部展示后撤掉。
+    /// 连线列表脚部：复用广场同款共享脚部 BearyLoadMoreFooterView，不另写一套。
+    /// 还有未展示的行时亮 3 个跳动圆点（滑到底自动续出）；全部展示后显示
+    /// “没有更多了”，不再报“还剩 N 条”。本地续出是同步的，没有网络等待，
+    /// 不进 failed；脚部自带的 failed＋onRetry 仍接上，万一进失败态点按重试续出。
     private func updateEdgeListFooter() {
-        guard edgeListShownCount < edgeListEdges.count else {
-            edgeListTableView.tableFooterView = nil
-            return
-        }
-        let remaining = edgeListEdges.count - edgeListShownCount
-        let button = UIButton(type: .custom)
-        button.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 15))
-        button.titleLabel?.adjustsFontForContentSizeCategory = true
-        button.setTitleColor(BearyColors.deepOrangeText, for: .normal)
-        button.setTitle("加载更多（还剩 \(remaining) 条）", for: .normal)
-        button.addTarget(self, action: #selector(didTapEdgeListLoadMore), for: .touchUpInside)
-        let footer = UIView(frame: CGRect(x: 0, y: 0, width: edgeListTableView.bounds.width, height: 44))
-        footer.addSubview(button)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            button.centerXAnchor.constraint(equalTo: footer.centerXAnchor),
-            button.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
-        ])
-        edgeListTableView.tableFooterView = footer
+        let state: BearyLoadMoreFooterView.State = edgeListShownCount < edgeListEdges.count ? .loading : .end
+        edgeListLoadMoreFooterView.setState(state)
+        edgeListLoadMoreFooterView.onRetry = { [weak self] in self?.loadMoreEdgeListRows() }
+        let width = edgeListTableView.bounds.width > 0 ? edgeListTableView.bounds.width : view.bounds.width
+        edgeListLoadMoreFooterView.frame = CGRect(x: 0, y: 0, width: width, height: BearyLoadMoreFooterView.height)
+        edgeListTableView.tableFooterView = edgeListLoadMoreFooterView
+    }
+
+    /// 连线列表自动续出：再展示一页（步长 edgeListPageStep），广场同款
+    /// 滑到底自动加载；本地续出是同步的，直接改条数重刷。
+    private func loadMoreEdgeListRows() {
+        guard edgeListShownCount < edgeListEdges.count else { return }
+        edgeListShownCount = min(edgeListEdges.count, edgeListShownCount + edgeListPageStep)
+        edgeListTableView.reloadData()
+        updateEdgeListFooter()
+        updateEdgeListTableHeight()
     }
 
     /// 表格按内容高伸缩，封顶 edgeListMaxHeight，超出部分在表内滚动。
@@ -1462,13 +1515,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
         edgeListTableView.layoutIfNeeded()
         edgeListTableHeight?.constant = min(edgeListTableView.contentSize.height, edgeListMaxHeight)
         view.layoutIfNeeded()
-    }
-
-    @objc private func didTapEdgeListLoadMore() {
-        edgeListShownCount = min(edgeListEdges.count, edgeListShownCount + edgeListPageStep)
-        edgeListTableView.reloadData()
-        updateEdgeListFooter()
-        updateEdgeListTableHeight()
     }
 
     private func edgeEntryName(_ entry: Entry?) -> String {
@@ -1496,22 +1542,35 @@ final class BearyDiaryStarMapViewController: UIViewController {
         return ""  // 109：无标题又无正文不再显“日记”占位
     }
 
+    /// 底卡标题的 attributed 版：标题优先全量渲染，空标题取正文前 24 字——
+    /// 先全文渲染再截断，记号已是单个附件格，不会被切一半。
+    private func sheetEntryTitleAttributed(_ entry: Entry, font: UIFont) -> NSAttributedString {
+        let title = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty {
+            return BearyText.inlineAttributedText(from: title, font: font, color: BearyStarMapNight.primaryText, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
+        }
+        let body = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return NSAttributedString(string: "") }
+        let rendered = BearyText.inlineAttributedText(from: body, font: font, color: BearyStarMapNight.primaryText, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
+        guard rendered.string.count > 24 else { return rendered }
+        let prefixLength = rendered.string.prefix(24).utf16.count
+        return rendered.attributedSubstring(from: NSRange(location: 0, length: prefixLength))
+    }
+
     /// 审计 17 轮第 20 项：底卡日期共用两个格式化器——sheetDateString 每行
     /// 新建 DateFormatter 是重复开销；格式一字不动（当年 M月d日／跨年
     /// yyyy年M月d日）。调用点全在主线程 sheet UI（见 sheetEntryButton／
     /// showStarSheet／edgeEntryName），DateFormatter 非线程安全，此处
     /// 单线程使用无虞（与画布 starDateFormatter 同款做法）。
-    private static let sheetDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "M月d日"
-        return formatter
-    }()
+    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；时区沿用
+    /// 既有行为（原来没写时区，跟设备走）；中文输出与改前一致。
+    private static var sheetDateFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "MMMMd", zhFormat: "M月d日")
+    }
 
-    private static let sheetDateYearFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy年M月d日"
-        return formatter
-    }()
+    private static var sheetDateYearFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "yyyyMMMMd", zhFormat: "yyyy年M月d日")
+    }
 
     private func sheetDateString(_ entry: Entry) -> String {
         guard let ms = entry.createdAt, ms > 0 else { return "" }
@@ -1626,18 +1685,12 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var fetchCollected: [Entry] = []
 
     private func fetchAllEntries() {
-        loadGeneration += 1
         // P1-4：加载开始同时作废已发出的后台重算——此前只递增 loadGeneration
         // 不递增 modelGeneration，已发出的重算回主线程时 generation 仍对得上，
         // 即调 applyModelToSky() 把空态顶回加载态上。递增后立即 recompute()
         // 一次：调用方已加载的日记仍即时成图（不丢首帧），只是换新 generation。
         modelGeneration += 1
         isFetching = true
-        fetchCollected = []
-        fetchResumeBefore = nil
-        fetchResumeBeforeId = nil
-        fetchResumePage = 1
-        fetchInterrupted = false
         // 审计登录杂项：无已有数据时先出加载态（此前首帧直接走空态“这里还没有星星”，
         // 回包后星星突然出现）；有数据时不遮旧星图。
         if allEntries.isEmpty {
@@ -1646,13 +1699,19 @@ final class BearyDiaryStarMapViewController: UIViewController {
         recompute()
         // C3：全量取数走共用入口（内存 → 完整存档 → 网络，在途共用）；
         // 本页只消费结果（成图/部分成图/失败态），分页与截断口径归加载器。
-        let generation = loadGeneration
-        BearySharedEntryLoader.shared.load(scope: entriesScope) { [weak self] load in
-            DispatchQueue.main.async {
-                guard let self = self, generation == self.loadGeneration else { return }
-                self.applySharedLoad(load)
-            }
-        }
+        // 起步（代次＋游标复位＋共用加载＋代次守卫分发）与地图共用
+        // BearySharedEntryLoader.startFreshLoad。
+        BearySharedEntryLoader.startFreshLoad(
+            scope: entriesScope,
+            generation: &loadGeneration,
+            collected: &fetchCollected,
+            resumeBefore: &fetchResumeBefore,
+            resumeBeforeId: &fetchResumeBeforeId,
+            resumePage: &fetchResumePage,
+            interrupted: &fetchInterrupted,
+            isCurrentGeneration: { [weak self] generation in self?.loadGeneration == generation },
+            apply: { [weak self] load in self?.applySharedLoad(load) }
+        )
     }
 
     /// 共用取数回包应用（与旧 fetchEntriesPage 的终态分支一一对应）：
@@ -1782,6 +1841,17 @@ extension BearyDiaryStarMapViewController: UITableViewDataSource, UITableViewDel
         return cell
     }
 
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        guard indexPath.row < edgeListEdges.count else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         // 130 扫 bug（#1214 引入）：点按后须取消选中，否则该行一直亮着
         // selectedBackgroundView；列表是常驻复用的表，再打开时旧行还亮着
@@ -1792,6 +1862,17 @@ extension BearyDiaryStarMapViewController: UITableViewDataSource, UITableViewDel
         // 按 id 在当前模型里重查：列表打开后模型可能已变，旧边不在了就不跳。
         guard let current = model.edges.first(where: { $0.id == edge.id }) else { return }
         didTapEdge(current)
+    }
+
+    /// 连线列表滑到底自动续出：广场 scrollViewDidScroll 同款，滑到离底部
+    /// 一屏时拉下一页（本地续出是同步的，loadMoreEdgeListRows 直接改条数重刷）。
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === edgeListTableView else { return }
+        guard edgeListShownCount < edgeListEdges.count else { return }
+        let remaining = edgeListTableView.contentSize.height - (scrollView.contentOffset.y + scrollView.bounds.height - scrollView.adjustedContentInset.bottom)
+        if remaining <= scrollView.bounds.height {
+            loadMoreEdgeListRows()
+        }
     }
 }
 
@@ -1879,11 +1960,11 @@ private final class StarMapSkyView: UIView {
     /// 每颗星新建 DateFormatter 是重复开销（200 篇即约 200 个/次）；格式一字
     /// 不动（M月d日）。setStars 只在主线程调用（见 applyModelToSky），
     /// DateFormatter 非线程安全，此处单线程使用无虞。
-    private static let starDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "M月d日"
-        return formatter
-    }()
+    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；时区沿用
+    /// 既有行为（原来没写时区，跟设备走）。
+    private static var starDateFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "MMMMd", zhFormat: "M月d日")
+    }
 
     /// r17 M2 入场态：新星延后表 + 新线集合 + 入场起始时刻（CACurrentMediaTime）。
     /// 无入场时延后表为空、起始为 0，draw 按终态画，不多一帧重绘。

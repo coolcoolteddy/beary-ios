@@ -44,6 +44,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private let inlineRetryButton = BearyHit44Button(type: .system)
     private let statusStackView = UIStackView()
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
+    /// 地图页列表 600 列上限约束（Feed 同款：宽 ≥821 才激活，开关在 viewDidLayoutSubviews）。
+    /// 只收列表，地图与状态行保持满宽；底 inset 仍走系统自动调整，不动。
+    private var mapListColCapConstraint: NSLayoutConstraint?
     // 失败态走 BearyStateView（居中承载，标题＋常规描边重试钮，动作复用 didTapRetry；
     // 不作全屏约束——StateView 以内容定高，全屏约束会让栈内标题/按钮拉伸）。
     private let failureStateView = BearyStateView()
@@ -191,6 +194,13 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         let mapMinimumHeight = mapView.heightAnchor.constraint(greaterThanOrEqualToConstant: 160)
         mapMinimumHeight.priority = UILayoutPriority(749)
         let listMinimumHeight = tableView.heightAnchor.constraint(greaterThanOrEqualToConstant: 120)
+        // 列表 600 居中（Feed 同款）：宽 == 屏宽为偏好（750），600 上限只在
+        // iPad 宽 ≥821 时激活（开关在 viewDidLayoutSubviews）；≤820 与 iPhone
+        // 横屏仍走全宽。地图与状态行保持满宽，不动。
+        let mapListColWidth = tableView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        mapListColWidth.priority = .defaultHigh
+        let mapListColCap = tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        mapListColCapConstraint = mapListColCap
         NSLayoutConstraint.activate([
             mapView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             mapView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -202,8 +212,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             statusStackView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             statusStackView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             tableView.topAnchor.constraint(equalTo: statusStackView.bottomAnchor, constant: 8),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
+            tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            mapListColWidth,
+            mapListColCap,
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             failureStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             failureStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
@@ -245,6 +258,16 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         // 开发者模式变化：强制空态 / 报错态 / 加载态（见 handleDevModeChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
         fetchAllEntries()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 600 上限只在 iPad 且宽 ≥821 时激活，iPhone 横屏仍走全宽；
+        // 状态不变不开关，避免布局循环（Feed 同款）。
+        let wantColCap = BearyDesktop.isWide(view.bounds.width)
+        if mapListColCapConstraint?.isActive != wantColCap {
+            mapListColCapConstraint?.isActive = wantColCap
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -341,16 +364,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 隐藏变可见时只淡入视图本身。地图大头针为 MapKit 渲染元素，
     /// 不走本口径（见 PR 说明）。
     private func setStatusTextFaded(_ text: String) {
-        guard statusLabel.text != text else { return }
-        statusLabel.text = text
-        guard !UIAccessibility.isReduceMotionEnabled, statusLabel.window != nil else {
-            statusLabel.alpha = 1
-            return
-        }
-        statusLabel.alpha = 0
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            self.statusLabel.alpha = 1
-        })
+        BearyLabelFade.setText(text, on: statusLabel, duration: BearyMotion.normal)
     }
 
     // 失败页显隐走 BearyStateView 自身的 isHidden 淡入淡出（0.2s、减动效直显），
@@ -467,30 +481,30 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             applyDevForcedMap()
             return
         }
-        loadGeneration += 1
         // 扫荡 130：新一轮取数开始即记下当前视野——整批解析完成时只有
         // 用户没动过地图才整体调整（见 applyGeocodedGroups）。
         if !didInitialGeocode {
             regionBeforeFirstGeocode = mapView.region
         }
         beginLoadingIfEmpty()
-        fetchCollected = []
-        fetchResumeBefore = nil
-        fetchResumeBeforeId = nil
-        fetchResumePage = 1
-        fetchInterrupted = false
         fetchCapped = false
         inlineRetryButton.setTitle("重试", for: .normal)
         inlineRetryButton.isHidden = true
         // C3：全量取数走共用入口（内存 → 完整存档 → 网络，在途共用）；
         // 本页只消费结果（成表/部分成表/失败态），分页与截断口径归加载器。
-        let generation = loadGeneration
-        BearySharedEntryLoader.shared.load(scope: entriesScope) { [weak self] load in
-            DispatchQueue.main.async {
-                guard let self = self, generation == self.loadGeneration else { return }
-                self.applySharedLoad(load)
-            }
-        }
+        // 起步（代次＋游标复位＋共用加载＋代次守卫分发）与星图共用
+        // BearySharedEntryLoader.startFreshLoad。
+        BearySharedEntryLoader.startFreshLoad(
+            scope: entriesScope,
+            generation: &loadGeneration,
+            collected: &fetchCollected,
+            resumeBefore: &fetchResumeBefore,
+            resumeBeforeId: &fetchResumeBeforeId,
+            resumePage: &fetchResumePage,
+            interrupted: &fetchInterrupted,
+            isCurrentGeneration: { [weak self] generation in self?.loadGeneration == generation },
+            apply: { [weak self] load in self?.applySharedLoad(load) }
+        )
     }
 
     /// 共用取数回包应用（与旧 fetchEntriesPage 的终态分支一一对应）：
@@ -508,7 +522,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 tableView.reloadData()
             } else {
                 fetchInterrupted = fetchResumeBefore != nil
-                setStatusTextFaded("网络失败，显示已加载的日记")
+                setStatusTextFaded(NSLocalizedString("map.network_seems_slow_showing_loaded", comment: ""))
                 inlineRetryButton.isHidden = false
             }
             return
@@ -532,13 +546,13 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                     showFailureState()
                     setStatusTextFaded("日记加载失败")
                 } else {
-                    setStatusTextFaded("仅展示已加载的部分，点按重试")
+                    setStatusTextFaded(NSLocalizedString("map.status.partial", comment: ""))
                     inlineRetryButton.isHidden = false
                 }
             } else {
                 // 已有数据时网络失败不清空地图：保留已加载聚合，状态行明示；
                 // 有内容时同样给状态行旁就近重试，列表与视角位置不动。
-                setStatusTextFaded("网络失败，显示已加载的日记")
+                setStatusTextFaded(NSLocalizedString("map.network_seems_slow_showing_loaded", comment: ""))
                 inlineRetryButton.isHidden = false
             }
             return
@@ -1320,7 +1334,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             }
             var secondary = ""
             if let created = entry.createdAt, created > 0 {
-                secondary = BearyVisibilityText.publishedRelativeString(publishedAtMs: created) ?? BearyDiaryCardCell.feedTimeString(ms: created)
+                secondary = BearyVisibilityText.diaryTimeString(publishedAtMs: created, timeZone: entry.diaryTimeZone) ?? BearyDiaryCardCell.feedTimeString(ms: created, timeZone: entry.diaryTimeZone)
             }
             if let line = BearyLocationDisplay.display(entry: entry) {
                 // 2026-11-14 存经纬度：有坐标的篇按当前语言重取位置行，解析出后只刷该行。
@@ -1363,6 +1377,21 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         cell.contentConfiguration = config
         cell.accessoryType = .disclosureIndicator
         return cell
+    }
+
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        if let selected = selectedGroup {
+            guard indexPath.row < selected.entries.count else { return }
+        } else {
+            guard indexPath.row < listedGroups.count else { return }
+        }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {

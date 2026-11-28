@@ -118,12 +118,23 @@ private final class BlindBoxPoolRowView: UIView {
     func configure(entry: Entry, selected: Bool) {
         let title = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if title.isEmpty == false {
-            mainLabel.text = title
+            mainLabel.attributedText = BearyText.inlineAttributedText(from: title, font: mainLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
         } else {
             let flat = (entry.content ?? "").replacingOccurrences(of: "\n", with: " ")
-            mainLabel.text = flat.isEmpty ? "（无正文）" : String(flat.prefix(40))
+            if flat.isEmpty {
+                mainLabel.text = "（无正文）"
+            } else {
+                // 先全文渲染再取前 40 字：记号已是单个附件格，不会被切一半。
+                let rendered = BearyText.inlineAttributedText(from: flat, font: mainLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: entry.images)
+                if rendered.string.count > 40 {
+                    let prefixLength = rendered.string.prefix(40).utf16.count
+                    mainLabel.attributedText = rendered.attributedSubstring(from: NSRange(location: 0, length: prefixLength))
+                } else {
+                    mainLabel.attributedText = rendered
+                }
+            }
         }
-        let dateText = BlindBoxDate.displayString(ms: entry.publishedAt ?? entry.createdAt)
+        let dateText = BlindBoxDate.displayString(ms: entry.publishedAt ?? entry.createdAt, timeZone: entry.diaryTimeZone)
         let eligibility = BlindBoxPool.eligibility(for: entry)
         switch eligibility {
         case .eligible:
@@ -282,9 +293,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     private func isStaleBlindBoxSnapshot(_ snapshot: BlindBoxRequestSnapshot) -> Bool {
-        return snapshot.epoch != BearyAPI.shared.authEpoch
-            || snapshot.accountId != BearyAPI.shared.authAccountId
-            || snapshot.dateKey != BlindBoxDate.todayKey()
+        return snapshot.dateKey != BlindBoxDate.todayKey()
+            || BearyAPI.isStaleAccountLoad(
+                requestAccountId: snapshot.accountId, requestEpoch: snapshot.epoch,
+                currentAccountId: BearyAPI.shared.authAccountId, currentEpoch: BearyAPI.shared.authEpoch)
     }
 
     override func viewDidLoad() {
@@ -464,10 +476,11 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         // 交换流程图标：icon_exchange（#229 已注册，不画在按钮标题里，只挂图标位）。
         let (exchangeIcon, exchangePlaceholder) = BlindBoxIcons.exchange(pointSize: 20)
         openButton.setImage(exchangeIcon, for: .normal)
-        openButton.tintColor = BearyColors.bg
+        // 开盒图标与标题同色 ink：按钮底是 surface2，bg 在其上仅 1.20/1.27:1、基本不可见。
+        openButton.tintColor = BearyColors.ink
         openButton.imageEdgeInsets.left = -6
         if exchangePlaceholder {
-            openButton.setTitle("开盒（图标待补）", for: .normal)
+            openButton.setTitle(NSLocalizedString("blindbox.open.title", comment: ""), for: .normal)
         }
         openButton.translatesAutoresizingMaskIntoConstraints = false
         openButton.addTarget(self, action: #selector(openTapped), for: .touchUpInside)
@@ -846,6 +859,13 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             SessionManager.shared.cancelAccountAddSession()
             self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
         }
+        login.onGuestMode = { [weak self] in
+            // 游客入口：关登录页、进游客态（回盲盒登录步；与取消同效回原地，
+            // 另置游客旗，后续受限动作按游客口径走登录门）。
+            self?.dismiss(animated: BearyMotion.animated(true)) {
+                SessionManager.shared.isGuestMode = true
+            }
+        }
         present(login, animated: BearyMotion.animated(true), completion: nil)
     }
 
@@ -1067,13 +1087,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 switch result {
                 case .success(let list):
                     let pageEntries = list.entries ?? []
-                    for entry in pageEntries {
-                        if let id = entry.id, !id.isEmpty {
-                            if self.poolSeenIds.contains(id) { continue }
-                            self.poolSeenIds.insert(id)
-                        }
-                        self.poolCollected.append(entry)
-                    }
+                    let fresh = BearyCursorPageLoad.fresh(pageEntries, id: { entry in entry.id.flatMap { $0.isEmpty ? nil : $0 } }, seen: &self.poolSeenIds)
+                    self.poolCollected.append(contentsOf: fresh)
                     let last = pageEntries.last
                     let eligibleCount = self.poolCollected.filter { BlindBoxPool.eligibility(for: $0) == .eligible }.count
                     if pageEntries.count >= 50, page < Self.poolMaxPages, eligibleCount < Self.poolEligibleTarget, let cursor = last?.createdAt, let lastId = last?.id {
@@ -1308,9 +1323,9 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         self.received = received
         receivedEmotes = received.emotes ?? []
         let title = (received.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        receivedTitleLabel.text = title.isEmpty ? nil : title
+        receivedTitleLabel.attributedText = title.isEmpty ? nil : BearyText.inlineAttributedText(from: title, font: receivedTitleLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: received.images)
         receivedTitleLabel.isHidden = title.isEmpty
-        receivedDateLabel.text = BlindBoxDate.displayString(ms: received.publishedAt)
+        receivedDateLabel.text = BlindBoxDate.displayString(ms: received.publishedAt, timeZone: received.diaryTimeZone)
         receivedDateLabel.isHidden = receivedDateLabel.text?.isEmpty != false
         renderReceivedContent()
         renderReceivedImages(keys: received.images ?? [])
@@ -1362,7 +1377,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 retry.widthAnchor.constraint(equalToConstant: 28),
                 retry.heightAnchor.constraint(equalToConstant: 28),
             ])
-            bearyFeedLoadImage(into: imageView, url: BearyImageURLs.imageURL(key: key, thumb: true), retryButton: retry, downsampleToWidth: nil)
+            bearyFeedLoadImage(into: imageView, url: BearyImageURLs.imageURL(key: key, thumb: true), retryButton: retry, downsampleToWidth: nil, blurUp: true)
         }
         imagesStack.isHidden = keys.isEmpty
     }
@@ -1594,15 +1609,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     /// 盲盒回应失败的拒绝动效：0.38s 摇头＋warning 震动＋拒绝音效（与详情/卡片 playDenyShake 同口径；
     /// 减动效时只跳过视觉抖动，震动与音效照常给）。
     private func playDenyShake(on view: UIView) {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-        if UIAccessibility.isReduceMotionEnabled { return }
-        view.layer.removeAnimation(forKey: "bearyBlindBoxDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        view.layer.add(shake, forKey: "bearyBlindBoxDenyShake")
+        BearyIconMotion.playDenyShake(on: view, key: "bearyBlindBoxDenyShake")
     }
 
     /// 摇头目标必须是当前在树上的 chip：renderEmoteChips() 全量重建，
@@ -1682,7 +1689,6 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         let sheet = BearyEmotePickerSheetViewController()
         // 第 19 轮审计 B4：点选不在 Sheet 里播回应音，改由下方成功分支播一次。
         sheet.playsPickSound = false
-        sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self] pickedKey in
             let reduceMotion = UIAccessibility.isReduceMotionEnabled
             self?.dismiss(animated: reduceMotion == false) {
@@ -1717,7 +1723,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 }
             }
         }
-        present(sheet, animated: BearyMotion.animated(true), completion: nil)
+        BearySystemSheet.present(sheet, from: self)
     }
 
     // MARK: - 举报 / 撤回
@@ -1787,7 +1793,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             if code == 409 { return BearyRepeatedCopy.blindBoxAlreadySwappedToday }
             return "加载失败，请重试"
         default:
-            return "网络不稳定，请稍后再试"
+            return NSLocalizedString("common.network_unstable", comment: "")
         }
     }
 

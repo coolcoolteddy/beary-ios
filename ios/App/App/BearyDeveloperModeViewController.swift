@@ -347,7 +347,7 @@ final class BearyDeveloperModeViewController: BearySettingsSubpageViewController
         UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+                guard BearyLocalNotifications.isAuthorized(settings) else {
                     BearyToast.show(in: self.view, message: "通知权限未开启，去系统设置里打开")
                     return
                 }

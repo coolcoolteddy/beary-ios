@@ -32,6 +32,11 @@ struct PublishSnapshot {
     let locationRegion: String?
     let locationCity: String?
     let locationStreet: String?
+    /// 日记时区（2026-11-21 v21 §二，17:02 Li 改）：创建草稿时的设备时区 IANA 标识
+    /// （草稿创建时取一次，之后编辑/发布都不改；无记录的旧草稿回落发布时设备时区）。
+    /// 快照不做 Codable 持久化，只经 saveDraftNow 落草稿，加字段安全。
+    /// 编辑不改时区：updateEntry 不发本键。
+    let tzName: String?
     let clientReq: String
     /// 快照拍定时的发起账号：发布中心起飞前再校验一次，防门禁/
     /// setVisibility 在途期间账号已变仍把旧篇以新账号发出。
@@ -198,7 +203,8 @@ final class BearyPublishCenter {
     /// 发布失败记录（key = draftId ?? clientReq）：原任务＋失败文案＋
     /// 失败时原日记是否已公开＋失败时草稿原样（重试指纹）。供 pill 状态表
     /// 与一键重试用；重试开始／新一轮发布开始即失效（另见 start()）；
-    /// 超 10 条时丢最旧一条。草稿删除不另行通知——重试前按指纹核对，
+    /// 超 BearyRetryPolicy.publishFailureRecordLimit 条时丢最旧一条
+    /// （内存 bound，不是重试次数）。草稿删除不另行通知——重试前按指纹核对，
     /// 草稿不在即失效、改走编辑器。
     private var failedJobs: [String: FailedPublish] = [:]
 
@@ -335,7 +341,7 @@ final class BearyPublishCenter {
                                         self.fail(runningJob, message: "原日记公开失败，请重试")
                                     }
                                 case .failure:
-                                    self.fail(runningJob, message: "网络不稳定，原日记是否已公开未知，请打开草稿查看后重试")
+                                    self.fail(runningJob, message: NSLocalizedString("publish.quote_source_unknown_after_network_failure", comment: ""))
                                 }
                             }
                         }
@@ -591,6 +597,7 @@ final class BearyPublishCenter {
             liveVideos: runningJob.liveVideos.isEmpty ? nil : runningJob.liveVideos,
             visibility: snapshot.visibility,
             tags: snapshot.tags,
+            timeZoneName: snapshot.tzName,
             uploadProgress: progressHandler
         ) { [weak self, weak runningJob] result in
             DispatchQueue.main.async {
@@ -675,8 +682,7 @@ final class BearyPublishCenter {
         // 拒绝反馈：震动＋拒绝音成对（成功侧 publishSuccess 震动＋回应音同款）；
         // 旧版只有震动没有音，失败与成功不对称。401 路径另见 fail(error:)，
         // 其反馈是登录入口本身，不另补音。
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
+        BearyIconMotion.playDenyFeedback()
         recordFailure(runningJob, message: message)
         if runningJob.openDraftOnFailure, let openDraft = runningJob.job.onOpenDraft,
            let container = terminalToastContainer(for: runningJob) {
@@ -781,7 +787,7 @@ final class BearyPublishCenter {
 
     /// 失败留档：内存记录供 pill 状态表与一键重试；持久标记写草稿，
     /// 草稿箱据此出失败行与重试入口（重启后仍在）。写盘走 ioQueue 串行，
-    /// 与清标记按调用顺序落盘。记录超 10 条时丢最旧一条。
+    /// 与清标记按调用顺序落盘。记录超 BearyRetryPolicy.publishFailureRecordLimit 条时丢最旧一条。
     private func recordFailure(_ runningJob: RunningJob, message: String) {
         let snapshot = runningJob.job.snapshot
         let sourcePublished = runningJob.sourcePublished
@@ -795,7 +801,7 @@ final class BearyPublishCenter {
             }
         )
         failedJobs[runningJob.key] = record
-        if failedJobs.count > 10,
+        if failedJobs.count > BearyRetryPolicy.publishFailureRecordLimit,
            let oldestKey = failedJobs.min(by: { $0.value.failedAt < $1.value.failedAt })?.key {
             failedJobs.removeValue(forKey: oldestKey)
         }
@@ -935,9 +941,13 @@ final class BearyPublishCenter {
     // MARK: - 文案与进度口径
 
     /// 失败文案（从 BearyComposerViewController 原样移入）：服务端业务码
-    /// 各分支原样，默认「发布失败，请重试」。
+    /// 各分支原样，默认「发布失败，请重试」。共用三分支走
+    /// BearyServerErrorMessages 共享码表，这里只留专属分支。
     static func message(forPublishError error: APIError) -> String {
         if case .server(let code, _) = error {
+            if let shared = BearyServerErrorMessages.sharedMessage(forServerCode: code) {
+                return shared
+            }
             switch code {
             case "create_gap":
                 return "发布太频繁，请稍后再试"
@@ -945,12 +955,6 @@ final class BearyPublishCenter {
                 return "今日发布次数已达上限，请明天再试"
             case "create_dup":
                 return "这篇和你写过的一篇一模一样"
-            case "content too long":
-                return "正文最多 2000 字"
-            case "title too long":
-                return "标题最多 30 字"
-            case "image unavailable":
-                return "图片已失效，请重新添加"
             case "recipient_invalid", "mentioned_user_invalid":
                 return "无法提到这位用户，请重新选择"
             default:
@@ -969,17 +973,18 @@ final class BearyPublishCenter {
         return "账号已变化，本篇未发布。请回到原账号后再发布，或丢弃本篇重新开始。"
     }
 
-    /// 部分成功失败文案：第 25 轮 13（收窄）：原日记已公开时，在原失败
-    /// 文案前加“原日记已公开，新篇未发布。”；未公开时原样返回。
-    /// 通用“发布失败，请重试”只改成“原日记已公开，新篇未发布，请重试”，
-    /// 不重复“发布失败”。仅供上述四条分支用；fail(error:) 与账号失配
+    /// 部分成功失败文案：第 25 轮 13（收窄）：原日记已公开时，按 #2464 口径
+    /// 先说失败——“发布失败，引用的日记已公开，…”；未公开时原样返回。
+    /// 通用“发布失败，请重试”只改成“发布失败，引用的日记已公开，请只重试新篇”，
+    /// 其余 base 前加“发布失败，引用的日记已公开。”前缀。
+    /// 仅供上述四条分支用；fail(error:) 与账号失配
     /// 分支已有部分成功口径，不走这里。
     private func partialFailureMessage(_ base: String, runningJob: RunningJob) -> String {
         guard runningJob.sourcePublished else { return base }
         if base == "发布失败，请重试" {
-            return "原日记已公开，新篇未发布，请重试"
+            return NSLocalizedString("publish.partial_failure_retry_new_only", comment: "")
         }
-        return "原日记已公开，新篇未发布。" + base
+        return NSLocalizedString("publish.partial_failure_prefix", comment: "") + base
     }
 
     private func reportProgress(_ runningJob: RunningJob, value: Double) {

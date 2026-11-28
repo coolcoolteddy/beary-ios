@@ -452,6 +452,7 @@ final class BearyDetailExpandAnimator: NSObject, UIViewControllerAnimatedTransit
         guard let provider = sourceProvider,
               let sourceView = provider(),
               let sourceRect = sourceRectInContainer(sourceView, container: container),
+              sourceRect.width > 0, sourceRect.height > 0,
               let snapshot = sourceView.snapshotView(afterScreenUpdates: false) else {
             // 无源行（深链／搜索／引用）或快照失败：沿用旧 slide 入场，
             // 不改既有行为；toView 已就位，直接淡入亦可，此处交回 slide。
@@ -464,24 +465,45 @@ final class BearyDetailExpandAnimator: NSObject, UIViewControllerAnimatedTransit
         dimView.backgroundColor = BearySheetChrome.scrimColor
         dimView.alpha = 0
         container.insertSubview(dimView, belowSubview: toView)
+        // 2026-11-22 拉长修复：快照不再直接改帧——位图随帧非等比拉伸
+        // （宽约 1.09 倍、高约 4 倍）就是 Li 报的“卡片被拉长”。改为裁剪窗
+        // + 等比缩放：clipView 带圆角裁剪、帧从源行矩形长到整页；快照钉
+        // 在裁剪窗左上角、只做等比缩放（宽比 = 终宽 / 源宽），内容全程
+        // 不变形；裁剪窗长出的区域由下方渐显的真详情页填满，快照在末段
+        // 淡出、与真页溶解交接。
         let radius = sourceView.layer.cornerRadius
-        snapshot.frame = sourceRect
-        snapshot.layer.cornerRadius = radius
-        snapshot.clipsToBounds = true
-        container.addSubview(snapshot)
+        let clipView = UIView(frame: sourceRect)
+        clipView.clipsToBounds = true
+        clipView.layer.cornerRadius = radius
+        snapshot.frame = CGRect(origin: .zero, size: sourceRect.size)
+        snapshot.layer.anchorPoint = CGPoint(x: 0, y: 0)
+        snapshot.layer.position = .zero
+        clipView.addSubview(snapshot)
+        container.addSubview(clipView)
         container.layoutIfNeeded()
+        let scale = finalFrame.width / sourceRect.width
         UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: 1.0, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
-            snapshot.frame = finalFrame
-            snapshot.layer.cornerRadius = 0
+            clipView.frame = finalFrame
+            clipView.layer.cornerRadius = 0
+            snapshot.transform = CGAffineTransform(scaleX: scale, y: scale)
             dimView.alpha = 1
         }, completion: { _ in
             // 弹簧临界阻尼单调趋近目标，结束时帧即终态；先显式归位再换真页，
             // 快照与真页同一帧交接，不跳变。
-            snapshot.frame = finalFrame
+            clipView.frame = finalFrame
             toView.alpha = 1
             snapshot.removeFromSuperview()
+            clipView.removeFromSuperview()
             dimView.removeFromSuperview()
             transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+        })
+        // 真详情页随裁剪窗长大渐显（填满快照下方的空区）；快照在末段淡出，
+        // 与真页溶解交接，不留硬切。
+        UIView.animate(withDuration: duration * 0.7, delay: 0, options: .curveEaseOut, animations: {
+            toView.alpha = 1
+        })
+        UIView.animate(withDuration: duration * 0.35, delay: duration * 0.65, options: .curveEaseOut, animations: {
+            snapshot.alpha = 0
         })
     }
 
@@ -518,6 +540,7 @@ final class BearyDetailExpandAnimator: NSObject, UIViewControllerAnimatedTransit
         guard let provider = sourceProvider,
               let sourceView = provider(),
               let targetRect = sourceRectInContainer(sourceView, container: container),
+              targetRect.width > 0, container.bounds.width > 0,
               let snapshot = fromView.snapshotView(afterScreenUpdates: false) else {
             UIView.animate(withDuration: duration, animations: {
                 fromView.alpha = 0
@@ -532,21 +555,64 @@ final class BearyDetailExpandAnimator: NSObject, UIViewControllerAnimatedTransit
         dimView.backgroundColor = BearySheetChrome.scrimColor
         dimView.alpha = 1
         container.insertSubview(dimView, aboveSubview: toView)
+        // 2026-11-22 拉长修复：同开场，快照不再直接改帧压进卡片矩形
+        // （整页位图被纵向压扁）；改为裁剪窗 + 等比缩放：裁剪窗从整页
+        // 收到卡片矩形，快照钉左上角、等比缩到卡片宽，内容全程不变形；
+        // 快照在末段淡出，露出下方已回到原位的真卡片。
+        let clipView = UIView(frame: container.bounds)
+        clipView.clipsToBounds = true
+        clipView.layer.cornerRadius = 0
         snapshot.frame = container.bounds
-        snapshot.layer.cornerRadius = 0
-        snapshot.clipsToBounds = true
-        container.addSubview(snapshot)
+        snapshot.layer.anchorPoint = CGPoint(x: 0, y: 0)
+        snapshot.layer.position = .zero
+        clipView.addSubview(snapshot)
+        container.addSubview(clipView)
         fromView.alpha = 0
         container.layoutIfNeeded()
+        let scale = targetRect.width / container.bounds.width
         UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: 1.0, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
-            snapshot.frame = targetRect
-            snapshot.layer.cornerRadius = radius
+            clipView.frame = targetRect
+            clipView.layer.cornerRadius = radius
+            snapshot.transform = CGAffineTransform(scaleX: scale, y: scale)
             dimView.alpha = 0
         }, completion: { _ in
-            snapshot.frame = targetRect
+            clipView.frame = targetRect
             snapshot.removeFromSuperview()
+            clipView.removeFromSuperview()
             dimView.removeFromSuperview()
             transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
         })
+        // 快照在末段淡出，露出下方已回到原位的真卡片，不留硬切。
+        UIView.animate(withDuration: duration * 0.35, delay: duration * 0.65, options: .curveEaseOut, animations: {
+            snapshot.alpha = 0
+        })
     }
+}
+
+// MARK: - 全屏 nav modal 共享入口（第二十四批第 6 项）
+
+// 七处「全屏 nav modal」同一副骨架收一处：nav 包裹＋藏栏＋全屏＋
+// EdgeDismiss（attach＋transitioningDelegate）＋present。调用方须把返回的
+// edgeDismiss 存进强持有属性（transitioningDelegate 弱引用，不持有则手势与
+// 动画代理失效）；nav 由调用方按需取用（如标签页的 onBack／shouldAllow 门）。
+// hidesNavigationBar 默认 true；Profile 地图／星图两处原就不藏栏，传 false，
+// 此时连赋值都不做（isNavigationBarHidden 默认即 false），行为与原来逐字一致。
+@discardableResult
+func presentFullscreenNav(
+    root: UIViewController,
+    from presenter: UIViewController,
+    hidesNavigationBar: Bool = true,
+    configureEdgeDismiss: ((BearyEdgeDismissController, UINavigationController) -> Void)? = nil
+) -> (nav: UINavigationController, edgeDismiss: BearyEdgeDismissController) {
+    let nav = UINavigationController(rootViewController: root)
+    if hidesNavigationBar {
+        nav.isNavigationBarHidden = true
+    }
+    nav.modalPresentationStyle = .fullScreen
+    let edgeDismiss = BearyEdgeDismissController()
+    configureEdgeDismiss?(edgeDismiss, nav)
+    edgeDismiss.attach(to: nav)
+    nav.transitioningDelegate = edgeDismiss
+    presenter.present(nav, animated: BearyMotion.animated(true))
+    return (nav, edgeDismiss)
 }

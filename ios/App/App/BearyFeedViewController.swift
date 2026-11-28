@@ -71,6 +71,11 @@ class BearyFeedViewController: UIViewController {
     /// 换桶，旧桶内容绝不渲染给新身份（见 handleFeedUserChanged）。
     private var feedCacheOwnerKey: String?
 
+    /// 账号隔离：冷启动首帧因身份未确认跳过加载的标记（见 loadCachedFeedOrRefresh）；
+    /// 任何一次真实加载（本函数放行、refreshAllInternal）即清掉；容器凭它在
+    /// /me 回包后补调首帧。须为 internal（SceneDelegate 读它）。
+    var identityPendingFirstLoad = false
+
     // MARK: - 广场流状态
 
     /// 原始拉取结果；展示时再按最近公开模块去重。
@@ -100,11 +105,18 @@ class BearyFeedViewController: UIViewController {
     private var pullEngageTranslation: CGFloat?
     private var customPullEndScheduled = false
     private var plazaError = false
+    /// 快照展示态：当前列表来自磁盘快照、尚未经网络首拉/增量成功确认。
+    /// 冷启动先显快照、静默刷新失败时凭此亮失败条（否则用户看不出内容是旧的）；
+    /// 网络首拉/增量成功、切段后清掉。
+    private var plazaShowingSnapshot = false
     /// since 补拉缺口态：hasGap 回包后置位，游标钉在缺口前的旧表头
     /// （plazaGapCursor），重试/再刷新仍从它起拉、不越过缺口；无缺口
     /// 成功或全量首拉后清掉。随切段槽走，不跨段复用。
     private var plazaHasGap = false
     private var plazaGapCursor: (key: Int, id: String)?
+    /// F2：限时到期 live 复核——广场/关注列表的 1 秒 tick（时间线 sweep
+    /// 同款）；进页起表、离页停表，到期即摘行。
+    private var limitedExpiryTimer: Timer?
     /// 切段缓存（Li 2026-11-02 定：切段直接显缓存，不重拉；刷新走下拉）：
     /// 每段各存一份内存列表与分页态；plazaRaw 与分页变量恒为“当前段”的
     /// live 镜像，切段时先把 live 写回出段槽、再把入段槽读回 live。
@@ -242,7 +254,6 @@ class BearyFeedViewController: UIViewController {
     /// 行/图点按防连点：各自独立时间戳，0.8 秒内同一动作重复点按直接丢弃。
     /// 看图与进详情分开节流：点图进灯箱后关闭、立即点行进详情，不再被看图的时钟丢弃；
     /// 同一动作连续快点仍各自防叠页。
-    private var lastImageViewerAt: Date?
     private var lastEntryNavigationAt: Date?
     /// 滚动藏栏（清单第 2 项首页部分）：上次处理的滚动偏移（2pt 死区内不更新，
     /// 慢速滚动的位移可累积到位再判定方向）；feedChromeHidden 是本页已下发的栏态，
@@ -415,6 +426,8 @@ class BearyFeedViewController: UIViewController {
         // 游客/未登录：不调接口，走与“我的”同口径的登录门，段强制回广场。
         // 游客即弹游客提示 Sheet；非游客未登录先 toast、1.2s 后弹登录页
         //（与 showTabLoginGate 同口径，toast 先可见；回包前已登录则不再弹）。
+        // U21 同口径：延迟回调里校验仍停留在触发页（首页）且前面无其他弹窗，
+        // 否则取消本次自动弹登录——1.2s 内切去搜索，就让他搜索。
         guard SessionManager.shared.currentUser?.id != nil else {
             feedFollowingSegment = false
             sender.selectedSegmentIndex = 0
@@ -424,9 +437,16 @@ class BearyFeedViewController: UIViewController {
                 BearyToast.show(in: view, message: "请先登录")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                     guard let self = self else { return }
-                    if SessionManager.shared.currentUser?.id == nil {
-                        self.onRequireLogin?()
-                    }
+                    // 仍在触发页：容器切页只改 isHidden（不离窗），切走后 view 即隐藏。
+                    guard SessionManager.shared.currentUser?.id == nil,
+                          let window = self.view.window,
+                          !self.view.isHidden,
+                          self.presentedViewController == nil else { return }
+                    // 前面没有其他弹窗：沿 window 根视图控制器查最上层，已有 modal 在前则不弹。
+                    var topVC = window.rootViewController
+                    while let presented = topVC?.presentedViewController { topVC = presented }
+                    guard topVC === window.rootViewController else { return }
+                    self.onRequireLogin?()
                 }
             }
             return
@@ -445,6 +465,7 @@ class BearyFeedViewController: UIViewController {
         plazaFirstPageInFlight = false
         // 切段即换段：出段的刷新失败条不带到入段，入段的拉取结果自会再定。
         setRefreshFailedBannerVisible(false)
+        plazaShowingSnapshot = false
         hideNewContentPill()
         pendingPlaza = nil
         clearPillReturnAnchor()
@@ -533,6 +554,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaFirstDone = true
                     strongSelf.isFirstLoad = false
                     strongSelf.lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                    strongSelf.plazaShowingSnapshot = true
                     // 快照落盘即算本段拉过：写回内存槽，切段回来直接显，不重读盘。
                     strongSelf.followingSegmentLoaded = true
                     strongSelf.followingSegmentCache = FeedSegmentCache(
@@ -639,17 +661,13 @@ class BearyFeedViewController: UIViewController {
         return container
     }()
 
-    /// 盲盒入口（广场顶部）：轮播下方一行小卡（compactMode：只留标题与
-    /// 今日计数，副文案去掉）；与时间线顶部入口共用 BearyBlindBoxEntryView
-    /// 与 BlindBoxState，同一当日计数。点按链路与原来一致（进盲盒流程页）。
-    private let blindBoxEntryView = BearyBlindBoxEntryView()
+    /// 广场表头容器：轮播在上、空态在下；盲盒交换是轮播第一页（见 rebuildCarouselItems），
+    /// 不再另占一行小卡。
     private let blindBoxHeaderWrap = UIView()
     private var feedBlindBoxHeaderHeight: CGFloat = 0
     private var feedBlindBoxHeaderWidth: CGFloat = 0
-    private var feedBlindBoxEntryPinned = false
-    private var feedBlindBoxEntryTopConstraint: NSLayoutConstraint?
 
-    /// 广场顶部轮播（取代旧的顶部盲盒卡位置；盲盒改收其下方一行小卡）。
+    /// 广场顶部轮播（第一页是盲盒交换，其余页为精选与历史上的今天）。
     private let plazaCarouselView = BearyPlazaCarouselView()
     /// 历史页的 EdgeDismiss 强持有（transitioningDelegate 弱引用）。
     private var plazaHistoryEdgeDismiss: BearyEdgeDismissController?
@@ -689,7 +707,7 @@ class BearyFeedViewController: UIViewController {
         refreshFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         refreshFailedLabel.adjustsFontForContentSizeCategory = true
         refreshFailedLabel.textColor = BearyColors.ink
-        refreshFailedLabel.text = "未能刷新"
+        refreshFailedLabel.text = NSLocalizedString("common.refresh_failed", comment: "")
         refreshFailedBanner.addSubview(refreshFailedLabel)
         refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
         refreshFailedRetryButton.setTitle("重试", for: .normal)
@@ -745,35 +763,45 @@ class BearyFeedViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlindBoxStateChanged), name: .bearyBlindBoxDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleAnnouncementListChanged), name: .bearyAnnouncementListDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleFeedUserChanged), name: .bearyUserDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleFriendsChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
         // 开发者模式变化：假日记 / 字号（见 handleDevModeChanged）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleDevModeChanged(_:)), name: .bearyDeveloperModeChanged, object: nil)
-        blindBoxEntryView.onTap = { [weak self] in
-            self?.presentBlindBoxFlow()
-        }
-        // 盲盒改收轮播下方一行小卡（只留标题与今日计数，副文案去掉）。
-        blindBoxEntryView.compactMode = true
         plazaCarouselView.onSelectFeatured = { [weak self] entry in
             self?.tryNavigateEntry(entry)
         }
         plazaCarouselView.onSelectHistory = { [weak self] in
             self?.presentHistoryToday()
         }
-        // 首帧先只出历史卡；精选卡等广场首屏数据到了再补（见 rebuildCarouselItems）。
-        plazaCarouselView.setItems([.historyToday(BearyHistoryTodayLoader.cached())])
+        plazaCarouselView.onSelectBlindBox = { [weak self] in
+            guard let self = self else { return }
+            // 远程开关（2026-11-19）：blindbox 关掉时入口仍可见，点按只 toast、不跳转；
+            // 该入口是盲盒唯一点按链（含已换态下的撤回入口），关掉会一并挡住撤回。
+            if BearyForceUpdateCenter.shared.isFeatureDisabled(.blindbox) {
+                BearyToast.show(in: self.view, message: NSLocalizedString("common.feature_maintenance", comment: ""))
+                return
+            }
+            self.presentBlindBoxFlow()
+        }
+        plazaCarouselView.onSelectAnnouncement = { [weak self] ann in
+            self?.presentAnnouncement(ann)
+        }
+        // 首帧先出盲盒页与历史卡；精选卡等广场首屏数据到了再补（见 rebuildCarouselItems）。
+        // 远程开关：blindbox 关掉时首帧也不建盲盒页（入口隐藏）。
+        plazaCarouselView.setItems(blindBoxFirstItems())
         // 历史上的今天：首帧即发起拉取（有缓存直接回包、无缓存发一次请求），
         // 到了重建轮播；在途去重见 BearyHistoryTodayLoader。
         BearyHistoryTodayLoader.load { [weak self] _ in
             self?.rebuildCarouselItems()
         }
         blindBoxHeaderWrap.addSubview(plazaCarouselView)
-        blindBoxHeaderWrap.addSubview(blindBoxEntryView)
         layoutFeedBlindBoxHeader()
         loadCachedFeedOrRefresh()
     }
 
     deinit {
+        limitedExpiryTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -794,11 +822,10 @@ class BearyFeedViewController: UIViewController {
     /// 拉黑/举报广播清行），不需要返回时再整拉一遍。
     /// allowBackgroundRevalidate=true（切 tab 回首页）：保留原 60 秒门控重拉。
     private func handlePageEnter(allowBackgroundRevalidate: Bool) {
-        // 盲盒计数：进页即按本地镜像刷新（跨日重置 + 流程页回来的已换态），服务端刷新由流程页做。
+        // 盲盒计数：进页即按本地镜像刷新（跨日重置 + 流程页回来的已换态），服务端刷新由流程页做；
+        // 盲盒页在轮播里，重建轮播即刷新计数。
         BlindBoxState.shared.resetIfNewDay()
-        blindBoxEntryView.refresh()
-        // 副文案随登录/已换态变长变短，入口高度可能变行——立即重算表头高度，
-        // 否则表头沿用旧高、框被压或留空，且中央转圈落点不跟进。
+        rebuildCarouselItems()
         layoutFeedBlindBoxHeader()
         // 回到本页即恢复轮播自动换页（modal 盖住 / 切走时已停表）。
         plazaCarouselView.setPageVisible(true)
@@ -885,6 +912,7 @@ class BearyFeedViewController: UIViewController {
             revalidateIfNeeded()
         }
         // else：modal 返回且登录态未变——直接回显缓存，不重拉、不重置滚动位。
+        startLimitedExpiryTimer()
     }
 
     /// P1-5：与时间线 pageDidEnter 同款钩子——容器切页只改 isHidden、不触发
@@ -905,6 +933,7 @@ class BearyFeedViewController: UIViewController {
     /// 容器切 tab 离页钩子（与消息页 pageDidLeave 同口径）：停轮播自动换页。
     func pageDidLeave() {
         plazaCarouselView.setPageVisible(false)
+        stopLimitedExpiryTimer()
     }
 
     override func viewDidLayoutSubviews() {
@@ -915,7 +944,7 @@ class BearyFeedViewController: UIViewController {
         if feedColCapConstraint?.isActive != wantColCap {
             feedColCapConstraint?.isActive = wantColCap
         }
-        // 盲盒表头：宽变化时重算入口行 + 空态高度（函数内以高度变化守卫赋值，不致布局循环）。
+        // 广场表头：宽变化时重算轮播 + 空态高度（函数内以高度变化守卫赋值，不致布局循环）。
         layoutFeedBlindBoxHeader()
         updateFootLogo()
         // 顶栏透度批：安全区变化时按已存栏态重算（容器 viewDidLayoutSubviews 也会重发，双重 no-op）。
@@ -967,7 +996,7 @@ class BearyFeedViewController: UIViewController {
             tableView.scrollIndicatorInsets.top = top
             tableView.scrollIndicatorInsets.bottom = bottom
         }
-        // 旧口径（顶栏 +40）已废：该位置在盲盒框加入后落在框内，改走表头底 +16。
+        // 旧口径（顶栏 +40）已废：该位置在表头加高后落在轮播卡上，改走表头底 +16。
         updateCentralSpinnerTop()
     }
 
@@ -1084,6 +1113,8 @@ class BearyFeedViewController: UIViewController {
     }
 
     private func refreshAllInternal(showCentralSpinner: Bool) {
+        // 账号隔离：任何一次真实加载即结束首帧身份待确认态（见 identityPendingFirstLoad）。
+        identityPendingFirstLoad = false
         // 112 分段去重：首拉已在途时直接跳过——不 bump 代际（否则在途回包
         // 会被代际守卫丢弃、等于白白重拉一次），不重置 hasMore/模型；
         // 在途回包完成时经 maybeEndRefreshing 结束下拉头并更新模型。
@@ -1182,7 +1213,7 @@ class BearyFeedViewController: UIViewController {
         if showLogo {
             let logo = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 90))
             logo.backgroundColor = BearyColors.bg
-            let logoImageValue = UIImage(named: "LogoHorizontal")
+            let logoImageValue = UIImage(named: BearyAssets.logoHorizontal)
             var logoWidth: CGFloat = 0
             if let logoImageValue = logoImageValue, logoImageValue.size.height > 0 {
                 logoWidth = 26 * logoImageValue.size.width / logoImageValue.size.height
@@ -1224,7 +1255,7 @@ class BearyFeedViewController: UIViewController {
         guard let entryIdValue = entry.id, !entryIdValue.isEmpty,
               let urlValue = URL(string: "https://teddyhn.com/beary/d/" + entryIdValue) else { return }
         let shareText = (entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        var items: [Any] = ["beary 日记"]
+        var items: [Any] = [NSLocalizedString("share.diary_title", comment: "")]
         if !shareText.isEmpty {
             items.append(String(shareText.prefix(60)))
         }
@@ -1256,21 +1287,6 @@ class BearyFeedViewController: UIViewController {
         present(activity, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
     }
 
-    /// F1：图片查看器统一复用 BearyEntryImageViewerViewController（自定义
-    /// pinch＋双击、失败重试），不再用本文件内旧版。
-    /// presented 守卫 + 本动作导航节流（0.8 秒，独立时钟，不与进详情共用），防连点叠页（E4）。
-    private func presentImageViewer(imageKeys: [String], startIndex: Int, liveVideos: [String: String]? = nil, originFrame: CGRect? = nil, thumbnail: UIImage? = nil) {
-        if imageKeys.isEmpty { return }
-        if presentedViewController != nil { return }
-        let now = Date()
-        if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
-        lastImageViewerAt = now
-        let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: liveVideos, startIndex: startIndex)
-        viewer.initialThumbnail = thumbnail
-        viewer.originFrameInWindow = originFrame
-        viewer.modalPresentationStyle = .fullScreen
-        present(viewer, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
-    }
 
     /// E4：行点按导航节流——0.8 秒内重复点按直接丢弃，防详情叠页。
     /// 独立时钟，不与看图共用：关灯箱后立即点行不再被看图的节流丢弃。
@@ -1350,6 +1366,7 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaNextPageBeforeId = nil
                         strongSelf.plazaReachedEnd = true
                         strongSelf.plazaError = false
+                        strongSelf.plazaShowingSnapshot = false
                         strongSelf.lastFeedLoadAt = Date()
                         if !strongSelf.didShowSkeleton {
                             strongSelf.tableView.reloadData()
@@ -1383,6 +1400,7 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaNextPageBefore = nil
                         strongSelf.plazaNextPageBeforeId = nil
                         strongSelf.applyFirstPageDiff(entries, hasMoreOverride: rawEntries.count >= strongSelf.firstPageLimit)
+                        strongSelf.plazaShowingSnapshot = false
                         strongSelf.setRefreshFailedBannerVisible(false)
                         strongSelf.rebuildCarouselItems()
                         // 秒开-启动瘦身：首屏回包已终结，通知容器再发启动期 /me。
@@ -1404,6 +1422,7 @@ class BearyFeedViewController: UIViewController {
                     }
                     strongSelf.plazaReachedEnd = rawEntries.count < strongSelf.firstPageLimit
                     strongSelf.plazaError = false
+                    strongSelf.plazaShowingSnapshot = false
                     strongSelf.setRefreshFailedBannerVisible(false)
                     strongSelf.clearPlazaGapState()
                     strongSelf.lastFeedLoadAt = Date()
@@ -1440,7 +1459,9 @@ class BearyFeedViewController: UIViewController {
                         }
                         strongSelf.finishFirstLoadIfNeeded()
                         strongSelf.updateOverlayState()
-                    } else if !silent {
+                    } else if !silent || strongSelf.plazaShowingSnapshot {
+                        // 快照态静默刷新失败：当前行是磁盘旧数据，亮已有失败条
+                        //（“未能刷新 · 重试”，重试走非静默刷新），不静默。
                         strongSelf.setRefreshFailedBannerVisible(true)
                     }
                     strongSelf.maybeEndRefreshing()
@@ -1544,6 +1565,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaFirstPageInFlight = false
                     strongSelf.plazaFirstDone = true
                     strongSelf.plazaError = false
+                    strongSelf.plazaShowingSnapshot = false
                     strongSelf.setRefreshFailedBannerVisible(false)
                     strongSelf.plazaHasGap = false
                     strongSelf.plazaGapCursor = nil
@@ -1552,14 +1574,14 @@ class BearyFeedViewController: UIViewController {
                     // B1：段守卫写盘（同首拉守卫），仅好友篇不落盘。
                     strongSelf.saveCurrentFeedHead(entries: strongSelf.plazaRaw, hasMore: strongSelf.plazaHasMore)
                     strongSelf.rebuildCarouselItems()
-                    if strongSelf.tableView.numberOfRows(inSection: 0) == oldCount {
+                    BearyLoadingUX.appendRowsIfConsistent(tableView: strongSelf.tableView, oldCount: oldCount, insert: {
                         let indexPaths = (0..<newItems.count).map { IndexPath(row: $0, section: 0) }
                         strongSelf.tableView.performBatchUpdates({
                             strongSelf.tableView.insertRows(at: indexPaths, with: .none)
                         })
-                    } else {
+                    }, fallback: {
                         strongSelf.tableView.reloadData()
-                    }
+                    })
                     strongSelf.finishFirstLoadIfNeeded()
                     strongSelf.updateOverlayState()
                     strongSelf.maybeEndRefreshing()
@@ -1671,15 +1693,11 @@ class BearyFeedViewController: UIViewController {
                     // 关注流二次过滤（仅 following 段）。
                     let scopeFiltered = strongSelf.feedFollowingSegment ? rawFresh : rawFresh.filter { BearyEphemeral.isEffectivelyPublic($0) }
                     let fresh = strongSelf.feedFollowingSegment ? strongSelf.filteredFollowingEntries(scopeFiltered) : scopeFiltered
-                    var known = Set<String>()
-                    for entry in strongSelf.plazaRaw {
-                        if let entryIdValue = entry.id { known.insert(entryIdValue) }
-                    }
-                    for entry in fresh {
-                        guard let entryIdValue = entry.id, !known.contains(entryIdValue) else { continue }
-                        strongSelf.plazaRaw.append(entry)
-                        known.insert(entryIdValue)
-                    }
+                    var known = Set(strongSelf.plazaRaw.compactMap { $0.id })
+                    // 可复用资源第十八批第 7 项：分页去重追加走第十六批第 8 条的共享 helper；
+                    // 游标推导、段过滤、代际守卫、缺口游标、脚部刷新各留自己的。
+                    let deduped = BearyCursorPageLoad.fresh(fresh, id: { $0.id }, seen: &known)
+                    strongSelf.plazaRaw.append(contentsOf: deduped)
                     // 审计 14-1：每页回包都存原始页末条作下次游标（哪怕整页被滤掉）。
                     if let rawLast = rawFresh.last, let rawLastId = rawLast.id, let rawLastKey = strongSelf.feedSortKey(rawLast) {
                         strongSelf.plazaNextPageBefore = rawLastKey
@@ -1709,6 +1727,59 @@ class BearyFeedViewController: UIViewController {
     /// 客户端不自排，否则打断 before 分页游标）。
     private func plazaEntries() -> [Entry] {
         return plazaRaw
+    }
+
+    private func startLimitedExpiryTimer() {
+        guard limitedExpiryTimer == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.sweepExpiredLimitedEntries()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        limitedExpiryTimer = timer
+    }
+
+    private func stopLimitedExpiryTimer() {
+        limitedExpiryTimer?.invalidate()
+        limitedExpiryTimer = nil
+    }
+
+    /// F2：限时到期 live 复核（时间线 sweep 同款 1 秒 tick）——广场/关注
+    /// 列表内限时篇到期即撤行：服务端列表查询已滤过期篇（读时判定），
+    /// 此处守内存里先拉后过期的旧行；摘行口径与 removeDeletedEntry 同款
+    /// （双段槽位同步清、引用缓存失效、行数对不上整表重载）。作者本人
+    /// 的到期篇同样撤（广场是公开面，首拉过滤亦不分作者）。
+    private func sweepExpiredLimitedEntries() {
+        guard isViewLoaded else { return }
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let expiredIds = Set(plazaRaw.compactMap { entry -> String? in
+            guard let id = entry.id, entry.isPublic == true, let until = entry.ephemeralUntil, until <= nowMs else { return nil }
+            return id
+        })
+        guard !expiredIds.isEmpty else { return }
+        // 先取行号再摘模型（与 applyEditedEntry 同款）；多 id 时行号重排，
+        // 删行批更新要求同一 section 内升序。
+        var paths: [IndexPath] = []
+        for id in expiredIds { paths.append(contentsOf: indexPaths(for: id)) }
+        paths.sort { $0.row < $1.row }
+        let oldCount = plazaRaw.count
+        for id in expiredIds {
+            plazaSegmentCache.entries.removeAll { $0.id == id }
+            plazaSegmentCache.firstPageIds.removeAll { $0 == id }
+            followingSegmentCache.entries.removeAll { $0.id == id }
+            followingSegmentCache.firstPageIds.removeAll { $0 == id }
+            BearyDiaryCardCell.invalidateQuote(forQuoteId: id)
+        }
+        plazaRaw.removeAll { $0.id.map { expiredIds.contains($0) } ?? false }
+        firstPageIds.removeAll { expiredIds.contains($0) }
+        persistFeedHead()
+        guard !paths.isEmpty else { return }
+        if tableView.numberOfRows(inSection: 0) == oldCount {
+            tableView.beginUpdates()
+            tableView.deleteRows(at: paths, with: .fade)
+            tableView.endUpdates()
+        } else {
+            tableView.reloadData()
+        }
     }
 
     // MARK: - 互动/编辑定向刷新（不整表刷新）
@@ -1868,11 +1939,7 @@ class BearyFeedViewController: UIViewController {
     /// 偏移钳制在可滚范围内（详情返回与 pill 返回位置共用）。
     private func scrollRowTop(toViewportOffset viewportOffset: CGFloat, at path: IndexPath) {
         tableView.layoutIfNeeded()
-        let targetY = tableView.rectForRow(at: path).origin.y - viewportOffset
-        guard abs(targetY - tableView.contentOffset.y) >= 1 else { return }
-        let minY = -tableView.contentInset.top
-        let maxY = max(minY, tableView.contentSize.height - tableView.bounds.height + tableView.contentInset.bottom)
-        tableView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+        BearyScrollAnchor.restoreDetailReturn(in: tableView, rowTop: tableView.rectForRow(at: path).origin.y, viewportOffset: viewportOffset)
     }
 
     /// F8：同一篇的全部可见行。
@@ -1892,8 +1959,19 @@ class BearyFeedViewController: UIViewController {
     /// 冷启动进页：有缓存先瞬间出缓存（不走网络、不转菊花），再后台静默
     /// 刷新；无缓存走旧全量路径（菊花 + 网络）。缓存是上次首屏窗口，
     /// 读取时再过一次有效公开过滤（限时过期/翻私密的旧篇不出缓存）。
-    private func loadCachedFeedOrRefresh() {
-        let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
+    // 注意：本函数保持 internal（非 private）——SceneDelegate 冷启动首个 /me
+    // 回包确认身份后直接调它补首帧（身份未确认时跳过的那一次）；时间线同款。
+    func loadCachedFeedOrRefresh() {
+        // 账号隔离：身份未确认时绝不渲染 lastKnownUserId 桶（冷启动登 demo 号
+        // 却看到自己号数据的根因）；骨架加载态已由初始 isFirstLoad 撑起，
+        // 等 /me 回包后容器重调本函数读本号桶。
+        guard let bucket = BearyFeedCache.confirmedBucket() else {
+            identityPendingFirstLoad = true
+            tableView.reloadData()
+            updateOverlayState()
+            return
+        }
+        identityPendingFirstLoad = false
         feedCacheOwnerKey = bucket
         // 审计-广场：首桶即定引用缓存身份桶（同桶重调不清空，见 switchQuoteCacheOwner）。
         BearyDiaryCardCell.switchQuoteCacheOwner(to: bucket)
@@ -1915,6 +1993,7 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaFirstDone = true
                     strongSelf.isFirstLoad = false
                     strongSelf.lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                    strongSelf.plazaShowingSnapshot = true
                     // 切段缓存：快照落盘即算广场段拉过（随后静默刷新会再确认），
                     // 切去关注段再回来直接显快照行，不重拉。
                     strongSelf.plazaSegmentLoaded = true
@@ -1953,16 +2032,18 @@ class BearyFeedViewController: UIViewController {
         guard newBucket != feedCacheOwnerKey else { return }
         lastFeedLoginUserId = SessionManager.shared.currentUser?.id
         feedCacheOwnerKey = newBucket
+        // 账号隔离：换桶即真实加载，首帧身份待确认态到此结束（容器补调凭此去重）。
+        identityPendingFirstLoad = false
         // 切段缓存跟身份走：换桶即清两段槽与拉过标记，旧身份的行绝不
         // 经切段恢复到新身份眼前（本函数后面的快照／清表分支会重建广场段）。
         plazaSegmentCache = FeedSegmentCache()
         followingSegmentCache = FeedSegmentCache()
         plazaSegmentLoaded = false
         followingSegmentLoaded = false
-        // 身份已换：旧身份的精选卡立即撤下（只留历史卡），新身份数据到了再重建；
+        // 身份已换：旧身份的精选卡立即撤下（只留盲盒页与历史卡），新身份数据到了再重建；
         // 旧桶选中 id 绝不经换桶渲染（挑法缓存键本身也按身份分桶；历史卡是
-        // 公开静态内容，不按身份分桶）。
-        plazaCarouselView.setItems([.historyToday(BearyHistoryTodayLoader.cached())])
+        // 公开静态内容，不按身份分桶）。远程开关：blindbox 关掉时不留盲盒页。
+        plazaCarouselView.setItems(blindBoxFirstItems())
         // 审计-广场（跨身份缓存残留，高）：换桶同步清空引用缓存——旧身份
         // 拉到的引用正文绝不留给新身份/游客渲染；读盘回包是新桶内容，
         // 其引用仍走 fetch 现拉，不依赖旧缓存。
@@ -1989,6 +2070,7 @@ class BearyFeedViewController: UIViewController {
                 strongSelf.plazaFirstDone = true
                 strongSelf.isFirstLoad = false
                 strongSelf.lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                strongSelf.plazaShowingSnapshot = true
                 // 切段缓存：快照落盘即算广场段拉过（随后静默刷新会再确认）。
                 strongSelf.plazaSegmentLoaded = true
                 strongSelf.tableView.reloadData()
@@ -1998,15 +2080,21 @@ class BearyFeedViewController: UIViewController {
                 return
             }
         }
-        // 登录后新桶无缓存：不清表——广场只含有效公开篇，游客行与登录后
-        // 首屏是服务端同一批公开内容（仅点赞态等 viewer 字段待刷新），先留
-        // 着当占位、后台全量 diff 对齐；失败也保留旧行（首拉失败口径）。
+        // 账号隔离：新桶无缓存时先清表再拉——旧身份的行（含旧身份的 viewer 态）
+        // 绝不留给新身份当占位；失败时 refreshAll 自会定失败态，不恢复旧行。
         // bypass 强制走全量首拉而非 since 增量（since 只前插新篇、不刷新旧行 viewer 字段）。
+        strongSelf.plazaRaw = []
+        strongSelf.plazaNextPageBefore = nil
+        strongSelf.plazaNextPageBeforeId = nil
+        strongSelf.firstPageIds = []
+        strongSelf.tableView.reloadData()
         strongSelf.plazaHasMore = true
         strongSelf.plazaReachedEnd = false
         strongSelf.plazaError = false
         strongSelf.refreshAllBypassInFlight = true
         strongSelf.refreshAll()
+        // 首拉已同步置 plazaLoading：空态在此时必藏，不闪旧身份空态。
+        strongSelf.updateOverlayState()
         }
     }
 
@@ -2520,8 +2608,8 @@ class BearyFeedViewController: UIViewController {
 
     /// 空态以 tableHeaderView 承载（网页空态在流顶、游客 logo 在其下方的叠放顺序；
     /// 覆盖层写法会把底部 logo 盖住，故不用覆盖层）。
-    /// 盲盒批：表头改为容器（入口行常驻在上、空态文案在下），空态显隐只改容器内
-    /// 空态行的挂载与否，不再把整个表头置 nil（入口行永不因空态消失）。
+    /// 盲盒批：表头改为容器（轮播常驻在上、空态文案在下），空态显隐只改容器内
+    /// 空态行的挂载与否，不再把整个表头置 nil（轮播永不因空态消失）。
     private func setEmptyVisible(_ visible: Bool) {
         if visible == false {
             guard feedEmptyVisible else {
@@ -2569,45 +2657,20 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    /// 盲盒表头布局（手动帧 + 高宽守卫赋值）：入口行左右 16、上下各 8；空态行在下、
-    /// 高度沿用旧 fitting 口径；高或宽任一变化都重赋值表头——UITableView 不会因
-    /// 已赋值表头的 frame 变化而自动跟宽，旧版只守高度时，首算的临时窄宽会
-    /// 一直沿用（“有时候框右侧被挤压”的根因之一），宽变必须重赋值才跟上。
-    /// 112 追加（#245 未根治的另一半）：入口行 translatesAutoresizingMaskIntoConstraints
-    /// 为 false、此前在容器里却没有任何外部约束，全靠手动 frame 定宽。UITableView
-    /// 在 reloadData / 重赋值表头时重排表头（此时 view 宽不变、viewDidLayoutSubviews
-    /// 不再跑、layoutFeed 也就不会再来纠正 frame），Auto Layout 就会把入口行按
-    /// 内在内容宽重算——窄了则右沿左缩、宽了则 chevron 被裁到容器外，表现为“有时
-    /// 右侧被挤压”。根治：给入口行加左右 + 顶三条约束钉死在容器上（只钉宽与顶，
-    /// 不钉底，避免容器旧高与新入口高不一致时过度约束），此后任何一次表头重排
-    /// 入口宽都恒等于容器宽 - 32，计数与 chevron 的 required 抗压（#245）只负责
-    /// 行内分配，不再承担定宽。手动 frame 保留作即时值，与约束值一致，不冲突。
+    /// 广场表头布局（手动帧 + 高宽守卫赋值）：表头自上而下是轮播（卡片 + 小圆点）
+    /// 与空态行；高或宽任一变化都重赋值表头——UITableView 不会因已赋值表头的
+    /// frame 变化而自动跟宽，旧版只守高度时，首算的临时窄宽会一直沿用（“有时候框右侧被挤压”
+    /// 的根因之一），宽变必须重赋值才跟上。
     private func layoutFeedBlindBoxHeader() {
         let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
         guard width > 0 else { return }
         if plazaCarouselView.superview !== blindBoxHeaderWrap {
             blindBoxHeaderWrap.addSubview(plazaCarouselView)
         }
-        if blindBoxEntryView.superview !== blindBoxHeaderWrap {
-            blindBoxHeaderWrap.addSubview(blindBoxEntryView)
-        }
-        if !feedBlindBoxEntryPinned {
-            feedBlindBoxEntryPinned = true
-            let entryTop = blindBoxEntryView.topAnchor.constraint(equalTo: blindBoxHeaderWrap.topAnchor, constant: 8)
-            feedBlindBoxEntryTopConstraint = entryTop
-            NSLayoutConstraint.activate([
-                blindBoxEntryView.leadingAnchor.constraint(equalTo: blindBoxHeaderWrap.leadingAnchor, constant: 16),
-                blindBoxEntryView.trailingAnchor.constraint(equalTo: blindBoxHeaderWrap.trailingAnchor, constant: -16),
-                entryTop,
-            ])
-        }
-        // 表头自上而下：轮播（卡片 + 小圆点）→ 盲盒一行小卡 → 空态。
-        // 先把容器宽定到当前表宽，再算入口高：约束下的入口宽即 width - 32，
-        // fitting 按此宽换行，副文案换行承担收缩，不压计数与 chevron。
+        // 表头自上而下：轮播（卡片 + 小圆点）→ 空态。
+        // 先把容器宽定到当前表宽，再算总高。
         blindBoxHeaderWrap.frame.size.width = width
         plazaCarouselView.frame = CGRect(x: 16, y: 8, width: width - 32, height: BearyPlazaCarouselView.preferredHeight)
-        feedBlindBoxEntryTopConstraint?.constant = 8 + BearyPlazaCarouselView.preferredHeight + 8
-        let blindBoxTop = 8 + BearyPlazaCarouselView.preferredHeight + 8
         if feedEmptyVisible {
             if emptyView.superview !== blindBoxHeaderWrap {
                 blindBoxHeaderWrap.addSubview(emptyView)
@@ -2615,15 +2678,9 @@ class BearyFeedViewController: UIViewController {
         } else if emptyView.superview === blindBoxHeaderWrap {
             emptyView.removeFromSuperview()
         }
-        let entryHeight = blindBoxEntryView.systemLayoutSizeFitting(
-            CGSize(width: width - 32, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height
-        blindBoxEntryView.frame = CGRect(x: 16, y: blindBoxTop, width: width - 32, height: entryHeight)
         // 首页切换已钉顶栏（容器顶栏玻璃内），不再进表头随流滚动；
-        // 表头只剩轮播、盲盒小卡与空态。
-        var headerBaseY = blindBoxTop + entryHeight + 8
+        // 表头只剩轮播与空态。
+        var headerBaseY = 8 + BearyPlazaCarouselView.preferredHeight + 8
         var totalHeight = headerBaseY
         if feedEmptyVisible {
             emptyView.frame = CGRect(x: 0, y: 0, width: width, height: 0)
@@ -2646,8 +2703,8 @@ class BearyFeedViewController: UIViewController {
         updateCentralSpinnerTop()
     }
 
-    /// 中央转圈落点：不再固定在顶栏 +40（盲盒框加入后该位置正落在框内，
-    /// 非手势刷新时转圈会盖在框副标题上）。改为表头底 +16：回顶时框顶即基线
+    /// 中央转圈落点：不再固定在顶栏 +40（表头加高后该位置正落在轮播卡上，
+    /// 非手势刷新时转圈会盖在卡上）。改为表头底 +16：回顶时框顶即基线
     /// （feedPullBaselineTop），故转圈顶 = 基线 + 表头高 + 16；空态时转圈已停，
     /// 表头含空态行时的落点不影响显示。只写约束常量，不触发布局循环。
     private func updateCentralSpinnerTop() {
@@ -2683,29 +2740,84 @@ class BearyFeedViewController: UIViewController {
         present(vc, animated: BearyMotion.animated(true), completion: nil)
     }
 
-    /// 轮播内容重建：精选卡取当前段广场首屏数据就地挑（正在关注段不挑，
-    /// 只留历史卡），历史卡恒为当日一条（未加载到先占位、到了再补）。
+    /// 公告页（轮播公告卡点按）：打开公告底 sheet（与启动时公告弹窗同一入口）。
+    private func presentAnnouncement(_ announcement: BearyAnnouncement) {
+        plazaCarouselView.setPageVisible(false)
+        BearyAnnouncementSheet.show(from: self, announcement: announcement)
+    }
+
+    /// 轮播内容重建：广场段按服务端配置组装页面（盲盒 / 精选 / 历史上的今天 / 公告，
+    /// 顺序即配置顺序；服务端已按 enabled + 时间规则过滤）。
+    /// 正在关注段不走配置，仍是盲盒页与历史卡（#2499 定版）。
+    /// 配置拉不到时用缓存或内置默认（见 BearyCarouselConfigLoader），轮播不空白。
     /// 内容不变时不重置滚动位（见 BearyPlazaCarouselView.setItems）。
-    private func rebuildCarouselItems() {
+    /// 远程开关：blindbox 关掉时首帧/关注流不含盲盒页（入口隐藏）；点按拦截仍在 onSelectBlindBox 兜底。
+    private func blindBoxFirstItems() -> [BearyPlazaCarouselItem] {
         var items: [BearyPlazaCarouselItem] = []
-        if !feedFollowingSegment {
-            let picks = BearyPlazaFeaturedPicker.pick(from: plazaRaw)
-            items.append(contentsOf: picks.map { .featured($0) })
+        if !BearyForceUpdateCenter.shared.isFeatureDisabled(.blindbox) {
+            items.append(.blindBox)
         }
-        let history = BearyHistoryTodayLoader.cached()
-        items.append(.historyToday(history))
-        plazaCarouselView.setItems(items)
-        if history == nil {
-            BearyHistoryTodayLoader.load { [weak self] _ in
-                self?.rebuildCarouselItems()
+        items.append(.historyToday(BearyHistoryTodayLoader.cached()))
+        return items
+    }
+
+    private func rebuildCarouselItems() {
+        if feedFollowingSegment {
+            let history = BearyHistoryTodayLoader.cached()
+            plazaCarouselView.setItems(blindBoxFirstItems())
+            if history == nil {
+                BearyHistoryTodayLoader.load { [weak self] _ in
+                    self?.rebuildCarouselItems()
+                }
+            }
+            return
+        }
+        BearyCarouselConfigLoader.load { [weak self] config in
+            guard let self = self else { return }
+            var items: [BearyPlazaCarouselItem] = []
+            for page in config.pages {
+                switch page.type {
+                case .featured:
+                    let picks = BearyPlazaFeaturedPicker.pick(from: self.plazaRaw, count: page.count ?? BearyPlazaFeaturedPicker.pickCount)
+                    items.append(contentsOf: picks.map { .featured($0) })
+                case .history:
+                    items.append(.historyToday(BearyHistoryTodayLoader.cached()))
+                case .blindbox:
+                    // 远程开关：关掉时不建盲盒页（入口隐藏）。
+                    if !BearyForceUpdateCenter.shared.isFeatureDisabled(.blindbox) {
+                        items.append(.blindBox)
+                    }
+                case .announcement:
+                    if let ann = BearyAnnouncementCenter.shared.latestAnnouncement() {
+                        items.append(.announcement(ann))
+                    }
+                }
+            }
+            self.plazaCarouselView.setItems(items)
+            if BearyHistoryTodayLoader.cached() == nil {
+                BearyHistoryTodayLoader.load { [weak self] _ in
+                    self?.rebuildCarouselItems()
+                }
+            }
+            // 公告页在配置里、但公告列表还没拉到：补拉后重建。
+            if config.pages.contains(where: { $0.type == .announcement }) && BearyAnnouncementCenter.shared.latestAnnouncement() == nil {
+                BearyAnnouncementCenter.shared.fetchList { [weak self] _ in
+                    self?.rebuildCarouselItems()
+                }
             }
         }
     }
 
     @objc private func handleBlindBoxStateChanged() {
-        blindBoxEntryView.refresh()
-        // 计数/副文案变了，入口可能换行——立即重算表头高度与转圈落点。
+        // 计数变了：重建轮播刷新盲盒页（签名含登录态与当日计数，状态没变时不重载、
+        // 不顶走正在看的页；状态变了会回第一页，正好是盲盒页）。
+        rebuildCarouselItems()
         layoutFeedBlindBoxHeader()
+    }
+
+    /// 公告列表拉到：轮播里有公告页时重建（取最新一条有效公告）。
+    @objc private func handleAnnouncementListChanged() {
+        rebuildCarouselItems()
     }
 
     /// 审计-广场（引用缓存无上限）：内存警告即清空引用缓存（正文重拉即可恢复，
@@ -2788,22 +2900,20 @@ class BearyFeedViewController: UIViewController {
             return
         }
         let sheet = BearyEmotePickerSheetViewController()
-        sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self, weak cell] pickedKey in
             let reduceMotion = UIAccessibility.isReduceMotionEnabled
             self?.dismiss(animated: reduceMotion == false) {
                 cell?.handleEmoteSheetPick(entryIdValue: entryIdValue, key: pickedKey)
             }
         }
-        let reduceMotion = UIAccessibility.isReduceMotionEnabled
-        present(sheet, animated: reduceMotion == false, completion: nil)
+        BearySystemSheet.present(sheet, from: self)
     }
 
     private func wireCell(_ cell: BearyDiaryCardCell, entry: Entry) {
         // F1：点图进本文件内图片查看器（带起始下标），不再进详情。
         cell.onImageTapped = { [weak self] index, originFrame, thumbnail in
             let keys = entry.images ?? []
-            self?.presentImageViewer(imageKeys: keys, startIndex: index, liveVideos: entry.liveVideos, originFrame: originFrame, thumbnail: thumbnail)
+            self?.presentImageViewer(imageKeys: keys, liveVideos: entry.liveVideos, startIndex: index, thumbnail: thumbnail, originFrame: originFrame)
         }
         cell.onNineGridTapped = { [weak self] button in
             guard let strongSelf = self else { return }
@@ -2831,7 +2941,7 @@ class BearyFeedViewController: UIViewController {
             // 此处是操作点的即时反馈，不与容器回调冲突（本文件不赋值 onNetworkUnstable）。
             if SessionManager.shared.authUnknown {
                 if let strongSelf = self {
-                    BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试")
+                    BearyToast.show(in: strongSelf.view, message: NSLocalizedString("common.network_unstable", comment: ""))
                 }
                 return
             }
@@ -2904,6 +3014,12 @@ class BearyFeedViewController: UIViewController {
             guard let path = strongSelf.tableView.indexPath(for: targetCell) else { return }
             if strongSelf.tableView.indexPathsForVisibleRows?.contains(path) == true {
                 strongSelf.tableView.performBatchUpdates(nil)
+            } else {
+                // 离屏行：回应行高已变，batch 不刷则表里缓存的旧行高过期，
+                // 滑回时布局纠正行高、内容尺寸突变，页面异常下移。
+                // 静默重载该行刷新缓存行高（.none、无动画；行在屏外不可见；
+                // 回调不在 willDisplay/批更新内，不触 #2555 的 reloadRows 闪退）。
+                strongSelf.tableView.reloadRows(at: [path], with: .none)
             }
         }
     }
@@ -3008,7 +3124,7 @@ class BearyFeedViewController: UIViewController {
                     // 白走一趟理由选择；现与卡片点赞/收藏未登录口径对齐：登录态未知先给
                     // 网络不稳定 toast，未登录直接走容器登录门，登录后才进举报流程。
                     if SessionManager.shared.authUnknown {
-                        BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试")
+                        BearyToast.show(in: strongSelf.view, message: NSLocalizedString("common.network_unstable", comment: ""))
                         return
                     }
                     if !SessionManager.shared.isLoggedIn {
@@ -3297,6 +3413,18 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate, U
         }
     }
 
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        let entries = plazaEntries()
+        guard indexPath.row < entries.count || (plazaError && !plazaLoading) else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
         let entries = plazaEntries()
@@ -3449,14 +3577,8 @@ class BearyFeedErrorCell: UITableViewCell {
 
     var onRetry: (() -> Void)?
 
-    private let iconView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyFeedIconCache.image(named: "icon_wifi_off", pointSize: 36)
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        return v
-    }()
+    private let iconView: UIImageView =
+        BearyIconImageView.make(image: BearyFeedIconCache.image(named: "icon_wifi_off", pointSize: 36))
 
     private let messageLabel: UILabel = {
         let lb = UILabel()
@@ -3593,12 +3715,25 @@ enum BearyFeedCache {
         UserDefaults.standard.removeObject(forKey: lastUserIdKey)
     }
 
+    /// 账号隔离：身份确认后的缓存桶（冷启动首帧用）。
+    /// - currentUser 已立（vault 恢复或 /me 回包均算确认）：本号桶。
+    /// - currentUser 为 nil 且 /me 已回包确认（游客）：guest 桶。
+    /// - currentUser 为 nil 且 /me 未回包、本地有旧号：nil——身份未知，
+    ///   绝不用旧号桶渲染，调用方显中性加载态、等 /me 回包后重调。
+    /// - currentUser 为 nil 且 /me 未回包、本地无旧号：guest 桶（无私密数据可漏）。
+    static func confirmedBucket() -> String? {
+        if let id = SessionManager.shared.currentUser?.id { return bucket(userId: id) }
+        if SessionManager.shared.identityResolved { return bucket(userId: nil) }
+        if lastKnownUserId() != nil { return nil }
+        return bucket(userId: nil)
+    }
+
     static func visibleHead(_ entries: [Entry]) -> [Entry] {
         return entries.filter { $0.id != nil && !$0.id!.isEmpty && BearyEphemeral.isEffectivelyPublic($0) }
     }
 
     private static func fileURL(bucket: String) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(filePrefix)\(bucket).json")
     }
 

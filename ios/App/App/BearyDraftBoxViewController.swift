@@ -2,10 +2,10 @@ import UIKit
 
 // ===== 草稿箱弹层（网页草稿箱移植；对应审计 G1）=====
 // 网页对照：~/workspace/teddy_site/beary.html 内 #draftModal。
-// 形态：overFullScreen 自包含呈现；遮罩统一走 BearySheetChrome scrim 0.45、出现时 0.26s 淡入
-// （2026-10-28 Li 令统一，此前全透明例外已撤销，见 buildViews 注释）；
-// 点遮罩关闭（backdrop 点击走 closeDraftBox，行为不变）；
-// iPhone 为底部 sheet；iPad（宽 ≥821）为居中 440 宽卡片；面板高度按内容算、320 封顶（第 13 项）。
+// 形态：系统底部 sheet（UISheetPresentationController，见 BearySystemSheet；
+// 2026-11-25 Li 定：所有弹窗都改系统，自研容器退役）；点遮罩关闭与下滑关闭
+// 走系统（outside-tap＋抓手）；iPad 宽屏走系统 sheet 宽（600）；
+// 面板高度按内容算、320 封顶（第 13 项），高度变化时 refreshDetentsIfNeeded。
 // 数据只读草稿 v3（BearyDraftFiles.swift）：v3 存储是多槽数组文件 beary_draft_v3.json，
 // 本弹层按 updatedAt 倒序列出全部草稿；旧 v2 单槽由存储层首次读取时迁入 v3，
 // 本文件不做迁移、不改存储结构本身。
@@ -13,11 +13,12 @@ import UIKit
 // 同款）；删除为本地操作：只删该篇（图片文件不动，6 秒撤销期内可原样恢复），
 // 删后出 6 秒撤销条，超时丢弃暂存；不碰服务端。
 // 调用约定：点“新建日记”只回调 onNew，点卡片只回调 onOpen 并传出该篇草稿；
-// 弹窗审计 E1-18 统一退场（第 13 项）：关闭、打开、新建三路共用同一退场——
-// 转场动画器播 0.26s 退场动画、dismiss 后再调回调，编辑器侧不再另行 dismiss；
-// 关闭路回调为空，不重复播动画；关闭与打开/新建均不删任何草稿。
-// 约束：颜色只用 BearyColors（遮罩走 BearySheetChrome.scrimColor）；不新增液态玻璃效果；
-// 动画遵守 reduced-motion；部署目标 iOS 15.0、Swift 5.0——只用闭包回调，
+// 弹窗审计 E1-18 统一退场（第 13 项）：关闭、打开、新建三路共用同一退场
+// （dismissWithExitAnimation）——退场走系统 sheet 动画、dismiss 后再调回调，
+// 编辑器侧不再另行 dismiss；关闭路回调为空，不重复播动画；关闭与打开/新建均不删任何草稿。
+// 约束：颜色只用 BearyColors；面板底色透明、走系统 sheet 自带液态玻璃
+// （2026-11-25 Li 定：底部弹窗要不带颜色的液态玻璃效果）；
+// 动画遵守 reduced-motion；部署目标 iOS 16.0、Swift 5.0——只用闭包回调，
 // 不用 async/await，不用 if-let 简写。
 
 /// 审计第 2 项：草稿卡片 meta 区流式布局视图。
@@ -72,7 +73,7 @@ final class BearyDraftMetaFlowView: UIView {
     }
 }
 
-final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDelegate {
+final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizing, UIGestureRecognizerDelegate {
 
     // MARK: - 对外 API（编辑器代理按此调用，勿改名）
 
@@ -80,8 +81,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         self.onNewHandler = onNew
         self.onOpenHandler = onOpen
         super.init(nibName: nil, bundle: nil)
-        modalPresentationStyle = .overFullScreen
-        transitioningDelegate = boxTransitionDelegate
     }
 
     required init?(coder: NSCoder) {
@@ -92,7 +91,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
 
     private let onNewHandler: () -> Void
     private let onOpenHandler: (BearyDraft) -> Void
-    private let boxTransitionDelegate = BearyDraftBoxTransitionDelegate()
     private var drafts: [BearyDraft] = []
     private var cardEntries: [(button: UIButton, draftValue: BearyDraft)] = []
     /// 草稿卡左滑跟手拖动：当前正在被手指拖动的卡片（同一时刻只可能有一张在拖）；
@@ -105,11 +103,11 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// 新规矩 (b)：草稿列表入场动效只播一次（首渲），后续重渲不重播已有卡片。
     /// 审计第 12 项起由 tryPlayEntrance 统一置位（原 renderDrafts 首轮置位已移走）。
     private var draftCardsAnimatedOnce = false
-    private var deleteEntries: [(button: UIButton, draftValue: BearyDraft)] = []
-    private var lostEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    private var deleteEntries = BearyRowButtonLookup<BearyDraft>(id: \.draftId)
+    private var lostEntries = BearyRowButtonLookup<BearyDraft>(id: \.draftId)
     /// 发布失败重试钮（草稿持久标记 lastPublishFailure 非空的卡才有）：
-    /// 与 deleteEntries／lostEntries 同款（按钮＋草稿）查表。
-    private var retryEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    /// 与 deleteEntries／lostEntries 同款行操作按钮查表。
+    private var retryEntries = BearyRowButtonLookup<BearyDraft>(id: \.draftId)
     /// DF-1/DF-2：编辑器当前正在写的那篇 draftId（由容器/编辑器在呈现草稿箱后设置；
     /// 未设置时“正在写”标记不显示、删正在写回调不触发）。容器接线由总协调收尾。
     var currentDraftId: String?
@@ -131,10 +129,10 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     // 避免 viewDidAppear 对尚未渲染的空栈空跑、卡片随后硬切出现。
     private var draftBoxAppeared = false
     private var draftsInitialLoaded = false
-    /// 弹窗审计 E1-19：面板框架入场是否已播（与卡片入场分开记）。慢读时
-    /// 面板先随加载态出现，数据到达后 tryPlayEntrance 只补卡片部分，不重播面板。
-    private var didPlaySheetEntrance = false
     private var isDismissing = false
+    /// 系统 sheet 下滑／点遮罩关闭经 delegate 守门（撤销确认）：用户在确认框里
+    /// 点“仍要关闭”后置位，第二次 shouldDismiss 不再拦截。
+    private var undoExitConfirmed = false
     /// 无障碍：关闭后焦点返回的触发入口（编辑器草稿钮，由打开方在 present
     /// 前传入；未传入时不发焦点通知）。新建／打开草稿走回调开新界面时不
     /// 用它（新界面自己接管焦点）。
@@ -142,7 +140,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// 无障碍：打开首焦点只发一次（viewDidAppear 会在上层弹框关闭回来时
     /// 再触发，不重复抢焦点）。
     private var didPostDraftBoxOpenFocus = false
-    private var isPadLayout = false
     private var bottomSpacerHeight: NSLayoutConstraint?
     /// G5：草稿库读取失败标记（loadAllResult 失败时置位，渲染时出失败态，不出空态）。
     private var draftsLoadFailed = false
@@ -151,25 +148,16 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     private var draftsLoadGeneration = 0
     /// 草稿库损坏态（lastLoadError 为 corruptStore 时）：失败态下出清除按钮；v2/v1 旧源损坏不属此态。
     private var draftsLoadCorrupt = false
-    /// U18：把手外包容器（原 buildViews 内局部变量），下滑关闭手势挂在这里。
+    /// 系统抓手占位：14pt（顶距 10 + 抓手 4），与旧把手行同高、标题位置不动；
+    /// 抓手本身由系统 sheet 绘制（prefersGrabberVisible），下滑关闭走系统。
     private let handleWrapView = UIView()
 
     // MARK: - 视图
 
-    private let backdropButton = UIButton(type: .custom)
-    private let sheetView = UIView()
     // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
     // 从卡片/删除等按钮上起滑时滚动视图能抢到 pan，点按行为不变。
     private let sheetScrollView = BearyCancellableScrollView()
     private let contentStack = UIStackView()
-    private let handleView = UIView()
-    /// 2026-10-30 抓手批：把手行本身只有 14pt 高（顶距 10 + 抓手 4），
-    /// 手指稍偏或列表可滚时滚动视图会抢走竖向 pan。另加一块不进 stack 的透明热区，
-    /// 直接钉在 sheetView 顶部（滚动视图之上，不会被抢），视觉与
-    /// 其余布局完全不动，见 buildViews。
-    /// 审计第 10 项（草稿箱部分）：把手行与标题行不再进滚动栈，改钉在
-    /// fixedHeaderView 内（面板顶部固定），滚动区从其下方起。
-    private let grabHitView = UIView()
     private let fixedHeaderView = UIView()
     private let headerWrap = UIView()
     private let titleLabel = UILabel()
@@ -191,18 +179,19 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     private let hintLabel = UILabel()
     private let bottomSpacer = UIView()
 
-    private var sheetHeightConstraint: NSLayoutConstraint?
     /// 第 13 项：面板高度只按内容算，320 只作封顶（不再写死 320 高）。
     private let draftBoxMaxHeight: CGFloat = 320
-    private var sheetWidthConstraint: NSLayoutConstraint?
-    private var phoneConstraints: [NSLayoutConstraint] = []
-    private var padConstraints: [NSLayoutConstraint] = []
 
     // MARK: - 生命周期
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor.clear
+        // 面板透明：系统 sheet 自带液态玻璃底，实色会盖住它（2026-11-25 Li 定）；
+        // 顶圆角同其他系统 sheet（公告／确认／输入）做法。
+        view.backgroundColor = .clear
+        view.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.layer.masksToBounds = true
         buildViews()
         buildConstraints()
         // 弹窗审计 E1-19（未覆盖的一半）：数据未到先呈现面板框架 + 加载图标，
@@ -215,7 +204,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             self?.hideLoadingState()
             self?.renderDrafts()
             self?.draftsInitialLoaded = true
-            self?.transitionSheetHeightToContent()
+            self?.updatePreferredContentSize()
             self?.tryPlayEntrance()
         }
     }
@@ -242,22 +231,15 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         loadingWrap.removeFromSuperview()
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        // E1-19：初态只在面板入场未播时置——面板已先出现后重进 Appear
-        // （如上层弹框关闭回来）不再把面板藏回屏外，否则 playSheetEntrance
-        // 的已播守卫会让面板卡在屏外。
-        if !didPlaySheetEntrance && !UIAccessibility.isReduceMotionEnabled {
-            applyEntranceStartState()
-        }
-    }
-
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         draftBoxAppeared = true
-        // E1-19：面板框架入场不以数据为门——慢读时面板先带加载图标出现；
+        // 系统 sheet 下滑／点遮罩关闭经 delegate 守门（撤销确认）：
+        // presentationController 在呈现后才存在，首次 appear 时挂上
+        // （之后重复出现时重复挂也无害）；待撤销笔只在箱内删卡后才产生，
+        // 此时 appear 早已跑完，守门不会迟到。
+        presentationController?.delegate = self
         // 卡片入场仍由 tryPlayEntrance 的 draftsInitialLoaded 门控。
-        playSheetEntrance()
         tryPlayEntrance()
         // 无障碍：打开首焦点只发一次，落到面板标题“草稿箱”；上层弹框关闭
         // 回来时不再重发抢焦点。未开 VoiceOver 时 post 为空操作。
@@ -270,43 +252,13 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
     }
 
-    /// E1-19 面板框架入场（只播 sheet + 遮罩，不碰卡片）：首个 viewDidAppear
-    /// 即播，与数据到达无关；减动效直显终值。已播过时直接返回，数据到达后
-    /// 的 tryPlayEntrance 不再重播面板（已有元素不重播）。
-    private func playSheetEntrance() {
-        guard !didPlaySheetEntrance else { return }
-        didPlaySheetEntrance = true
-        if UIAccessibility.isReduceMotionEnabled {
-            sheetView.transform = .identity
-            sheetView.alpha = 1
-            backdropButton.alpha = 1
-            return
-        }
-        view.layoutIfNeeded()
-        applyEntranceStartState()
-        let duration: TimeInterval = BearyMotion.normal
-        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut, animations: {
-            self.sheetView.transform = .identity
-            self.sheetView.alpha = 1
-        })
-        // 遮罩 0.26s 淡入（与卡片滑入解耦）。
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
-            self.backdropButton.alpha = 1
-        })
-    }
-
     /// 88 包 M8：入场错峰只在“已 Appear 且首轮 loadDrafts 已渲染”时播一次；
     /// 减动效与已播过时与原来一致，直接返回。
     /// 审计第 12 项：本函数是卡片入场唯一入口——“数据就绪（draftsInitialLoaded）+
     /// 面板可见（draftBoxAppeared）+ 首屏卡片入场”在此一处协调，不再由
     /// renderDrafts 自行播卡片。renderDrafts 只建卡片终态，入场初态与动画一律
-    /// 由本函数在面板到位时设置。
-    /// E1-19 面板拆分（以 #571 卡片版为底重做）：面板框架由 viewDidAppear 的
-    /// playSheetEntrance 先播，本函数面板已播时只播卡片、不重播面板；面板未播
-    /// 时走兜底分支（面板动画播完再播卡片）。
+    /// 由本函数在面板到位时设置。面板框架入场走系统 sheet 动画，不在此播。
     private func tryPlayEntrance() {
-        // 2026-10-28 Li 令：遮罩出现时 0.26s 淡入；减动效直显终值。
-        if UIAccessibility.isReduceMotionEnabled { backdropButton.alpha = 1 }
         guard !didPlayEntrance, draftBoxAppeared, draftsInitialLoaded,
               !UIAccessibility.isReduceMotionEnabled else { return }
         didPlayEntrance = true
@@ -339,37 +291,19 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 })
             }
         }
-        if didPlaySheetEntrance {
-            playCards()
-            return
-        }
-        view.layoutIfNeeded()
-        applyEntranceStartState()
-        let duration: TimeInterval = BearyMotion.normal
-        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut, animations: {
-            self.sheetView.transform = .identity
-            self.sheetView.alpha = 1
-        }, completion: { _ in
-            playCards()
-        })
-        // 遮罩 0.26s 淡入（与卡片滑入解耦）。
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
-            self.backdropButton.alpha = 1
-        })
+        playCards()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        updateLayoutModeIfNeeded()
-        updateSheetHeight()
         updateBottomSpacer()
+        updatePreferredContentSize()
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 边框与卡片描边。
+        // CGColor 只在赋值时解析一次：深浅切换时重刷卡片描边。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            applySheetChrome()
             for entry in cardEntries {
                 entry.button.layer.bearyDynamicBorderColor = BearyColors.line
             }
@@ -379,33 +313,13 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     // MARK: - 视图搭建
 
     private func buildViews() {
-        // 草稿箱遮罩统一走 BearySheetChrome scrim 0.45，出现时 0.26s 淡入（2026-10-28 Li 令统一，全透明例外已撤销）。
-        backdropButton.backgroundColor = BearySheetChrome.scrimColor
-        backdropButton.alpha = 0
-        backdropButton.accessibilityLabel = "关闭"
-        backdropButton.addTarget(self, action: #selector(closeBox), for: .touchUpInside)
-        backdropButton.bearyAddPressFeedback()
-        backdropButton.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(backdropButton)
-
-        // 视觉清单第 12 项：sheet 玻璃背板已撤，改实色 surface3 底（sheet 层底色；
-        // 玻璃范围 Token 只允许栏/菜单，底 sheet 不在内）；sheetView 本身不裁剪，阴影保留。
-        sheetView.backgroundColor = BearyColors.surface3
-        sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
-        // 无障碍：面板是 overFullScreen 呈现，底层编辑器仍在视图层级里，
-        // 不置 modal 则 VoiceOver 滑动能滑到被遮的编辑器内容；置 modal 后
-        // 导航只限面板内，触摸与遮罩关闭行为不动。
-        sheetView.accessibilityViewIsModal = true
-        // 阴影一律走底 sheet 档（2026-11-02 定版第 2 组，旧 0.30/30/(0, 24) 档已废弃），
-        // 此处不再自写数值。
-        sheetView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(sheetView)
-
+        // 自研容器已退役：遮罩（点按关闭）与面板阴影／圆角走系统 sheet；
+        // 内容直接挂在 view 上（view 即 sheet 内容，底色透明、走系统液态玻璃）。
         sheetScrollView.showsVerticalScrollIndicator = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         sheetScrollView.delaysContentTouches = false
         sheetScrollView.translatesAutoresizingMaskIntoConstraints = false
-        sheetView.addSubview(sheetScrollView)
+        view.addSubview(sheetScrollView)
 
         contentStack.axis = .vertical
         contentStack.spacing = 0
@@ -413,39 +327,14 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         sheetScrollView.addSubview(contentStack)
 
-        // 抓手走 gray：底是 surface3，line（浅 #DBDBDB）与 surface3（浅 #F5F5F5）
-        // 对比约 1.27:1、浅色下几不可见（#1286 档距拉大后；深色差约 34 阶）。
-        handleView.backgroundColor = BearyColors.gray
-        handleView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        handleView.translatesAutoresizingMaskIntoConstraints = false
+        // 系统抓手占位：handleWrapView 只留 14pt 高（顶距 10 + 抓手 4），
+        // 与旧把手行同高、标题位置不动；抓手本身由系统 sheet 绘制，
+        // 下滑关闭走系统，不再挂自研 pan 手势。
         handleWrapView.translatesAutoresizingMaskIntoConstraints = false
-        handleWrapView.addSubview(handleView)
         NSLayoutConstraint.activate([
-            handleView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            handleView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-            handleView.centerXAnchor.constraint(equalTo: handleWrapView.centerXAnchor),
-            handleView.topAnchor.constraint(equalTo: handleWrapView.topAnchor, constant: BearySheetChrome.grabberTop),
-            handleView.bottomAnchor.constraint(equalTo: handleWrapView.bottomAnchor),
+            handleWrapView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight),
         ])
-        // U18：把手加下滑关闭手势（与 closeBox 同动画）；遮罩点按关闭保留。
-        handleWrapView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(handlePanGesture(_:))))
         // 审计第 10 项：把手行不进滚动栈，改由下方固定头部容器收纳。
-        // 2026-10-30 抓手批：把手行只有 14pt 高，手指很难稳定抓中。
-        // 热区以抓手为中心、宽 120、高 32（抓手 10–14 上下各扩余量），
-        // 该区内只有不拦截触摸的把手与居中标题；热区不进 stack、
-        // 不推开标题，布局与视觉不动。
-        // 热区直接挂在 sheetView 上（在滚动视图之上），竖向 pan 不再
-        // 被 sheetScrollView 抢走；原把手行手势保留，两者同走
-        // handlePanGesture，位移口径一致。
-        grabHitView.translatesAutoresizingMaskIntoConstraints = false
-        grabHitView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(handlePanGesture(_:))))
-        sheetView.addSubview(grabHitView)
-        NSLayoutConstraint.activate([
-            grabHitView.topAnchor.constraint(equalTo: sheetView.topAnchor),
-            grabHitView.centerXAnchor.constraint(equalTo: sheetView.centerXAnchor),
-            grabHitView.widthAnchor.constraint(equalToConstant: 120),
-            grabHitView.heightAnchor.constraint(equalToConstant: 32),
-        ])
 
         headerWrap.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "草稿箱"
@@ -464,20 +353,18 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: headerWrap.bottomAnchor, constant: -4),
         ])
         // 审计第 10 项（草稿箱部分）：头部固定在面板顶部——把手行与
-        // 标题行移出滚动栈，钉在 sheetView 顶部的固定容器内；
+        // 标题行移出滚动栈，钉在 view 顶部的固定容器内；
         // 滚动区改为从容器下方起，余下内容（副标题起）按原顺序仍在
-        // 滚动栈内。关闭动作、标题文案、抓手样式与头高均不动。
-        fixedHeaderView.backgroundColor = BearyColors.surface3
+        // 滚动栈内。标题文案与头高均不动。
+        fixedHeaderView.backgroundColor = .clear
         fixedHeaderView.translatesAutoresizingMaskIntoConstraints = false
-        fixedHeaderView.layer.cornerRadius = BearySheetChrome.topCornerRadius
-        fixedHeaderView.layer.masksToBounds = true
-        sheetView.addSubview(fixedHeaderView)
+        view.addSubview(fixedHeaderView)
         fixedHeaderView.addSubview(handleWrapView)
         fixedHeaderView.addSubview(headerWrap)
         NSLayoutConstraint.activate([
-            fixedHeaderView.topAnchor.constraint(equalTo: sheetView.topAnchor),
-            fixedHeaderView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
-            fixedHeaderView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+            fixedHeaderView.topAnchor.constraint(equalTo: view.topAnchor),
+            fixedHeaderView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            fixedHeaderView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             handleWrapView.topAnchor.constraint(equalTo: fixedHeaderView.topAnchor),
             handleWrapView.leadingAnchor.constraint(equalTo: fixedHeaderView.leadingAnchor),
             handleWrapView.trailingAnchor.constraint(equalTo: fixedHeaderView.trailingAnchor),
@@ -486,8 +373,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             headerWrap.trailingAnchor.constraint(equalTo: fixedHeaderView.trailingAnchor),
             headerWrap.bottomAnchor.constraint(equalTo: fixedHeaderView.bottomAnchor),
         ])
-        // 抓手热区仍压在最上层（居中 120 宽）。
-        sheetView.bringSubviewToFront(grabHitView)
 
         subLabel.font = UIFont.systemFont(ofSize: 12)
         subLabel.textColor = BearyColors.gray
@@ -614,134 +499,51 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
 
     private func buildConstraints() {
         NSLayoutConstraint.activate([
-            backdropButton.topAnchor.constraint(equalTo: view.topAnchor),
-            backdropButton.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            backdropButton.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            backdropButton.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ])
-
-        sheetScrollView.layer.cornerRadius = 20
-        sheetScrollView.layer.masksToBounds = true
-        NSLayoutConstraint.activate([
             // 审计第 10 项：滚动区从固定头部下方起，不再盖住头部。
             sheetScrollView.topAnchor.constraint(equalTo: fixedHeaderView.bottomAnchor),
-            sheetScrollView.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor),
-            sheetScrollView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
-            sheetScrollView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+            sheetScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            sheetScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            sheetScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             contentStack.topAnchor.constraint(equalTo: sheetScrollView.contentLayoutGuide.topAnchor),
             contentStack.bottomAnchor.constraint(equalTo: sheetScrollView.contentLayoutGuide.bottomAnchor),
             contentStack.leadingAnchor.constraint(equalTo: sheetScrollView.contentLayoutGuide.leadingAnchor),
             contentStack.trailingAnchor.constraint(equalTo: sheetScrollView.contentLayoutGuide.trailingAnchor),
             contentStack.widthAnchor.constraint(equalTo: sheetScrollView.frameLayoutGuide.widthAnchor),
         ])
-
-        // 第 13 项：初值即按内容量（量不到时取封顶值兜底），之后每次布局由 updateSheetHeight 跟进。
-        let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: draftBoxContentHeight() ?? draftBoxMaxHeight)
-        heightConstraint.isActive = true
-        sheetHeightConstraint = heightConstraint
-
-        let widthConstraint = sheetView.widthAnchor.constraint(equalToConstant: 440)
-        sheetWidthConstraint = widthConstraint
-
-        phoneConstraints = [
-            sheetView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            sheetView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            sheetView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ]
-        padConstraints = [
-            sheetView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            sheetView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            widthConstraint,
-        ]
-        NSLayoutConstraint.activate(phoneConstraints)
-        applySheetChrome()
     }
 
-    // MARK: - 布局模式与尺寸
+    // MARK: - 尺寸（系统 sheet 定高口径，见 BearySystemSheetSizing）
 
-    private func updateLayoutModeIfNeeded() {
-        let pad = view.bounds.width >= 821
-        if pad == isPadLayout {
-            return
-        }
-        isPadLayout = pad
-        if pad {
-            NSLayoutConstraint.deactivate(phoneConstraints)
-            NSLayoutConstraint.activate(padConstraints)
-        } else {
-            NSLayoutConstraint.deactivate(padConstraints)
-            NSLayoutConstraint.activate(phoneConstraints)
-        }
-        applySheetChrome()
-    }
-
-    private func applySheetChrome() {
-        if isPadLayout {
-            sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-            sheetView.layer.borderWidth = 0
-            BearyShadow.applyRaised(to: sheetView.layer)
-            // 审计第 10 项：顶圆角归固定头部，底圆角归滚动区（圆角数值不动）。
-            fixedHeaderView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-            sheetScrollView.layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-        } else {
-            sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-            sheetView.layer.borderWidth = 0
-            BearyShadow.applyRaised(to: sheetView.layer)
-            fixedHeaderView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-            sheetScrollView.layer.maskedCorners = []
-        }
-    }
-
-    /// 审计第 8 轮第 5 项：首轮数据未到时不跟内容改面板高——面板保持
-    /// 初始高（加载态），回包后由 transitionSheetHeightToContent 一次量高、
-    /// 一段动画过渡到内容态；否则回包晚于入场、两态高度不同时，底部固定的
-    /// iPhone 面板顶边会突然上跳。
-    /// 第 13 项：量高口径改走 draftBoxContentHeight（按内容算、320 封顶）。
-    private func updateSheetHeight() {
-        guard draftsInitialLoaded else { return }
-        let sheetWidth = isPadLayout ? min(440, view.bounds.width - 80) : view.bounds.width
-        if let widthConstraint = sheetWidthConstraint, isPadLayout {
-            widthConstraint.constant = max(sheetWidth, 0)
-        }
-        guard let target = draftBoxContentHeight() else { return }
-        if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - target) > 0.5 {
-            heightConstraint.constant = target
-        }
-    }
-
-    /// 第 13 项：面板高度按内容算，320 只作封顶；量不到（未布局／内容未就绪）时回 nil，调用方保持原高。
-    private func draftBoxContentHeight() -> CGFloat? {
-        let sheetWidth = isPadLayout ? min(440, view.bounds.width - 80) : view.bounds.width
-        guard sheetWidth > 0 else { return nil }
-        // 审计第 10 项：面板总高 = 固定头部高（把手 + 标题行）+ 滚动内容高；
+    /// 按当前宽度算内容高，推给系统 sheet 当 detent 高；宽/字号档变化时跟帧补齐。
+    /// extraBottomInset 只在进场前（未进窗口、安全区为 0）用调用方的安全区补齐。
+    /// 第 13 项：面板高度按内容算，320 只作封顶；量不到（未布局／内容未就绪）
+    /// 时保持原高（旧 draftBoxContentHeight 同款守卫）。
+    /// 审计第 8 轮第 5 项：首轮数据未到时量的是加载态，面板保持加载态高；
+    /// 回包后由 loadDrafts 完成回调再量一次，detent 经 refreshDetentsIfNeeded
+    /// 一段动画过渡到内容态，顶边不跳。
+    func updatePreferredContentSize(extraBottomInset: CGFloat = 0) {
+        let width = view.bounds.width > 0 ? view.bounds.width : 375
+        let target = CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
+        // 审计第 10 项：面板总高 = 固定头部高（把手占位 + 标题行）+ 滚动内容高；
         // 头部已移出滚动栈，故此处须把两部分相加，否则面板会矮一截。
         let headerHeight = fixedHeaderView.systemLayoutSizeFitting(
-            CGSize(width: sheetWidth, height: 0),
+            target,
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
-        let fittingHeight = headerHeight + contentStack.systemLayoutSizeFitting(
-            CGSize(width: sheetWidth, height: 0),
+        let contentHeight = contentStack.systemLayoutSizeFitting(
+            target,
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
-        guard fittingHeight > 100 else { return nil }
-        return min(fittingHeight, draftBoxMaxHeight)
-    }
-
-    /// 审计第 8 轮第 5 项：首轮数据就绪后统一量一次高，用同一段动画过渡
-    /// 面板与内容（减动效直接落定）。须在 renderDrafts 之后、下一轮布局之前调，
-    /// 否则布局回路会先把新高直接写上去，顶边照样一跳。
-    /// 第 13 项：量高口径改走 draftBoxContentHeight（按内容算、320 封顶）。
-    private func transitionSheetHeightToContent() {
-        guard let target = draftBoxContentHeight(),
-              let heightConstraint = sheetHeightConstraint,
-              abs(heightConstraint.constant - target) > 0.5 else { return }
-        heightConstraint.constant = target
-        guard !UIAccessibility.isReduceMotionEnabled else { return }
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
-            self.view.layoutIfNeeded()
-        })
+        let fittingHeight = headerHeight + contentHeight
+        guard fittingHeight > 100 else { return }
+        let height = min(fittingHeight, draftBoxMaxHeight) + extraBottomInset
+        let preferred = CGSize(width: width, height: ceil(height))
+        if preferredContentSize != preferred {
+            preferredContentSize = preferred
+            BearySystemSheet.refreshDetentsIfNeeded(for: self)
+        }
     }
 
     private func updateBottomSpacer() {
@@ -840,7 +642,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 self?.hideLoadingState()
                 self?.renderDrafts()
                 self?.draftsInitialLoaded = true
-                self?.transitionSheetHeightToContent()
+                self?.updatePreferredContentSize()
                 self?.tryPlayEntrance()
             }
         }
@@ -898,9 +700,9 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             arranged.removeFromSuperview()
         }
         cardEntries = []
-        deleteEntries = []
-        lostEntries = []
-        retryEntries = []
+        deleteEntries.removeAll()
+        lostEntries.removeAll()
+        retryEntries.removeAll()
         if draftsLoadFailed {
             subLabel.text = nil
             subWrap.isHidden = true
@@ -918,9 +720,9 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 let corruptSubtitle = BearyDraftStore.hasCorruptBackup()
                     ? "这些草稿读不出来。清除后 App 内找不回，手机里的备份仍在；新草稿不受影响。"
                     : "这些草稿读不出来。清除后无法找回；新草稿不受影响。"
-                failedStateView.configure(kind: .error, title: "草稿库已损坏", subtitle: corruptSubtitle, iconName: nil, actionTitle: "清除损坏的草稿数据", actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
+                failedStateView.configure(kind: .error, title: NSLocalizedString("draftbox.corrupt_title", comment: ""), subtitle: corruptSubtitle, iconName: nil, actionTitle: NSLocalizedString("draftbox.clear_corrupt_drafts", comment: ""), actionStyle: .destructiveOutline(.regular), onAction: { [weak self] in self?.clearCorruptStoreTapped() })
             } else {
-                failedStateView.configure(kind: .error, title: "草稿读取失败", subtitle: "原文件已保留，请稍后再试", iconName: nil, actionTitle: "重新读取", onAction: { [weak self] in self?.retryLoadDraftsTapped() })
+                failedStateView.configure(kind: .error, title: NSLocalizedString("draftbox.load_failed_title", comment: ""), subtitle: NSLocalizedString("draftbox.load_failed_subtitle", comment: ""), iconName: nil, actionTitle: NSLocalizedString("draftbox.retry_load", comment: ""), onAction: { [weak self] in self?.retryLoadDraftsTapped() })
             }
             listStack.addArrangedSubview(failedStateView)
             return
@@ -957,6 +759,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         card.layer.borderWidth = 0
         card.layer.cornerRadius = BearyCorners.single
         card.addTarget(self, action: #selector(cardTapped(_:)), for: .touchUpInside)
+        card.bearyAddRowPressFeedback()
 
         let inner = UIStackView()
         inner.axis = .vertical
@@ -1030,7 +833,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         deleteButton.addTarget(self, action: #selector(deleteTapped(_:)), for: .touchUpInside)
         deleteButton.bearyAddPressFeedback()
         topRow.addArrangedSubview(deleteButton)
-        deleteEntries.append((button: deleteButton, draftValue: draftValue))
+        deleteEntries.append(button: deleteButton, value: draftValue)
         inner.addArrangedSubview(topRow)
 
         // 2026-11-14（132 真机）：标题独立成行（卡片标题字、粗体），不再挤进
@@ -1117,7 +920,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             lostButton.bearyAddPressFeedback()
             lostButton.translatesAutoresizingMaskIntoConstraints = false
             metaFlow.addSubview(lostButton)
-            lostEntries.append((button: lostButton, draftValue: draftValue))
+            lostEntries.append(button: lostButton, value: draftValue)
         }
         // DF-1 正在写标记：编辑器当前正在写的那篇（currentDraftId 由容器设置）。
         if let current = currentDraftId, current == draftValue.draftId {
@@ -1170,7 +973,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             retryButton.bearyAddPressFeedback()
             retryButton.translatesAutoresizingMaskIntoConstraints = false
             statusRow.addArrangedSubview(retryButton)
-            retryEntries.append((button: retryButton, draftValue: draftValue))
+            retryEntries.append(button: retryButton, value: draftValue)
         }
         // 状态行与字数/心情行之间留 8pt（与内层 spacing 的 6pt 叠加后接近网页 meta 的 8pt 上边距）。
         // metaColumn 上边距仍取原 metaRow 的 2pt，行距 6pt 与内层 spacing 一致。
@@ -1255,7 +1058,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 // 拖过阈值执行删除：复用删除钮路径（删盘成功后删卡 + 6 秒撤销条），
                 // 拖动 transform 不先复位——复位会让卡片先跳回原位再收起，
                 // 直接交接给 deleteTapped，删盘成功后的收起动画里一并滑回原位，视觉上连续。
-                guard let button = deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button else {
+                guard let button = deleteEntries.button(forID: draftValue.draftId) else {
                     resetDraftDragCard(card)
                     return
                 }
@@ -1287,23 +1090,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: initialSpringVelocity, options: .curveEaseOut, animations: {
             card.transform = .identity
         }, completion: { _ in completion?() })
-    }
-
-    /// 拒绝反馈：warning 震动＋拒绝音（与好友页 playDenyFeedback 同口径）。
-    private func playDenyFeedback() {
-        BearyHaptics.rejectionWarning()
-        BearySoundPlayer.play(.refuseBonk)
-    }
-
-    /// 仅视觉摇头（0.4s）；减动效时跳过。调用方须先调 playDenyFeedback 给震动＋音效。
-    private func denyShake(on view: UIView) {
-        if UIAccessibility.isReduceMotionEnabled { return }
-        view.layer.removeAnimation(forKey: "bearyDenyShake")
-        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -8, 8, -5, 5, 0]
-        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        shake.duration = BearyMotion.screen
-        view.layer.add(shake, forKey: "bearyDenyShake")
     }
 
     private func chipShell() -> UIView {
@@ -1434,13 +1220,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// renderDrafts()，整列卡片重建两次、可见位置也无保留；现只原位替换
     /// 这一张卡，写盘成功直接结束，失败才按磁盘重读恢复该卡并 toast。
     @objc private func clearLostTapped(_ sender: UIButton) {
-        var targetDraft: BearyDraft?
-        for entry in lostEntries {
-            if entry.button === sender {
-                targetDraft = entry.draftValue
-            }
-        }
-        guard var draftValue = targetDraft else { return }
+        guard var draftValue = lostEntries.value(for: sender) else { return }
         draftValue.images = draftValue.images.filter { [weak self] item in
             guard let strongSelf = self else { return true }
             return strongSelf.isUnrecoverableImage(item) == false
@@ -1466,7 +1246,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 } else {
                     strongSelf.renderDrafts()
                 }
-                strongSelf.showDraftToast(message: "保存失败，图片提示还在")
+                strongSelf.showDraftToast(message: NSLocalizedString("draftbox.save_failed_lost_image_hint_remains", comment: ""))
             }
         }
     }
@@ -1492,8 +1272,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         listStack.removeArrangedSubview(oldCard)
         oldCard.removeFromSuperview()
         cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-        deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-        lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+        deleteEntries.removeAll(id: draftValue.draftId)
+        lostEntries.removeAll(id: draftValue.draftId)
         // makeCard 会把删除钮／丢失图钮登记进 deleteEntries／lostEntries（与 renderDrafts 同路），
         // 卡片登记追加在末尾，再挪回旧卡的位置，保持卡片数组与栈内顺序一致。
         let card = makeCard(for: draftValue)
@@ -1608,113 +1388,67 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 
     /// 网页 dfTimeStr 移植：v3 updatedAt 为秒，网页 updated_at 为毫秒，此处按秒换算。
+    /// 2026-11-21 日期完全本地化：相对时间与绝对日期跟 App 语言（见 BearyLocalizedDate），
+    /// 中文输出与改前一致（昨天仍补零 HH:mm，W9 定版口径不变）；今天／昨天判定与
+    /// 显示沿用既有北京日历／GMT+8 口径（扫荡 B 定版），本支只改语言、不动时区。
+    /// 2026-11-25 Li 定去“前”：分钟／小时走日记版 helper（X 分钟／X 小时）。
     private func draftTimeText(updatedAtSeconds: TimeInterval) -> String {
         let date = Date(timeIntervalSince1970: updatedAtSeconds)
         let now = Date()
         let diff = now.timeIntervalSince(date)
         if diff < 3600 {
             let minutes = max(1, Int(floor(diff / 60)))
-            return "\(minutes) 分钟前"
+            return BearyLocalizedDate.diaryMinutesString(minutes)
         }
-        // 扫荡 B：今天/昨天判定走北京日历，与下方 formatter 的北京时区一致。
+        // 扫荡 B：今天/昨天判定走北京日历，与显示的北京时区一致。
         // 旧口径用 Calendar.current（设备时区）：设备时区非北京时，跨北京午夜
         // 前后会把“昨天”误判成“今天”（或反之），而显示的 HH:mm/M月d日又是
-        // 北京时间，两处口径打架；回收站 TrashText.deletedLabel 已用北京日历，
-        // 本处与之对齐（本地构造，不依赖时间线文件的共享 helper，避免跨分支耦合）。
-        var beijingCalendar = Calendar(identifier: .gregorian)
-        beijingCalendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600) ?? TimeZone.current
-        let calendar = beijingCalendar
+        // 北京时间，两处口径打架；本处与回收站 TrashText.deletedLabel 对齐。
+        let calendar = BearyBeijingDay.calendar
         if calendar.isDateInToday(date) {
             let hours = Int(floor(diff / 3600))
-            return "\(hours) 小时前"
+            return BearyLocalizedDate.diaryHoursString(hours)
         }
-        let beijingZone = TimeZone(secondsFromGMT: 8 * 3600)
-        let timeFormatter = DateFormatter()
-        timeFormatter.locale = Locale(identifier: "zh_CN")
-        // G8（草稿箱部分）：时间显示 formatter 统一设北京时区，与服务端日界一致。
-        timeFormatter.timeZone = beijingZone
-        // W9：原生定版统一补零（HH:mm），不再以网页昨天 H:mm 口径为准。
-        timeFormatter.dateFormat = "HH:mm"
         if calendar.isDateInYesterday(date) {
-            return "昨天 " + timeFormatter.string(from: date)
+            // W9：原生定版统一补零（HH:mm），不再以网页昨天 H:mm 口径为准。
+            return BearyLocalizedDate.yesterdayWord(timeZone: BearyLocalizedDate.gmt8) + " " + BearyLocalizedDate.timeStringPadded(from: date, timeZone: BearyLocalizedDate.gmt8)
         }
-        let dayFormatter = DateFormatter()
-        dayFormatter.locale = Locale(identifier: "zh_CN")
-        dayFormatter.timeZone = beijingZone
-        dayFormatter.dateFormat = "M月d日"
-        return dayFormatter.string(from: date)
+        return BearyLocalizedDate.monthDayString(from: date, timeZone: BearyLocalizedDate.gmt8)
     }
 
-    // MARK: - 入场/退场动效
+    // MARK: - 退场守卫与退场（入场面板动画走系统 sheet，卡片入场见 tryPlayEntrance）
 
-    private func applyEntranceStartState() {
-        if isPadLayout {
-            sheetView.alpha = 0
-            sheetView.transform = CGAffineTransform(translationX: 0, y: sheetView.bounds.height * 0.04)
-        } else {
-            sheetView.alpha = 1
-            sheetView.transform = CGAffineTransform(translationX: 0, y: sheetView.bounds.height)
-        }
-    }
-
-    /// 四路统一离场守卫：遮罩／把手下滑（均走 closeBox）、新建、
-    /// 点开另一篇共用。撤销只活在箱内 pendingUndos 内存（deinit 即清计时器
-    /// 与队列），故 6 秒窗内任一路离箱都会丢撤销：有可撤销笔时一律先弹确认，
-    /// 确认才执行该路的离场动作，取消则保留箱内状态与撤销队列；无待撤销笔
-    /// 时各路关闭路径一字不动。关闭路的提示文案与确认钮文案保持原样，
-    /// 新建／点开路复用同一条提示文案，确认钮为“仍要继续”。
+    /// 三路统一离场守卫：新建、点开、重试共用（系统 sheet 的下滑／点遮罩
+    /// 关闭另走 UIAdaptivePresentationControllerDelegate，见文件末尾）。
+    /// 撤销只活在箱内 pendingUndos 内存（deinit 即清计时器与队列），故 6 秒窗内
+    /// 任一路离箱都会丢撤销：有可撤销笔时一律先弹确认，确认才执行该路的离场
+    /// 动作，取消则保留箱内状态与撤销队列；无待撤销笔时各路关闭路径一字不动。
+    /// 关闭路的提示文案与确认钮文案保持原样，新建／点开路复用同一条提示文案，
+    /// 确认钮为“仍要继续”。
     private func exitWithUndoGuard(confirmTitle: String, confirmedExit: @escaping () -> Void) {
         // 守卫原先只认 UIAlertController；确认改走底 sheet 后，有在途弹窗
         // 即 presentedViewController 非 nil，一律不再叠弹（原意不变）。
         if presentedViewController != nil { return }
         if !pendingUndos.isEmpty {
             // 原 alert 无标题，底 sheet 标题传空（只显说明＋按钮，不另起文案）。
-            BearyConfirmSheet.show(from: self, title: "", message: "关闭草稿箱后，刚删除的草稿将无法撤销", actions: [
+            // 说明走 catalog（draftbox.undo_exit_message），与系统关闭守卫共用同一 key。
+            BearyConfirmSheet.show(from: self, title: "", message: NSLocalizedString("draftbox.undo_exit_message", comment: ""), actions: [
                 BearyConfirmSheet.Action(title: confirmTitle, style: .destructive) {
                     confirmedExit()
                 },
             ], onDismissWithoutAction: { [weak self] in
-                // 审计 A3：取消关闭时回到原位——把手下滑已把面板拖离原位、
-                // 遮罩变淡，确认框关掉后须复位，否则面板一直停在拖动态。
-                // 移植说明：#2012 已摘掉确认底 sheet 的取消钮，复位改挂
-                // BearyConfirmSheet 的 onDismissWithoutAction（未点按钮就关闭——
-                // 下滑／点遮罩——时调一次）；#1818 已删草稿箱 × 钮，layoutChanged
-                // 的通知对象由 closeButton 改为 sheetView（实际变布局的元素）。
-                // 非拖拽路（关闭钮／遮罩／新建／点开）面板本就在原位，复位为空操作。
+                // 取消关闭时焦点回面板标题（面板本就在原位，系统 sheet 无拖动态可复位）。
                 guard let strongSelf = self else { return }
-                let restore = {
-                    strongSelf.sheetView.transform = .identity
-                    strongSelf.backdropButton.alpha = 1
-                }
-                if UIAccessibility.isReduceMotionEnabled {
-                    restore()
-                    UIAccessibility.post(notification: .layoutChanged, argument: strongSelf.sheetView)
-                } else {
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: BearyMotion.springDamping, initialSpringVelocity: 0, options: [], animations: restore) { _ in
-                        UIAccessibility.post(notification: .layoutChanged, argument: strongSelf.sheetView)
-                    }
-                }
+                UIAccessibility.post(notification: .layoutChanged, argument: strongSelf.titleLabel)
             })
             return
         }
         confirmedExit()
     }
 
-    @objc private func closeBox() {
-        // 审计-编辑器详情：补查证实——删盘在 finishDelete 即落盘，撤销只活
-        // 在箱内 pendingUndos 内存（deinit 即清计时器与队列），故 6 秒窗内
-        // 关箱即丢撤销。修法取审计“弹确认”分支：仅当仍有可撤销笔时确认，
-        // 无待撤销笔时关闭路径一字不动；新建／点开路同样经 exitWithUndoGuard
-        // 拦，不再各自直走退场。
-        exitWithUndoGuard(confirmTitle: "仍要关闭") { [weak self] in
-            self?.dismissWithExitAnimation(completion: nil)
-        }
-    }
-
     /// 弹窗审计 E1-18 统一退场完成回调：关闭、打开、新建三路共用同一
-    /// 退场（第 13 项：退场动画改由转场动画器播——遮罩 0.26s 淡出 + 面板滑出
-    /// 走拖拽收尾统一弹簧 0.26s／damping 0.7，减动效直 dismiss；本函数不再手动播，
-    /// 外部／系统直接 dismiss 同样走动画器，不再瞬时消失），dismiss 完成后
+    /// 退场（退场动画走系统 sheet，减动效直 dismiss；本函数只调 dismiss，
+    /// 不再手动播——同一关闭只播一次退场动画），dismiss 完成后
     /// 才调 completion（即原 onNew/onOpen 回调）。
     /// 退场在途时再点按一律忽略：不重复播动画，也不让“关闭后又打开”
     /// 的回调在关闭完成后再执行；先到的一路为准。
@@ -1738,36 +1472,11 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             dismiss(animated: false, completion: wrappedCompletion)
             return
         }
-        // 第 13 项：退场动画由转场动画器播（见 BearyDraftBoxAnimator），
-        // 本函数只调 dismiss(animated: true)，不再手动播——同一关闭只播一次退场动画。
         dismiss(animated: true, completion: wrappedCompletion)
     }
 
-    /// 第 13 项：退场动画的唯一实现，供退场动画器调用——遮罩 0.26s 单独淡出
-    /// （与面板滑出解耦；面板滑出走拖拽收尾统一弹簧 0.26s／damping 0.7）。
-    /// 完成时调 completion（动画器随后 completeTransition）；退场在途时置
-    /// isDismissing，防关闭／新建／点开路重复触发。
-    func playDismissExitAnimation(completion: @escaping () -> Void) {
-        isDismissing = true
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: .curveEaseOut, animations: {
-            self.backdropButton.alpha = 0
-        })
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: {
-            if self.isPadLayout {
-                self.sheetView.alpha = 0
-                self.sheetView.transform = CGAffineTransform(translationX: 0, y: self.sheetView.bounds.height * 0.04)
-            } else {
-                self.sheetView.transform = CGAffineTransform(translationX: 0, y: self.sheetView.bounds.height)
-            }
-        }, completion: { _ in
-            completion()
-        })
-    }
-
     @objc private func newDraftTapped() {
-        // 轻震只在点按确认时给：touchDown 里给会在 sheet 内起滑时误震。
-        BearyHaptics.press()
-        // 与关闭／点开路共用 exitWithUndoGuard：6 秒窗内有可撤销笔时先弹确认，
+        // 与点开路共用 exitWithUndoGuard：6 秒窗内有可撤销笔时先弹确认，
         // 取消保留箱内撤销，确认才退场并调原 onNew 回调。
         exitWithUndoGuard(confirmTitle: "仍要继续") { [weak self] in
             self?.dismissWithExitAnimation { [weak self] in
@@ -1776,64 +1485,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
     }
 
-    /// U18：把手下滑关闭——下滑跟手，超过 80pt 或快速下滑时走 closeBox 同动画；
-    /// 否则统一弹簧（0.26s／damping 0.7＋松手速度）弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
-    /// 2026-10-30 抓手批：上滑按统一口径阻尼微移后回弹，不扩高、不关闭。
-    /// 2026-11-19 改：上滑不动（弹窗贴底，底部不空），见 BearySheetDrag.offset。
-    @objc private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
-        guard !isDismissing else { return }
-        let translation = gesture.translation(in: view)
-        switch gesture.state {
-        case .changed:
-            let offset = BearySheetDrag.offset(for: translation.y)
-            // 把手拖动只动面板，不碰列表滚动位置：列表滚到下面时
-            // 下拉把手又弹回，也要保留原阅读位置。把手在固定头部里，
-            // 与滚动视图是不同手势，不存在与滚动回弹打架的问题。
-            sheetView.transform = CGAffineTransform(translationX: 0, y: offset)
-            // 审计第 14 项：遮罩跟手变淡，与游客提示同口径（共用映射）。
-            backdropButton.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheetView.bounds.height)
-        case .ended:
-            let velocity = gesture.velocity(in: view).y
-            if translation.y > 80 || velocity > 600 {
-                closeBox()
-            } else {
-                let restore = {
-                    self.sheetView.transform = .identity
-                    self.backdropButton.alpha = 1
-                }
-                // 无障碍：拖拽取消后面板仍开着，焦点回到面板标题，
-                // 不送回面板后的编辑器触发入口（面板未关，送回去会穿透）。
-                if UIAccessibility.isReduceMotionEnabled {
-                    restore()
-                    UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
-                } else {
-                    let offset = BearySheetDrag.offset(for: translation.y)
-                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: BearySheetDrag.restoreSpringVelocity(velocity: velocity, offset: offset), options: [], animations: restore) { _ in
-                        UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
-                    }
-                }
-            }
-        case .cancelled, .failed:
-            let restore = {
-                self.sheetView.transform = .identity
-                self.backdropButton.alpha = 1
-            }
-            // 无障碍：同上，取消／失败后焦点回面板标题。
-            if UIAccessibility.isReduceMotionEnabled {
-                restore()
-                UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
-            } else {
-                UIView.animate(withDuration: BearyMotion.normal, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: restore) { _ in
-                    UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
-                }
-            }
-        default:
-            break
-        }
-    }
-
     /// G7：箱内轻提示：委托统一 BearyToast。“新 toast 先清旧 toast”
-    /// 由统一组件内部承接（同容器旧 toast 先移除）。草稿箱是 overFullScreen
+    /// 由统一组件内部承接（同容器旧 toast 先移除）。草稿箱是系统 sheet
     /// 模态，盖住 Chrome，落点由组件回落安全区 -32。
     /// 调用签名与文案、触发时机不变。
     private func showDraftToast(message: String) {
@@ -1916,8 +1569,6 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     @objc private func cardTapped(_ sender: UIButton) {
         for entry in cardEntries {
             if entry.button === sender {
-                // 轻震只在点按确认时给：touchDown 里给会在 sheet 内起滑时误震。
-                BearyHaptics.press()
                 // E1-18：整卡打开先走统一退场，dismiss 后再调原 onOpen 回调；
                 // 与关闭／新建路共用 exitWithUndoGuard：6 秒窗内有可撤销笔时
                 // 先弹确认，取消保留箱内撤销，确认才退场。
@@ -1936,7 +1587,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// 中心无原任务（如重启后）或草稿已改过时改走正常打开编辑器再点发布——
     /// 编辑器读草稿持久标记后仍跳过门禁与 setVisibility，只发新篇。
     @objc private func retryPublishTapped(_ sender: UIButton) {
-        guard let draftValue = retryEntries.first(where: { $0.button === sender })?.draftValue else { return }
+        guard let draftValue = retryEntries.value(for: sender) else { return }
         if BearyPublishCenter.shared.isPublishing(draftId: draftValue.draftId) {
             showDraftToast(message: "发布中…")
             return
@@ -1961,13 +1612,7 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     /// 本地删卡：从列表移除并只删该篇 v3 草稿；图片文件不动（撤销期内可原样恢复，
     /// 超时后由编辑器侧的孤文件清理承接，不在此处改存储结构）。
     @objc private func deleteTapped(_ sender: UIButton) {
-        var targetDraft: BearyDraft?
-        for entry in deleteEntries {
-            if entry.button === sender {
-                targetDraft = entry.draftValue
-            }
-        }
-        guard let draftValue = targetDraft else { return }
+        guard let draftValue = deleteEntries.value(for: sender) else { return }
         // 发布后台化：发布中的草稿不许从草稿箱删——只删记录不删文件，
         // 失败后重发即丢正文。拦在动画与 pendingUndos 之前，卡片不动。
         if BearyPublishCenter.shared.isPublishing(draftId: draftValue.draftId) {
@@ -1976,10 +1621,10 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             // 拒绝反馈（震动＋音效＋toast），摇头等弹簧归位完成后再抖，
             // 免得与归位动画抢 transform。
             if let cardView = cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {
-                playDenyFeedback()
+                BearyIconMotion.playDenyFeedback()
                 resetDraftDragCard(cardView) { [weak self] in
                     guard let strongSelf = self else { return }
-                    strongSelf.denyShake(on: cardView)
+                    BearyIconMotion.denyShake(on: cardView, key: "bearyDenyShake")
                 }
             }
             showDraftToast(message: "发布中…")
@@ -2026,16 +1671,16 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 }
                 if let cardView = strongSelf.cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {
                     cardView.isUserInteractionEnabled = true
-                    strongSelf.playDenyFeedback()
+                    BearyIconMotion.playDenyFeedback()
                     // 删盘失败：卡片可能带着左滑位移进来（拖动进删不先复位），
                     // 不复位就停在半偏移位；先弹簧归位、摇头等归位完成后再抖
                     //（与发布中拒删分支同口径，免得摇头与归位抢 transform）。
                     strongSelf.resetDraftDragCard(cardView) { [weak self] in
                         guard let strongSelf = self else { return }
-                        strongSelf.denyShake(on: cardView)
+                        BearyIconMotion.denyShake(on: cardView, key: "bearyDenyShake")
                     }
                 }
-                if let deleteButton = strongSelf.deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button {
+                if let deleteButton = strongSelf.deleteEntries.button(forID: draftValue.draftId) {
                     deleteButton.isEnabled = true
                 }
                 strongSelf.showDraftToast(message: "删除失败，请重试")
@@ -2106,8 +1751,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
                 cardEntry.button.removeFromSuperview()
             }
             cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-            deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-            lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+            deleteEntries.removeAll(id: draftValue.draftId)
+            lostEntries.removeAll(id: draftValue.draftId)
             setSubLabelCountText("共 \(drafts.count) 份 · 仅保存在本设备")
         }
         // 本笔在队列里且计时未起时出条并起 6 秒计时；其余笔的计时互不干扰。
@@ -2272,8 +1917,8 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
             cardEntry.button.removeFromSuperview()
         }
         cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-        deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-        lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+        deleteEntries.removeAll(id: draftValue.draftId)
+        lostEntries.removeAll(id: draftValue.draftId)
         subLabel.text = "共 \(drafts.count) 份 · 仅保存在本设备"
     }
 
@@ -2286,7 +1931,18 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
         }
         if pendingUndos.count == 1, let only = pendingUndos.first {
             let short = summaryText(for: only.draft)
-            undoLabel.text = short.count > 20 ? "已删除草稿“\(String(short.prefix(20)))…”" : "已删除草稿“\(short)”"
+            // 撤销条文案走转换器：先全文渲染再取前 20 字，记号变单个附件格。
+            let rendered = BearyText.inlineAttributedText(from: short, font: undoLabel.font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark, gifImageKeys: only.draft.images.compactMap { $0.serverKey })
+            let result = NSMutableAttributedString(string: "已删除草稿“", attributes: [.font: undoLabel.font, .foregroundColor: BearyColors.ink])
+            if rendered.string.count > 20 {
+                let prefixLength = rendered.string.prefix(20).utf16.count
+                result.append(rendered.attributedSubstring(from: NSRange(location: 0, length: prefixLength)))
+                result.append(NSAttributedString(string: "…”", attributes: [.font: undoLabel.font, .foregroundColor: BearyColors.ink]))
+            } else {
+                result.append(rendered)
+                result.append(NSAttributedString(string: "”", attributes: [.font: undoLabel.font, .foregroundColor: BearyColors.ink]))
+            }
+            undoLabel.attributedText = result
         } else {
             undoLabel.text = "\(pendingUndos.count) 份草稿已删除"
         }
@@ -2310,63 +1966,36 @@ final class BearyDraftBoxViewController: UIViewController, UIGestureRecognizerDe
     }
 }
 
-// MARK: - 自包含呈现：入场瞬时转场 + 手动入场动效，退场走动画器
+// MARK: - 系统 sheet 关闭守卫（下滑／点遮罩）
 
-/// 呈现本身不播系统动画，sheet 的滑入/淡入由本控制器在
-/// viewWillAppear/viewDidAppear 里手动做（与网页 .32s/.25s 同口径），
-/// 调用方无论 present(animated:) 传 true 还是 false，效果一致。
-/// 退场（第 13 项）改由动画器播统一退场动画：任何一路 dismiss（含外部／
-/// 系统直接 dismiss）都走同一退场，不再瞬时消失；关闭／新建／点开三路
-/// 只调 dismiss(animated: true)，不再各自手动播，同一关闭只播一次。
-private final class BearyDraftBoxTransitionDelegate: NSObject, UIViewControllerTransitioningDelegate {
+/// 旧容器下把手下滑与遮罩点按走 closeBox → exitWithUndoGuard；系统 sheet 的
+/// 下滑／点遮罩改由 presentationController delegate 守门（delegate 在
+/// viewDidAppear 里挂上，见上）。有待撤销笔时先弹确认并拦下（return false），
+/// 确认才放行（undoExitConfirmed 置位后第二次 shouldDismiss 不再拦截）；
+/// 取消则箱子原样留着，撤销队列不动。确认框已在 shouldDismiss 里弹出，
+/// didAttemptToDismiss 不再重复弹。文案与新建／点开路的确认框共用同一组 catalog key。
+extension BearyDraftBoxViewController: UIAdaptivePresentationControllerDelegate {
 
-    func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        return BearyDraftBoxAnimator(isPresenting: true)
+    func presentationControllerShouldDismiss(_ presentationController: UIPresentationController) -> Bool {
+        if !pendingUndos.isEmpty && !undoExitConfirmed {
+            presentUndoExitConfirm()
+            return false
+        }
+        return true
     }
 
-    func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        return BearyDraftBoxAnimator(isPresenting: false)
-    }
-}
-
-private final class BearyDraftBoxAnimator: NSObject, UIViewControllerAnimatedTransitioning {
-
-    private let isPresenting: Bool
-
-    init(isPresenting: Bool) {
-        self.isPresenting = isPresenting
-        super.init()
-    }
-
-    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        if isPresenting || UIAccessibility.isReduceMotionEnabled {
-            return 0
-        }
-        return BearyMotion.normal
-    }
-
-    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
-        let container = transitionContext.containerView
-        if isPresenting {
-            if let toView = transitionContext.view(forKey: .to) {
-                container.addSubview(toView)
-            }
-            transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
-            return
-        }
-        let fromView = transitionContext.view(forKey: .from)
-        guard let box = transitionContext.viewController(forKey: .from) as? BearyDraftBoxViewController,
-              !UIAccessibility.isReduceMotionEnabled else {
-            fromView?.removeFromSuperview()
-            transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
-            return
-        }
-        box.playDismissExitAnimation {
-            if !transitionContext.transitionWasCancelled {
-                fromView?.removeFromSuperview()
-            }
-            transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
-        }
+    private func presentUndoExitConfirm() {
+        // 确认框已在途时不再叠弹（用户连点遮罩／重复下滑时，第二次
+        // shouldDismiss 仍回 false，箱子不动，等用户在确认框里决定）。
+        if presentedViewController != nil { return }
+        // 确认钮与说明走 catalog（与 exitWithUndoGuard 共用同一组 key，
+        // 中文原文即旧硬编码文案原样，英文为本批草稿译法、非 Li 定版）。
+        BearyConfirmSheet.show(from: self, title: "", message: NSLocalizedString("draftbox.undo_exit_message", comment: ""), actions: [
+            BearyConfirmSheet.Action(title: NSLocalizedString("draftbox.undo_exit_confirm", comment: ""), style: .destructive) { [weak self] in
+                self?.undoExitConfirmed = true
+                self?.dismissWithExitAnimation(completion: nil)
+            },
+        ])
     }
 }
 
@@ -2398,7 +2027,16 @@ private final class BearyDraftBoxDashedButton: BearyHit44Button {
     override func layoutSubviews() {
         super.layoutSubviews()
         dashedLayer.frame = bounds
-        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 12).cgPath
+        // 描边以 path 为中心：path 贴 bounds 边时，外侧一半落在 layer 背板外被裁掉，
+        // 顶边只剩一半粗（像素实测约 0.75pt）、底边却近全粗（约 1.5pt），上下不一。
+        // path 内缩半个线宽，整条描边落进 layer 内，四边同粗；外沿仍贴 bounds、
+        // 圆角同步减半个线宽（12 - 0.75 = 11.25），外形不动。
+        // 线宽 1.5、pattern [6, 4]、颜色、圆角外形均不动。
+        let halfLine = dashedLayer.lineWidth / 2
+        dashedLayer.path = UIBezierPath(
+            roundedRect: bounds.insetBy(dx: halfLine, dy: halfLine),
+            cornerRadius: BearyCorners.single - halfLine
+        ).cgPath
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {

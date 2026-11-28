@@ -1,9 +1,9 @@
 // ===== beary 设置页（2026-10-26：原独立账户页整体迁移为本页「账号与安全」分区；
 // 齿轮菜单与头像菜单的“账户设置”入口均改开本页，旧 BearyAccountViewController 已删除，
 // 不留两个入口、不留死代码页）=====
-// C 批（C2/C3/C4）：模块顺序改为 [ID 概览卡 & Plus 状态] → [通用与通知
+// C 批（C2/C3/C4）：模块顺序改为 [Plus 状态] → [通用与通知
 // （外观切换、使用指南入口）] → [账户与安全（登录设备管理、导出数据；
-// 个人资料入口为 ID 卡右侧“编辑资料”钮，旧账户组四行已按 C4 删除）] → [隐私与协议]；
+// 旧账户组四行已按 C4 删除）] → [隐私与协议]；
 // 退出登录为独立居中常规钮（BearyButton 工厂），注销账户下沉至页底弱化灰字，
 // 两者行为一字不动；齿轮直达本页，不再经 ActionSheet / 外观 Popover 中转。
 // 新增行一律真实能力：外观主题三选
@@ -20,9 +20,6 @@ import UIKit
 // - 账户 Worker ~/workspace/teddy_accounts_v2/worker.js（端点与字段均以它为准）：
 //   GET /api/account/me → {ok, user: {id, is_admin, email, display_name, avatar, cover_ver,
 //     created_at, handle, plus, plus_until, plus_free, invite_code, referral}}。
-//     注意：现行 /me 不返回 serial_id，
-//     故本页 ID 行不编造序列号：serial_id 若将来由服务端下发则显示它，
-//     否则显示 @handle（与现行网页 heroId 口径一致），再无 handle 时显示“ID <id>”。
 //   GET /api/account/plus-detail → {ok, personal_until, free_until, effective_until,
 //     permanent, grants: [{days, source, created_at, until_after}]}（LIMIT 20，id DESC）。
 //     结论：第 3 项 Plus 发放记录明细有现成接口，直接接它，不编造、不造假数据。
@@ -104,6 +101,18 @@ struct BearyPlusDetailResponse: Decodable {
     var grants: [BearyPlusGrant]?
 }
 
+/// POST /api/account/plus-verify 回包（内购验单）：ok:true 带 plus／plusUntil／
+/// permanent／productId／alreadyVerified；ok:false 带 error 码。
+struct BearyPlusVerifyResponse: Decodable {
+    var ok: Bool
+    var plus: Bool?
+    var plusUntil: Int?
+    var permanent: Bool?
+    var productId: String?
+    var alreadyVerified: Bool?
+    var error: String?
+}
+
 struct BearyAccountOkResponse: Decodable {
     var ok: Bool?
 }
@@ -131,6 +140,26 @@ extension BearyAPI {
     /// GET /api/account/plus-detail（Plus 分层 + 发放账本；未登录 401）。
     func fetchPlusDetail(completion: @escaping (Result<BearyPlusDetailResponse, APIError>) -> Void) {
         request("/api/account/plus-detail", completion: completion)
+    }
+
+    /// POST /api/account/plus-verify（内购验单，2026-11-25 Li 定现在做）：
+    /// body {jws: VerificationResult.jwsRepresentation}，服务端验 JWS 签名后发权益。
+    /// 200 回包两种：ok:true（plus／plus_until／permanent／product_id／
+    /// already_verified）与 ok:false（error 码：invalid_jws／bad_bundle／
+    /// bad_product→400；revoked／expired→200 带 ok:false）。
+    /// 服务端实现见 ~/workspace/plus-iap-server-diff/（只备 diff，不部署）。
+    func verifyPlusPurchase(jws: String, completion: @escaping (Result<BearyPlusVerifyResponse, APIError>) -> Void) {
+        request("/api/account/plus-verify", method: "POST", jsonBody: ["jws": jws], completion: completion)
+    }
+
+    /// POST /api/account/plus-verify（TF 只记账，2026-11-26）：
+    /// 与 verifyPlusPurchase 同接口同 body，唯一区别是 401 只返回
+    /// .unauthorized、绝不触发全局 onUnauthorized（suppressUnauthorized）——
+    /// 记账是 fire-and-forget 的后台调用，会话过期也不能因此把用户踢下线。
+    /// 调用方直接丢弃结果：ok:true（白名单发了权益也不认，只认本地标记）、
+    /// ok:false sandbox_not_allowed、网络失败，一律不影响购买流程。
+    func recordTestFlightPlusPurchase(jws: String, completion: @escaping (Result<BearyPlusVerifyResponse, APIError>) -> Void) {
+        request("/api/account/plus-verify", method: "POST", jsonBody: ["jws": jws], suppressUnauthorized: true, completion: completion)
     }
 
     /// DELETE /api/account/sessions/others（退出当前设备之外的全部会话；当前会话服务端必保留）。
@@ -162,25 +191,9 @@ enum BearyAccountText {
     /// 永久会员阈值：网页与服务端同款常量（plus_until >= 该值即永久）。
     static let permanentThreshold: Int = 4102444800000
 
-    /// 日期格式化器只建一次复用：DateFormatter 创建昂贵，导出每篇调
-    /// isoString 三次、设置页反复调 dateString／dateTimeString。
-    /// DateFormatter 非线程安全：date／dateTime 两档只在主线程用（设置页
-    /// 文案）；iso 档只在导出后台链用（单次导出串行，isExporting 守卫），
-    /// 不可拿到别的队列共用。
-    private static let dateFormatter: DateFormatter = {
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "yyyy年M月d日"
-        return fmt
-    }()
-
-    private static let dateTimeFormatter: DateFormatter = {
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "yyyy年M月d日 HH:mm"
-        return fmt
-    }()
-
+    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；时区沿用
+    /// 既有行为（原来没写时区，跟设备走）；中文输出与改前一致。
+    /// ISO 档仍只建一次复用（导出后台链用，见 isoString）。
     private static let isoFormatter: DateFormatter = {
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX")
@@ -192,13 +205,13 @@ enum BearyAccountText {
     static func dateString(ms: Int?) -> String {
         guard let value = ms, value > 0 else { return "–" }
         let date = Date(timeIntervalSince1970: TimeInterval(value) / 1000.0)
-        return dateFormatter.string(from: date)
+        return BearyLocalizedDate.yearMonthDayString(from: date)
     }
 
     static func dateTimeString(ms: Int?) -> String {
         guard let value = ms, value > 0 else { return "–" }
         let date = Date(timeIntervalSince1970: TimeInterval(value) / 1000.0)
-        return dateTimeFormatter.string(from: date)
+        return BearyLocalizedDate.yearMonthDayTimeString(from: date)
     }
 
     /// 毫秒转 ISO（网页导出 toMs + toISOString 同口径：秒级值先 ×1000）。
@@ -224,9 +237,12 @@ enum BearyAccountText {
     /// 网页 pdGrants 同款来源文案；未知来源一律“系统赠送”，不编造新来源名。
     static func grantSourceName(_ source: String?) -> String {
         switch source {
-        case "admin": return "管理员开通"
+        case "admin": return NSLocalizedString("plus.grant.admin", comment: "")
         case "referral_inviter": return "邀请好友奖励"
         case "referral_invitee": return "受邀注册奖励"
+        case "iap_monthly": return NSLocalizedString("plus.grant.iap_monthly", comment: "")
+        case "iap_yearly": return NSLocalizedString("plus.grant.iap_yearly", comment: "")
+        case "iap_lifetime": return NSLocalizedString("plus.grant.iap_lifetime", comment: "")
         default: return "系统赠送"
         }
     }
@@ -337,7 +353,7 @@ final class BearySettingsViewController: UIViewController {
     private let accountSessionsLoad = BearySharedLoad<BearyAccountSessionsResponse>(fetch: { BearyAPI.shared.fetchAccountSessions(completion: $0) })
     private var isLoadingMe = false
     /// /me 代次：切换账号成功时 +1 作废旧请求，旧回包凭代次丢弃，
-    /// 不再把旧账号写回 ID 卡（旧请求发在切换前，回包体仍是旧账号）。
+    /// 不再把旧账号写回界面（旧请求发在切换前，回包体仍是旧账号）。
     private var meLoadGeneration = 0
     /// 第三轮审计 13：Plus/设备列表已请求代次——同一次页面加载（同一
     /// meLoadGeneration）各只请求一次，第二轮调用直接跳过；重进页/切号
@@ -428,12 +444,11 @@ final class BearySettingsViewController: UIViewController {
     private let loginWrap = UIStackView()
     private let loginHintLabel = UILabel()
     private let loginButton = UIButton(type: .system)
-    /// C2：登录态相关容器。contentWrap = [ID 卡]；plusWrap = [Plus 会员]；
+    /// C2：登录态相关容器。plusWrap = [Plus 会员]；
     /// accountSecurityWrap = [隐私与安全]；accountActionWrap = [账号]；
-    /// 四者未登录 / 加载失败时隐藏。generalNotifyWrap = [通用]、
+    /// 三者未登录 / 加载失败时隐藏。generalNotifyWrap = [通用]、
     /// storageDataWrap = [存储与数据]、dataFeedbackWrap = [反馈与建议]
     /// 登录态无关，恒可见。
-    private let contentWrap = UIStackView()
     private let generalNotifyWrap = UIStackView()
     private let storageDataWrap = UIStackView()
     private let plusWrap = UIStackView()
@@ -458,8 +473,6 @@ final class BearySettingsViewController: UIViewController {
     /// 2026-10-29 第 10 项：页底版本脚注（通用组版本行移至页底，Bundle 动态读）。
     private let versionFooterWrap = UIView()
 
-    // ID 卡（2026-11-19 七组版：注册时弹出的可翻转 ID 卡，见 BearySettingsIDCardView）。
-    private let idCardView = BearySettingsIDCardView()
 
     // Plus 分组
     /// Plus 页入口行尾文案（未开通／至到期日／永久有效，随 fillPlusDetail 更新）。
@@ -553,6 +566,14 @@ final class BearySettingsViewController: UIViewController {
         let topBarOff = topBar != nil && abs(topBarMinY - safeTop) > 20
         let scrollCollapsed = scrollView.frame.height <= 0
         guard viewFrameOff || topBarOff || scrollCollapsed else { return }
+        // 跟手拖动中 transform 非单位阵：此时 frame.origin 含跟手位移，
+        // 按 bounds 写 frame 会连 center 一起改掉——松手复位后整页停在
+        // 左侧、右侧露出后方内容（右滑返回中途不松手左滑复现）。
+        // 跳过本次、不消耗一次性守卫，等 transform 回到单位阵后的
+        // 下一次布局再复位。
+        if viewFrameOff, !view.transform.isIdentity {
+            return
+        }
         settingsFrameResetDone = true
         if viewFrameOff {
             view.frame = bounds
@@ -788,7 +809,7 @@ final class BearySettingsViewController: UIViewController {
                 separator.translatesAutoresizingMaskIntoConstraints = false
                 separator.backgroundColor = BearyColors.line
                 NSLayoutConstraint.activate([
-                    separator.heightAnchor.constraint(equalToConstant: 1),
+                    separator.heightAnchor.constraint(equalToConstant: 0.5),
                 ])
                 stack.addArrangedSubview(separator)
                 separators.append(separator)
@@ -847,7 +868,7 @@ final class BearySettingsViewController: UIViewController {
     /// 标题行走组标题口径（12 灰 kern 1，见 makeSectionTitle）+ 行尾下箭头
     /// （官方包 icon_chevron_down 16 灰，通知卡同款）；体是行栈，初始收起
     /// （isHidden，栈自动归零高度），行包容器与分隔线口径与 makeGroupCard
-    /// 一致（行上下 14、左右 16、行间 1pt 细线），可点行的覆盖按钮按
+    /// 一致（行上下 14、左右 16、行间 0.5pt 细线），可点行的覆盖按钮按
     /// makeGroupCard 的审计口径改钉包容器四边（只扩留白区，不盖同行控件）。
     private final class SettingsDisclosure {
         let card: UIView
@@ -906,6 +927,7 @@ final class BearySettingsViewController: UIViewController {
         headerButton.accessibilityLabel = title
         headerButton.accessibilityValue = "已收起"
         headerWrap.addSubview(headerButton)
+        headerWrap.bearyAddRowPressFeedback()
         NSLayoutConstraint.activate([
             headerContent.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 14),
             headerContent.leadingAnchor.constraint(equalTo: headerWrap.leadingAnchor, constant: 16),
@@ -928,7 +950,7 @@ final class BearySettingsViewController: UIViewController {
         headerSeparator.translatesAutoresizingMaskIntoConstraints = false
         headerSeparator.backgroundColor = BearyColors.line
         NSLayoutConstraint.activate([
-            headerSeparator.heightAnchor.constraint(equalToConstant: 1),
+            headerSeparator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
         bodyStack.addArrangedSubview(headerSeparator)
         var wrappers: [UIView] = []
@@ -939,7 +961,7 @@ final class BearySettingsViewController: UIViewController {
                 separator.translatesAutoresizingMaskIntoConstraints = false
                 separator.backgroundColor = BearyColors.line
                 NSLayoutConstraint.activate([
-                    separator.heightAnchor.constraint(equalToConstant: 1),
+                    separator.heightAnchor.constraint(equalToConstant: 0.5),
                 ])
                 bodyStack.addArrangedSubview(separator)
                 separators.append(separator)
@@ -1114,15 +1136,9 @@ final class BearySettingsViewController: UIViewController {
         loginWrap.addArrangedSubview(loginButton)
         loginWrap.isHidden = true
 
-        contentWrap.translatesAutoresizingMaskIntoConstraints = false
-        contentWrap.axis = .vertical
-        contentWrap.spacing = 20
-        contentWrap.alignment = .fill
-        contentWrap.isHidden = true
 
-        // 2026-11-19 七组版（从上往下）：ID 卡 → 通用 → 存储与数据 →
+        // 2026-11-19 七组版（从上往下）：通用 → 存储与数据 →
         // Plus 会员 → 隐私与安全 → 反馈与建议 → 账号；页脚版本号＋隐私／协议链接。
-        buildIdCard()
 
         generalNotifyWrap.translatesAutoresizingMaskIntoConstraints = false
         generalNotifyWrap.axis = .vertical
@@ -1162,7 +1178,6 @@ final class BearySettingsViewController: UIViewController {
         contentStack.addArrangedSubview(loadingView)
         contentStack.addArrangedSubview(failureStateView)
         contentStack.addArrangedSubview(loginWrap)
-        contentStack.addArrangedSubview(contentWrap)
         contentStack.addArrangedSubview(generalNotifyWrap)
         contentStack.addArrangedSubview(storageDataWrap)
         contentStack.addArrangedSubview(plusWrap)
@@ -1176,16 +1191,6 @@ final class BearySettingsViewController: UIViewController {
         // toast 已委托 B 批统一 BearyToast（见 showToast），此处不再建常驻容器。
     }
 
-    /// 2026-11-19 七组版：ID 卡（注册时弹出的可翻转 ID 卡，见 BearySettingsIDCardView）。
-    /// 正面干净纯白、只有头像＋昵称；背面分段放注册时间、账号所在地、
-    /// 用户名更改（几次＋上次更改时间）、ID。无编辑资料钮（改资料入口在
-    /// 我的页）、无会员行（会员在 Plus 卡）、无同步状态行。
-    /// fillIdCard 组装数据调 idCardView.configure；未登录时整卡隐藏（contentWrap）。
-    private func buildIdCard() {
-        idCardView.translatesAutoresizingMaskIntoConstraints = false
-        contentWrap.addArrangedSubview(idCardView)
-    }
-
     /// 2026-11-19 七组版：Plus 会员卡只留入口行一行；点入口进 Plus 页，
     /// 页内是来源明细（见 BearyPlusPageViewController）。当前状态行、
     /// 专属会员行、Plus 更多折叠全删。
@@ -1197,7 +1202,7 @@ final class BearySettingsViewController: UIViewController {
         plusEntryLabel.numberOfLines = 0
         plusEntryLabel.textAlignment = .right
         // Plus 页入口行：标题“Plus 会员”＋行尾状态（未开通／到期日／
-        // 永久有效），点按进 Plus 展示页；到期日只留 Plus 组，不进 ID 卡（全修 3-2）。
+        // 永久有效），点按进 Plus 展示页；到期日只留 Plus 组（全修 3-2）。
         let plusEntryTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         // 视觉批：行标题归位 smallBodyFont（覆写，见 makeRow 的注释）。
         plusEntryTitle.font = BearyDynamicType.smallBodyFont()
@@ -1345,7 +1350,7 @@ final class BearySettingsViewController: UIViewController {
     /// （账号卡）由 loadAll 隐藏，这里只清空行栈。
     /// 当前账号优先排第一位（其余按首次保存顺序），当前行打勾；
     /// “添加账号”行恒可见，满 3 个时点按只弹上限提示、不进登录页。
-    /// 行口径与 makeGroupCard 同款（行上下 14、行间 1pt 细线），唯首行
+    /// 行口径与 makeGroupCard 同款（行上下 14、行间 0.5pt 细线），唯首行
     /// 顶 0、末行底 0——外层账号卡的包容器已给整组上下各 14，内行再给
     /// 会双倍留白。
     private func refreshAccountSwitchSection() {
@@ -1466,13 +1471,13 @@ final class BearySettingsViewController: UIViewController {
         return wrap
     }
 
-    /// 账号卡内账号列表行间分隔线（1pt，BearyColors.line，与 makeGroupCard 同款）。
+    /// 账号卡内账号列表行间分隔线（0.5pt，BearyColors.line，与 makeGroupCard 同款）。
     private func accountListSeparator() -> UIView {
         let separator = UIView()
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.backgroundColor = BearyColors.line
         NSLayoutConstraint.activate([
-            separator.heightAnchor.constraint(equalToConstant: 1),
+            separator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
         return separator
     }
@@ -1646,13 +1651,13 @@ final class BearySettingsViewController: UIViewController {
             showToast("正在移除该账号，请稍后再切换")
             return
         }
-        if expiredSwitchUserIds.contains(accountIdValue) {
-            // 该号会话已被上次切换预检证实失效：不再发注定 401 的预检，
-            // 直走过期重登（与下面 .expired 分支同一入口）。
-            showToast("登录已过期，请重新登录")
-            openLoginForAccountSwitch()
-            return
-        }
+        // 2026-11-28 切换过期修法：已标记过期的行不再直走重登。标记只
+        // 在刷新时剪枝，一次 .expired 未必是终态（预检瞬间的 vault 状
+        // 态／服务端会话状态都可能已变），不应把整行砖掉一整个设置页
+        // 访问。点按仍走下面 switchToAccount 重发一次预检：成功就切
+        // 过去，再次 .expired 才标过期＋弹重登页（见下面 .expired 分支）。
+        // 本次 Li 报的正是这条：点按后登录页立刻弹（无 /me 等待），即
+        // 同次访问里早已被标过期、点的是第二下。
         isSwitchingAccount = true
         switchingAccountId = accountIdValue
         // 116 后扫查：切换要等一次 /me 网络往返，旧代码这段时间按钮毫无变化，
@@ -1675,19 +1680,33 @@ final class BearySettingsViewController: UIViewController {
                 self.refreshAccountSwitchSection()
             case .alreadyCurrent:
                 self.refreshAccountSwitchSection()
-            case .expired:
+            case .expired(let reason, let message):
                 // 会话已死：先把该号标成过期并刷新卡片（行上见“登录已过期”，
                 // 不再装成可直接切换），再弹重登页；取消回来时标记仍在。
+                // toast 按 401 原因分流（冷启动同款口径，见 SceneDelegate
+                // fireStartupMeIfNeeded）：服务端 message 优先，无 message
+                // 时 kicked 是别处退出、banned 是封禁，其余按过期。
                 self.expiredSwitchUserIds.insert(accountIdValue)
                 self.refreshAccountSwitchSection()
-                self.showToast("登录已过期，请重新登录")
+                self.showToast(self.expiredSwitchToastText(reason: reason, message: message))
                 self.openLoginForAccountSwitch()
             case .network:
-                self.showToast("网络不稳定，请稍后再试")
+                self.showToast(NSLocalizedString("common.network_unstable", comment: ""))
             case .failed, .unavailable:
                 self.showToast("切换失败，请稍后再试")
             }
         }
+    }
+
+    /// 切换预检 401 原因 → toast 文案（冷启动同款口径，见 SceneDelegate
+    /// fireStartupMeIfNeeded）：服务端 message 优先；无 message 时按
+    /// reason 兜底——kicked（已在其他设备退出）、banned（账号被封禁），
+    /// 其余一律按登录过期。
+    private func expiredSwitchToastText(reason: String?, message: String?) -> String {
+        if let m = message, !m.isEmpty { return m }
+        if reason == "banned" { return NSLocalizedString("account.switch.banned", comment: "") }
+        if reason == "kicked" { return NSLocalizedString("account.switch.kicked", comment: "") }
+        return NSLocalizedString("account.switch.expired", comment: "")
     }
 
     @objc private func addAccountButtonTapped() {
@@ -1735,6 +1754,13 @@ final class BearySettingsViewController: UIViewController {
                     }
                 }
             }
+        }
+        loginVC.onGuestMode = { [weak loginVC] in
+            // 添加账号流程里的“游客”＝放弃加号、回原地（与取消同效）：
+            // 本页只进已登录用户，游客态置位会与 currentUser 冲突（顶栏
+            // 按游客渲染、拉黑表被清），故只解会话守卫＋关登录页，不置游客旗。
+            SessionManager.shared.cancelAccountAddSession()
+            loginVC?.dismiss(animated: BearyMotion.animated(true))
         }
         presentSettingsPage(loginVC)
     }
@@ -1834,6 +1860,7 @@ final class BearySettingsViewController: UIViewController {
         deleteRow.addSubview(deleteRowButton)
         // 审计 E2 第 23 项：忙碌图标挂在注销行内、原入口右侧（不改标题、不新增弹窗）。
         deleteRow.addSubview(deleteSpinner)
+        deleteRow.bearyAddRowPressFeedback()
         NSLayoutConstraint.activate([
             deleteRowButton.topAnchor.constraint(equalTo: deleteRow.topAnchor),
             deleteRowButton.centerXAnchor.constraint(equalTo: deleteRow.centerXAnchor),
@@ -1854,7 +1881,7 @@ final class BearySettingsViewController: UIViewController {
         exportTitle.text = "导出我的数据"
         exportTitle.numberOfLines = 0 // P1-7：行正文标题多行
         let exportDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
-        exportDetail.text = "导出 JSON，包含账户资料、日记和点赞记录"
+        exportDetail.text = NSLocalizedString("settings.export_data_detail", comment: "")
         exportDetailLabel = exportDetail
         let exportStack = UIStackView(arrangedSubviews: [exportTitle, exportDetail])
         exportStack.axis = .vertical
@@ -1871,6 +1898,7 @@ final class BearySettingsViewController: UIViewController {
         exportRowWrap.translatesAutoresizingMaskIntoConstraints = false
         exportRowWrap.addSubview(exportRow)
         exportRowWrap.addSubview(exportRowButton)
+        exportRowWrap.bearyAddRowPressFeedback()
         exportRow.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             exportRow.topAnchor.constraint(equalTo: exportRowWrap.topAnchor),
@@ -2011,6 +2039,9 @@ final class BearySettingsViewController: UIViewController {
         // 不关页/弹登录（本次退出对当前会话无事可做）。
         let accountId = SessionManager.shared.currentUser?.id
         let epoch = BearyAPI.shared.authEpoch
+        // 推送登记清理：登出请求发出前删本号在本机的登记行（session 与
+        // cookie 仍在）；fire-and-forget，失败不改登出结论。
+        BearyPushNotifications.shared.unregisterTokenForCurrentAccount()
         BearyAPI.shared.logout { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -2043,16 +2074,7 @@ final class BearySettingsViewController: UIViewController {
     /// 不赋值不重播；减动效或未进窗口时直设终值。容器首次出现时
     /// 只淡入容器本身，已可见时不重播。
     private func setLabelTextFaded(_ label: UILabel, _ text: String) {
-        guard label.text != text else { return }
-        label.text = text
-        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
-            label.alpha = 1
-            return
-        }
-        label.alpha = 0
-        UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            label.alpha = 1
-        })
+        BearyLabelFade.setText(text, on: label, duration: BearyMotion.normal)
     }
 
     private func fadeView(_ view: UIView) {
@@ -2138,11 +2160,9 @@ final class BearySettingsViewController: UIViewController {
             loginWrap.isHidden = true
             loadingView.stopSpinning()
             loadingView.isHidden = true
-            contentWrap.isHidden = false
             accountSecurityWrap.isHidden = false
             plusWrap.isHidden = false
             accountActionWrap.isHidden = false
-            fillIdCard(user: cached)
             // 注销入口：只用 is_admin，缓存与刷新后同一口径（见下）。
             setAccountActionDeleteHidden(cached.isAdmin == true)
             loadPlusDetail()
@@ -2162,7 +2182,6 @@ final class BearySettingsViewController: UIViewController {
                             return
                         }
                         self.meUser = userValue
-                        self.fillIdCard(user: userValue)
                         self.setAccountActionDeleteHidden(userValue.isAdmin == true)
                         self.loadPlusDetail()
                         self.loadSessions()
@@ -2183,7 +2202,6 @@ final class BearySettingsViewController: UIViewController {
         loadingView.isHidden = false
         failureStateView.isHidden = true
         loginWrap.isHidden = true
-        contentWrap.isHidden = true
         accountSecurityWrap.isHidden = true
         plusWrap.isHidden = true
         accountActionWrap.isHidden = true
@@ -2208,19 +2226,15 @@ final class BearySettingsViewController: UIViewController {
                     }
                     self.meUser = userValue
                     // 116：三组容器随 /me 到达首次出现时只淡入容器本身。
-                    let contentWasHidden = self.contentWrap.isHidden
                     let securityWasHidden = self.accountSecurityWrap.isHidden
                     let plusWasHidden = self.plusWrap.isHidden
                     let actionWasHidden = self.accountActionWrap.isHidden
-                    self.contentWrap.isHidden = false
                     self.accountSecurityWrap.isHidden = false
                     self.plusWrap.isHidden = false
                     self.accountActionWrap.isHidden = false
-                    self.fadeViewIfAppearing(self.contentWrap, wasHidden: contentWasHidden)
                     self.fadeViewIfAppearing(self.accountSecurityWrap, wasHidden: securityWasHidden)
                     self.fadeViewIfAppearing(self.plusWrap, wasHidden: plusWasHidden)
                     self.fadeViewIfAppearing(self.accountActionWrap, wasHidden: actionWasHidden)
-                    self.fillIdCard(user: userValue)
                     self.refreshAccountSwitchSection()
                     // 注销入口：只用 /me 下发的 is_admin（服务端算出），客户端不写 id 判定；
                     // 服务端 403 admin_cannot_delete 仍是最终判定（见 delete 失败映射）。
@@ -2238,35 +2252,9 @@ final class BearySettingsViewController: UIViewController {
         }
     }
 
-    /// 2026-11-19 七组版：ID 卡数据组装（缺值显“–”，绝不编造）。
-    /// 账号所在地／用户名更改次数／上次更改时间走 /me 新字段（见 BearyAPI.MeUser：
-    /// accountRegion / handleChangeCount / handleChangedAt；服务端 diff 在
-    /// ~/workspace/settings-reorg-server-diff/，只备不部署——后端未部署前
-    /// 这三项为 nil，卡上显“–”）。
-    private func fillIdCard(user: MeUser) {
-        let idText: String
-        if let serial = user.serialId, !serial.isEmpty {
-            idText = serial
-        } else if let handle = user.handle, !handle.isEmpty {
-            idText = "@" + handle
-        } else if let id = user.id {
-            idText = "№ \(id)"
-        } else {
-            idText = "–"
-        }
-        idCardView.configure(data: BearySettingsIDCardData(
-            displayName: user.displayName ?? user.email ?? "–",
-            avatar: user.avatar,
-            createdAt: user.createdAt,
-            accountRegion: user.accountRegion,
-            handleChangeCount: user.handleChangeCount,
-            handleChangedAt: user.handleChangedAt,
-            idText: idText
-        ))
-    }
 
     // C4：fillAccountRows 已随旧账户组删除（显示名称 / 用户名 / 邮箱 /
-    // 注册时间四行不再渲染；ID 卡 fillIdCard 仍呈现名 / 邮箱 / 注册时间 / 会员）。
+    // 注册时间四行不再渲染）。
 
     private func loadPlusDetail(force: Bool = false) {
         // 第三轮审计 13：同一代次内只请求一次（loadAll 缓存路径里 /me 成功
@@ -2479,7 +2467,7 @@ final class BearySettingsViewController: UIViewController {
                     }
                     if case .cancelled = error { return }
                     if case .server(let code, _) = error, code == "admin_cannot_delete" {
-                        self.showToast("管理员账号不能注销")
+                        self.showToast(NSLocalizedString("account.delete.admin_cannot_delete", comment: ""))
                         return
                     }
                     self.showToast("注销失败，请重试")
@@ -2577,7 +2565,7 @@ final class BearySettingsViewController: UIViewController {
     /// 置“正在生成文件…”、文件写完（成功 present 前 / 失败 toast 前）才复原。
     private func setExportProgress(_ text: String?) {
         DispatchQueue.main.async { [weak self] in
-            self?.exportDetailLabel?.text = text ?? "导出 JSON，包含账户资料、日记和点赞记录"
+            self?.exportDetailLabel?.text = text ?? NSLocalizedString("settings.export_data_detail", comment: "")
         }
     }
 
@@ -2631,14 +2619,14 @@ final class BearySettingsViewController: UIViewController {
                 self.isExporting = false
                 self.exportRowButton.isEnabled = true
                 self.setExportProgress(nil)
-                self.showToast("导出失败（登录设备拉取失败），未生成文件")
+                self.showToast(NSLocalizedString("settings.export.failed_retry", comment: ""))
                 return
             }
-            if let failedReason = exportFailedReason {
+            if exportFailedReason != nil {
                 self.isExporting = false
                 self.exportRowButton.isEnabled = true
                 self.setExportProgress(nil)
-                self.showToast("导出失败（\(failedReason)），未生成文件")
+                self.showToast(NSLocalizedString("settings.export.failed_retry", comment: ""))
                 return
             }
             // 触顶：分享前先弹明确标注，用户点“继续分享”才拼文件、出分享面板；
@@ -2716,7 +2704,7 @@ final class BearySettingsViewController: UIViewController {
                                     finish()
                                     return
                                 }
-                                self.setExportProgress("正在导出（4/4）赞过…")
+                                self.setExportProgress(NSLocalizedString("settings.export.step4_liked", comment: ""))
                                 self.fetchAllEntries(scope: .liked, pin: pin) { result in
                                     DispatchQueue.main.async {
                                         if self.exportPinChanged(pin) || result.reason == "账号已切换" {
@@ -2809,7 +2797,7 @@ final class BearySettingsViewController: UIViewController {
                     self.isExporting = false
                     self.exportRowButton.isEnabled = true
                     self.setExportProgress(nil)
-                    self.showToast("导出失败，请重试")
+                    self.showToast(NSLocalizedString("settings.export.failed_retry", comment: ""))
                 }
                 return
             }
@@ -2839,7 +2827,7 @@ final class BearySettingsViewController: UIViewController {
                     self.isExporting = false
                     self.exportRowButton.isEnabled = true
                     self.setExportProgress(nil)
-                    self.showToast("导出失败，请重试")
+                    self.showToast(NSLocalizedString("settings.export.failed_retry", comment: ""))
                 }
                 return
             }
@@ -2856,17 +2844,11 @@ final class BearySettingsViewController: UIViewController {
                 self.exportRowButton.isEnabled = true
                 self.setExportProgress(nil)
                 let activity = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-                if let pop = activity.popoverPresentationController {
-                    pop.sourceView = self.exportRowButton
-                    pop.sourceRect = self.exportRowButton.bounds
-                }
                 // S3：分享结束即删本次临时文件——完成、取消、失败路径都清，
                 // 不留导出 JSON 在 tmp 里；完成回调在分享面板收起后才跑，活动方已读完文件。
-                activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                BearyShareSheet.present(activity, from: self, sourceView: self.exportRowButton, sourceRect: self.exportRowButton.bounds) { [weak self] _, _, _, _ in
                     try? FileManager.default.removeItem(at: fileURL)
-                    if completed { self?.showToast("导出完成") }
                 }
-                self.present(activity, animated: BearyMotion.animated(true))
             }
         }
     }
@@ -3050,18 +3032,18 @@ final class BearySettingsViewController: UIViewController {
         if let value = entry.title { dict["title"] = value }
         if let images = entry.images {
             dict["images"] = images.map { key in
-                let encoded = key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key
-                return BearyImageURLs.base + "/beary/api/images/" + encoded
+                BearyImageURLs.imageURL(key: key, thumb: false)?.absoluteString
+                    ?? (BearyImageURLs.base + "/beary/api/images/" + (key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? key))
             }
         }
         if let liveVideos = entry.liveVideos, !liveVideos.isEmpty {
             // 实况：静图 key → 视频 key 的配对须原样保留，两边都按 images 同款拼完整 URL。
             dict["live_videos"] = liveVideos.map { stillKey, videoKey in
-                let stillEncoded = stillKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? stillKey
-                let videoEncoded = videoKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? videoKey
                 return [
-                    "image": BearyImageURLs.base + "/beary/api/images/" + stillEncoded,
-                    "video": BearyImageURLs.base + "/beary/api/images/" + videoEncoded,
+                    "image": BearyImageURLs.imageURL(key: stillKey, thumb: false)?.absoluteString
+                        ?? (BearyImageURLs.base + "/beary/api/images/" + (stillKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? stillKey)),
+                    "video": BearyImageURLs.imageURL(key: videoKey, thumb: false)?.absoluteString
+                        ?? (BearyImageURLs.base + "/beary/api/images/" + (videoKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? videoKey)),
                 ] as [String: Any]
             }
         }
@@ -3133,6 +3115,7 @@ final class BearySettingsViewController: UIViewController {
         wrap.addSubview(content)
         button.translatesAutoresizingMaskIntoConstraints = false
         wrap.addSubview(button)
+        wrap.bearyAddRowPressFeedback()
         NSLayoutConstraint.activate([
             content.topAnchor.constraint(equalTo: wrap.topAnchor),
             content.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
@@ -3161,7 +3144,7 @@ final class BearySettingsViewController: UIViewController {
         let themeButton = UIButton(type: .custom)
         themeButton.accessibilityLabel = "主题"
         themeButton.addTarget(self, action: #selector(openThemeSettingsPage), for: .touchUpInside)
-        // 语言行：点进语言子页（目前只有跟随系统、中国大陆两档）。
+        // 语言行：点进语言子页（跟随系统、中国大陆、English 三档）。
         // 图标用官方包的 language（双文种字形）；地球 icon_globe 是公开可见性图标，一图两义，2026-11-19 Li 定改掉。
         let languageDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         languageDetail.text = languageRowDetailText()
@@ -3226,9 +3209,13 @@ final class BearySettingsViewController: UIViewController {
         }
     }
 
-    /// 语言行尾文案（与语言子页选项同词：跟随系统／中国大陆）。
+    /// 语言行尾文案（与语言子页选项同词：跟随系统／中国大陆／English）。
     private func languageRowDetailText() -> String {
-        BearyAppLanguage.mode == .system ? "跟随系统" : "中国大陆"
+        switch BearyAppLanguage.mode {
+        case .system: return NSLocalizedString("settings.language.follow_system", comment: "")
+        case .mainland: return NSLocalizedString("settings.language.mainland_china", comment: "")
+        case .english: return "English"
+        }
     }
 
     /// 子页返回后刷新通用卡行尾文案（主题／语言在子页里改，回来即跟上）。
@@ -3478,11 +3465,12 @@ final class BearySettingsViewController: UIViewController {
         let devRow = makeSettingsTappableRow(content: devContent, button: devButton)
         devRow.isHidden = !BearyDeveloperMode.shared.isEnabled
         developerModeRow = devRow
-        let rows: [UIView] = [
-            makeSettingsTappableRow(content: feedbackContent, button: feedbackButton),
-            makeSettingsTappableRow(content: wishContent, button: wishButton),
-            devRow,
-        ]
+        // 远程开关：wishwall 关掉时不建许愿墙行（入口隐藏）；点按拦截仍在 openWishWallPage 兜底。
+        var rows: [UIView] = [makeSettingsTappableRow(content: feedbackContent, button: feedbackButton)]
+        if !BearyForceUpdateCenter.shared.isFeatureDisabled(.wishwall) {
+            rows.append(makeSettingsTappableRow(content: wishContent, button: wishButton))
+        }
+        rows.append(devRow)
         let group = makeGroupCard(title: "反馈与建议", rows: rows)
         dataFeedbackWrap.addArrangedSubview(group.card)
         // 第二批体验检查第 6 项：离线保存独立组（与反馈组并列，不混进反馈组标题下）。
@@ -3559,6 +3547,11 @@ final class BearySettingsViewController: UIViewController {
 
     /// 补缺第 21 项：功能许愿墙列表页（反馈页同款全屏 modal + fadeRise）。
     @objc private func openWishWallPage() {
+        // 远程开关（2026-11-19）：wishwall 关掉时入口仍可见，点按只 toast、不跳转。
+        if BearyForceUpdateCenter.shared.isFeatureDisabled(.wishwall) {
+            showToast(NSLocalizedString("common.feature_maintenance", comment: ""))
+            return
+        }
         let vc = BearyWishWallViewController()
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
@@ -3568,11 +3561,16 @@ final class BearySettingsViewController: UIViewController {
     /// Plus 页入口②：设置页 Plus 组首行点按进 Plus 展示页。状态与入口行尾同源
     /// （plusDetail 已到时用永久／有效期判定，未到时退回 /me 的 plus）。
     private var isPlusMember: Bool {
+        // TF 本地 Plus（2026-11-26 Li 定）：测试版上本地买过 Plus 也算开通；
+        // 正式版里 isLocalTestFlightPlus 恒为 false，不影响服务端口径。
+        let base: Bool
         if let detail = plusDetail {
             let now = Int(Date().timeIntervalSince1970 * 1000)
-            return BearyDeveloperMode.effectivePlus(detail.permanent == true || (detail.effectiveUntil ?? 0) > now)
+            base = BearyDeveloperMode.effectivePlus(detail.permanent == true || (detail.effectiveUntil ?? 0) > now)
+        } else {
+            base = BearyDeveloperMode.effectivePlus(SessionManager.shared.currentUser?.plus == true)
         }
-        return BearyDeveloperMode.effectivePlus(SessionManager.shared.currentUser?.plus == true)
+        return base || BearyPlusGate.isLocalTestFlightPlus
     }
 
     @objc private func openPlusPage() {
@@ -4023,7 +4021,7 @@ private final class BearyDataStatusViewController: UIViewController {
 /// 方案一：隐私政策 / 用户协议服务器下发文字（2026-11-01）。
 /// 缓存按 doc 分开存（privacy / terms 各一键 + 各一个 updated_at 键）；
 /// 有网每次打开都拉，拉取失败或没网就用缓存，再没有缓存才用包内 BearyLegalTexts 兜底；
-/// 登录页协议链接同走本路径（见 BearyLoginViewController.openLegalPage）。
+/// 登录页协议链接同走本路径（见 BearyWelcomeViewController.openLegalPage）。
 enum BearyLegalServerText {
     enum Doc: String {
         case privacy
@@ -4131,7 +4129,7 @@ enum BearyLegalTexts {
 
 信息说明
 
-beary 日记文字、图片。默认私密，仅本人可见；写完即按所选可见，公开与私密可随时切换
+Beary 日记文字、图片。默认私密，仅本人可见；写完即按所选可见，公开与私密可随时切换
 
 点赞记录你点赞的日记 ID、时间
 
@@ -4143,7 +4141,7 @@ beary 日记文字、图片。默认私密，仅本人可见；写完即按所�
 
 行为记录仅记操作类型、目标 ID 与时间（如打开 App、详情阅读停留时长、搜索结果点按），不记日记正文、标题与搜索词原文；游客阅读仅记匿名计数，用于年度报告与风控
 
-MC 白名单申请Minecraft 用户名、申请时间、审批状态（站长可见，用于审批；保留 1 年）
+MC 白名单申请Minecraft 用户名、申请时间、审批状态（Beary 团队可见，用于审批；保留 1 年）
 
 2.3 设备与日志信息
 
@@ -4365,7 +4363,7 @@ Cookie见 2.4过期自动失效
 
 1.2 内测说明
 
-本站目前处于内测阶段，站长可能视情况开启注册名额限制或邀请码注册。
+本站目前处于内测阶段，Beary 团队可能视情况开启注册名额限制或邀请码注册。
 
 如开启名额限制：名额满后新注册将被拒绝，已注册用户不受影响，具体以站内显示为准。
 
@@ -4401,19 +4399,19 @@ Cookie见 2.4过期自动失效
 
 封禁分为限时封禁与永久封禁。被封禁用户登录时将看到封禁原因与期限；封禁期间所有设备将被强制退出登录。
 
-第二章 beary 日记
+第二章 Beary 日记
 
 2.1 基本规则
 
 规则说明
 
-发布登录后可发布，文字上限 2000 字，图片最多 9 张
+发布登录后可发布，文字上限 5000 字，图片最多 9 张
 
 私密期默认私密，仅本人可见，可随时公开或改回私密
 
 公开与私密写完选公开或私密，默认私密；公开与私密可随时切换
 
-编辑期随时可编辑，永久可改
+编辑期发布后 1 小时内可编辑，Plus 不限
 
 删除公开与私密均可删除，进回收站 30 天
 
@@ -4487,7 +4485,7 @@ Cookie见 2.4过期自动失效
 
 在本站提交 Minecraft Java 版用户名申请白名单。
 
-申请信息将发送给站长，由站长手动审批。
+申请信息将发送给 Beary 团队，由 Beary 团队手动审批。
 
 审批不保证时效，请耐心等待。
 
@@ -4523,7 +4521,7 @@ MC 服务器为免费公益服，不保证 7×24 在线。
 
 逆向工程、试图获取他人数据；
 
-冒充站长或本站工作人员。
+冒充 Beary 团队或本站工作人员。
 
 4.2 限流
 
@@ -5133,6 +5131,16 @@ private final class BearyBlockedUserCell: UITableViewCell {
     private let avatarView = BearyAvatarView()
     private let nameLabel = UILabel()
     private let handleLabel = UILabel()
+    /// 名字＋handle 纵向栈：相对头像垂直居中。原两行顶钉 contentView.top + 14
+    /// （＝头像顶），块高小于头像 44，上面贴顶、下面留空；栈居中后上下留白对头像相等。
+    /// 间距 1 与原 name→handle 间距一致；handle 隐藏时栈自动收起，单行名字同样居中。
+    private lazy var textStack: UIStackView = {
+        let stack = UIStackView(arrangedSubviews: [nameLabel, handleLabel])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 1
+        return stack
+    }()
     private var unblockHandler: (() -> Void)?
 
     private lazy var unblockButton: BearyHit44Button = {
@@ -5162,8 +5170,7 @@ private final class BearyBlockedUserCell: UITableViewCell {
         handleLabel.textColor = BearyColors.gray
         handleLabel.numberOfLines = 1
         contentView.addSubview(avatarView)
-        contentView.addSubview(nameLabel)
-        contentView.addSubview(handleLabel)
+        contentView.addSubview(textStack)
         contentView.addSubview(unblockButton)
         NSLayoutConstraint.activate([
             avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
@@ -5171,13 +5178,13 @@ private final class BearyBlockedUserCell: UITableViewCell {
             avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),
-            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
-            nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: unblockButton.leadingAnchor, constant: -8),
-            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
-            handleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
-            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: unblockButton.leadingAnchor, constant: -8),
-            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
+            // 文字块相对头像垂直居中（上下留白对头像相等）；顶／底各留 14 兜底，
+            // 大字号下文字块高于头像时行高由其撑起，不溢出。
+            textStack.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
+            textStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
+            textStack.trailingAnchor.constraint(lessThanOrEqualTo: unblockButton.leadingAnchor, constant: -8),
+            textStack.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 14),
+            textStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
             unblockButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             unblockButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),

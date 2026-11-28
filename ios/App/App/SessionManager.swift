@@ -34,10 +34,17 @@ final class SessionManager {
     }
     var isLoggedIn: Bool { currentUser != nil }
     /// 游客模式（只读）：用户在登录页点“先逛逛”进入的无账号浏览态，只能看公开日记。
-    /// 内存态，不持久化（重开 App 回登录页）；登录成功与显式退出时清零。
+    /// 持久化在 UserDefaults（bearyGuestMode）：重开 App 恢复游客态，FAB 继续隐藏；
+    /// 登录成功与显式退出时清零（登录用户正常显示 FAB）。退出后重进游客走 enterGuestMode
+    /// 重新置真，不靠旧标记残留。
     /// 游客态与未登录态的区别：未登录可能是会话过期等被动状态，游客是用户主动选的浏览态；
     /// 容器据此决定顶栏（只留登录）、FAB（隐藏）、受限动作（走登录提示 Sheet 而非直弹登录页）。
-    var isGuestMode = false
+    var isGuestMode: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.guestModeDefaultsKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.guestModeDefaultsKey) }
+    }
+    /// 游客模式的 UserDefaults 键（见 isGuestMode）。
+    private static let guestModeDefaultsKey = "bearyGuestMode"
     /// 64 包反馈修（第 17 项）：本地有效会话 cookie（teddy_session 且未过期）——
     /// 首帧缓存态依据，同步读存储、不发网络；后台 refreshMe 验出 401 才切游客态。
     /// 注意：只判断 cookie 存在与过期，不证明服务端会话仍有效，401 回来即纠正。
@@ -62,6 +69,12 @@ final class SessionManager {
     /// 5-29：5xx 与解析失败与网络失败同口径（同置未知、同调
     /// onNetworkUnstable），仍不按游客处理、不弹登录页。
     private(set) var authUnknown: Bool = false
+    /// 账号隔离：最近一次 /me 是否已回包确认过身份。成功（含 success(nil)
+    /// 的游客确认）与 authFailure（封禁/踢下线/过期，清态即确认未登录）
+    /// 均算确认；网络/5xx/解析失败/业务码/取消不算，身份仍未知。
+    /// 时间线/广场首帧凭它区分“已确认游客”与“身份未知”——后者绝不
+    /// 渲染 lastKnownUserId 桶（冷启动登 demo 号却看到自己号数据的根因）。
+    private(set) var identityResolved: Bool = false
     /// G26：网络失败时的回调（容器可接 toast；默认不弹登录页）。
     var onNetworkUnstable: (() -> Void)?
 
@@ -249,6 +262,7 @@ final class SessionManager {
         switch result {
         case .success(let user):
             self.authUnknown = false
+            self.identityResolved = true
             // 用户 id 变化即权威登录态变迁：先应用新态，再推代际，
             // 使此前在途请求的 401 回调（BearyAPI 侧 epoch 校验）失效。
             if user?.id != previousUserId {
@@ -269,7 +283,9 @@ final class SessionManager {
                 // 自动进列表，无需迁移；添加账号时容器 refreshMe 同样走这里，
                 // 设置页添加前再显式快照一次旧号即可（见 snapshotCurrentAccount）。
                 if user != nil {
-                    self.snapshotCurrentAccount()
+                    // /me 成功即证实了当前 cookie 属于该用户：带 confirmed
+                    // 覆盖（登录成功换了新 token 时正在此处落盘）。
+                    self.snapshotCurrentAccount(confirmed: true)
                 }
                 self.notifyUserChanged(user)
                 completion?(.success(user))
@@ -284,11 +300,13 @@ final class SessionManager {
                     // fetchMe 已把无 reason 的 401 映射为 success(nil)，此处理论上到不了；
                     // 万一到达，按已证实的游客处理并清未知标记。
                     self.authUnknown = false
+                    self.identityResolved = true
                 case .authFailure:
                     // 审计 P1-7：封禁/踢下线/过期——与 success(nil) 同口径清用户态
                     // （id 变化即代际推进，防在途旧请求 401 回调误踢新号），
                     // 原因与文案经 completion 透传给容器分流提示（见 SceneDelegate 冷启动处）。
                     self.authUnknown = false
+                    self.identityResolved = true
                     if previousUserId != nil {
                         self.sessionGeneration += 1
                         self.api.bumpAuthEpoch()
@@ -374,6 +392,9 @@ final class SessionManager {
             if !BearyAccountVault.shared.remove(userId: id) {
                 _ = BearyAccountVault.shared.markUnrecoverable(userId: id)
             }
+            // 推送登记：登出即清该号的已上报标记（重登后必重报；
+            // 只清本号，不碰其他账号）。
+            BearyPushNotifications.shared.clearLastSentToken(userId: id)
         }
         purgeImageCacheForCurrentAccount()
         purgeLocalSnapshotsForCurrentAccount()
@@ -423,6 +444,8 @@ final class SessionManager {
         purgeLocalSnapshots(forAccountId: id)
         BlindBoxState.shared.clearAccount(accountId: id)
         BearyPlazaFeaturedPicker.clearAccount(accountId: id)
+        // 推送登记：发起账号已登出，清其已上报标记（重登后必重报）。
+        BearyPushNotifications.shared.clearLastSentToken(userId: id)
     }
 
     /// 账号隔离 4 号：显式退出清态时清掉该账号的图片缓存（内存全清 +
@@ -581,10 +604,12 @@ final class SessionManager {
     // MARK: - 多账号切换（设置页账号分组，2026-10-31）
 
     /// 切换结果：调用方只按结果给 toast / 弹登录页，不另猜原因。
+    /// expired 带 401 原因（reason / message，源自 fetchMeWithToken
+    /// 的 .authFailure；无原因的 401 与 token 归属对不上时两值均为 nil）。
     enum AccountSwitchResult {
         case switched(MeUser)
         case alreadyCurrent
-        case expired
+        case expired(reason: String?, message: String?)
         case network
         case failed
         case unavailable
@@ -631,13 +656,25 @@ final class SessionManager {
     /// 不在库里时不写（不顶掉旧账号）；当前会话照常可用，腾出空位后
     /// 下次 refreshMe 成功时自动补进。调用方（设置页添加前）同样先调
     /// 本函数快照旧号，再弹登录页。
-    func snapshotCurrentAccount() {
+    /// 配对守卫（2026-11-28 切换过期修法）：共享 cookie 是单桶制，刚登
+    /// 录的新号 token 会先落进共享桶、而 currentUser 仍是旧号——此时
+    /// 盲目快照会把新号 token 写进旧号的保管库项，下次切回旧号预检
+    /// 拿新号 token 调 /me、id 对不上即 .expired。库里已有该号且 token
+    /// 不同时，只有 /me 成功证实的配对（confirmed）才覆盖；未证实
+    /// 的盲目调用直接跳过并记日志（旧 token 在服务端仍有效——登录
+    /// 从不杀旧会话，见诊断报告 §3；/me 成功后由证实路径重存新 token）。
+    func snapshotCurrentAccount(confirmed: Bool = false) {
         guard let user = currentUser, let userId = user.id,
               let cookie = currentSessionCookie(), !cookie.value.isEmpty else {
             return
         }
         let vault = BearyAccountVault.shared
         if vault.load(userId: userId) == nil && vault.loadAll().count >= BearyAccountVault.maxAccounts {
+            return
+        }
+        if !confirmed, let existing = vault.load(userId: userId), existing.token != cookie.value {
+            // 未证实的 token 变更：不覆盖旧项（见上），只记日志供诊断。
+            BearyAppLog.event("snapshot skip token mismatch userId=\(userId)")
             return
         }
         let expiresMs: Double? = cookie.expiresDate.map { $0.timeIntervalSince1970 * 1000 }
@@ -734,6 +771,8 @@ final class SessionManager {
     /// 稿桶/图片桶/时间线缓存，与现行账号变化路径同一条）；预检失败
     /// 或身份对不上时，共享 cookie 与 currentUser 一字不动——没有回
     /// 滚可做，也就不存在回滚窗口里后台请求错用临时 cookie 的问题。
+    /// 401 的原因（reason / message）随 .expired 带给调用方分流提示
+    /// 与日志（2026-11-28 切换过期修法），不再折成裸过期。
     /// 磁盘缓存口径：切换不走 signOutLocally 的磁盘清除，旧账号磁盘
     /// 保留、切回可复用（现行注释口径）；内存态由容器 onUserChanged
     /// 切桶时清掉，不跨账号。
@@ -769,8 +808,12 @@ final class SessionManager {
                 case .success(let user):
                     guard let user = user, user.id == userId else {
                         // 401 无原因回空（会话已死）或 token 归属对不上：
-                        // 原账号原样不动（无回滚），只报过期。
-                        finish(.expired)
+                        // 原账号原样不动（无回滚），只报过期。归属对不上
+                        // 与无原因 401 是两种死法，日志里区分（id_mismatch），
+                        // 结果里 reason 均为 nil（调用方一律按过期重登）。
+                        let reason = user == nil ? nil : "id_mismatch"
+                        BearyAppLog.event("account switch expired userId=\(userId) reason=\(reason ?? "none")")
+                        finish(.expired(reason: nil, message: nil))
                         return
                     }
                     // 第 18 轮 ⑯：三重核对——当前账号仍是发起时账号、且
@@ -805,8 +848,12 @@ final class SessionManager {
                     finish(.switched(user))
                 case .failure(let error):
                     switch error {
-                    case .authFailure:
-                        finish(.expired)
+                    case .authFailure(let reason, let message):
+                        // 带原因的 401 不再折成裸 .expired：原因随结果带给
+                        // 调用方分流 toast，并记日志（expired / kicked /
+                        // banned / 无 reason 是四种完全不同的死法）。
+                        BearyAppLog.event("account switch expired userId=\(userId) reason=\(reason ?? "none")")
+                        finish(.expired(reason: reason, message: message))
                     case .network, .cancelled, .http, .decoding:
                         // 网络/5xx/解析失败 = 未证实过期（G26 口径）：只
                         // 报告网络问题，不按游客处理、不清旧号、不动 cookie。
@@ -850,6 +897,11 @@ final class SessionManager {
                 completion(.removed)
                 return
             }
+            // 推送登记清理：移除前删目标号在本机的登记行——隔离请求＋目标号
+            // 保管库 token（共享 cookie 属于当前号，删不掉目标号的行）。
+            // fire-and-forget：失败不改移除结论；已上报标记已清，移除失败
+            // 切回该号时可重新上报。
+            BearyPushNotifications.shared.unregisterTokenForAccount(userId: userId, sessionToken: target.token)
             api.logoutWithToken(target.token) { [weak self] result in
                 guard let self = self else { return }
                 DispatchQueue.main.async {
@@ -868,6 +920,8 @@ final class SessionManager {
                             completion(.failed)
                             return
                         }
+                        // 推送登记：移除成功即清该号的已上报标记（重登后必重报）。
+                        BearyPushNotifications.shared.clearLastSentToken(userId: userId)
                         completion(.removed)
                     case .failure:
                         // 隔离登出失败：不删保管库项、不动当前 cookie 与
@@ -879,6 +933,9 @@ final class SessionManager {
             }
             return
         }
+        // 推送登记清理：登出请求发出前删本号在本机的登记行（session 与
+        // cookie 仍在）；fire-and-forget，失败不改移除结论。
+        BearyPushNotifications.shared.unregisterTokenForCurrentAccount()
         api.logout { [weak self] result in
             guard let self = self else { return }
             // 当前账号登出回包先回主线程：后续 clearLocalCookies +

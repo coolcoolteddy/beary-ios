@@ -24,6 +24,27 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var deletingConversationPeerIds: Set<Int> = []
 
     private let tableView = UITableView(frame: .zero, style: .plain)
+    /// 自定义下拉指示器图标（32pt 官方刷新图标、灰色；平时 alpha 0，
+    /// 下拉时淡入＋跟随旋转，刷新中常亮连续旋转）。
+    private lazy var pullIconView = BearyRefreshIconView()
+
+    /// 自定义下拉指示器（通知页同款）：固定高 116、藏在表内容上方
+    /// （content y=-116..0），指示高按手指行程 ×0.48 阻尼（上限 116），
+    /// 不拦截触摸；刷新中改固定 84 高。
+    private lazy var pullView: UIView = {
+        let pull = UIView()
+        pull.backgroundColor = BearyColors.bg
+        pull.isUserInteractionEnabled = false
+        pull.frame = CGRect(x: 0, y: -116, width: 0, height: 116)
+        pull.addSubview(pullIconView)
+        NSLayoutConstraint.activate([
+            pullIconView.centerXAnchor.constraint(equalTo: pull.centerXAnchor),
+            pullIconView.bottomAnchor.constraint(equalTo: pull.bottomAnchor, constant: -14),
+            pullIconView.widthAnchor.constraint(equalToConstant: 32),
+            pullIconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        return pull
+    }()
     // C5：空态/失败态走统一 BearyStateView（旧 emptyLabel 退役；文案与下拉重试不变，
     // 失败态另加“重试”动作钮调同一 load()，下拉手势仍在）。
     private let conversationStateView = BearyStateView()
@@ -58,8 +79,20 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var backButton: UIButton?
     private var conversations: [BearyAPI.DMConversation] = []
     fileprivate var loading = false
+    /// 自定义下拉头（通知页同款口径）：固定高 116、藏在表内容上方，指示高按
+    /// 手指行程 ×0.48 阻尼（上限 116），32pt 官方刷新图标；触发 140pt、
+    /// 刷新固定 84 高、进入／收回 0.38s。
+    private var isCustomPullRefreshing = false
+    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
+    private var customPullEndInFlight = false
+    /// 一次拖动的 engage 锚点：只锁一次，中途不再凭 offset/inset 阈值清掉。
+    private var pullEngageTranslation: CGFloat?
     private var needsReloadAfterUserChange = false
     private var loadFailed = false
+    /// 首拉／刷新失败自动重试一次（约 1 秒后静默重拉）：失败即约一次，
+    /// 成功或手动重拉即清零；定时器只持 weak self，页面已走不发请求。
+    private var conversationsAutoRetryWorkItem: DispatchWorkItem?
+    private var conversationsAutoRetryUsed = false
     // 第 7 轮属实项 6：已有内容时刷新失败的非阻断提示条。只在
     // loadFailed && !conversations.isEmpty 时显（空列表仍走居中空态文案，
     // 不与本条重复）。失败条不占位、不挤压列表：表顶恒贴顶栏，显隐只淡入
@@ -106,9 +139,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         tableView.dataSource = self
         tableView.register(BearyDMConversationCell.self, forCellReuseIdentifier: "dmConversationCell")
         tableView.register(BearyDMConversationSkeletonCell.self, forCellReuseIdentifier: BearyDMConversationSkeletonCell.reuseIdentifier)
-        let refresh = UIRefreshControl()
-        refresh.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
-        tableView.refreshControl = refresh
+        tableView.addSubview(pullView)
         view.addSubview(tableView)
 
         conversationStateView.translatesAutoresizingMaskIntoConstraints = false
@@ -122,19 +153,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         // 叠 12% 语义红，与旧“red 0.12 透在 bg 上”的观感一致（深浅模式各自
         // 按当前 trait 混合）。
         refreshFailedBanner.translatesAutoresizingMaskIntoConstraints = false
-        refreshFailedBanner.backgroundColor = UIColor { trait in
-            let base = BearyColors.bg.resolvedColor(with: trait)
-            let tint = BearyColors.red.resolvedColor(with: trait)
-            var baseR: CGFloat = 0, baseG: CGFloat = 0, baseB: CGFloat = 0, baseA: CGFloat = 0
-            var tintR: CGFloat = 0, tintG: CGFloat = 0, tintB: CGFloat = 0, tintA: CGFloat = 0
-            base.getRed(&baseR, green: &baseG, blue: &baseB, alpha: &baseA)
-            tint.getRed(&tintR, green: &tintG, blue: &tintB, alpha: &tintA)
-            let a: CGFloat = 0.12
-            return UIColor(red: tintR * a + baseR * (1 - a),
-                           green: tintG * a + baseG * (1 - a),
-                           blue: tintB * a + baseB * (1 - a),
-                           alpha: 1)
-        }
+        refreshFailedBanner.backgroundColor = BearyColors.failureBannerBackground()
         refreshFailedBanner.isHidden = true
         refreshFailedBanner.alpha = 0
         view.addSubview(refreshFailedBanner)
@@ -142,7 +161,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         refreshFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         refreshFailedLabel.adjustsFontForContentSizeCategory = true
         refreshFailedLabel.textColor = BearyColors.ink
-        refreshFailedLabel.text = "未能刷新"
+        refreshFailedLabel.text = NSLocalizedString("common.refresh_failed", comment: "")
         refreshFailedBanner.addSubview(refreshFailedLabel)
         refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
         refreshFailedRetryButton.setTitle("重试", for: .normal)
@@ -214,6 +233,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     deinit {
         relativeTimeTimer?.invalidate()
         pollTimer?.invalidate()
+        conversationsAutoRetryWorkItem?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -342,6 +362,9 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             tableView.contentInset.bottom = bottom
             tableView.scrollIndicatorInsets.bottom = bottom
         }
+        if tableView.bounds.width > 0 && pullView.frame.width != tableView.bounds.width {
+            pullView.frame.size.width = tableView.bounds.width
+        }
         reportEmbeddedContentHeight()
     }
 
@@ -405,25 +428,143 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var showingSkeleton: Bool {
         firstLoadPending && conversations.isEmpty
             && SessionManager.shared.isLoggedIn
-            && tableView.refreshControl?.isRefreshing != true
+            && !isCustomPullRefreshing
     }
 
     /// 同 tab 重拍口径（消息页取两组并集用）：在途加载或下拉刷新在途都算刷新中。
     var isRefreshingForRetap: Bool {
-        loading || (tableView.refreshControl?.isRefreshing ?? false)
+        loading || isCustomPullRefreshing
     }
 
     /// 会话页关闭 / 关系变化后的外部刷新入口（容器接线）。
+    /// 下拉刷新与容器调用都走它：程序触发同样走自定义下拉外观
+    /// （下滑 84 + 转圈，回包到即收回），而非标准 UIRefreshControl。
     func refresh() {
+        if isCustomPullRefreshing || (firstLoadPending && loading) {
+            return
+        }
+        beginCustomPullRefresh()
+    }
+
+    /// 自定义下拉指示器跟随：手指行程（pan 手势自顶部锚点起算）× 0.48 阻尼、
+    /// 上限 116；指示高 ≥67.2 时转满一圈（= 触发行程 140pt × 0.48）。
+    /// 指示器是表内子视图：屏内底边固定为指示高，顶边随表回弹裁剪。
+    /// 锚点一次拖动只锁一次：中途不再凭 offset/inset 阈值清掉——顶栏显隐
+    /// 改 contentInset.top 或重载顶 offset，都会把阈值顶到手指下面，旧口径
+    /// 一清锚点 fingerRaw 即归零、指示高塌掉，图标还没触发就缩回去。
+    /// 锚点只在拖动结束清（scrollViewDidEndDragging 与下方 !isDragging 分支）。
+    private func updateCustomPullIndicator() {
+        if isCustomPullRefreshing {
+            return
+        }
+        if !tableView.isDragging {
+            pullEngageTranslation = nil
+            pullView.frame = CGRect(x: 0, y: -116, width: tableView.bounds.width, height: 116)
+            pullIconView.setPullProgress(0)
+            return
+        }
+        let contentRaw = max(0, -(tableView.contentOffset.y + tableView.contentInset.top))
+        let panTranslation = tableView.panGestureRecognizer.translation(in: tableView).y
+        if tableView.contentOffset.y <= -tableView.contentInset.top && pullEngageTranslation == nil {
+            pullEngageTranslation = panTranslation
+        }
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        let indicatorHeight = min(fingerRaw * 0.48, 116)
+        pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: tableView.bounds.width, height: 116)
+        if indicatorHeight <= 0 {
+            pullIconView.setPullProgress(0)
+        } else {
+            let progress = min(1, indicatorHeight / 67.2)
+            pullIconView.setPullProgress(progress)
+        }
+    }
+
+    /// 自定义下拉刷新进入：指示固定 84 高 + 转圈，回包到即收回
+    /// （无 0.5 秒最低展示）。load() 回包终点调 endCustomPullRefresh 收回；
+    /// load() 因在途直接返回时不收回——在途那次结束时收回，不丢刷新。
+    private func beginCustomPullRefresh() {
+        if isCustomPullRefreshing || (firstLoadPending && loading) {
+            return
+        }
+        isCustomPullRefreshing = true
+        pullIconView.startSpinning()
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”。
+        tableView.setContentOffset(tableView.contentOffset, animated: false)
+        let pullIn = {
+            self.tableView.contentInset.top = 84 // beary-lint: allow
+            self.tableView.scrollIndicatorInsets.top = 84
+            self.tableView.contentOffset = CGPoint(x: 0, y: -84)
+            self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullIn()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
+        }
         load()
+    }
+
+    private func endCustomPullRefresh() {
+        if !isCustomPullRefreshing || customPullEndInFlight {
+            return
+        }
+        customPullEndInFlight = true
+        // 收回动画全程仍持刷新旗：跟随侧不中途重写 pullView.frame。
+        // 结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
+        // 不再把 contentOffset 拽回 0 顶部，只复位内边距、藏指示头，留在原位置；
+        // 仍停在下拉位的才按旧口径回到 0（指示区须收掉）。
+        // 下拉位 = -84（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
+        let stillAtPullPosition = !self.tableView.isDragging
+            && self.tableView.contentOffset.y <= -84 + 8
+        // 动量截断（进入侧同款）：只在仍停在下拉位时——此时收回动画要接管
+        // offset；松手后的表减速若还在跑，会与收回 easing 双路驱动
+        // contentOffset，图标先往下掉一下再上去；先掐断再播动画。
+        // 用户已滑走时 offset 不参与收回动画，不碰他的滚动。
+        if stillAtPullPosition {
+            tableView.setContentOffset(tableView.contentOffset, animated: false)
+        }
+        let pullOut = {
+            self.tableView.contentInset.top = 0
+            self.tableView.scrollIndicatorInsets.top = 0
+            if stillAtPullPosition {
+                self.tableView.contentOffset = CGPoint(x: 0, y: 0)
+            }
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullOut()
+            self.isCustomPullRefreshing = false
+            self.customPullEndInFlight = false
+            self.pullIconView.stopSpinning()
+        } else {
+            UIView.animate(withDuration: BearyMotion.screen, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+                self.isCustomPullRefreshing = false
+                self.customPullEndInFlight = false
+                self.pullIconView.stopSpinning()
+            })
+        }
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateCustomPullIndicator()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        // 自定义下拉触发：手指原始行程满 140pt 松手才刷新。
+        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        pullEngageTranslation = nil
+        if fingerRaw >= 140 && !isCustomPullRefreshing && !(firstLoadPending && loading) {
+            // 自定义下拉触发（满 140pt 松手）给一次轻触觉；程序触发的 refresh() 不走这里。
+            BearyHaptics.press()
+            beginCustomPullRefresh()
+        }
     }
 
     @objc private func backTapped() {
         onBack?()
-    }
-
-    @objc private func refreshPulled() {
-        load()
     }
 
     @objc private func refreshFailedRetryTapped() {
@@ -532,13 +673,18 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         }
     }
 
-    private func load() {
+    private func load(isAutoRetry: Bool = false) {
         guard SessionManager.shared.isLoggedIn else {
-            tableView.refreshControl?.endRefreshing()
+            endCustomPullRefresh()
             onRequireLogin?()
             return
         }
         guard !loading else { return }
+        // 手动重拉开启新一轮：本次失败仍可自动重试一次；自动重试本身不重置，
+        // 否则它的失败会再约一次、无限续杯。
+        if !isAutoRetry {
+            conversationsAutoRetryUsed = false
+        }
         loading = true
         loadFailed = false
         // 第十轮 #20：首次无数据才出骨架行（下拉刷新自带转圈时不叠加）；
@@ -602,6 +748,10 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                         self.loadFailed = false
                         self.finishConversationsLoad(anchor: anchor, previousSignature: previousSignature)
                         self.endConversationsRefresh()
+                        // 成功即清零：待发的自动重试取消，本轮不再补发。
+                        self.conversationsAutoRetryWorkItem?.cancel()
+                        self.conversationsAutoRetryWorkItem = nil
+                        self.conversationsAutoRetryUsed = false
                     }
                 case .failure:
                     // 服务端失败：本地 BearyDMStore 会话先显（仅本地有消息的对方），
@@ -628,6 +778,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                         self.loadFailed = true
                         self.finishConversationsLoad(anchor: anchor, previousSignature: previousSignature)
                         self.endConversationsRefresh()
+                        self.scheduleConversationsAutoRetryOnce()
                     }
                 }
             }
@@ -672,12 +823,29 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         tableView.setContentOffset(CGPoint(x: 0, y: y), animated: false)
     }
 
+    /// 加载失败自动重试一次：约 1 秒后静默重拉 load()，不另出加载态
+    /// （首拉已落定，骨架不再出；有旧内容时失败条留着、后台悄悄重拉）。
+    /// 只约一次——成功或手动重拉清零后才可再约；触发时 load() 自带
+    /// !loading 门，在途请求不重复发；页面已走（weak self 为空）不发请求。
+    private func scheduleConversationsAutoRetryOnce() {
+        guard !conversationsAutoRetryUsed else { return }
+        conversationsAutoRetryUsed = true
+        conversationsAutoRetryWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self, SessionManager.shared.isLoggedIn else { return }
+            self.conversationsAutoRetryWorkItem = nil
+            self.load(isAutoRetry: true)
+        }
+        conversationsAutoRetryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: workItem)
+    }
+
     /// 刷新态收尾（第 18 轮 #18）：只在本地合并完成后调——清 loading、
     /// 停下拉转圈；网络回包时不清，否则合并在途期间再下拉会重复发请求。
     /// 旧号合并回调早退时也要调，否则挂起的重拉会被 guard !loading 挡住。
     private func endConversationsRefresh() {
         loading = false
-        tableView.refreshControl?.endRefreshing()
+        endCustomPullRefresh()
     }
 
     /// 首拉落定（成功或失败）后的统一收尾：空态＋重载＋快照变化通知。
@@ -829,8 +997,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                             BearyDMConversationsCache.save(bucket: "\(uid)", conversations: strongSelf.conversations)
                         }
                     }
-                    BearyHaptics.rejectionWarning()
-                    BearySoundPlayer.play(.refuseBonk)
+                    BearyIconMotion.playDenyFeedback()
                     strongSelf.showToast(message: "删除失败，请重试")
                     completion?(false)
                 }
@@ -884,22 +1051,61 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         })
     }
 
+    func tableView(_ tableView: UITableView, didHighlightRowAt indexPath: IndexPath) {
+        guard indexPath.row < conversations.count else { return }
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressDown(on: cell.contentView)
+    }
+
+    func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
+        guard let cell = tableView.cellForRow(at: indexPath) else { return }
+        BearyIconMotion.rowPressUp(on: cell.contentView)
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         onOpenChat?(conversations[indexPath.row])
     }
 
+    /// 左滑删除二次确认（HIG W4）：会话含聊天记录、服务端只存 7 天，删后
+    /// 本侧记录无法恢复；先弹 action sheet，确认才走 deleteConversation
+    /// （乐观移除／失败插回／toast 原样），取消不做任何事。iPad 上以行
+    /// cell 为 popover 锚点，免得无锚点崩溃；消息页会话行共用本方法（见
+    /// BearyMessagesViewController 会话行左滑）。
+    func confirmDeleteConversation(peerId: Int, sourceView: UIView) {
+        let sheet = UIAlertController(
+            title: NSLocalizedString("dm.delete.confirm.title", comment: ""),
+            message: NSLocalizedString("dm.delete.confirm.message", comment: ""),
+            preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(
+            title: NSLocalizedString("dm.delete.confirm.delete", comment: ""),
+            style: .destructive) { [weak self] _ in
+                self?.deleteConversation(peerId: peerId) { _ in }
+            })
+        sheet.addAction(UIAlertAction(
+            title: NSLocalizedString("dm.delete.confirm.cancel", comment: ""),
+            style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = sourceView
+            popover.sourceRect = sourceView.bounds
+        }
+        present(sheet, animated: BearyMotion.animated(true))
+    }
+
     /// 左滑删除单个会话：只给「删除」一个红色动作（卡片本身不在本页）。
-    /// 骨架行与无对方 id 的行不删；在途重复删由编排层拦。
+    /// 点按先弹二次确认（HIG W4），确认才删；骨架行与无对方 id 的行不删；
+    /// 在途重复删由编排层拦。
     func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
         guard !showingSkeleton,
               indexPath.row < conversations.count,
               let peerId = conversations[indexPath.row].peer?.id else { return nil }
         let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, done in
             guard let self = self else { done(false); return }
-            BearyHaptics.press()
-            self.deleteConversation(peerId: peerId) { _ in }
             done(true)
+            // 删前先二次确认：等左滑收起后再弹 sheet，免得在 swipe 进行中弹框。
+            DispatchQueue.main.async {
+                self.confirmDeleteConversation(peerId: peerId, sourceView: tableView.cellForRow(at: indexPath) ?? tableView)
+            }
         }
         delete.accessibilityLabel = "删除这个会话"
         return UISwipeActionsConfiguration(actions: [delete])
@@ -965,7 +1171,7 @@ final class BearyDMConversationCell: UITableViewCell {
         timeLabel.adjustsFontForContentSizeCategory = true
         timeLabel.textColor = BearyColors.gray
         unreadBadge.translatesAutoresizingMaskIntoConstraints = false
-        unreadBadge.font = BearyDynamicType.scaledFont(for: .boldSystemFont(ofSize: 10))
+        unreadBadge.font = BearyDynamicType.unreadBadgeFont()
         unreadBadge.adjustsFontForContentSizeCategory = true
         // 角标字固定纯黑（不用 BearyColors.ink：深色下 ink 是近白 #F5F5F5，
         // 在深蓝底上仅 3.35:1；固定黑字浅 #007AFF 底 5.23:1、深 #0A84FF 底 5.76:1，均 ≥4.5:1）
@@ -984,10 +1190,12 @@ final class BearyDMConversationCell: UITableViewCell {
         contentView.addSubview(timeLabel)
         contentView.addSubview(unreadBadge)
         contentView.addSubview(separatorView)
-        // 标题顶锚头像顶：名称字形顶比 label 框顶低 ascender-capHeight，
-        // 上移该量后字形顶落到头像顶（常数由 configure 按当前字号重算）。
-        nameLabelTopToAvatarConstraint = nameLabel.topAnchor.constraint(equalTo: avatarView.topAnchor, constant: -(nameLabel.font.ascender - nameLabel.font.capHeight))
+        // 标题＋摘要整块相对头像垂直居中：块顶 = 头像顶 + (头像高 − 块高) / 2，
+        // 块高 = 标题行高 + 4 + 摘要行高（摘要隐藏时只算标题）；常数由
+        // updateNameLabelTopOffset 按当前字号与摘要显隐重算（init 与 configure 都调）。
+        nameLabelTopToAvatarConstraint = nameLabel.topAnchor.constraint(equalTo: avatarView.topAnchor, constant: 0)
         nameLabelTopToAvatarConstraint?.isActive = true
+        updateNameLabelTopOffset()
         NSLayoutConstraint.activate([
             // 行高改文字栈决定：头像垂直居中，上下各留最小 14（行高下限 72 兜底）。
             avatarView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
@@ -1004,7 +1212,7 @@ final class BearyDMConversationCell: UITableViewCell {
             snippetLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
             snippetLabel.trailingAnchor.constraint(lessThanOrEqualTo: unreadBadge.leadingAnchor, constant: -8),
             snippetLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            // 时间跟标题顶走（现行两顶差 2pt 不变），标题上移时时间同步上移。
+            // 时间跟标题顶走（现行两顶差 2pt 不变），标题移动时时间同步移动。
             timeLabel.topAnchor.constraint(equalTo: nameLabel.topAnchor, constant: 2),
             timeLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             unreadBadge.topAnchor.constraint(equalTo: timeLabel.bottomAnchor, constant: 6),
@@ -1012,11 +1220,11 @@ final class BearyDMConversationCell: UITableViewCell {
             // 审计 N1：角标底边 ≤ 行底 -14——大字号下变高的角标能撑起行高，
             // 而不是溢出到行外；默认字号下角标底 52.5 ≤ 58，不影响现行高。
             unreadBadge.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
-            // 审计低风险项：行底 1pt 分隔线。
+            // 审计低风险项：行底 0.5pt 分隔线。
             separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            separatorView.heightAnchor.constraint(equalToConstant: 1),
+            separatorView.heightAnchor.constraint(equalToConstant: 0.5),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
         ])
         // 审计：角标隐藏时不占位——隐藏态用 0 宽约束替换 ≥17 宽约束
@@ -1040,12 +1248,12 @@ final class BearyDMConversationCell: UITableViewCell {
     }
 
     /// 审计 N1：未读角标几何跟随系统字号——实际高 = max(17, ceil(字体行高) + 4)，
-    /// 默认字号下 ceil(12.1) + 4 = 17，默认视觉不变；最小宽 ≥ 实际高、圆角 = 高 / 2
-    ///（规范 §1 半高类）；字号／颜色／文案均不动（字号 10 bold 见规范 §11、角标色
+    /// 默认字号下 ceil(13.3) + 4 = 18；最小宽 ≥ 实际高、圆角 = 高 / 2
+    ///（规范 §1 半高类）；字号／颜色／文案均不动（字号 11 bold 见规范 §11、角标色
     /// BearyColors.blue 见 §7）。字体按当前 trait 重取：scaledFont 只在创建时按当前档
     /// 取值，trait 变化后须重建，否则几何与渲染字体脱节。
     private func updateUnreadBadgeGeometry() {
-        unreadBadge.font = BearyDynamicType.scaledFont(for: .boldSystemFont(ofSize: 10))
+        unreadBadge.font = BearyDynamicType.unreadBadgeFont()
         let badgeHeight = max(17, ceil(unreadBadge.font.lineHeight) + 4)
         unreadBadgeHeightConstraint?.constant = badgeHeight
         unreadBadgeMinWidthConstraint?.constant = badgeHeight
@@ -1064,16 +1272,27 @@ final class BearyDMConversationCell: UITableViewCell {
         lastAtMs = nil
     }
 
+    /// 标题＋摘要整块相对头像垂直居中：块顶偏移 = (44 − 块高) / 2，
+    /// 块高按当前字号行高实算（标题约 20＋4＋摘要约 15）；摘要隐藏时只算标题。
+    /// 只动纵向锚定，不改字号、行距、间距数值、行高下限与头像尺寸；
+    /// 时间跟标题走（timeLabel.top = nameLabel.top + 2），不用另动。
+    private func updateNameLabelTopOffset() {
+        let titleHeight = ceil(nameLabel.font.lineHeight)
+        let snippetHeight = snippetLabel.isHidden ? 0 : ceil(snippetLabel.font.lineHeight)
+        let blockHeight = titleHeight + 4 + snippetHeight
+        nameLabelTopToAvatarConstraint?.constant = (44 - blockHeight) / 2
+    }
+
     func configure(conversation: BearyAPI.DMConversation) {
         let peer = conversation.peer
-        let displayName = (peer?.displayName?.isEmpty == false) ? peer!.displayName! : "beary 用户"
-        // 标题顶对齐圆圈顶：按当前名称字号重算字形顶偏移（默认字号约 4pt）。
-        nameLabelTopToAvatarConstraint?.constant = -(nameLabel.font.ascender - nameLabel.font.capHeight)
+        let displayName = (peer?.displayName?.isEmpty == false) ? peer!.displayName! : NSLocalizedString("emote.posters.fallback_display_name", comment: "")
         nameLabel.text = displayName
         // 审计：摘要空行折叠——空白摘要整行隐藏，不留空白行。
         let snippet = (conversation.lastBody ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         snippetLabel.text = snippet
         snippetLabel.isHidden = snippet.isEmpty
+        // 标题＋摘要整块相对头像垂直居中（摘要显隐变了块高，这里重算）。
+        updateNameLabelTopOffset()
         // 时间口径与通知行一致（相对时间：刚刚/X 分钟前/X 小时前/X 天前；2026-11-11 定版带空格，取代 2026-11-05 无空格口径）。
         if let lastAt = conversation.lastAt {
             lastAtMs = lastAt
@@ -1149,7 +1368,7 @@ enum BearyDMConversationsCache {
     }
 
     private static func fileURL(bucket: String) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(filePrefix)\(bucket).json")
     }
 

@@ -67,12 +67,11 @@ final class BearyWordprintView: UIView {
         }
 
         // A11：UIButton 版按压反馈是 UIControl 专属，词行是 UIView＋手势，
-        // 故在此自带同款手感（同 BearyCalloutPicker 菜单行）：轻震＋微缩＋
+        // 故在此自带同款手感（同 BearyCalloutPicker 菜单行）：微缩＋
         // 微暗，0.18s（BearyMotion.micro），松手／取消回弹。
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
             super.touchesBegan(touches, with: event)
             guard isPressEnabled else { return }
-            BearyHaptics.press()
             UIView.animate(withDuration: BearyMotion.animated(true) ? BearyMotion.micro : 0,
                            delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
                            animations: {
@@ -280,14 +279,22 @@ final class BearyWordprintView: UIView {
         wordRows.append((wordLabel: wordLabel, countLabel: countLabel, wordRow: wordRow, spacer: wordRowSpacer))
         let barBackground = UIView()
         barBackground.translatesAutoresizingMaskIntoConstraints = false
-        barBackground.backgroundColor = BearyColors.surface2
+        barBackground.backgroundColor = BearyColors.line
         barBackground.layer.cornerRadius = 3
         barBackground.clipsToBounds = true
+        // 填充橙色按名次递减透明度：第一名实心，往后逐档变淡（第 4 名起同第 3 名一档）。
+        let fillAlpha: CGFloat
+        switch index {
+        case 0: fillAlpha = 1.0
+        case 1: fillAlpha = 0.6
+        case 2: fillAlpha = 0.35
+        default: fillAlpha = 0.35
+        }
         let barFill = UIView()
         barFill.translatesAutoresizingMaskIntoConstraints = false
-        barFill.backgroundColor = BearyColors.orange
+        barFill.backgroundColor = BearyColors.orange.withAlphaComponent(fillAlpha)
         barBackground.addSubview(barFill)
-        let barHeight: CGFloat = mode == .compact ? 6 : 8
+        let barHeight: CGFloat = 3
         if ratio > 0 {
             NSLayoutConstraint.activate([
                 barFill.topAnchor.constraint(equalTo: barBackground.topAnchor),

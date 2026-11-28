@@ -146,7 +146,7 @@ enum BearyLocationPrecision: String, CaseIterable {
     /// 详细地址：完整地点名。
     case detail = "detail"
 
-    private static let key = "beary_location_precision"
+    static let key = "beary_location_precision"
 
     static var current: BearyLocationPrecision {
         guard let raw = UserDefaults.standard.string(forKey: key),
@@ -252,7 +252,7 @@ enum BearyTheme {
     }
 }
 
-/// 语言（通用 → 语言子页）：跟随系统 / 中国大陆（强制简体中文）。
+/// 语言（通用 → 语言子页）：跟随系统 / 中国大陆（强制简体中文）/ English（强制英文）。
 /// 实现：Bundle 子类覆盖 localizedString，切换后重建根界面即时生效，
 /// 不靠重启、不靠退出重进。String Catalog（.xcstrings）编译后走
 /// Bundle.main 的字符串表，子类覆盖对其生效。
@@ -262,6 +262,8 @@ enum BearyAppLanguage {
         case system = "system"
         /// 强制简体中文。
         case mainland = "zh-Hans"
+        /// 强制英文。
+        case english = "en"
     }
 
     private static let key = "beary_app_language"
@@ -280,6 +282,9 @@ enum BearyAppLanguage {
             return nil
         case .mainland:
             guard let path = Bundle.main.path(forResource: "zh-Hans", ofType: "lproj") else { return nil }
+            return Bundle(path: path)
+        case .english:
+            guard let path = Bundle.main.path(forResource: "en", ofType: "lproj") else { return nil }
             return Bundle(path: path)
         }
     }
@@ -304,7 +309,7 @@ enum BearyAppLanguage {
 }
 
 /// Bundle.main 的语言覆盖子类：强制简体中文时走 zh-Hans.lproj，
-/// 否则走系统默认。只覆盖 localizedString 一个入口。
+/// 强制英文时走 en.lproj，否则走系统默认。只覆盖 localizedString 一个入口。
 final class BearyLanguageBundle: Bundle {
     override func localizedString(forKey key: String, value: String?, table tableName: String?) -> String {
         if let forced = BearyAppLanguage.forcedBundle {

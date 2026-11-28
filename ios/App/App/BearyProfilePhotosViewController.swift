@@ -38,6 +38,11 @@ final class BearyProfilePhotosViewController: UIViewController {
     /// 翻页失败持续态：true 时尾部多一节重试入口；只由显式点按清掉，
     /// fetchNextPageIfNeeded 有本旗守门，willDisplay 不自动重拉（见守门处注释）。
     private var photosPageLoadFailed = false
+    /// 翻页加载中脚部已插节：true 时尾部一节显示共享脚部的三个跳动点。
+    /// 只与实际插节／删节同步改（见 insertPhotosLoadingFooterIfNeeded 与
+    /// 回包各分支），数据源节数以本旗＋失败旗为准；首拉（reloadPhotosFirstPage）
+    /// 与空相册续拉不插本节（空态另有骨架占位／重试按钮）。
+    private var photosFooterLoadingShown = false
     /// 03：空相册续拉失败持续态——照片为 0 时重试节插进已被隐藏的网格里
     /// 看不见，改由空态区的重试按钮承载；只由显式点按清掉，不走第 1 节。
     private var photosEmptyLoadFailed = false
@@ -77,11 +82,11 @@ final class BearyProfilePhotosViewController: UIViewController {
 
     /// 月份标题格式（与星图 sheetDateYearFormatter 同款“yyyy年M月”口径，
     /// 只取年月）；主线程使用，与 BearyAPI timeFormatter 同款做法。
-    private static let photoMonthFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy年M月"
-        return formatter
-    }()
+    /// 2026-11-21 日期完全本地化：走共享 helper，跟 App 语言；时区沿用
+    /// 既有行为（原来没写时区，跟设备走）；中文输出与改前一致。
+    private static var photoMonthFormatter: DateFormatter {
+        BearyLocalizedDate.formatter(template: "yyyyMMMM", zhFormat: "yyyy年M月")
+    }
 
     private var photoSections: [PhotoMonthSection] {
         var byMonth: [String: [BearyProfilePhotoItem]] = [:]
@@ -115,8 +120,9 @@ final class BearyProfilePhotosViewController: UIViewController {
         return sections
     }
 
-    /// 翻页失败重试节的下标（只在 photosPageLoadFailed 时存在）：照片节数，
-    /// 不再是写死的 1。
+    /// 翻页尾部节的下标（失败重试格／加载中三点共用一节，互斥出现，
+    /// 只在 photosPageLoadFailed 或 photosFooterLoadingShown 时存在）：
+    /// 照片节数，不再是写死的 1。
     private var photosRetrySectionIndex: Int { photoSections.count }
 
     /// 分节下标 → 灯箱用的扁平下标（灯箱仍持扁平数组，本换算只做桥接）。
@@ -571,7 +577,7 @@ final class BearyProfilePhotosViewController: UIViewController {
     private func updatePhotosStatusLabel() {
         let text: String?
         if photosFromCache, photosRefreshFailed {
-            text = "显示的是上次的数据"
+            text = NSLocalizedString("common.showing_previous_content", comment: "")
         } else {
             text = nil
         }
@@ -804,6 +810,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         photosHasMore = false
         photosFetching = false
         photosPageLoadFailed = false
+        photosFooterLoadingShown = false
         // 合入时补：03 空态失败态也是旧账号的残留状态，切号即清，否则重拉
         // 期间空态会把旧失败画出来（分支基线早于 03，未处理此旗）。
         photosEmptyLoadFailed = false
@@ -1098,11 +1105,7 @@ final class BearyProfilePhotosViewController: UIViewController {
               let path = indexPath(forFlatIndex: index) else { return }
         collectionView.layoutIfNeeded()
         guard let frame = collectionView.layoutAttributesForItem(at: path)?.frame else { return }
-        let targetY = frame.minY - viewportOffset
-        guard abs(targetY - collectionView.contentOffset.y) >= 1 else { return }
-        let minY = -collectionView.contentInset.top
-        let maxY = max(minY, collectionView.contentSize.height - collectionView.bounds.height + collectionView.contentInset.bottom)
-        collectionView.contentOffset = CGPoint(x: 0, y: min(max(targetY, minY), maxY))
+        BearyScrollAnchor.restoreDetailReturn(in: collectionView, rowTop: frame.minY, viewportOffset: viewportOffset)
     }
 
     /// 详情内编辑/可见性变化按 id 定向同步：模型原地改字段后重算照片索引；
@@ -1174,6 +1177,9 @@ final class BearyProfilePhotosViewController: UIViewController {
             return
         }
         photosFetching = true
+        // 翻页在途脚部亮三点：willDisplay 里直接插节会撞布局，下一轮
+        // 再插；回包已先到（photosFetching 复位）或照片为空时守门跳过。
+        DispatchQueue.main.async { [weak self] in self?.insertPhotosLoadingFooterIfNeeded() }
         // r24-#2：代次快照——切号换代后本页旧分页回包在写回前丢弃，
         // 不得把旧账号的下一页追加进新身份的列表；photosFetching 也只由
         // 同代回包复位，不由过期回包乱改。
@@ -1224,6 +1230,10 @@ final class BearyProfilePhotosViewController: UIViewController {
                     // 成功即清持续失败态：尾部重试节（如有）在同一批更新里删掉。
                     let newPhotoCount = strongSelf.photosValue.count
                     let hadRetrySection = strongSelf.photosPageLoadFailed
+                    // 加载脚部随本次回包撤下：批量更新里删节、整表刷新前
+                    // 先清旗（数据源节数以旗为准，见 insertPhotosLoadingFooterIfNeeded）。
+                    let hadLoadingFooterSection = strongSelf.photosFooterLoadingShown
+                    strongSelf.photosFooterLoadingShown = false
                     strongSelf.photosPageLoadFailed = false
                     strongSelf.photosEmptyLoadFailed = false
                     strongSelf.updateTitleAndEmpty()
@@ -1301,7 +1311,7 @@ final class BearyProfilePhotosViewController: UIViewController {
                         return
                     }
                     strongSelf.collectionView.performBatchUpdates({
-                        if hadRetrySection {
+                        if hadRetrySection || hadLoadingFooterSection {
                             strongSelf.collectionView.deleteSections(IndexSet(integer: oldSectionCount))
                         }
                         if newPhotoCount > oldPhotoCount {
@@ -1359,11 +1369,28 @@ final class BearyProfilePhotosViewController: UIViewController {
                         strongSelf.updateTitleAndEmpty()
                     } else if !strongSelf.photosPageLoadFailed {
                         strongSelf.photosPageLoadFailed = true
-                        strongSelf.collectionView.insertSections(IndexSet(integer: strongSelf.photosRetrySectionIndex))
+                        if strongSelf.photosFooterLoadingShown {
+                            // 加载脚部已在位：只把三点翻成重试格，不再插一节。
+                            strongSelf.photosFooterLoadingShown = false
+                            strongSelf.collectionView.reloadSections(IndexSet(integer: strongSelf.photosRetrySectionIndex))
+                        } else {
+                            strongSelf.collectionView.insertSections(IndexSet(integer: strongSelf.photosRetrySectionIndex))
+                        }
                     }
                 }
             }
         }
+    }
+
+    /// 翻页加载脚部插节：仅翻页请求在途且已有照片时插一节，复用
+    /// 失败重试节的下标（两态互斥，共用一节）。willDisplay 里调
+    /// fetchNextPageIfNeeded 时本函数走下一轮（见调用处），避开
+    /// 布局中插节；回包先到、照片为空或节已在位时直接跳过。
+    private func insertPhotosLoadingFooterIfNeeded() {
+        guard photosFetching, !photosValue.isEmpty, !photosPageLoadFailed, !photosFooterLoadingShown else { return }
+        guard collectionView.numberOfSections == photoSections.count else { return }
+        photosFooterLoadingShown = true
+        collectionView.insertSections(IndexSet(integer: photosRetrySectionIndex))
     }
 
     /// 审计三轮 #26：灯箱续页入口——与网格重试按钮走同一入口
@@ -1436,47 +1463,45 @@ final class BearyProfilePhotosViewController: UIViewController {
                 wallLiveVideos[photo.imageKey] = liveKey
             }
         }
-let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex, entryIds: photosValue.map { $0.entry.id })
-        presentedViewer = viewer
-        viewer.initialThumbnail = thumbnail
-        viewer.originFrameInWindow = originFrame
-        // C1：网格和灯箱订阅同一个分页结果——网格续拉的新页追加进灯箱；
-        // 灯箱翻到末尾要下一页时由这里触发网格续拉。
-        viewer.hasMorePages = photosHasMore
-        viewer.onRequestMorePages = { [weak self] in self?.requestNextPageFromLightbox() }
-        // 审计 8 第 1 项：关场回当前照片——凭 (entryId, imageKey) 在实时
-        // 网格里定位，不用灯箱下标（后台回包重排后下标会串到别篇）；
-        // 在视口内才给矩形与焦点视图，格不在视口内时返回 nil、走淡出兜底。
-        // 月份分节后 photoIndex 回的是扁平下标，须经 indexPath(forFlatIndex:)
-        // 换算成（节，项），不能直接当 section 0 的 item。
-        viewer.dismissOriginKeyProvider = { [weak self] entryId, imageKey in
-            guard let self = self, let index = self.photoIndex(forEntryId: entryId, imageKey: imageKey),
-                  let path = self.indexPath(forFlatIndex: index) else { return nil }
-            guard let cell = self.collectionView.cellForItem(at: path) else { return nil }
-            let frame = cell.convert(cell.bounds, to: nil)
-            return (frame: frame, element: cell)
+        presentImageViewer(imageKeys: keys, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex, entryIds: photosValue.map { $0.entry.id }, thumbnail: thumbnail, originFrame: originFrame) { [weak self] viewer in
+            guard let self = self else { return }
+            self.presentedViewer = viewer
+            // C1：网格和灯箱订阅同一个分页结果——网格续拉的新页追加进灯箱；
+            // 灯箱翻到末尾要下一页时由这里触发网格续拉。
+            viewer.hasMorePages = self.photosHasMore
+            viewer.onRequestMorePages = { [weak self] in self?.requestNextPageFromLightbox() }
+            // 审计 8 第 1 项：关场回当前照片——凭 (entryId, imageKey) 在实时
+            // 网格里定位，不用灯箱下标（后台回包重排后下标会串到别篇）；
+            // 在视口内才给矩形与焦点视图，格不在视口内时返回 nil、走淡出兜底。
+            // 月份分节后 photoIndex 回的是扁平下标，须经 indexPath(forFlatIndex:)
+            // 换算成（节，项），不能直接当 section 0 的 item。
+            viewer.dismissOriginKeyProvider = { [weak self] entryId, imageKey in
+                guard let self = self, let index = self.photoIndex(forEntryId: entryId, imageKey: imageKey),
+                      let path = self.indexPath(forFlatIndex: index) else { return nil }
+                guard let cell = self.collectionView.cellForItem(at: path) else { return nil }
+                let frame = cell.convert(cell.bounds, to: nil)
+                return (frame: frame, element: cell)
+            }
+            viewer.onViewEntryAtKey = { [weak self, weak viewer] entryId, imageKey in
+                guard let strongSelf = self, let viewerValue = viewer else { return }
+                // r24-#2：灯箱打开期间身份变了（返回后 viewWillAppear 会重拉），
+                // 此处不再按旧快照开旧账号的日记详情，只关灯箱。
+                guard SessionManager.shared.currentUser?.id == strongSelf.viewerIdAtOpen else {
+                    viewerValue.dismiss(animated: BearyMotion.animated(true), completion: nil)
+                    return
+                }
+                // 审计 8 第 1 项：凭 (entryId, imageKey) 在实时网格里定位目标
+                // 日记；找不到（该图已被重滤撤下）时只关灯箱，不开错篇。
+                guard let index = strongSelf.photoIndex(forEntryId: entryId, imageKey: imageKey) else {
+                    viewerValue.dismiss(animated: BearyMotion.animated(true), completion: nil)
+                    return
+                }
+                let targetEntry = strongSelf.photosValue[index].entry
+                viewerValue.dismiss(animated: BearyMotion.animated(true)) {
+                    strongSelf.onOpenEntry?(targetEntry)
+                }
+            }
         }
-        viewer.modalPresentationStyle = .fullScreen
-        viewer.onViewEntryAtKey = { [weak self, weak viewer] entryId, imageKey in
-            guard let strongSelf = self, let viewerValue = viewer else { return }
-            // r24-#2：灯箱打开期间身份变了（返回后 viewWillAppear 会重拉），
-            // 此处不再按旧快照开旧账号的日记详情，只关灯箱。
-            guard SessionManager.shared.currentUser?.id == strongSelf.viewerIdAtOpen else {
-                viewerValue.dismiss(animated: BearyMotion.animated(true), completion: nil)
-                return
-            }
-            // 审计 8 第 1 项：凭 (entryId, imageKey) 在实时网格里定位目标
-            // 日记；找不到（该图已被重滤撤下）时只关灯箱，不开错篇。
-            guard let index = strongSelf.photoIndex(forEntryId: entryId, imageKey: imageKey) else {
-                viewerValue.dismiss(animated: BearyMotion.animated(true), completion: nil)
-                return
-            }
-            let targetEntry = strongSelf.photosValue[index].entry
-            viewerValue.dismiss(animated: BearyMotion.animated(true)) {
-                strongSelf.onOpenEntry?(targetEntry)
-            }
-        }
-        present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
 
     @objc private func backButtonTapped() {
@@ -1487,13 +1512,13 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
 extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
 
     func numberOfSections(in collectionView: UICollectionView) -> Int {
-        // 体验检查第 11 项：照片按月份分节，末尾一节只在翻页失败时
-        // 存在（持续重试入口，下标即照片节数）。
-        return photoSections.count + (photosPageLoadFailed ? 1 : 0)
+        // 体验检查第 11 项：照片按月份分节，末尾一节只在翻页失败或
+        // 翻页加载中时存在（重试入口／三点脚部共用一节，下标即照片节数）。
+        return photoSections.count + ((photosPageLoadFailed || photosFooterLoadingShown) ? 1 : 0)
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        if section == photosRetrySectionIndex, photosPageLoadFailed {
+        if section == photosRetrySectionIndex, photosPageLoadFailed || photosFooterLoadingShown {
             return 1
         }
         guard section < photoSections.count else { return 0 }
@@ -1501,10 +1526,11 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        if indexPath.section == photosRetrySectionIndex, photosPageLoadFailed {
+        if indexPath.section == photosRetrySectionIndex, photosPageLoadFailed || photosFooterLoadingShown {
             guard let footerValue = collectionView.dequeueReusableCell(withReuseIdentifier: "BearyProfilePhotosLoadMoreFooterCell", for: indexPath) as? BearyProfilePhotosLoadMoreFooterCell else {
                 return UICollectionViewCell()
             }
+            footerValue.configure(isLoading: photosFooterLoadingShown && !photosPageLoadFailed)
             footerValue.onRetry = { [weak self] in self?.retryNextPage() }
             return footerValue
         }
@@ -1532,11 +1558,14 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
     }
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
-        if indexPath.section == photosRetrySectionIndex, photosPageLoadFailed {
-            return CGSize(width: collectionView.bounds.width, height: 44)
+        if indexPath.section == photosRetrySectionIndex, photosPageLoadFailed || photosFooterLoadingShown {
+            // 加载中三点与共享脚部同高 56；失败重试格保持 44。
+            let height: CGFloat = (photosFooterLoadingShown && !photosPageLoadFailed) ? BearyLoadMoreFooterView.height : 44
+            return CGSize(width: collectionView.bounds.width, height: height)
         }
-        let widthValue = collectionView.bounds.width > 0 ? collectionView.bounds.width : view.bounds.width
-        let side = floor((widthValue - 40 - 16) / 3)
+        // 40 + 16 = 56：本页 sectionInset 左右各 16（合计 32），按布局应扣 48；此处 40 与布局对不上，
+        // 疑似从个人页脚部 20 边距抄来。本支只收公式、不改数值，是否改 48 另定。
+        let side = bearyGridSide(width: collectionView.bounds.width, fallbackWidth: view.bounds.width, horizontalDeduction: 40 + 16)
         return CGSize(width: side, height: side)
     }
 
@@ -1551,7 +1580,6 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
-        BearyHaptics.press()
         // 月份分节后重试节下标即照片节数（photosRetrySectionIndex），
         // 不再是写死的 section 1。
         if indexPath.section == photosRetrySectionIndex, photosPageLoadFailed {
@@ -1781,11 +1809,16 @@ final class BearyProfilePhotosMonthHeaderView: UICollectionReusableView {
     }
 }
 
-/// 翻页失败尾部重试格（与本文件同文件，不新增文件）：整格即重试入口，
-/// 文案常驻直到成功或下次翻页；点按只走 VC 的 retryNextPage，不自动重拉。
+/// 翻页尾部格（与本文件同文件，不新增文件）：失败态是整格重试入口，
+/// 文案常驻直到成功或下次翻页，点按只走 VC 的 retryNextPage，不自动重拉；
+/// 加载态复用共享脚部 BearyLoadMoreFooterView（广场同款三个跳动点）。
 final class BearyProfilePhotosLoadMoreFooterCell: UICollectionViewCell {
 
     var onRetry: (() -> Void)?
+
+    /// 加载中复用共享脚部（广场同款三点），不另写一套三点样式；
+    /// 失败态仍用本格原有的重试按钮。
+    private let loadingFooterView = BearyLoadMoreFooterView()
 
     private lazy var retryButton: UIButton = {
         let buttonValue = UIButton(type: .custom)
@@ -1803,7 +1836,15 @@ final class BearyProfilePhotosLoadMoreFooterCell: UICollectionViewCell {
     override init(frame: CGRect) {
         super.init(frame: frame)
         contentView.addSubview(retryButton)
+        contentView.addSubview(loadingFooterView)
+        loadingFooterView.translatesAutoresizingMaskIntoConstraints = false
+        loadingFooterView.onRetry = { [weak self] in self?.onRetry?() }
+        loadingFooterView.isHidden = true
         NSLayoutConstraint.activate([
+            loadingFooterView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            loadingFooterView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            loadingFooterView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            loadingFooterView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             retryButton.topAnchor.constraint(equalTo: contentView.topAnchor),
             retryButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             retryButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
@@ -1818,6 +1859,22 @@ final class BearyProfilePhotosLoadMoreFooterCell: UICollectionViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         onRetry = nil
+        loadingFooterView.setState(.hidden)
+        loadingFooterView.isHidden = true
+        retryButton.isHidden = false
+    }
+
+    /// 加载态亮共享脚部的三个跳动点，失败态回到本格重试按钮。
+    func configure(isLoading: Bool) {
+        if isLoading {
+            retryButton.isHidden = true
+            loadingFooterView.isHidden = false
+            loadingFooterView.setState(.loading)
+        } else {
+            loadingFooterView.setState(.hidden)
+            loadingFooterView.isHidden = true
+            retryButton.isHidden = false
+        }
     }
 
     @objc private func retryButtonTapped() {
