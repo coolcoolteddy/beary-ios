@@ -170,7 +170,7 @@ final class BearyPlusPageViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        crownView.start()
+        if isPlusValue { crownView.start() } else { crownView.stop() }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
