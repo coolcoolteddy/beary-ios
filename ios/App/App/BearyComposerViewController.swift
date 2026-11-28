@@ -866,7 +866,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     ///   （>30 字服务端 400），前端输入时即截断到 30 字，不靠服务端报错。
     /// - 显示位置与样式：卡片与详情已有标题行（16.5 粗体，空标题整行
     ///   隐藏、不占位），本支不改其样式；编辑器输入框 17 粗体、占位灰字
-    ///   “给这篇日记起个标题（可选）”，空 = 无标题。
+    ///   “给这篇日记起个标题”，空 = 无标题。
     /// - 空态：字段留空即无标题；卡片/详情空标题不占位、不显“日记”占位；
     ///   列表行（那年今日/对话原篇、地图列表、星图 sheet）的“无标题又无
     ///   正文显日记”回退一并去掉，改为空串（只剩日期/副文案可读）。
@@ -1877,7 +1877,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         headlineField.returnKeyType = .next
         headlineField.delegate = self
         headlineField.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
-        headlinePlaceholderLabel.text = "给这篇日记起个标题（可选）"
+        headlinePlaceholderLabel.text = "给这篇日记起个标题"
         headlinePlaceholderLabel.font = headlinePlaceholderFont
         headlinePlaceholderLabel.textColor = BearyColors.gray
         headlinePlaceholderLabel.isUserInteractionEnabled = false
