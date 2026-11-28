@@ -1480,6 +1480,15 @@ final class BearyChromeViewController: UIViewController {
             } else {
                 BearyEntrySync.shared.noteLoggedOut()
             }
+            // 我页 tab 跟账号走：重建判断放 sessionFlipArmed 早退之前——
+            // 进程内首个 onUserChanged 也可能是翻转（登录回另一号），
+            // 只广播不重建会让 tab 永久停在旧号。判断本身幂等：冷启动
+            // 首个 /me 回同一号时 profileBuiltForUserId 与回包 id 相等，
+            // 不重建、不多一次加载；其余翻转刷新仍由早退跳过（见 sessionFlipArmed 注释）。
+            // 只看 user != nil：首个回包是 nil（401）时沿用旧口径，不重建。
+            if user != nil, self.profileVC != nil, self.profileBuiltForUserId != user?.id {
+                self.rebuildProfileVC()
+            }
             // 首次同步只恢复态：礼物门控由 applyLoginState 从 refreshMe 结果复用，不再单独拉；翻转刷新跳过（见 sessionFlipArmed 注释）。
             if !self.sessionFlipArmed {
                 self.sessionFlipArmed = true

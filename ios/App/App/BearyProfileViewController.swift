@@ -6835,6 +6835,12 @@ class BearyProfileViewController: UIViewController {
         if wasOwn, currentTab != .saved {
             loadTab(forceReload: true)
         }
+        // 资料头补发：广播已推 viewerGeneration +1，在途资料回包会被守卫
+        // 静默丢弃；本人页 profile 仍为 nil 时补一次 loadProfile()，
+        // 新请求带新代次，不会被自己的守卫丢弃。已加载时不补发。
+        if wasOwn, profile == nil {
+            loadProfile()
+        }
         // 审计 r7 ⑥：只修 modal 他人主页（!wasOwn）——旧 can 立即清掉，
         // 按钮先藏，不闪旧账号的结果；有新账号时按新会话重查（refreshDMCan
         // 内同样凭观看者代次守卫回包）；退出到游客（无新账号）只清不查。
