@@ -235,7 +235,8 @@ final class BearyDetailViewController: UIViewController {
     /// 回应行一律全宽（左右与内容列齐平），不再缩进到昵称位置。
     private let bodyStack = BearyPassThroughStackView()
     private var headerStackTopConstraint: NSLayoutConstraint?
-    /// 作者行顶对齐约束：authorRow.top == avatarButton.top（用户名顶部与头像顶部平行）。
+    /// 作者行顶对齐约束：authorRow.top == avatarButton.top − lift（昵称墨顶贴头像顶，
+    /// lift 见 authorRowTopLift；用户名顶部与头像顶部平行，Li 2026-11-27 定）。
     /// 只在 recipientRow 藏时激活（见 updateDiaryStackSpacing）；
     /// @ 行显时停用、改走头行顶约束。
     private var authorRowTopConstraint: NSLayoutConstraint?
@@ -954,6 +955,10 @@ final class BearyDetailViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // 昵称墨顶贴头像顶（Li 2026-11-27 定）：updateDiaryStackSpacing 已按字号度量
+        // 上抬过一次，此处按实测帧再校准残差；残差 ≤0.5pt 不动，避免布局循环。
+        // 放宽度守卫之前：宽度不变时布局仍须校准，宽度守卫后的逻辑与此无关。
+        correctAuthorRowTopAlignment()
         // 内联 GIF 覆盖层：label 宽变或文本重建后跟帧刷新（签名未变时内部短路，不重载）。
         refreshGIFOverlays()
         // 详情重做：两分支互斥整组开关（状态不变不开关，避免布局循环）。
@@ -1041,7 +1046,8 @@ final class BearyDetailViewController: UIViewController {
         // 一旦某一路异常即全崩，故改本地常量激活、彻底去掉强制解包，行为不变。
         let narrowLeading = columnNarrowLeading
         let narrowTrailing = columnNarrowTrailing
-        // 批 B：头像顶 16；头行顶：无 @ 行时作者行钉头像顶（头行顶约束保持激活、16）、
+        // 批 B：头像顶 16；头行顶：无 @ 行时作者行钉头像顶再上抬 lift（墨顶贴头像顶，
+        // 头行顶约束保持激活、16 − lift，见 updateDiaryStackSpacing／authorRowTopLift）、
         // 有 @ 行时 17，见 updateDiaryStackSpacing（@ 行显隐的 1pt 差值保留）。
         // 头行右缩进恒 0：⋯ 已挪到顶栏（与返回钮平行），作者行不再给 ⋯ 留位，
         // 日期为行内最右元素；正文栈左右与内容列齐平、右缩进恒 0。
@@ -1173,7 +1179,8 @@ final class BearyDetailViewController: UIViewController {
         // 让两端先同属 authorRow 层级，再激活皇冠约束才安全。
         headerStack.addArrangedSubview(authorRow)
 
-        // 作者行顶对齐约束：初始不激活，只在 @ 行藏时启用（见 updateDiaryStackSpacing）。
+        // 作者行顶对齐约束：初始不激活，只在 @ 行藏时启用（见 updateDiaryStackSpacing，
+        // constant 在彼处按 lift 置 −lift，头行顶约束同量置 16 − lift）。
         // 建在此处：authorRow 已入栈、avatarButton 已入内容列，两端已同属内容列层级。
         authorRowTopConstraint = authorRow.topAnchor.constraint(equalTo: avatarButton.topAnchor)
 
@@ -1464,6 +1471,34 @@ final class BearyDetailViewController: UIViewController {
         emoteFlowHeight?.isActive = true
     }
 
+    /// 作者行上抬量：名字墨顶（cap 顶）贴头像顶所需的上抬值。
+    /// 行内 .firstBaseline 栈的公共基线由皇冠容器定（纯 UIView、基线即底边，
+    /// 高 == 名字钮高），名字钮顶比行顶低 (钮高 − ascender)，墨顶再低
+    /// (ascender − capHeight)，合计低 (钮高 − capHeight)；整行上抬该量，
+    /// 墨顶即贴头像顶。由钮 intrinsic 高与字号度量算，跟随动态字号；
+    /// 残差由 correctAuthorRowTopAlignment 按实测帧再校准。
+    private func authorRowTopLift() -> CGFloat {
+        let nameFont = nameButton.titleLabel?.font ?? BearyDynamicType.cardTitleFont()
+        return max(0, nameButton.intrinsicContentSize.height - nameFont.capHeight)
+    }
+
+    /// 作者行顶对齐残差校准：按实测帧量名字墨顶与头像顶的差，补足
+    /// authorRowTopLift() 的度量残差。只在 @ 行藏、作者行顶约束激活时做；
+    /// 头行顶与作者行顶两条约束同量移动；残差 ≤0.5pt 不动，避免布局循环。
+    private func correctAuthorRowTopAlignment() {
+        guard recipientRow.isHidden, authorRowTopConstraint?.isActive == true else { return }
+        guard nameButton.bounds.width > 0, avatarButton.bounds.width > 0 else { return }
+        let nameFont = nameButton.titleLabel?.font ?? BearyDynamicType.cardTitleFont()
+        let nameButtonTop = nameButton.convert(CGPoint.zero, to: contentColumnView).y
+        let capTop = nameButtonTop + (nameFont.ascender - nameFont.capHeight)
+        let residual = capTop - avatarButton.frame.minY
+        guard abs(residual) > 0.5 else { return }
+        let currentLift = -(authorRowTopConstraint?.constant ?? 0)
+        let newLift = currentLift + residual
+        authorRowTopConstraint?.constant = -newLift
+        headerStackTopConstraint?.constant = 16 - newLift
+    }
+
     /// 首页 updateDiaryStackSpacing 同款对照表（详情无折叠钮，故正文后恒取 14）：
     /// @→作者 4、作者→限时 4；头行→正文栈 6（紧贴用户名下方，取规范标题→正文档 6；
     /// 原 16 有标题／14 无标题，该槽位改动须走规范同步），由正文栈顶
@@ -1486,15 +1521,21 @@ final class BearyDetailViewController: UIViewController {
         // 行被拉长后基线本身随拉伸下移，停用顶钉才动得了名字。顶钉已于 2026-11-22 删除
         // （见 buildLayout），此处不再留它；正文顶仍由两条 required ≥ 定在
         // max(头像底，头行底) + 6，行为不变。
-        // 行内名字墨顶比行顶低数 pt 是字体 leading＋皇冠容器基线（与卡片同款几何），不在本次范围。
+        // 行内名字墨顶比行顶低数 pt 是字体 leading＋皇冠容器基线（与卡片同款几何）：
+        // 136 实测墨顶比头像顶低约 10.7pt——行框顶钉头像顶只是框对齐，墨顶仍低。
+        // 2026-11-27 Li 定：昵称墨顶贴头像圆顶边，整行上抬 authorRowTopLift() 的量
+        // （头行顶与作者行顶两条约束同量移动，保持一致不冲突）；残差由
+        // viewDidLayoutSubviews 按实测帧再校准。
         if recipientRow.isHidden {
             if recipientRow.superview != nil {
                 headerStack.removeArrangedSubview(recipientRow)
                 recipientRow.removeFromSuperview()
             }
             headerStackTopConstraint?.isActive = true
-            headerStackTopConstraint?.constant = 16
             authorRowTopConstraint?.isActive = true
+            let lift = authorRowTopLift()
+            headerStackTopConstraint?.constant = 16 - lift
+            authorRowTopConstraint?.constant = -lift
         } else {
             if recipientRow.superview == nil {
                 headerStack.insertArrangedSubview(recipientRow, at: 0)
