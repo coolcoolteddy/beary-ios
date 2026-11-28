@@ -586,10 +586,13 @@ class BearyFeedViewController: UIViewController {
     private func updateEmptyCopyForSegment() {
         if feedFollowingSegment {
             feedEmptyTitleLabel?.text = "还没有关注的日记"
-            feedEmptySubtitleLabel?.text = "你关注的人的日记会出现在这里"
+            // 展示审计 G1-15：删副标题，标题已自解释（底子只定标题）。
+            feedEmptySubtitleLabel?.text = nil
+            feedEmptySubtitleLabel?.isHidden = true
         } else {
             feedEmptyTitleLabel?.text = "还没有公开的日记"
             feedEmptySubtitleLabel?.text = "写一篇并公开试试"
+            feedEmptySubtitleLabel?.isHidden = false
         }
     }
 
