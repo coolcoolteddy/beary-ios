@@ -175,6 +175,10 @@ class BearyEditProfileViewController: UIViewController {
     private var signatureLoaded = false
     private var signatureEdited = false
     private var signatureFetchStarted = false
+    /// 改昵称防抖预检（数据同步审阅 #10）：输入停 0.6s 后调 search
+    /// 精确匹配他人的显示名；仅提示、永不拦保存。
+    private var namePrecheckWorkItem: DispatchWorkItem?
+    private var namePrecheckTask: URLSessionDataTask?
     /// G3：handle POST 成功后立即记下的已提交 handle（initialHandle 是 let，不可改；
     /// 重试时以它为准，不再重发已成功的 handle 步）。
     private var submittedHandle: String?
@@ -401,6 +405,32 @@ class BearyEditProfileViewController: UIViewController {
         return labelValue
     }()
 
+    /// 改昵称内联提示（数据同步审阅 #10）：名字行下方的内联提示，与
+    /// handle 行下方的 hintWrap 同款位置（标签 58＋间隙 14 对齐输入框）；
+    /// 预检命中／上次保存失败复现时显示，其余时间整行隐藏（stack 会收起）。
+    private let nameHintLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.captionFont()
+        labelValue.textColor = BearyColors.destructiveText
+        labelValue.numberOfLines = 0
+        labelValue.lineBreakMode = .byCharWrapping
+        return labelValue
+    }()
+    private var nameHintWrap: UIView?
+    /// 签名行下方的内联提示：只用于上次保存失败复现（signature_too_long），
+    /// 与名字行同款；签名无输入时预检。
+    private let signatureHintLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.captionFont()
+        labelValue.textColor = BearyColors.destructiveText
+        labelValue.numberOfLines = 0
+        labelValue.lineBreakMode = .byCharWrapping
+        return labelValue
+    }()
+    private var signatureHintWrap: UIView?
+
     // MARK: - F12 行（主页链接；id 由 /me 补）
     // C4：邮箱行与账户与安全行已删除，onOpenAccount 回调、emailLabel、
     // accountRowButton、openAccountPage 一并移除（全仓 grep 确认无调用方）。
@@ -460,6 +490,8 @@ class BearyEditProfileViewController: UIViewController {
         nameField.returnKeyType = .next
         signatureField.returnKeyType = .next
         handleField.returnKeyType = .done
+        // 改昵称防抖预检（数据同步审阅 #10）：与签名行的 editingChanged 同款接线。
+        nameField.addTarget(self, action: #selector(nameFieldChanged), for: .editingChanged)
         signatureField.addTarget(self, action: #selector(signatureFieldChanged), for: .editingChanged)
         scrollView.keyboardDismissMode = .onDrag
         NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
@@ -506,6 +538,9 @@ class BearyEditProfileViewController: UIViewController {
             fetchInitialSignature()
             refreshLinkRowFromMe()
         }
+        // 上次保存失败复现（数据同步审阅 #10）：值仍对得上即在字段旁
+        // 内联复现原因；值已变则丢弃记录。
+        restoreLastSaveFailureHint()
     }
 
     /// F12：/me 刷新链接行（首启与复制重试共用）：成功记 id、失败记
@@ -580,6 +615,9 @@ class BearyEditProfileViewController: UIViewController {
                     if !strongSelf.signatureEdited {
                         strongSelf.signatureField.text = profile.signature
                     }
+                    // 上次保存失败复现（数据同步审阅 #10）：签名初值刚拉到，
+                    // 此时才能核对签名失败记录的值是否对得上。
+                    strongSelf.restoreLastSaveFailureHint()
                 case .failure:
                     break
                 }
@@ -589,6 +627,114 @@ class BearyEditProfileViewController: UIViewController {
 
     @objc private func signatureFieldChanged() {
         signatureEdited = true
+    }
+
+    /// 本页的账号 id（入口已确认的优先，否则本地会话）。
+    private var currentAccountId: Int? {
+        return fetchedUserId ?? SessionManager.shared.currentUser?.id
+    }
+
+    /// 改昵称防抖预检（数据同步审阅 #10）：输入停 0.6s 后调 search
+    /// 精确匹配他人的显示名；仅提示、永不拦保存。值回到记录值时复现
+    /// 上次失败提示，不再预检。
+    @objc private func nameFieldChanged() {
+        namePrecheckWorkItem?.cancel()
+        namePrecheckTask?.cancel()
+        let name = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if let accountId = currentAccountId,
+           let record = BearyEditFailureStore.load(accountId: accountId),
+           record.field == "name", record.value == name {
+            showNameHint(message: profileErrorMessage(err: .server(record.code, nil)))
+            return
+        }
+        hideNameHint()
+        guard !name.isEmpty, name != (committedDisplayName ?? ""), name.utf16.count <= 30,
+              let myId = currentAccountId, !isSaving else { return }
+        let workItem = DispatchWorkItem { [weak self] in self?.runNamePrecheck(name: name, myId: myId) }
+        namePrecheckWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: workItem)
+    }
+
+    /// 昵称预检：search 精确匹配他人的显示名；无服务端 check-name 接口，
+    /// 有匹配是可靠的“已被使用”，无匹配只是提示性结论，保存时 PUT 仍是权威。
+    private func runNamePrecheck(name: String, myId: Int) {
+        guard !isSaving else { return }
+        namePrecheckTask?.cancel()
+        namePrecheckTask = BearyAPI.shared.search(q: name) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                // 代次守卫：回包时输入已变即丢弃，不把旧结论贴到新值上。
+                guard (self.nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == name else { return }
+                switch result {
+                case .success(let data):
+                    let taken = (data.users ?? []).contains { $0.displayName == name && $0.id != nil && $0.id != myId }
+                    if taken {
+                        self.showNameHint(message: NSLocalizedString("editprofile.name_taken_hint", comment: ""))
+                    } else {
+                        self.hideNameHint()
+                    }
+                case .failure:
+                    // 预检失败不提示：保存时服务端仍是权威，不拿失败吓用户。
+                    break
+                }
+            }
+        }
+    }
+
+    private func showNameHint(message: String) {
+        nameHintLabel.text = message
+        nameHintWrap?.isHidden = false
+    }
+
+    private func hideNameHint() {
+        nameHintWrap?.isHidden = true
+    }
+
+    private func showSignatureHint(message: String) {
+        signatureHintLabel.text = message
+        signatureHintWrap?.isHidden = false
+    }
+
+    /// 上次保存失败复现（数据同步审阅 #10）：记录里的值仍等于当前字段值
+    /// 时，在字段旁内联复现原因；值已变（别处改过／已重填）则丢弃记录。
+    /// 签名初值尚未拉到时不判：等 fetchInitialSignature 回来再复核，
+    /// 不提前清记录。
+    private func restoreLastSaveFailureHint() {
+        guard let accountId = currentAccountId,
+              let record = BearyEditFailureStore.load(accountId: accountId) else { return }
+        switch record.field {
+        case "name":
+            guard (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == record.value else {
+                BearyEditFailureStore.clear(accountId: accountId)
+                return
+            }
+            showNameHint(message: profileErrorMessage(err: .server(record.code, nil)))
+        case "signature":
+            guard initialSignature != nil else { return }
+            guard (signatureField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == record.value else {
+                BearyEditFailureStore.clear(accountId: accountId)
+                return
+            }
+            showSignatureHint(message: profileErrorMessage(err: .server(record.code, nil)))
+        default:
+            BearyEditFailureStore.clear(accountId: accountId)
+        }
+    }
+
+    /// 失败态持久化（数据同步审阅 #10）：只记有内联展示位的字段
+    /// （名字／签名）的服务端码失败；用户名／头像失败无展示位，仍只走
+    /// toast（现有行为），不记——不拿无位失败顶掉有位记录。
+    private func persistProfileSaveFailure(err: APIError, snapshot: SaveSnapshot) {
+        guard case .server(let code, _) = err,
+              let accountId = currentAccountId else { return }
+        switch code {
+        case "name_taken", "name_too_long", "name_no_text":
+            BearyEditFailureStore.record(field: "name", code: code, value: snapshot.displayName, accountId: accountId)
+        case "signature_too_long":
+            BearyEditFailureStore.record(field: "signature", code: code, value: snapshot.signatureValue, accountId: accountId)
+        default:
+            break
+        }
     }
 
     /// 批 D 签名改动判定（trim 后比较）：已拉到初值时与初值比；未拉到初值时
@@ -646,6 +792,24 @@ class BearyEditProfileViewController: UIViewController {
     }
 
     /// F15：表单行包容器（网页 ed-row 口径：上下 15 内边距）。
+    /// 字段内联提示行（数据同步审阅 #10）：与 handle 行下方的 hintWrap
+    /// 同款位置与上下边距（文案左缘 72 = 标签 58＋间隙 14，与输入框左缘
+    /// 对齐）；默认隐藏，stack 会收起。约束只用 constant，不走 stack
+    /// spacing（lint 口径）。
+    private func makeFieldHintWrap(label: UILabel) -> UIView {
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        wrap.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 72),
+            label.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+            label.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 8),
+            label.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -8),
+        ])
+        wrap.isHidden = true
+        return wrap
+    }
+
     private func makeFormRowWrap(_ inner: UIView) -> UIView {
         let wrap = UIView()
         wrap.translatesAutoresizingMaskIntoConstraints = false
@@ -741,6 +905,12 @@ class BearyEditProfileViewController: UIViewController {
         ])
         // C4：只读邮箱行已删除（标签 + 灰值 + 「不在这里修改」整行移除；
         // 邮箱仍在设置页 ID 卡呈现，不在这里改）。
+        // 改昵称／签名内联提示行（数据同步审阅 #10）：各贴在自己行下方，
+        // 与 handle 行下方的 hintWrap 同款“行＋提示行＋分隔线”结构。
+        let nameHintWrapValue = makeFieldHintWrap(label: nameHintLabel)
+        nameHintWrap = nameHintWrapValue
+        let signatureHintWrapValue = makeFieldHintWrap(label: signatureHintLabel)
+        signatureHintWrap = signatureHintWrapValue
         let formStack = UIStackView()
         formStack.translatesAutoresizingMaskIntoConstraints = false
         formStack.axis = .vertical
@@ -748,8 +918,10 @@ class BearyEditProfileViewController: UIViewController {
         formStack.alignment = .fill
         formStack.addArrangedSubview(makeFormSeparator())
         formStack.addArrangedSubview(makeFormRowWrap(nameRow))
+        formStack.addArrangedSubview(nameHintWrapValue)
         formStack.addArrangedSubview(makeFormSeparator())
         formStack.addArrangedSubview(makeFormRowWrap(signatureRow))
+        formStack.addArrangedSubview(signatureHintWrapValue)
         formStack.addArrangedSubview(makeFormSeparator())
         formStack.addArrangedSubview(makeFormRowWrap(handleRow))
         formStack.addArrangedSubview(hintWrap)
@@ -1446,6 +1618,11 @@ class BearyEditProfileViewController: UIViewController {
                            strongSelf.submittedHandle == snapshot.handle {
                             message += NSLocalizedString("editprofile.handle_saved_suffix", comment: "")
                         }
+                        // 失败态持久化（数据同步审阅 #10）：记下 {字段，服务端码，
+                        // 提交值}，回到编辑页时在字段旁内联复现原因。
+                        if let snapshot = strongSelf.savingSnapshot {
+                            strongSelf.persistProfileSaveFailure(err: err, snapshot: snapshot)
+                        }
                         strongSelf.finishSavingWithError(message: message)
                     }
                 }
@@ -1458,6 +1635,10 @@ class BearyEditProfileViewController: UIViewController {
     }
 
     private func finishSavingSuccess(profileResponse: BearyProfileUpdateResponse?) {
+        // 失败态持久化（数据同步审阅 #10）：保存成功即清上次失败记录。
+        if let accountId = currentAccountId {
+            BearyEditFailureStore.clear(accountId: accountId)
+        }
         // 三件套第 3 项：先把已提交快照写进 SessionManager.currentUser
         // 统一快照（名字 / 用户名 / 头像），再走 onSaved 通知容器刷新个人页
         // 与信息流——下次打开编辑资料的初值即新值，不再是旧值。
@@ -1911,5 +2092,48 @@ extension BearyEditProfileViewController: UITextFieldDelegate {
             textField.resignFirstResponder()
         }
         return true
+    }
+}
+
+// MARK: - 上次保存失败（数据同步审阅 #10）
+
+/// 上次保存失败：{字段，服务端码，提交值}，落盘一份（最新一次为准）；
+/// 回到编辑页时值仍对得上即在字段旁内联复现原因；保存成功即清。
+/// DM 待发文件同款：Application Support 下按账号分文件，JSON 编解码、原子写。
+private enum BearyEditFailureStore {
+    struct Record: Codable {
+        var field: String
+        var code: String
+        var value: String
+        var accountId: Int
+        var atMs: Int
+    }
+
+    private static let fileName = "beary_edit_failure"
+
+    static func record(field: String, code: String, value: String, accountId: Int) {
+        let record = Record(field: field, code: code, value: value, accountId: accountId, atMs: Int(Date().timeIntervalSince1970 * 1000))
+        guard let url = fileURL(accountId: accountId),
+              let data = try? JSONEncoder().encode(record) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    static func load(accountId: Int) -> Record? {
+        guard let url = fileURL(accountId: accountId),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(Record.self, from: data)
+    }
+
+    static func clear(accountId: Int) {
+        guard let url = fileURL(accountId: accountId) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    private static func fileURL(accountId: Int) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        if !FileManager.default.fileExists(atPath: base.path) {
+            try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
+        }
+        return base.appendingPathComponent("\(fileName)_\(accountId).json")
     }
 }
