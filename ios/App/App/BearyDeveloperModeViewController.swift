@@ -77,7 +77,6 @@ final class BearyDeveloperModeViewController: BearySettingsSubpageViewController
                 BearyDevPreviewState.fakeDay = nil
                 BearyDeveloperMode.shared.postChange(kind: "date")
                 self?.resetDatePicker()
-                BearyToast.show(in: self?.view ?? UIView(), message: "已回到今天")
             },
         ]))
 
