@@ -5176,24 +5176,24 @@ enum BearyQuoteGate {
 
     /// 编辑器新发布门禁：宿主将公开且含私密引用时拦截。自己来源三选一
     /// （一并公开／删除引用并公开／保持私密发布），他人来源只剩两项
-    /// （删除引用并公开／保持私密发布）；“取消”仅关弹窗、不发请求。
+    /// （删除引用并公开／保持私密发布）；下滑／点外关闭仅关弹窗、不发请求
+    /// （调 onCancel 解冻发布冻结）。
     static func gateEditorPublish(from vc: UIViewController, sourceIsMine: Bool, sourceIsFriendsOnly: Bool = false, onPublishTogether: @escaping () -> Void, onDeleteQuote: @escaping () -> Void, onKeepPrivate: @escaping () -> Void, onCancel: (() -> Void)? = nil) {
         // 审计 2026-11-02 弹窗组：present 前统一守卫；未过则不弹、不发请求，用户可重试。
         // “保持私密发布”含义固定：本篇改回私密再发（引用保留），与切公开门禁的
         // “放弃公开”（不发请求）不同；标题／正文按来源私密／仅好友分。
-        // 第 25 轮 11 项：取消／无选择关闭时调 onCancel（调用方据此解冻发布冻结）。
+        // 第 25 轮 11 项：无选择关闭时调 onCancel（调用方据此解冻发布冻结）。
         guard BearyPresentGuard.canPresent(from: vc) else { return }
         let sourceWord = sourceIsFriendsOnly ? "仅好友" : "私密"
         // 审计 r16 第 16 项：改走共享确认底 sheet（原系统 UIAlertController
-        // .alert，标题/正文/按钮文案一字不动；行顺序按底 sheet 口径：确认行
-        // 在上、取消行单独在下）。叉叉/遮罩/下滑关闭与点“取消”同义（不发请求）。
+        // .alert，标题/正文/按钮文案一字不动）。叉叉/遮罩/下滑关闭仅关弹窗、
+        // 不发请求（调 onCancel 解冻发布冻结）。
         var actions: [BearyConfirmSheet.Action] = []
         if sourceIsMine {
             actions.append(BearyConfirmSheet.Action(title: "一并公开原日记", style: .default) { onPublishTogether() })
         }
         actions.append(BearyConfirmSheet.Action(title: "删除引用并公开", style: .default) { onDeleteQuote() })
         actions.append(BearyConfirmSheet.Action(title: "保持私密发布", style: .default) { onKeepPrivate() })
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel, handler: onCancel))
         BearyConfirmSheet.show(
             from: vc,
             title: "引用的日记还是\(sourceWord)",

@@ -10,12 +10,11 @@ import UIKit
 // 进场动画落位；viewDidLoad 时 view 尚未挂窗、首次响应者可能静默失败，
 // 见 BearyComposerPickers；viewDidAppear 再补一次当兜底）。键盘 Return（.done）
 // 走确定同款路径。
-// 按钮顺序按 BearyConfirmSheet 口径：非取消在上、取消垫底（确定、清除在上，
-// 取消垫底）；清除钮只在传了 onClear 时出现。点按按钮先关 sheet、关完再跑
+// 按钮组：确定在上，清除钮只在传了 onClear 时出现；点按按钮先关 sheet、关完再跑
 // 回调（回调里再弹 sheet 或出 toast 时不叠在正在退场的 sheet 上）；
 // 抓手下滑/遮罩点按关闭只关 sheet、不跑任何回调。
 // 滚动结构：表单区走 UIScrollView＋内容容器（标题→说明→输入框在滚动区内，
-// 确定/清除/取消按钮组固定在底部），超高时表单纵向滚动、按钮组贴底不动；
+// 确定/清除按钮组固定在底部），超高时表单纵向滚动、按钮组贴底不动；
 // updatePreferredContentSize 改为滚动内容高＋按钮组高分别相加（滚动区无固有高，
 // 整体系 fitting 算不出高）。
 // 输入框走共享 BearyInputContainer（surface2 底、圆角 12、48 最小高、聚焦阴影，
@@ -140,13 +139,6 @@ final class BearyInputSheetViewController: UIViewController, BearySystemSheetSiz
             buttonStack.addArrangedSubview(clearButton)
             clearButton.heightAnchor.constraint(equalToConstant: clearButton.style.height).isActive = true
         }
-        let cancelButton = BearyButton(style: .secondaryOutline(.regular))
-        cancelButton.translatesAutoresizingMaskIntoConstraints = false
-        cancelButton.setTitle("取消", for: .normal)
-        cancelButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        cancelButton.bearyAddPressFeedback()
-        buttonStack.addArrangedSubview(cancelButton)
-        cancelButton.heightAnchor.constraint(equalToConstant: cancelButton.style.height).isActive = true
         view.addSubview(buttonStack)
 
         // 滚动区底边贴按钮组顶边（999：横屏小屏键盘顶过低、按钮组本身已超出
@@ -259,10 +251,6 @@ final class BearyInputSheetViewController: UIViewController, BearySystemSheetSiz
         dismiss(animated: BearyMotion.animated(true)) {
             handler?()
         }
-    }
-
-    @objc private func closeTapped() {
-        dismiss(animated: BearyMotion.animated(true))
     }
 }
 

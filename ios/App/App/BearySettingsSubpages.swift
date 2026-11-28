@@ -877,7 +877,6 @@ final class BearyOfflineSaveViewController: BearySettingsSubpageViewController {
                 BearyToast.show(in: self.view, message: cleared ? "已清除全部离线保存" : "清除失败，请重试")
                 self.render()
             },
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 }

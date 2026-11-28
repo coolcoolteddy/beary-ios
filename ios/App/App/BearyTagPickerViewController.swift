@@ -4,7 +4,7 @@ import UIKit
 // 写日记页功能栏 # 钮弹出：挑旧标签（我用过的，按篇数倒序）或输入新建；
 // 多选，点确定回传选中列。走系统底部 sheet（UISheetPresentationController，
 // 见 BearySystemSheet）。无叉叉关闭（弹窗规矩 2026-11-17：
-// 关闭走抓手下滑／点外收起／取消钮）；点确定先关 sheet、关完再跑回调。
+// 关闭走抓手下滑／点外收起，不设取消钮）；点确定先关 sheet、关完再跑回调。
 // 部署目标 iOS 16.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 enum BearyTagPicker {
@@ -34,7 +34,7 @@ final class BearyTagPickerViewController: UIViewController, BearySystemSheetSizi
 
     private let onConfirm: ([String]) -> Void
 
-    /// 只解析一次：点按任一按钮即定局，后到的直接丢弃，防确定/取消双跑。
+    /// 只解析一次：点确定即定局，防确定重复点按。
     private var resolved = false
 
     /// 按钮组底边约束：停靠键盘时由 BearySheetKeyboardAvoidance 按键盘顶升改常量。
@@ -162,13 +162,6 @@ final class BearyTagPickerViewController: UIViewController, BearySystemSheetSizi
         confirmButton.bearyAddPressFeedback()
         buttonStack.addArrangedSubview(confirmButton)
         confirmButton.heightAnchor.constraint(equalToConstant: confirmButton.style.height).isActive = true
-        let cancelButton = BearyButton(style: .secondaryOutline(.regular))
-        cancelButton.translatesAutoresizingMaskIntoConstraints = false
-        cancelButton.setTitle("取消", for: .normal)
-        cancelButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        cancelButton.bearyAddPressFeedback()
-        buttonStack.addArrangedSubview(cancelButton)
-        cancelButton.heightAnchor.constraint(equalToConstant: cancelButton.style.height).isActive = true
         view.addSubview(buttonStack)
 
         let tagsAreaHeight = tagsAreaView.heightAnchor.constraint(equalToConstant: Self.rowHeight)
@@ -370,10 +363,6 @@ final class BearyTagPickerViewController: UIViewController, BearySystemSheetSizi
         dismiss(animated: BearyMotion.animated(true)) {
             handler(tags)
         }
-    }
-
-    @objc private func closeTapped() {
-        dismiss(animated: BearyMotion.animated(true))
     }
 }
 
