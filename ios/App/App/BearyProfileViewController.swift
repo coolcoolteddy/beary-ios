@@ -6983,6 +6983,12 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.tabLoadMore = false
                     strongSelf.refreshFooter()
                     strongSelf.endCustomPullRefresh()
+                    // r1-1 同款（handleTabResult 代次丢弃分支同款）：代次丢弃时也消费待办——切号翻转期间立的强制刷新
+                    // 意愿，否则待办悬空、列表不再补拉。loadTab 入口清标记（在途
+                    // 则重立待办），新请求带当前代次，不会被自己的守卫丢弃，不循环。
+                    if strongSelf.tabPendingForceReload {
+                        strongSelf.loadTab(forceReload: true)
+                    }
                     return
                 }
                 // 切走即丢弃（handleTabResult 的 109 守卫同款），只清加载旗。
