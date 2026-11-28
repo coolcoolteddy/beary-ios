@@ -4540,6 +4540,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         metaRowStack.isHidden = locationMetaButton.isHidden && weatherChipButton.isHidden
         updatePreferredContentSize()
+        // 元信息行在内容栈最底部、其高度计入 updateTextViewHeight 的 othersHeight：
+        // 定位选定/清除、天气自动填回都会改它（显隐或 chip 高），却只调本函数、
+        // 从不重算正文高，正文高滞留旧值、编辑器底部多一段死空白（定位后打字即见）。
+        // 在此统一重算（恢复/重置流程已有各自的重算，本处再算一次只走 0.5pt 防抖门限）。
+        updateTextViewHeight()
         guard animated, !UIAccessibility.isReduceMotionEnabled, view.window != nil,
               !weatherChipButton.isHidden, hadLocation != hasLocation,
               chipFrameBefore.width > 0 else {
