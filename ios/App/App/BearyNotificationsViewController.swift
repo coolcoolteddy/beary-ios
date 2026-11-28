@@ -268,6 +268,13 @@ final class BearyNotificationsViewController: UIViewController {
     private var pollTimer: Timer?
     private var loginPromptShown = false
     private var visibleState: VisibleState = .loading
+    /// 首拉骨架行数（DM 会话行骨架同款 3 行）。
+    private let skeletonRowCount = 3
+    /// 首拉骨架是否在屏——与 .loading 同条件（首拉在途、无旧数据、尚未显示过一页）；
+    /// 有旧数据／缓存秒显时不出骨架，保留内容后台刷新。
+    private var showingSkeleton: Bool {
+        visibleState == .loading
+    }
     private var hasDisplayedPage = false
     /// 审计四轮增量 02：通知快照回填代次——切号／401 清场即 +1，在途旧号
     /// 快照回包凭此丢弃（只比账号不够——切走又切回同一账号时 uid 相同，
@@ -422,6 +429,7 @@ final class BearyNotificationsViewController: UIViewController {
         table.delaysContentTouches = false
         table.register(BearyNotificationCell.self, forCellReuseIdentifier: "BearyNotificationCell")
         table.register(BearyNotificationTrailingCell.self, forCellReuseIdentifier: "BearyNotificationTrailingCell")
+        table.register(BearyNotificationSkeletonCell.self, forCellReuseIdentifier: BearyNotificationSkeletonCell.reuseIdentifier)
         table.delegate = self
         table.dataSource = self
         pullTableView.addSubview(pullView)
@@ -1216,6 +1224,10 @@ final class BearyNotificationsViewController: UIViewController {
         firstLoadFailed = false
         let requestedLimit = items.isEmpty ? pageLimit : min(max(pageLimit, items.count), maxRefreshLimit)
         refreshVisibleState()
+        // 首拉骨架在屏时表内即出 3 行骨架（态容器同时藏起，见 applyVisibleState）。
+        if showingSkeleton {
+            tableView.reloadData()
+        }
         let requestEpoch = BearyAPI.shared.authEpoch
         let requestAccountId = BearyAPI.shared.authAccountId
         // 第 17 轮 11：拍下发起时的已读操作代次（同轻量刷新）。
@@ -2918,7 +2930,8 @@ final class BearyNotificationsViewController: UIViewController {
         let stateWasHidden = stateContainer.isHidden
         // 表头是 tableHeaderView：表区不再整体隐藏，态容器只盖住表头以下；
         // 非列表态把表滚回顶，让表头回到视野（自定义下拉刷新中不抢偏移）。
-        stateContainer.isHidden = showsList
+        // 首拉骨架在屏时态容器藏起，表内骨架行即加载态（中央刷新图标不再转）。
+        stateContainer.isHidden = showsList || showingSkeleton
         if showsList {
             stateContainer.alpha = 1
         } else if stateWasHidden {
@@ -2941,7 +2954,8 @@ final class BearyNotificationsViewController: UIViewController {
         }
         switch visibleState {
         case .loading:
-            centralSpinner.startSpinning()
+            // 首拉改骨架行：中央 32pt 刷新图标停用（其余态的 stopSpinning 不动）。
+            centralSpinner.stopSpinning()
             errorStateView.isHidden = true
             stateIconView.isHidden = true
             stateMailView.isHidden = true
@@ -3086,10 +3100,17 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        // 首拉骨架在屏时只出骨架行（哨兵行不叠加）。
+        if showingSkeleton {
+            return skeletonRowCount
+        }
         return displayRows.count + (showsSentinelRow ? 1 : 0)
     }
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        if showingSkeleton {
+            return UITableView.automaticDimension
+        }
         if indexPath.row == displayRows.count {
             // 第七轮 12：哨兵三态同高 56（网页 .more-sentinel 闲置总高 =
             // min-height 24 + padding 10/22 = 56）；加载中只换行内转圈、
@@ -3103,6 +3124,9 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        if showingSkeleton {
+            return tableView.dequeueReusableCell(withIdentifier: BearyNotificationSkeletonCell.reuseIdentifier, for: indexPath)
+        }
         if indexPath.row == displayRows.count {
             guard let trailingCell = tableView.dequeueReusableCell(
                 withIdentifier: "BearyNotificationTrailingCell",
@@ -3234,6 +3258,8 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
+        // 骨架行不可点。
+        if showingSkeleton { return }
         if indexPath.row == displayRows.count {
             // 112：失败态哨兵行可点按重试——内容总高小于视口时哨兵永远可见，
             // 只靠“滚出视野清 loadMoreFailed”永远清不掉，重试被永久锁死。
