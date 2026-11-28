@@ -3489,7 +3489,7 @@ final class BearyLetterViewController: UIViewController {
         if let quote = pendingQuote {
             pendingQuote = nil
             quotePlainText = quote.text
-            quoteTextLabel.attributedText = Self.moodLineHeightText(quote.text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: traitCollection.userInterfaceStyle == .dark)
+            quoteTextLabel.attributedText = BearyNotificationCell.moodLineHeightText(quote.text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: 1.75, dark: traitCollection.userInterfaceStyle == .dark)
             quoteMetaLabel.text = quote.meta
             quoteWrap.isHidden = false
         } else {
@@ -3638,9 +3638,9 @@ final class BearyLetterViewController: UIViewController {
     /// 正文／引用富文本重建（深浅切换与字号档变化时调用）。
     private func rebuildAttributedTexts() {
         let dark = traitCollection.userInterfaceStyle == .dark
-        bodyLabel.attributedText = Self.moodLineHeightText(bodyText, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.9, dark: dark)
+        bodyLabel.attributedText = BearyNotificationCell.moodLineHeightText(bodyText, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: 1.9, dark: dark)
         if let quoteText = quotePlainText, !quoteWrap.isHidden {
-            quoteTextLabel.attributedText = Self.moodLineHeightText(quoteText, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: dark)
+            quoteTextLabel.attributedText = BearyNotificationCell.moodLineHeightText(quoteText, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: 1.75, dark: dark)
         }
     }
 
@@ -3652,20 +3652,11 @@ final class BearyLetterViewController: UIViewController {
         return NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
     }
 
-    /// 信件正文／引用走心情渲染：服务端 body 可能内嵌日记正文切片
-    /// （如转回私密通知），含 [mood:] 记号原文；与卡片同款渲染（旧模态同款）。
-    private static func moodLineHeightText(_ string: String, font: UIFont, color: UIColor, multiple: CGFloat, dark: Bool) -> NSAttributedString {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = multiple
-        paragraph.lineBreakMode = .byCharWrapping
-        return BearyText.inlineAttributedText(from: BearyText.stripTrailingPartialInlineToken(string), font: font, color: color, paragraphStyle: paragraph, dark: dark, gifImageKeys: nil)
-    }
-
     /// 引用预览随后补全（旧模态 fillQuote 同款：引用区随正文一起进滚动区）。
     func fillQuote(text: String, meta: String) {
         let isNewQuote = quoteWrap.isHidden
         quotePlainText = text
-        quoteTextLabel.attributedText = Self.moodLineHeightText(text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75, dark: traitCollection.userInterfaceStyle == .dark)
+        quoteTextLabel.attributedText = BearyNotificationCell.moodLineHeightText(text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: 1.75, dark: traitCollection.userInterfaceStyle == .dark)
         quoteMetaLabel.text = meta
         quoteWrap.isHidden = false
         applyRowSpacing()
@@ -4597,8 +4588,9 @@ class BearyNotificationCell: UITableViewCell {
     /// 含 [mood:]/[gif:] 记号原文；与卡片同款 inlineAttributedText，
     /// 行高默认 1.5、断行口径与 lineHeightText 一致；合并列表传
     /// multiple 1.0（与私信行同款无倍数行高）。通知无条目图，
-    /// [gif:] 记号按既有兜底留原文。
-    private static func moodLineHeightText(_ string: String, font: UIFont, color: UIColor, lineBreakMode: NSLineBreakMode = .byTruncatingTail, multiple: CGFloat = 1.5, dark: Bool) -> NSAttributedString {
+    /// [gif:] 记号按既有兜底留原文。信件正文／引用（BearyLetterViewController）
+    /// 共用此份，调用时显式传 lineBreakMode: .byCharWrapping 保持原断行行为。
+    fileprivate static func moodLineHeightText(_ string: String, font: UIFont, color: UIColor, lineBreakMode: NSLineBreakMode = .byTruncatingTail, multiple: CGFloat = 1.5, dark: Bool) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = multiple
         paragraph.lineBreakMode = lineBreakMode
