@@ -9,13 +9,15 @@ import Network
 // pill 跳到底、或手动滚到底后才调 dm/read；读旧消息时回包带了新到的对方
 // 消息只出 pill、不标已读，未读一直留到用户真正看到那条消息。
 // 对方发来新消息时沿用现有列表刷新口径（下拉刷新 + 重进），不另搭长连接、不搭推送。
-// 已读回执不显示给对方：read_at 只用于自己未读计数，本页不画任何已读态。
+// 已读回执（2026-11-29 Li 定，v3 预览）：本人最后一条行外左侧画状态标——
+// 时钟=发送中／未确认，单勾=已送达，双勾=对方已读，失败画 alert 点按重发；
+// 状态标底边与时间行底边对齐；对方行不画。已读靠 60 秒轮询刷新，不新加实时通道。
 // 档位不允许时 history/send 回 403 dm_not_allowed：页顶横幅提示并禁用输入；
 // 拉黑 403 仍走原“会话已关闭”路径，不泄露拉黑方向。
 // 乐观发送（2026-11-04 Li 定，取代旧“服务端确认后重拉再落行”口径）：
 // 点发送即把消息落到记录末尾（0.22s 淡入 + 从输入条位置轻微上浮），输入框
 // 立即清空；成功后靠重拉与服务端行配对认领、替换成本行；网络失败时本行
-// 侧边出红色感叹号（44pt 热区），点按重发。超时/结果未知不认失败——
+// 侧边出 alert 图标（44pt 热区），点按重发。超时/结果未知不认失败——
 // 无法确认是否已送达，谎称失败或谎称成功都会错，改走撤行 + 草稿回填 + toast。
 
 /// 翻旧加载态浮标的命中容器：视觉保持 32pt 胶囊不变；失败态点按重试时
@@ -129,10 +131,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private let replyBarCloseButton = UIButton(type: .system)
     private var replyBarHeight: NSLayoutConstraint?
     private var replyBarMinHeight: NSLayoutConstraint?
-    /// 2026-11-04 乐观发送：失败待发行的本地键集合（行侧边出红叹号、点按重发）。
+    /// 2026-11-04 乐观发送：失败待发行的本地键集合（行侧边出 alert 图标、点按重发）。
     private var failedSendKeys = Set<String>()
     /// 审计四轮增量 03：重发在途集合——同一条消息在请求结束前只允许一次重发，
-    /// 回调时清除（失败叹号隐藏不等于底层有锁）。
+    /// 回调时清除（失败 alert 隐藏不等于底层有锁）。
     private var retryingKeys = Set<String>()
     /// 未确认待发（401/403/超时撤行后留下的记录，或重启后恢复的待发）：行留在列表里、
     /// 时间旁标“未确认”，无重发入口（免重复发出），长按可复制正文核对。
@@ -792,7 +794,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 var restored: [BearyAPI.DMMessage] = []
                 for p in pendings where !existingKeys.contains(p.localKey) {
                     restored.append(BearyAPI.DMMessage(id: nil, senderId: self.storeAccountId, fromMe: true, body: p.body, createdAt: p.createdAt, localKey: p.localKey, replyTo: p.replyTo, replyFromMe: p.replyFromMe, replySenderName: p.replySenderName, replyBody: p.replyBody))
-                    // 第 17 轮：失败态如实恢复——明确失败的回失败集（保留红叹号重试入口），
+                    // 第 17 轮：失败态如实恢复——明确失败的回失败集（保留 alert 重试入口），
                     // 发送中（结果未知）的降为未确认，未确认的保持未确认。
                     switch p.status {
                     case .failed:
@@ -1467,8 +1469,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
-    /// 待发行重发：失败红叹号点按入口。重发期先清失败态（叹号消失），
-    /// 成功靠重拉认领；再失败则叹号回来；超时/未知与 401/403 走撤行口径
+    /// 待发行重发：失败 alert 点按入口。重发期先清失败态（alert 消失），
+    /// 成功靠重拉认领；再失败则 alert 回来；超时/未知与 401/403 走撤行口径
     ///（见 removePendingSend），不给会重复发出的重试。
     /// 审计四轮增量 03：同一条消息在请求结束前只允许一次重发（retryingKeys
     /// 按 localKey 区分，连点只发一次；回调时清除在途状态）。
@@ -2114,7 +2116,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 乐观发送（2026-11-04）：点按即上提交锁、待发先落盘——确认落盘后
     /// 才拼行、清空本次输入、发网请求，滚到底、0.22s 淡入 + 从输入条位置
     /// 上浮；请求在后台跑。成功后重拉
-    /// 认领（服务端行到位即替换待发）；网络失败行侧边出红叹号、点按重发；
+    /// 认领（服务端行到位即替换待发）；网络失败行侧边出 alert 图标、点按重发；
     /// 401/403/超时未知走撤行 + 草稿回填（不谎称已发、也不给会重复发出的重试）。
     @objc private func sendTapped() {
         guard let userId = peer.id, !sessionClosed, !dmNotAllowed else { return }
@@ -2231,7 +2233,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                             self.updatePermBanner()
                         } else if error.isPermissionDenied {
                             // 审计第 9 项：带业务码的 403 同样进会话关闭；其余 .server
-                            // 错误不在此列，仍走下面失败叹号分支。
+                            // 错误不在此列，仍走下面失败 alert 分支。
                             self.removePendingSend(key: key, restoreDraft: true)
                             self.sessionClosed = true
                             self.inputTextView.isEditable = false
@@ -2244,7 +2246,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                             self.removePendingSend(key: key, restoreDraft: true)
                             BearyToast.show(in: self.view, message: "发送结果未知，请确认对方是否已收到后再重发")
                         } else {
-                            // 确认未送达的失败：行留在原地、侧边出红叹号，点按重发；
+                            // 确认未送达的失败：行留在原地、侧边出 alert 图标，点按重发；
                             // M3：只让这一条摇头并提示「没发出去」，其余行不动。
                             self.failedSendKeys.insert(key)
                             let accountId = self.storeAccountId
@@ -2357,16 +2359,34 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let cell = tableView.dequeueReusableCell(withIdentifier: "dmMessageCell", for: indexPath) as! BearyDMMessageCell
         let message = messages[indexPath.row]
         let isMine = message.senderId != nil && message.senderId == storeAccountId
-        // 2026-11-04 乐观发送：仅本人待发行可带失败态；失败时叹号点按重发该条。
+        // 2026-11-04 乐观发送：仅本人待发行可带失败态；失败时 alert 点按重发该条。
         let showFail = isMine && message.localKey.map { failedSendKeys.contains($0) } == true
         let showUnconfirmed = isMine && message.localKey.map { unconfirmedSendKeys.contains($0) } == true
         let retryKey = message.localKey
+        // 状态标（2026-11-29 Li 定，v3 预览）：只画在本人最后一条；失败行永远画
+        //（走左侧 failButton 的 alert，不经状态标）。对方行不画。已读靠 history
+        // 的 read 字段（60 秒轮询刷新），不新加实时通道。
+        let isLastOwnRow = messages.lastIndex(where: { $0.senderId != nil && $0.senderId == storeAccountId }) == indexPath.row
+        let status: BearyDMMessageCell.DMStatus
+        if !isMine || showFail {
+            status = .none
+        } else if isLastOwnRow {
+            if showUnconfirmed || message.id == nil {
+                status = .sending
+            } else if message.read == true {
+                status = .read
+            } else {
+                status = .sent
+            }
+        } else {
+            status = .none
+        }
         // 私信时间分组（2026-11-18 Li 定）：组内时间只在组尾出现一次，组内气泡贴紧。
         let showTime = isTimestampGroupTail(at: indexPath.row, showFail: showFail, showUnconfirmed: showUnconfirmed)
         let tightTop = continuesTimestampGroup(at: indexPath.row)
         // 左滑回复：只有服务端行（有 id）能被回复；待发行无 id，不进回复态。
         let quoteName = quoteDisplayName(for: message)
-        cell.configure(message: message, isMine: isMine, showFail: showFail, showUnconfirmed: showUnconfirmed, showTime: showTime, tightTop: tightTop, quoteName: quoteName, onRetry: showFail ? { [weak self] in
+        cell.configure(message: message, isMine: isMine, showFail: showFail, showUnconfirmed: showUnconfirmed, showTime: showTime, tightTop: tightTop, quoteName: quoteName, status: status, onRetry: showFail ? { [weak self] in
             guard let key = retryKey else { return }
             self?.retrySend(key: key)
         } : nil, onSwipeReply: message.id == nil ? nil : { [weak self] in
@@ -2602,12 +2622,43 @@ private final class BearyDMMessageCell: UITableViewCell {
     private let theirsTextLabel = UILabel()
     private let mineTimeLabel = UILabel()
     private let theirsTimeLabel = UILabel()
-    // 2026-11-04 乐观发送失败态：本人行气泡左侧红叹号。热区 44×44（视觉
-    // 22 红圆 + 白叹号），仅失败待发行显示，点按重发该条。
+    // 2026-11-04 乐观发送失败态：本人行气泡左侧 alert 图标（官方 icon_alert，
+    // 红 tint）。热区 44×44（视觉 16pt 三角 alert），仅失败待发行显示，点按重发该条。
+    // 2026-11-29 v3 预览：失败 alert 与其他状态标同位——气泡外左侧、底边与时间行对齐。
     private let failButton = UIButton(type: .system)
-    private let failBadge = UIView()
-    private let failMark = UILabel()
     private var onRetry: (() -> Void)?
+    // 私信状态标（2026-11-29 Li 定，v3 预览）：只画在本人最后一条（失败行例外，
+    // 走 failButton 的 alert）。时钟=发送中／未确认，单勾=已送达，双勾=对方已读；
+    // 对方行不画。图标一律官方包（icon_clock／icon_check），单色灰，已读不换色；
+    // 位置在气泡外左侧、底边与时间行底边对齐（与 failButton 同位）。
+    private let mineStatusView = UIView()
+    private let statusIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
+    /// 双勾的第二勾：与第一勾重叠 6pt；身后垫一张同图放大 1.2 倍的背景色勾，
+    /// 把交叠处第一勾的线条镂空（晕色跟聊天背景走，不写死）。
+    private let statusSecondCheckHaloView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.tintColor = BearyColors.bg
+        v.contentMode = .scaleAspectFit
+        v.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
+        v.isHidden = true
+        return v
+    }()
+    private let statusSecondCheckView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        v.isHidden = true
+        return v
+    }()
+    private var mineStatusWidthConstraint: NSLayoutConstraint!
     // 左滑回复（2026-11-26 Li 定）：气泡上方引用块（名字＋原文摘要，最多两行），
     // 只在带回复的消息行显示；拖动时气泡右侧露出的回复图标（官方 icon_reply）。
     private let mineQuoteView = UIView()
@@ -2654,6 +2705,12 @@ private final class BearyDMMessageCell: UITableViewCell {
     /// 窄屏仍只靠 104pt 地板，行为无变化。开关见 layoutSubviews。
     private var mineWidthCap: NSLayoutConstraint!
     private var theirsWidthCap: NSLayoutConstraint!
+
+    /// 私信状态标（2026-11-29 Li 定）：只画在本人最后一条（失败行走 failButton，
+    /// 不经这里）；对方行一律 .none。sending 含发送中与未确认（视觉合并）。
+    enum DMStatus {
+        case none, sending, sent, read
+    }
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -2712,38 +2769,51 @@ private final class BearyDMMessageCell: UITableViewCell {
         // 原先地板限放出约 1060pt）；初始不启用，由 layoutSubviews 按宽屏判定开关。
         mineWidthCap = mineStack.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.7)
         theirsWidthCap = theirsStack.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.7)
-        // 失败叹号：44 热区包 22 红圆，圆心与本人气泡纵向居中、贴气泡左侧 8pt。
+        // 失败 alert（2026-11-29 v3 预览）：官方 icon_alert、红 tint、16pt，
+        // 44 热区；图标底边与时间行底边对齐（44 热区中心即时间行底边上 8pt），
+        // 贴气泡左侧 8pt。
         failButton.translatesAutoresizingMaskIntoConstraints = false
         failButton.backgroundColor = .clear
         failButton.isHidden = true
+        failButton.setImage(BearyIconImages.image(named: "icon_alert", pointSize: 16), for: .normal)
+        failButton.tintColor = BearyColors.red
         // 审计四轮 11：失败按钮补无障碍名称（否则 VoiceOver 只读到一个无名按钮）。
         failButton.accessibilityLabel = NSLocalizedString("dm.send_failed_retry_a11y", comment: "")
         failButton.addTarget(self, action: #selector(failTapped), for: .touchUpInside)
-        failBadge.translatesAutoresizingMaskIntoConstraints = false
-        failBadge.backgroundColor = BearyColors.red
-        failBadge.layer.cornerRadius = 11
-        failBadge.clipsToBounds = true
-        failBadge.isUserInteractionEnabled = false
-        failMark.translatesAutoresizingMaskIntoConstraints = false
-        failMark.text = "!"
-        failMark.font = UIFont.systemFont(ofSize: 15, weight: .bold)
-        failMark.textColor = .white
-        failMark.textAlignment = .center
-        failMark.isUserInteractionEnabled = false
-        failButton.addSubview(failBadge)
-        failBadge.addSubview(failMark)
         contentView.addSubview(failButton)
         NSLayoutConstraint.activate([
             failButton.widthAnchor.constraint(equalToConstant: 44),
             failButton.heightAnchor.constraint(equalToConstant: 44),
             failButton.trailingAnchor.constraint(equalTo: mineStack.leadingAnchor, constant: -8),
-            failButton.centerYAnchor.constraint(equalTo: mineBubble.centerYAnchor),
-            failBadge.widthAnchor.constraint(equalToConstant: 22),
-            failBadge.heightAnchor.constraint(equalToConstant: 22),
-            failBadge.centerXAnchor.constraint(equalTo: failButton.centerXAnchor),
-            failBadge.centerYAnchor.constraint(equalTo: failButton.centerYAnchor),
-            failMark.centerXAnchor.constraint(equalTo: failBadge.centerXAnchor),
-            failMark.centerYAnchor.constraint(equalTo: failBadge.centerYAnchor),
+            failButton.centerYAnchor.constraint(equalTo: mineTimeLabel.bottomAnchor, constant: -8),
+        ])
+        // 状态标（时钟／单勾／双勾）：16pt，气泡外左侧 8pt，底边与时间行底边对齐；
+        // 双勾时第二勾与第一勾重叠 6pt（宽 22pt），平时宽 16pt。
+        mineStatusView.translatesAutoresizingMaskIntoConstraints = false
+        mineStatusView.isHidden = true
+        mineStatusView.isUserInteractionEnabled = false
+        mineStatusView.addSubview(statusIconView)
+        mineStatusView.addSubview(statusSecondCheckHaloView)
+        mineStatusView.addSubview(statusSecondCheckView)
+        contentView.addSubview(mineStatusView)
+        mineStatusWidthConstraint = mineStatusView.widthAnchor.constraint(equalToConstant: 16)
+        NSLayoutConstraint.activate([
+            mineStatusWidthConstraint,
+            mineStatusView.heightAnchor.constraint(equalToConstant: 16),
+            mineStatusView.trailingAnchor.constraint(equalTo: mineStack.leadingAnchor, constant: -8),
+            mineStatusView.bottomAnchor.constraint(equalTo: mineTimeLabel.bottomAnchor),
+            statusIconView.widthAnchor.constraint(equalToConstant: 16),
+            statusIconView.heightAnchor.constraint(equalToConstant: 16),
+            statusIconView.leadingAnchor.constraint(equalTo: mineStatusView.leadingAnchor),
+            statusIconView.topAnchor.constraint(equalTo: mineStatusView.topAnchor),
+            statusSecondCheckHaloView.widthAnchor.constraint(equalToConstant: 16),
+            statusSecondCheckHaloView.heightAnchor.constraint(equalToConstant: 16),
+            statusSecondCheckHaloView.leadingAnchor.constraint(equalTo: statusIconView.trailingAnchor, constant: -10),
+            statusSecondCheckHaloView.topAnchor.constraint(equalTo: mineStatusView.topAnchor),
+            statusSecondCheckView.widthAnchor.constraint(equalToConstant: 16),
+            statusSecondCheckView.heightAnchor.constraint(equalToConstant: 16),
+            statusSecondCheckView.leadingAnchor.constraint(equalTo: statusIconView.trailingAnchor, constant: -10),
+            statusSecondCheckView.topAnchor.constraint(equalTo: mineStatusView.topAnchor),
         ])
         // 左滑回复引用块：气泡上方一小块（名字＋原文摘要，最多两行），只在带回复的
         // 消息行显示；宽由内容定（栈按最宽子项撑宽），圆角 8（引用卡例外值，
@@ -2967,9 +3037,13 @@ private final class BearyDMMessageCell: UITableViewCell {
         theirsBubbleMask.path = nil
         lastCreatedAtMs = nil
         isUnconfirmed = false
-        // 失败叹号与重发闭包不得串行（复用 cell 默认无叹号）。
+        // 失败 alert 与重发闭包不得串行（复用 cell 默认无 alert）。
         failButton.isHidden = true
         onRetry = nil
+        // 状态标不得串行（复用 cell 默认无状态标）。
+        mineStatusView.isHidden = true
+        statusSecondCheckHaloView.isHidden = true
+        statusSecondCheckView.isHidden = true
         // 左滑回复：复用不得把滑动位移／引用块／回复图标带给下一行。
         mineStack.transform = .identity
         theirsStack.transform = .identity
@@ -3016,7 +3090,7 @@ private final class BearyDMMessageCell: UITableViewCell {
         }
     }
 
-    func configure(message: BearyAPI.DMMessage, isMine: Bool, showFail: Bool = false, showUnconfirmed: Bool = false, showTime: Bool = true, tightTop: Bool = false, quoteName: String? = nil, onRetry: (() -> Void)? = nil, onSwipeReply: (() -> Void)? = nil) {
+    func configure(message: BearyAPI.DMMessage, isMine: Bool, showFail: Bool = false, showUnconfirmed: Bool = false, showTime: Bool = true, tightTop: Bool = false, quoteName: String? = nil, status: DMStatus = .none, onRetry: (() -> Void)? = nil, onSwipeReply: (() -> Void)? = nil) {
         mineStack.isHidden = !isMine
         theirsStack.isHidden = isMine
         // 私信时间分组（2026-11-18 Li 定）：非组尾行藏时间、底边贴紧下一气泡；
@@ -3034,11 +3108,39 @@ private final class BearyDMMessageCell: UITableViewCell {
         // showTime＝组尾即无下一条），与时间显示同一口径，不另算分组。
         bubbleHasPrevious = tightTop
         bubbleHasNext = !showTime
-        // 失败叹号只挂本人行；对方行、成功行一律不画。
+        // 失败 alert 只挂本人行；对方行、成功行一律不画。
         failButton.isHidden = !(isMine && showFail)
         // 审计四轮 11：失败态变化时同步更新无障碍说明（复用 cell 不得串行）。
         failButton.accessibilityLabel = (isMine && showFail) ? NSLocalizedString("dm.send_failed_retry_a11y", comment: "") : nil
         self.onRetry = onRetry
+        // 状态标（2026-11-29 Li 定，v3 预览）：只画在本人行、气泡外左侧，
+        // 底边与时间行底边对齐；失败行走左侧 failButton，这里不重复画；对方行不画。
+        // 时钟=发送中／未确认，单勾=已送达，双勾=对方已读（第二勾重叠＋背景色晕镂空）。
+        let showStatus = isMine && status != .none
+        mineStatusView.isHidden = !showStatus
+        if showStatus {
+            switch status {
+            case .sending:
+                statusIconView.image = BearyIconImages.image(named: "icon_clock", pointSize: 16)
+                statusSecondCheckHaloView.isHidden = true
+                statusSecondCheckView.isHidden = true
+                mineStatusWidthConstraint.constant = 16
+            case .sent:
+                statusIconView.image = BearyIconImages.image(named: "icon_check", pointSize: 16)
+                statusSecondCheckHaloView.isHidden = true
+                statusSecondCheckView.isHidden = true
+                mineStatusWidthConstraint.constant = 16
+            case .read:
+                statusIconView.image = BearyIconImages.image(named: "icon_check", pointSize: 16)
+                statusSecondCheckHaloView.image = BearyIconImages.image(named: "icon_check", pointSize: 16)
+                statusSecondCheckView.image = BearyIconImages.image(named: "icon_check", pointSize: 16)
+                statusSecondCheckHaloView.isHidden = false
+                statusSecondCheckView.isHidden = false
+                mineStatusWidthConstraint.constant = 22
+            case .none:
+                break
+            }
+        }
         self.onSwipeReply = onSwipeReply
         // 左滑回复引用块：有引用名即显（名字＋原文摘要，最多两行），无引用藏起；
         // 复用 cell 不得把上一行的引用带给下一行（无引用时两项全藏）。
