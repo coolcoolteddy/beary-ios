@@ -2104,10 +2104,21 @@ final class BearySettingsViewController: UIViewController {
         // 推送登记清理：登出请求发出前删本号在本机的登记行（session 与
         // cookie 仍在）；fire-and-forget，失败不改登出结论。
         BearyPushNotifications.shared.unregisterTokenForCurrentAccount()
+        // 登出队列（数据同步审阅 #8）：清本地态之前先把当前 token 抄进
+        // 持久队列（signOutLocally 会删保管库项，事后抄不到）；本地 token
+        // 无论如何丢弃，本次登出请求落定成功即撤条，失败留待下次启动／
+        // 回前台按退避补发，服务端会话不再因一次失败就永远活着。
+        if let accountId = accountId, let token = SessionManager.shared.currentSessionToken() {
+            BearyLogoutQueue.enqueue(userId: accountId, token: token)
+        }
         // 登出 POST 后台跑：任务在调用内同步创建并 resume，请求头／cookie
-        // 已定死在任务里，随后清本地态不影响在途请求；回包直接丢弃，
-        // 失败不回滚、不提示。
-        BearyAPI.shared.logout { _ in }
+        // 已定死在任务里，随后清本地态不影响在途请求；回包成功即撤登出
+        // 队列表项，失败不回滚、不提示（队列留待补发）。
+        BearyAPI.shared.logout { result in
+            if case .success = result, let accountId = accountId {
+                BearyLogoutQueue.remove(userId: accountId)
+            }
+        }
         guard SessionManager.shared.isCurrentAuthSession(accountId: accountId, epoch: epoch) else {
             if let accountId = accountId {
                 SessionManager.shared.purgeLocalState(forAccountId: accountId)

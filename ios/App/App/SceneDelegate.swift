@@ -29,6 +29,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         BearyAppLog.event("app launch")
         // iCity §12：App 启动记 app_open 事件（fire-and-forget，失败不阻塞、不 toast）。
         BearyAPI.shared.sendEvent(eventType: "app_open")
+        // 登出队列补发（数据同步审阅 #8）：上次登出未落定的，下次启动补发。
+        BearyLogoutQueue.flush()
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
@@ -231,6 +233,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
         // fixall-sync 5-27 集成接线：被守卫挡下的同步在回前台时重跑（内部去重已覆盖已同步/在途）。
         BearyEntrySync.shared.kickForCurrentUser()
+        // 登出队列补发（数据同步审阅 #8）：回前台再续一次未落定的登出。
+        BearyLogoutQueue.flush()
     }
 
     /// 栏显隐查找（#47 修正）：setChromeHidden 在容器 VC 上，不在 SceneDelegate 上；

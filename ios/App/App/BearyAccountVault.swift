@@ -267,3 +267,120 @@ final class BearyAccountVault {
         return nil
     }
 }
+
+// MARK: - 登出待发队列（数据同步审阅 #8）
+
+/// 待发登出项：本地 token 已丢弃、服务端会话尚未注销的登出请求。
+/// 存一份 JSON 数组，单条 Keychain 项（与账号项同 service，
+/// account = "beary.pending-logout"；loadAll 只认 beary.acct. 前缀，
+/// 不会把它当账号读出）。
+struct BearyPendingLogout: Codable {
+    var userId: Int
+    var token: String
+    var enqueuedAtMs: Int
+    var attempts: Int
+}
+
+/// 登出队列：本地 token 无论如何丢弃（批次“不回滚”不动），登出请求
+/// 进持久队列无限重试（退避，不紧循环），下次启动／回前台补发。
+/// 补发走 logoutWithToken（401 算成功）；成功撤条，失败记 attempts
+/// 并按退避排下一次。单链串行：同一时刻最多一条在途、一个重试计时器。
+enum BearyLogoutQueue {
+    private static let service = "com.teddyhn.beary.account-vault"
+    private static let itemAccount = "beary.pending-logout"
+    /// 退避秒数：首次失败 5s、之后 15s／30s／60s、300s 封顶。
+    private static let backoffSeconds = [5, 15, 30, 60, 300]
+    private static var flushing = false
+    private static var retryWorkItem: DispatchWorkItem?
+
+    /// 入队（按 userId 去重，同一账号只留最新 token，attempts 归零）；
+    /// 入队即试发一次。
+    static func enqueue(userId: Int, token: String) {
+        guard !token.isEmpty else { return }
+        var list = loadAll()
+        list.removeAll { $0.userId == userId }
+        list.append(BearyPendingLogout(userId: userId, token: token, enqueuedAtMs: Int(Date().timeIntervalSince1970 * 1000), attempts: 0))
+        saveAll(list)
+        flush()
+    }
+
+    /// 撤条（本次登出请求落定成功时调；失败不撤，留待重试）。
+    static func remove(userId: Int) {
+        var list = loadAll()
+        list.removeAll { $0.userId == userId }
+        saveAll(list)
+    }
+
+    /// 补发：队首逐条发 logoutWithToken；成功撤条并继续下一条；
+    /// 失败记 attempts、按退避排重试并停链（服务端／网络同因，
+    /// 后面的大概率同样失败，不紧循环）。
+    static func flush() {
+        guard !flushing else { return }
+        guard let first = loadAll().first else { return }
+        flushing = true
+        BearyAPI.shared.logoutWithToken(first.token) { result in
+            DispatchQueue.main.async {
+                flushing = false
+                switch result {
+                case .success:
+                    remove(userId: first.userId)
+                    flush()
+                case .failure:
+                    var list = loadAll()
+                    if let index = list.firstIndex(where: { $0.userId == first.userId }) {
+                        let delay = backoffSeconds[min(list[index].attempts, backoffSeconds.count - 1)]
+                        list[index].attempts += 1
+                        saveAll(list)
+                        scheduleRetry(after: delay)
+                    }
+                }
+            }
+        }
+    }
+
+    private static func scheduleRetry(after delaySeconds: Int) {
+        retryWorkItem?.cancel()
+        let workItem = DispatchWorkItem { flush() }
+        retryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds), execute: workItem)
+    }
+
+    private static func loadAll() -> [BearyPendingLogout] {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: itemAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let list = try? JSONDecoder().decode([BearyPendingLogout].self, from: data) else {
+            return []
+        }
+        return list
+    }
+
+    private static func saveAll(_ list: [BearyPendingLogout]) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: itemAccount,
+        ]
+        if list.isEmpty {
+            _ = SecItemDelete(query as CFDictionary)
+            return
+        }
+        guard let data = try? JSONEncoder().encode(list) else { return }
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let addStatus = SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
+        if addStatus == errSecSuccess { return }
+        if addStatus == errSecDuplicateItem {
+            _ = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        }
+    }
+}
