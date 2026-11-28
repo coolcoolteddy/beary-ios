@@ -121,8 +121,8 @@ class BearyFeedViewController: UIViewController {
     /// 每段各存一份内存列表与分页态；plazaRaw 与分页变量恒为“当前段”的
     /// live 镜像，切段时先把 live 写回出段槽、再把入段槽读回 live。
     /// #626 的混段顾虑由槽位隔离解决：firstPageIds／末条游标／hasMore／
-    /// error 都随槽走，绝不跨段复用。磁盘快照仍只走广场段（首拉写盘
-    /// 守卫不动，persistFeedHead 不动）。
+    /// error 都随槽走，绝不跨段复用。磁盘快照每段各走各的桶（广场桶与
+    /// "-following" 桶，首拉写盘守卫与 persistFeedHead 按段分桶）。
     private struct FeedSegmentCache {
         var entries: [Entry] = []
         var firstPageIds: [String] = []
@@ -500,19 +500,20 @@ class BearyFeedViewController: UIViewController {
         feedCacheOwnerKey.map { $0 + "-following" }
     }
 
-    /// 段守卫写盘：当前段的 live 首屏写回本段桶，绝不跨段混桶。
-    /// save 内部只存有效公开篇，故正在关注段的仅好友篇永不落盘、
-    /// 只由网络实时校验；广场段口径不动。
+    /// 段守卫写盘：当前段的 live 列表写回本段桶，绝不跨段混桶。
+    /// 调用方须传完整内存列表（首拉传首屏、since/分页传 plazaRaw、
+    /// diff 传合并后 newList），只传首屏时扩容存不满；save 内部按段过滤：
+    /// 广场段只存有效公开篇，正在关注段另存仅好友篇（只进 "-following" 桶）。
     private func saveCurrentFeedHead(entries: [Entry], hasMore: Bool) {
         if feedFollowingSegment {
-            BearyFeedCache.save(bucket: followingCacheBucket, entries: entries, hasMore: hasMore)
+            BearyFeedCache.save(bucket: followingCacheBucket, entries: entries, hasMore: hasMore, includeFriendsOnly: true)
         } else {
             BearyFeedCache.save(bucket: feedCacheOwnerKey, entries: entries, hasMore: hasMore)
         }
     }
 
-    /// 正在关注段首次进段：先读本段磁盘快照（只含有效公开篇），有内容即
-    /// 先显再静默刷新（仅好友篇由网络实时补齐、viewer 字段随之纠正）；
+    /// 正在关注段首次进段：先读本段磁盘快照（有效公开篇 + 仅好友篇），有内容即
+    /// 先显再静默刷新（取关后失资格的旧行由刷新复核清掉、viewer 字段随之纠正）；
     /// 快照为空/未覆盖整页（hasMore）时保持加载态（转圈、不判空态），
     /// 等网络结果再判断空态。调用点须在段翻转之后、live 已清表。
     private func loadFollowingSnapshotOrRefresh() {
@@ -541,7 +542,7 @@ class BearyFeedViewController: UIViewController {
                   strongSelf.feedFollowingSegment,
                   strongSelf.feedCacheOwnerKey == ownerKey else { return }
             if let snap = snap {
-                let head = BearyFeedCache.visibleHead(snap.entries)
+                let head = BearyFeedCache.isSnapshotExpansionEnabled ? BearyFeedCache.followingHead(snap.entries) : BearyFeedCache.visibleHead(snap.entries)
                 if !head.isEmpty {
                     strongSelf.plazaRaw = head
                     // 审计 14-1：快照只有可见篇、无原始游标，旧游标（另一段）作废。
@@ -1432,8 +1433,8 @@ class BearyFeedViewController: UIViewController {
                     if !strongSelf.didShowSkeleton {
                         strongSelf.tableView.reloadData()
                     }
-                    // B1：段守卫写盘——当前段首屏写回本段桶；save 内部只存
-                    // 有效公开篇，正在关注段的仅好友篇不落盘、只走网络实时校验。
+                    // C-P0-7：段守卫写盘——当前段首屏写回本段桶；save 内部按段
+                    // 过滤，正在关注段的仅好友篇也落盘（只进 "-following" 桶）。
                     strongSelf.saveCurrentFeedHead(entries: entries, hasMore: strongSelf.plazaHasMore)
                     strongSelf.rebuildCarouselItems()
                     // 80 包 A2-2：先落表再结束首屏标记。
@@ -1571,7 +1572,8 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaGapCursor = nil
                     strongSelf.lastFeedLoadAt = Date()
                     BearyTimelinePrefetch.maybePrefetch()
-                    // B1：段守卫写盘（同首拉守卫），仅好友篇不落盘。
+                    // C-P0-7：段守卫写盘（同首拉守卫），传完整 plazaRaw，
+                    // 正在关注段的仅好友篇也落盘（只进 "-following" 桶）。
                     strongSelf.saveCurrentFeedHead(entries: strongSelf.plazaRaw, hasMore: strongSelf.plazaHasMore)
                     strongSelf.rebuildCarouselItems()
                     BearyLoadingUX.appendRowsIfConsistent(tableView: strongSelf.tableView, oldCount: oldCount, insert: {
@@ -1709,6 +1711,11 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaHasMore = rawFresh.count >= strongSelf.pageLimit
                     strongSelf.plazaReachedEnd = rawFresh.count < strongSelf.pageLimit
                     strongSelf.plazaError = false
+                    // C-P0-7 分页落盘：续拉追加后把完整内存列表写回本段桶，
+                    // 否则磁盘快照永远只有首屏 12 篇，断网滑不到第 13 篇。
+                    // save 内部按上限截断（36）并按段过滤，仅好友篇只进
+                    // "-following" 桶；失败不写盘，旧快照继续有效。
+                    strongSelf.saveCurrentFeedHead(entries: strongSelf.plazaRaw, hasMore: strongSelf.plazaHasMore)
                 case .failure:
                     strongSelf.plazaError = true
                 }
@@ -2146,16 +2153,16 @@ class BearyFeedViewController: UIViewController {
         loadPlazaFirstPage(diffMode: true, silent: true)
     }
 
-    /// 结构变化后把当前首屏头写回缓存（删篇/举报/拉黑/翻私密）。
-    /// 只存首屏窗口内仍有效公开的篇；翻私密的篇会被过滤掉，
-    /// 下次冷启动绝不从缓存里把它露给他人视角。
-    /// B1：段守卫写盘——当前段 live 写回本段桶，正在关注段的
-    /// 仅好友篇不落盘（save 内部过滤），广场段口径不动。
+    /// 结构变化后把当前窗口写回缓存（删篇/举报/拉黑/翻私密）。
+    /// 只存窗口内仍有效的篇（广场段有效公开、正在关注段另含仅好友）；
+    /// 翻私密的篇会被过滤掉，下次冷启动绝不从缓存里把它露给他人视角。
+    /// C-P0-7：写回上限改 snapshotEntryLimit（原首屏 12 会截掉已分页
+    /// 加载的尾部）；段守卫写盘——当前段 live 写回本段桶，广场段口径不动。
     private func persistFeedHead() {
         guard let bucket = feedCacheOwnerKey else { return }
-        let head = Array(plazaRaw.prefix(firstPageLimit))
+        let head = Array(plazaRaw.prefix(BearyFeedCache.snapshotEntryLimit))
         if feedFollowingSegment {
-            BearyFeedCache.save(bucket: followingCacheBucket, entries: head, hasMore: plazaHasMore)
+            BearyFeedCache.save(bucket: followingCacheBucket, entries: head, hasMore: plazaHasMore, includeFriendsOnly: true)
         } else {
             BearyFeedCache.save(bucket: bucket, entries: head, hasMore: plazaHasMore)
         }
@@ -2200,7 +2207,8 @@ class BearyFeedViewController: UIViewController {
             plazaError = false
             clearPlazaGapState()
             lastFeedLoadAt = Date()
-            // B1：段守卫写盘——正在关注段公开篇不得混入广场桶。
+            // C-P0-7：段守卫写盘——正在关注段公开篇不得混入广场桶；
+            // 本分支整表替换，fresh 即完整列表，仅好友篇只进 "-following" 桶。
             saveCurrentFeedHead(entries: fresh, hasMore: plazaHasMore)
             plazaLoading = false
             tableView.reloadData()
@@ -2293,8 +2301,10 @@ class BearyFeedViewController: UIViewController {
         plazaError = false
         clearPlazaGapState()
         lastFeedLoadAt = Date()
-        // B1：段守卫写盘——正在关注段公开篇不得混入广场桶。
-        saveCurrentFeedHead(entries: deduped, hasMore: plazaHasMore)
+        // C-P0-7：段守卫写盘——传合并后完整列表 newList（含分页尾部），
+        // 只传首屏 deduped 会把已分页的尾部从磁盘快照里截掉；正在关注段
+        // 公开篇不得混入广场桶，仅好友篇只进 "-following" 桶。
+        saveCurrentFeedHead(entries: newList, hasMore: plazaHasMore)
         plazaLoading = false
         // 删+增一批做（删用旧下标、增用新下标）；随后按模拟出的视觉顺序
         // 逐行 move 到新顺序，最后只刷内容变了的可见行。
@@ -3709,11 +3719,12 @@ class BearyFeedErrorCell: UITableViewCell {
 
 // MARK: - feedfast：主页首屏磁盘缓存（与本文件同模块，不新增文件、不改 pbxproj）
 
-/// 缓存 = 上次首拉窗口（首屏 12 篇）+ 保存时间 + 是否还有更多。
+/// 缓存 = 上次窗口（首屏 12 篇 + 分页续拉的尾部，上限见 snapshotEntryLimit）
+/// + 保存时间 + 是否还有更多。
 /// 桶按身份隔离：登录用户 id / guest；游客与登录态绝不共桶。
-/// 隐私：写入与读取时双重过滤 BearyEphemeral.isEffectivelyPublic——
-/// 已删/已翻私密/限时过期的一律不进缓存、不出缓存；后台刷新 diff
-/// 会把窗口内消失的篇定向删行（见 applyFirstPageDiff）。
+/// 隐私：写入与读取时双重过滤——广场桶只认 BearyEphemeral.isEffectivelyPublic，
+/// 正在关注桶另认仅好友篇（followingHead）；已删/已翻私密/限时过期的一律
+/// 不进缓存、不出缓存；后台刷新 diff 会把窗口内消失的篇定向删行（见 applyFirstPageDiff）。
 /// 注意：广场缓存只含公开内容，不含私密日记；点赞/收藏等 viewer
 /// 字段随快照保存、属该桶身份的旧值，后台静默刷新回包即纠正；
 /// 切账号/游客切换时换桶 + 退出/401 时清桶（见 SessionManager），
@@ -3734,8 +3745,10 @@ enum BearyFeedCache {
     }
 
     /// 正在关注段快照桶：与广场桶同账号隔离、文件名独立（"-following"
-    /// 后缀）；只存有效公开篇（save 的 visibleHead 过滤），仅好友篇
-    /// 永不落盘，每次进段都由网络实时校验补齐。
+    /// 后缀）；也存仅好友篇（save 的 followingHead 过滤：有效公开或仅好友）。
+    /// 仅好友篇绝不进广场桶；退出时两桶同清（见 SessionManager
+    /// purgeLocalSnapshots）；进段仍静默刷新复核资格，取关后失资格的旧行
+    /// 由刷新/广播清掉，不靠缓存自证。
     static func followingBucket(userId: Int?) -> String {
         return bucket(userId: userId) + "-following"
     }
@@ -3772,6 +3785,13 @@ enum BearyFeedCache {
         return entries.filter { $0.id != nil && !$0.id!.isEmpty && BearyEphemeral.isEffectivelyPublic($0) }
     }
 
+    /// 正在关注段落盘/读盘口径：有效公开篇 + 仅好友篇（与 filteredFollowingEntries
+    /// 同口径；服务端 scope=following 已按关注关系过滤，本地只收紧不放宽）。
+    /// 仅广场桶用 visibleHead；仅好友篇只进 "-following" 桶，绝不进广场桶。
+    static func followingHead(_ entries: [Entry]) -> [Entry] {
+        return entries.filter { $0.id != nil && !$0.id!.isEmpty && (BearyEphemeral.isEffectivelyPublic($0) || $0.isFriendsOnly) }
+    }
+
     private static func fileURL(bucket: String) -> URL? {
         guard let base = FileManager.appSupportDirectory else { return nil }
         return base.appendingPathComponent("\(filePrefix)\(bucket).json")
@@ -3779,11 +3799,31 @@ enum BearyFeedCache {
 
     /// 审计 13：磁盘读写与编解码走独立串行队列，不再占主线程；读写同队
     /// 列，同一会话内“写后读”顺序有保证（删帖写回不会被旧快照读回冲掉）。
-    /// 快照只存首屏窗口（snapshotEntryLimit 条）；窗口外还有篇时 hasMore
-    /// 强制为真——截断后的分页游标是窗口末条，before 续拉恰好取回被截掉
-    /// 的旧篇，续接不断。调用方仍传原始 hasMore，截断修正由本函数统一做。
+    /// 快照存首屏窗口 + 分页续拉的尾部（上限 snapshotEntryLimit 条）；
+    /// 窗口外还有篇时 hasMore 强制为真——截断后的分页游标是窗口末条，
+    /// before 续拉恰好取回被截掉的旧篇，续接不断。调用方仍传原始 hasMore，
+    /// 截断修正由本函数统一做。调用方须传完整内存列表（plazaRaw / 合并后
+    /// newList），只传首屏 12 篇时扩容存不满（见 saveCurrentFeedHead）。
     private static let ioQueue = DispatchQueue(label: "beary.feedCache.io", qos: .utility)
-    static let snapshotEntryLimit = 12
+
+    /// C-P0-7 快照扩容灰度开关（UserDefaults 熔断；本仓无远端配置通道，
+    /// 灰度/回滚走本开关）：默认开。关时上限回落 12、正在关注段回落仅公开篇（旧口径）。
+    private static let snapshotExpansionFlagKey = "beary.feed.snapshotExpansionEnabled"
+    static var isSnapshotExpansionEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: snapshotExpansionFlagKey) == nil { return true }
+            return UserDefaults.standard.bool(forKey: snapshotExpansionFlagKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: snapshotExpansionFlagKey) }
+    }
+    /// 扩容值 36 = 3 × 首屏 12：首屏 + 一页分页（20）再多 4 篇，离线可滑
+    /// 约 3 屏；单文件几十 KB，写盘仍在 ioQueue 异步，不卡首帧；后台刷新
+    /// 单次拉 36 条仍为一次请求（见 BearyBackgroundRefresh）。
+    static let snapshotEntryLimitExpanded = 36
+    static let snapshotEntryLimitLegacy = 12
+    static var snapshotEntryLimit: Int {
+        return isSnapshotExpansionEnabled ? snapshotEntryLimitExpanded : snapshotEntryLimitLegacy
+    }
 
     /// 审计 22 项：按桶的失效代次。purge 同步推进代次、删除进 ioQueue；
     /// save/load 在调用时固定代次、队列内执行时再次校验。purge 前已排队
@@ -3822,13 +3862,15 @@ enum BearyFeedCache {
         }
     }
 
-    /// 写缓存：只存有效公开篇（visibleHead 过滤）；hasMore 由调用方按
-    /// 本次首拉回包量给（不能从存后篇数反推——删篇后写回时篇数会缩水），
-    /// 再叠加截断修正（见上）。写盘异步进行，调用方先应用界面、不等写盘。
-    /// 审计 22 项：队列内写盘前验代次，purge 前已排队的写被弃写。
-    static func save(bucket: String?, entries: [Entry], hasMore: Bool) {
+    /// 写缓存：广场桶只存有效公开篇（visibleHead 过滤）；正在关注桶另存
+    /// 仅好友篇（followingHead 过滤，调用方传 includeFriendsOnly: true）。
+    /// hasMore 由调用方按本次首拉回包量给（不能从存后篇数反推——删篇后写回
+    /// 时篇数会缩水），再叠加截断修正（见上）。写盘异步进行，调用方先应用
+    /// 界面、不等写盘。审计 22 项：队列内写盘前验代次，purge 前已排队的写被弃写。
+    static func save(bucket: String?, entries: [Entry], hasMore: Bool, includeFriendsOnly: Bool = false) {
         guard let bucket = bucket, !bucket.isEmpty else { return }
-        let head = visibleHead(entries)
+        let allowFriendsOnly = includeFriendsOnly && isSnapshotExpansionEnabled
+        let head = allowFriendsOnly ? followingHead(entries) : visibleHead(entries)
         let capped = Array(head.prefix(snapshotEntryLimit))
         let storedHasMore = hasMore || head.count > snapshotEntryLimit
         let snap = Snapshot(savedAt: Date().timeIntervalSince1970, entries: capped, hasMore: storedHasMore)
