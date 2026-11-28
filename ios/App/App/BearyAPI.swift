@@ -1354,6 +1354,27 @@ final class BearyAPI {
         }
     }
 
+    // MARK: - 法律文本
+
+    /// 法律文本响应：GET /beary/api/legal?doc=privacy|terms。
+    /// 全局 decoder 带 convertFromSnakeCase，故 updated_at 在此写作 updatedAt。
+    struct LegalTextResponse: Decodable {
+        let ok: Bool
+        let doc: String
+        let title: String?
+        let updatedAt: String?
+        let text: String?
+    }
+
+    /// 法律文本：GET /beary/api/legal?doc=<doc>（公开接口，无需登录）。
+    /// suppressUnauthorized: true——游客在登录页同样拉取，401 只作失败回传，
+    /// 绝不能触发 onUnauthorized 把已登录账号踢下线（原 URLSession 直调无此副作用）。
+    /// 其余走统一出口：专用会话、Origin 头、BearyAppLog.api、GET 网络错重试 1 次。
+    @discardableResult
+    func fetchLegalText(doc: String, completion: @escaping (Result<LegalTextResponse, APIError>) -> Void) -> URLSessionDataTask? {
+        request("/beary/api/legal", query: ["doc": doc], suppressUnauthorized: true, completion: completion)
+    }
+
     /// since 增量取数结果。hasGap=true 表示补拉未接上旧表头（补拉页失败，
     /// 或 4 页耗尽仍未撞见已知 id）：entries 只是已收集的新篇、中间有缺口；
     /// 调用方不得把游标推进到缺口之外（下次 since 仍从旧表头起拉）。

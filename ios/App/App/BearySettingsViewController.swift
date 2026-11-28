@@ -4084,14 +4084,6 @@ enum BearyLegalServerText {
         case terms
     }
 
-    private struct Response: Decodable {
-        let ok: Bool
-        let doc: String
-        let title: String?
-        let updated_at: String?
-        let text: String?
-    }
-
     private static func textKey(for doc: Doc) -> String { "beary_legal_text_" + doc.rawValue }
     private static func updatedKey(for doc: Doc) -> String { "beary_legal_updated_at_" + doc.rawValue }
 
@@ -4113,27 +4105,25 @@ enum BearyLegalServerText {
     }
 
     static func refresh(doc: Doc, completion: @escaping (String?) -> Void) {
-        guard let url = URL(string: "https://teddyhn.com/beary/api/legal?doc=" + doc.rawValue) else {
-            completion(nil)
-            return
-        }
-        var request = URLRequest(url: url)
-        request.setValue("https://teddyhn.com", forHTTPHeaderField: "Origin")
-        URLSession.shared.dataTask(with: request) { data, response, _ in
-            guard let data = data,
-                  let http = response as? HTTPURLResponse, http.statusCode == 200,
-                  let decoded = try? JSONDecoder().decode(Response.self, from: data),
-                  decoded.ok, decoded.doc == doc.rawValue,
-                  let text = decoded.text, !text.isEmpty else {
+        // 走 BearyAPI 统一出口（专用会话、Origin 头、日志、GET 网络错重试 1 次）；
+        // 缓存与兜底语义不变：成功才写 UserDefaults，失败 completion(nil)，
+        // 调用方继续显示缓存或包内文本。completion 仍在主线程回调（调用方直接改 UI）。
+        BearyAPI.shared.fetchLegalText(doc: doc.rawValue) { result in
+            switch result {
+            case .success(let resp):
+                guard resp.ok, resp.doc == doc.rawValue, let text = resp.text, !text.isEmpty else {
+                    DispatchQueue.main.async { completion(nil) }
+                    return
+                }
+                UserDefaults.standard.set(text, forKey: textKey(for: doc))
+                if let updated = resp.updatedAt {
+                    UserDefaults.standard.set(updated, forKey: updatedKey(for: doc))
+                }
+                DispatchQueue.main.async { completion(text) }
+            case .failure:
                 DispatchQueue.main.async { completion(nil) }
-                return
             }
-            UserDefaults.standard.set(text, forKey: textKey(for: doc))
-            if let updated = decoded.updated_at {
-                UserDefaults.standard.set(updated, forKey: updatedKey(for: doc))
-            }
-            DispatchQueue.main.async { completion(text) }
-        }.resume()
+        }
     }
 }
 
