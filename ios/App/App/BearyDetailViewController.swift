@@ -726,49 +726,8 @@ final class BearyDetailViewController: UIViewController {
     /// 失败态与占位共用本视图布局，一并受益（P1-2），不另起一套。
     private let placeholderStateView = BearyStateView()
 
-    /// 第 22 轮 C2：失败横幅——“显示的是上次的内容”＋“重试”，挂正文栈首行
-    /// （作者头行正下方）；失败时常驻、不自动消失，成功后 0.18s 淡出。
-    private let staleBannerLabel: UILabel = {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        label.adjustsFontForContentSizeCategory = true
-        label.textColor = BearyColors.gray
-        label.text = "显示的是上次的内容"
-        label.setContentHuggingPriority(UILayoutPriority.defaultLow, for: .horizontal)
-        return label
-    }()
-
-    private lazy var staleBannerRetryButton: UIButton = {
-        let button = UIButton(type: .custom)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.setTitle("重试", for: .normal)
-        button.setTitleColor(BearyColors.ink, for: .normal)
-        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
-        button.titleLabel?.adjustsFontForContentSizeCategory = true
-        button.setContentHuggingPriority(UILayoutPriority.required, for: .horizontal)
-        button.accessibilityLabel = "重试加载"
-        button.addTarget(self, action: #selector(staleBannerRetryTapped), for: .touchUpInside)
-        button.bearyAddPressFeedback()
-        return button
-    }()
-
-    private lazy var staleBannerView: UIStackView = {
-        let stack = UIStackView(arrangedSubviews: [staleBannerLabel, staleBannerRetryButton])
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .horizontal
-        stack.spacing = 8
-        stack.alignment = .center
-        stack.backgroundColor = BearyColors.surface2
-        stack.layer.cornerRadius = 12
-        stack.clipsToBounds = true
-        stack.isLayoutMarginsRelativeArrangement = true
-        stack.layoutMargins = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
-        stack.isHidden = true
-        return stack
-    }()
-
-    private var staleBannerVisible = false
+    /// 展示审计 G4-14：失败提示改 toast（见 showStaleBanner），标题上方不再
+    /// 常驻横幅；staleBannerRetrying 只拦重试连点。
     private var staleBannerRetrying = false
 
     /// 限时虚线气泡（2026-11-19 预览定版，卡片同款）：包住标题＋正文；
@@ -1154,7 +1113,6 @@ final class BearyDetailViewController: UIViewController {
 
         buildCardHeader()
         buildBody()
-        buildStaleBanner()
         buildImages()
         buildQuote()
         buildLocation()
@@ -1323,12 +1281,6 @@ final class BearyDetailViewController: UIViewController {
         ])
         // 定宽先算一次：容器宽随即定下，首帧布局不再有歧义宽。
         updateFollowButtonFixedWidth()
-    }
-
-    /// 第 22 轮 C2：失败横幅挂正文栈首行（作者头行正下方、标题上方）；
-    /// 隐藏时栈自动压零，不留空隙、不动其余间距。
-    private func buildStaleBanner() {
-        bodyStack.insertArrangedSubview(staleBannerView, at: 0)
     }
 
     private func buildBody() {
@@ -1603,8 +1555,6 @@ final class BearyDetailViewController: UIViewController {
         let headerBodyGap: CGFloat = limitedBubbleActive ? 12 : 6
         bodyStackTopFromAvatarConstraint?.constant = headerBodyGap
         bodyStackTopFromHeaderConstraint?.constant = headerBodyGap
-        // 失败横幅→标题 12：横幅隐藏时栈自动忽略，不留空隙。
-        bodyStack.setCustomSpacing(12, after: staleBannerView)
         // 标题贴着正文走：标题→正文 6（ChatGPT 间距跟进，#904 为 4）；标题隐藏时其后间距置 0，正文直接贴头行间距。
         // 限时态下标题／正文在气泡内栈里，该间距走气泡内栈（固定 6），正文栈只认气泡后间距。
         if limitedBubbleActive {
@@ -1805,49 +1755,20 @@ final class BearyDetailViewController: UIViewController {
         placeholderStateView.isHidden = false
     }
 
-    /// 第 22 轮 C2：失败横幅显现（常驻，直到补齐成功）。已在显时只恢复
-    /// 可点按态（重试失败回来），不重播出现动效。顶部多出一条时保住阅读
-    /// 位置：在顶时不补，横幅把内容往下推、本就是要让用户看到它。
+    /// 展示审计 G4-14：失败提示改轻量形式——标题上方不再常驻横幅，改 toast
+    /// “显示的是上次的内容”＋“重试”动作；重试中只拦连点，正文与其它区域
+    /// 一字不动；成功后 toast 自带消失，无需 hide。重试失败回来时
+    /// showFetchFailed 再调本方法，届时重试旗已落定，重新弹出 toast。
     private func showStaleBanner() {
         guard !locallyHiddenByModeration, entry.placeholder != true else { return }
-        if staleBannerVisible {
-            setStaleBannerRetrying(false)
-            return
-        }
-        staleBannerVisible = true
         setStaleBannerRetrying(false)
-        let beforeHeight = scrollView.contentSize.height
-        staleBannerView.isHidden = false
-        staleBannerView.alpha = 0
-        view.layoutIfNeeded()
-        let grown = scrollView.contentSize.height - beforeHeight
-        if grown > 0, scrollView.contentOffset.y > 0 {
-            scrollView.contentOffset.y += grown
-        }
-        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            self.staleBannerView.alpha = 1
-        })
+        BearyToast.show(in: view, message: "显示的是上次的内容", actionTitle: "重试", action: { [weak self] in self?.staleBannerRetryTapped() })
     }
 
-    /// 第 22 轮 C2：补齐成功后横幅 0.18 秒淡出（BearyMotion.localStateDuration），
-    /// 再收起；收起后内容上移，同步回补 offset，读到的位置不动（在顶时不补）。
-    private func hideStaleBanner() {
-        guard staleBannerVisible else { return }
-        staleBannerVisible = false
+    /// 展示审计 G4-14：横幅已撤，只剩重试旗——回包明确不可见或补齐成功时清掉，
+    /// 避免重试失败后 toast 不再弹出。
+    private func clearStaleRetryState() {
         setStaleBannerRetrying(false)
-        let beforeHeight = scrollView.contentSize.height
-        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
-            self.staleBannerView.alpha = 0
-        }, completion: { _ in
-            self.staleBannerView.isHidden = true
-            self.staleBannerView.alpha = 1
-            self.view.layoutIfNeeded()
-            let shrunk = beforeHeight - self.scrollView.contentSize.height
-            if shrunk > 0, self.scrollView.contentOffset.y > 0, !self.bodyStack.isHidden {
-                let maxOffset = max(0, self.scrollView.contentSize.height - self.scrollView.bounds.height)
-                self.scrollView.contentOffset.y = min(max(0, self.scrollView.contentOffset.y - shrunk), maxOffset)
-            }
-        })
     }
 
     /// 第 22 轮 C2：横幅重试——重试中只更新这条（按钮置灰、“重试中”），
@@ -1860,8 +1781,6 @@ final class BearyDetailViewController: UIViewController {
 
     private func setStaleBannerRetrying(_ retrying: Bool) {
         staleBannerRetrying = retrying
-        staleBannerRetryButton.isEnabled = !retrying
-        staleBannerRetryButton.setTitle(retrying ? "重试中" : "重试", for: .normal)
     }
 
     /// 详情失败重试：与 SceneDelegate 后台补齐同一可见性门（作者直更、
@@ -2302,8 +2221,8 @@ final class BearyDetailViewController: UIViewController {
                 entry.placeholder = true
                 showPlaceholder(visibility: fetched.visibility)
             }
-            // 第 22 轮 C2：回包明确不可见，失败横幅一并收起（横幅只留给弱网旧内容）。
-            hideStaleBanner()
+            // 展示审计 G4-14：回包明确不可见，重试态一并清掉（toast 只留给弱网旧内容）。
+            clearStaleRetryState()
             return
         }
         // 第 22 轮 C3：记住屏上可见块再合并——上方内容高度变化时，补齐后按锚点恢复位置。
@@ -2464,8 +2383,8 @@ final class BearyDetailViewController: UIViewController {
         if !applyEphemeralExpiryIfNeeded() {
             scheduleEphemeralExpiry()
         }
-        // 第 22 轮 C2：补齐成功，失败横幅 0.18 秒淡出收起。
-        hideStaleBanner()
+        // 展示审计 G4-14：补齐成功，重试态清掉（toast 自带消失）。
+        clearStaleRetryState()
     }
 
     /// 单篇磁盘快照写盘：占位/拉黑态与无 id 的篇不写（快照只存看过的内容态），
@@ -2617,7 +2536,7 @@ final class BearyDetailViewController: UIViewController {
         limitedBubbleView.textStack.addArrangedSubview(titleLabel)
         limitedBubbleView.textStack.addArrangedSubview(bodyLabel)
         if limitedBubbleView.superview == nil {
-            let bubbleIndex = staleBannerView.superview != nil ? 1 : 0
+            let bubbleIndex = 0
             bodyStack.insertArrangedSubview(limitedBubbleView, at: bubbleIndex)
         }
         limitedBubbleView.isHidden = false
@@ -2632,7 +2551,7 @@ final class BearyDetailViewController: UIViewController {
         bodyLabel.removeFromSuperview()
         bodyStack.removeArrangedSubview(limitedBubbleView)
         limitedBubbleView.removeFromSuperview()
-        let titleIndex = staleBannerView.superview != nil ? 1 : 0
+        let titleIndex = 0
         bodyStack.insertArrangedSubview(bodyLabel, at: titleIndex + 1)
         bodyStack.insertArrangedSubview(titleLabel, at: titleIndex)
     }
