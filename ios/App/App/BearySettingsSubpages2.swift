@@ -463,10 +463,13 @@ final class BearyStorageSettingsViewController: BearySettingsSubpageViewControll
 // MARK: - 数据用量页
 
 /// 数据用量：顶部一句说明，流量节省程序开关默认关，高画质图片行，
-/// 自动播放实况开关。beary 没有视频功能，高画质视频／自动播放视频／
+/// 上传画质行，自动播放实况开关。beary 没有视频功能，高画质视频／自动播放视频／
 /// 1080p 视频上传／离线视频／网页存储一律不放。
 final class BearyDataUsageSettingsViewController: BearySettingsSubpageViewController {
     init() { super.init(title: "数据用量") }
+
+    /// Plus 页左缘右滑控制器（presentPlusPage 里挂住，见编辑器同款）。
+    private var plusPageEdgeDismiss: BearyEdgeDismissController?
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -495,11 +498,18 @@ final class BearyDataUsageSettingsViewController: BearySettingsSubpageViewContro
         hiresButton.accessibilityLabel = "高画质图片"
         hiresButton.addTarget(self, action: #selector(hiresRowTapped), for: .touchUpInside)
         let hiresRow = bearySettingsTappableRow(content: bearySettingsNavContent(title: "高画质图片", detail: hiresDetail), button: hiresButton)
+        let qualityDetail = BearyUploadQuality.current == .original
+            ? NSLocalizedString("settings.upload_quality.original", comment: "")
+            : NSLocalizedString("settings.upload_quality.compressed", comment: "")
+        let qualityButton = UIButton(type: .custom)
+        qualityButton.accessibilityLabel = NSLocalizedString("settings.upload_quality.title", comment: "")
+        qualityButton.addTarget(self, action: #selector(uploadQualityRowTapped), for: .touchUpInside)
+        let qualityRow = bearySettingsTappableRow(content: bearySettingsNavContent(title: NSLocalizedString("settings.upload_quality.title", comment: ""), detail: qualityDetail), button: qualityButton)
         let autoplayOn = BearyLivePhotoAutoplay.isEnabled
         let autoplayDetail = saverOn ? "流量节省程序开启时不自动播放" : "时间线和详情里的实况照片就绪后自动播放"
         let (autoplayRow, autoplaySwitch) = bearySettingsSwitchContent(title: "自动播放实况", detail: autoplayDetail, isOn: autoplayOn, target: self, action: #selector(autoplaySwitchChanged(_:)))
         autoplaySwitch.isEnabled = !saverOn
-        contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: [saverRow, hiresRow, autoplayRow]))
+        contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: [saverRow, hiresRow, qualityRow, autoplayRow]))
     }
 
     @objc private func saverSwitchChanged(_ sender: UISwitch) {
@@ -525,6 +535,42 @@ final class BearyDataUsageSettingsViewController: BearySettingsSubpageViewContro
             }, isSelected: option.value == current)
         }
         BearyConfirmSheet.show(from: self, title: "高画质图片", message: "选择在什么网络下拉取原图", actions: actions)
+    }
+
+    @objc private func uploadQualityRowTapped() {
+        let current = BearyUploadQuality.current
+        let actions: [BearyConfirmSheet.Action] = [
+            BearyConfirmSheet.Action(title: NSLocalizedString("settings.upload_quality.original_plus", comment: ""), style: .default, handler: { [weak self] in
+                guard let self = self else { return }
+                guard BearyPlusGate.canUsePlusFeature(user: SessionManager.shared.currentUser) else {
+                    BearyToast.show(in: self.view, message: NSLocalizedString("settings.upload_quality.plus_required", comment: ""), actionTitle: NSLocalizedString("settings.upload_quality.learn_plus", comment: "")) { [weak self] in
+                        self?.presentPlusPage()
+                    }
+                    return
+                }
+                BearyUploadQuality.setCurrent(.original)
+                self.render()
+            }, isSelected: current == .original),
+            BearyConfirmSheet.Action(title: NSLocalizedString("settings.upload_quality.compressed", comment: ""), style: .default, handler: { [weak self] in
+                BearyUploadQuality.setCurrent(.compressed)
+                self?.render()
+            }, isSelected: current == .compressed),
+        ]
+        BearyConfirmSheet.show(from: self, title: NSLocalizedString("settings.upload_quality.title", comment: ""), message: NSLocalizedString("settings.upload_quality.choose_message", comment: ""), actions: actions)
+    }
+
+    /// Plus 页（编辑器 presentPlusPage 同款呈现：窄屏全屏＋左缘右滑、宽屏默认呈现）。
+    private func presentPlusPage() {
+        guard presentedViewController == nil else { return }
+        let page = BearyPlusPageViewController(isPlus: BearyPlusGate.isRealPlus(user: SessionManager.shared.currentUser))
+        if traitCollection.horizontalSizeClass == .compact {
+            page.modalPresentationStyle = .fullScreen
+            let edgeDismiss = BearyEdgeDismissController()
+            edgeDismiss.attach(to: page)
+            page.transitioningDelegate = edgeDismiss
+            plusPageEdgeDismiss = edgeDismiss
+        }
+        present(page, animated: BearyMotion.animated(true))
     }
 }
 
