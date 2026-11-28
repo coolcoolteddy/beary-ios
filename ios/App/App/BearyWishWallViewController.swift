@@ -1166,7 +1166,7 @@ final class BearyWishWallViewController: UIViewController {
                     // 审计 26 #34：写请求服务端确认成功，写入版本 +1（列表旧快照不得再覆盖）。
                     self.wishWriteVersion[wishId, default: 0] += 1
                     onSettled?(true)
-                case .failure:
+                case .failure(let error):
                     // 失败回滚口径（点赞同款）：滚到最后服务端确认态，不是本次
                     // 点按前的中间态——快连点下中间态已被更新点按覆盖，滚回去即错。
                     var rolledBack = self.wishes[idx]
@@ -1177,9 +1177,14 @@ final class BearyWishWallViewController: UIViewController {
                     }
                     self.wishes[idx] = rolledBack
                     self.rowViews[wishId]?.configure(item: rolledBack, isAdmin: self.isAdmin)
-                    self.rowViews[wishId]?.shake()
-                    BearyHaptics.rejectionWarning()
-                    BearyToast.show(in: self.view, message: NSLocalizedString("wish.vote_failed", comment: ""))
+                    if case .unauthorized = error {
+                        // 401 对齐通用规则（数据同步审阅 c）：只回滚，不摇头、
+                        // 不弹 toast——全局 onUnauthorized 已清态并走统一登录门。
+                    } else {
+                        self.rowViews[wishId]?.shake()
+                        BearyHaptics.rejectionWarning()
+                        BearyToast.show(in: self.view, message: NSLocalizedString("wish.vote_failed", comment: ""))
+                    }
                     onSettled?(false)
                 }
             }

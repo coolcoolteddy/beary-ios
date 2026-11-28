@@ -9956,13 +9956,18 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.updateEntryInAllTabs(entry: prev)
                     }
                     strongSelf.tableView.reloadData()
-                    BearyToast.show(in: strongSelf.view, message: BearyDiaryPin.errorMessage(for: err, pinning: pinning))
-                    // reloadData 后布局未必已落定，下一 runloop 再取可见行摇头。
-                    DispatchQueue.main.async {
-                        guard let row = strongSelf.displayedEntries.firstIndex(where: { $0.id == entryId }),
-                              let cell = strongSelf.tableView.cellForRow(at: IndexPath(row: row, section: 0)) as? BearyDiaryCardCell,
-                              cell.cellEntryId == entryId else { return }
-                        cell.playPublishDenyShake()
+                    if case .unauthorized = err {
+                        // 401 对齐通用规则（数据同步审阅 c）：只回滚，不弹 toast、
+                        // 不摇头——全局 onUnauthorized 已清态并走统一登录门。
+                    } else {
+                        BearyToast.show(in: strongSelf.view, message: BearyDiaryPin.errorMessage(for: err, pinning: pinning))
+                        // reloadData 后布局未必已落定，下一 runloop 再取可见行摇头。
+                        DispatchQueue.main.async {
+                            guard let row = strongSelf.displayedEntries.firstIndex(where: { $0.id == entryId }),
+                                  let cell = strongSelf.tableView.cellForRow(at: IndexPath(row: row, section: 0)) as? BearyDiaryCardCell,
+                                  cell.cellEntryId == entryId else { return }
+                            cell.playPublishDenyShake()
+                        }
                     }
                 }
             }
