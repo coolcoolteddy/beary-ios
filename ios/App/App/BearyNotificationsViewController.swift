@@ -4562,7 +4562,8 @@ class BearyNotificationCell: UITableViewCell {
         avatarFallbackLabel.isHidden = true
         kindBadgeView.isHidden = true
         nestedLineView.isHidden = true
-        titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16)), color: BearyColors.ink, lineBreakMode: .byCharWrapping, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
+        // 展示审计 G6-H4：卡面分组名 15 semibold，与行标题 16 bold 拉开层级（A8 的 16.5 只管行标题，不管卡面名）。
+        titleLabel.attributedText = BearyNotificationCell.moodLineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold)), color: BearyColors.ink, lineBreakMode: .byTruncatingTail, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         excerptLabel.attributedText = BearyNotificationCell.moodLineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: mergedList ? 12 : 14)), color: BearyColors.gray, multiple: mergedList ? 1.0 : 1.5, dark: traitCollection.userInterfaceStyle == .dark)
         lastTimeMs = timeMs
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
