@@ -48,6 +48,14 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
     var containerHeight: CGFloat = 800
 
     private let titleLabel = UILabel()
+    /// 展示审计 G5-08：[mood:] 语法提示入口（info 图标，官方 icon_info）＋
+    /// tooltip 气泡。心情选择器入口已删（2026-11-18），唯一路径是正文手动
+    /// 键入 [mood:xxx]，编辑器内此前无任何处提示；本处只加一处 info 图标，
+    /// 点按才出气泡，不加常驻说明文字。
+    private let moodTipButton = BearyHit44Button(type: .system)
+    private let moodTipBubble = UIView()
+    private let moodTipLabel = UILabel()
+    private var moodTipHideTimer: Timer?
     private var emoteCollectionView: UICollectionView?
     private var collectionHeightConstraint: NSLayoutConstraint?
     private var lastLayoutWidth: CGFloat = 0
@@ -106,6 +114,34 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
         titleLabel.textColor = BearyColors.ink
         view.addSubview(titleLabel)
 
+        // 展示审计 G5-08：标题行尾 info 图标（反馈页 helpButton 同款口径：
+        // icon_info 灰色、点按出提示）；气泡默认隐藏，点按才出。
+        moodTipButton.translatesAutoresizingMaskIntoConstraints = false
+        moodTipButton.setImage(BearyIconImages.image(named: "icon_info", pointSize: 20), for: .normal)
+        moodTipButton.tintColor = BearyColors.gray
+        moodTipButton.accessibilityLabel = "关于手动输入表情记号"
+        moodTipButton.addTarget(self, action: #selector(moodTipTapped), for: .touchUpInside)
+        moodTipButton.bearyAddPressFeedback()
+        view.addSubview(moodTipButton)
+
+        moodTipBubble.translatesAutoresizingMaskIntoConstraints = false
+        moodTipBubble.backgroundColor = BearyColors.ink
+        moodTipBubble.layer.cornerRadius = 12
+        moodTipBubble.layer.masksToBounds = true
+        moodTipBubble.isHidden = true
+        moodTipLabel.translatesAutoresizingMaskIntoConstraints = false
+        moodTipLabel.text = "在正文输入 [mood:xxx]，也能直接插入小熊表情"
+        moodTipLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        moodTipLabel.adjustsFontForContentSizeCategory = true
+        moodTipLabel.textColor = BearyColors.bg
+        moodTipLabel.numberOfLines = 0
+        moodTipLabel.isAccessibilityElement = true
+        moodTipLabel.accessibilityLabel = "在正文输入 mood 记号，也能直接插入小熊表情"
+        moodTipBubble.addSubview(moodTipLabel)
+        let moodTipTap = UITapGestureRecognizer(target: self, action: #selector(hideMoodTip))
+        moodTipBubble.addGestureRecognizer(moodTipTap)
+        view.addSubview(moodTipBubble)
+
         let layout = UICollectionViewFlowLayout()
         layout.minimumInteritemSpacing = 6
         layout.minimumLineSpacing = 10
@@ -130,7 +166,21 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
             // 顶部留白与旧抓手区等高（抓手顶 10＋高 4＋标题间距 14）：系统抓手占顶区，标题位置不动。
             titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: BearySheetChrome.grabberTop + BearySheetChrome.grabberHeight + 14),
             titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
-            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            titleLabel.trailingAnchor.constraint(equalTo: moodTipButton.leadingAnchor, constant: -8),
+
+            moodTipButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            moodTipButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            moodTipButton.widthAnchor.constraint(equalToConstant: 24),
+            moodTipButton.heightAnchor.constraint(equalToConstant: 24),
+
+            moodTipBubble.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            moodTipBubble.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
+            moodTipBubble.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+
+            moodTipLabel.topAnchor.constraint(equalTo: moodTipBubble.topAnchor, constant: 10),
+            moodTipLabel.bottomAnchor.constraint(equalTo: moodTipBubble.bottomAnchor, constant: -10),
+            moodTipLabel.leadingAnchor.constraint(equalTo: moodTipBubble.leadingAnchor, constant: 14),
+            moodTipLabel.trailingAnchor.constraint(equalTo: moodTipBubble.trailingAnchor, constant: -14),
 
             collection.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
             collection.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -188,6 +238,31 @@ final class BearyMoodPickerSheetViewController: UIViewController, UICollectionVi
 
     @objc private func closeTapped() {
         dismiss(animated: BearyMotion.animated(true))
+    }
+
+    /// 展示审计 G5-08：info 图标点按开关 tooltip 气泡；气泡 5 秒后自动收起，
+    /// 点气泡本身也收起；sheet 关闭时清掉定时器。
+    @objc private func moodTipTapped() {
+        if moodTipBubble.isHidden {
+            moodTipBubble.isHidden = false
+            moodTipHideTimer?.invalidate()
+            moodTipHideTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+                self?.hideMoodTip()
+            }
+        } else {
+            hideMoodTip()
+        }
+    }
+
+    @objc private func hideMoodTip() {
+        moodTipHideTimer?.invalidate()
+        moodTipHideTimer = nil
+        moodTipBubble.isHidden = true
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        hideMoodTip()
     }
 
     /// VoiceOver 双指 scrub（无障碍退出手势）：走同一关闭路径。
