@@ -19,20 +19,12 @@ import UIKit
 final class BearyRecipientPickerViewController: UIViewController, UITextFieldDelegate, BearySystemSheetSizing {
 
     /// 点行回传（调用方写 selectedRecipient；本页随后自行 dismiss）。
-    /// iCity：@ 提醒无按篇开关——第二参仅为签名兼容保留，调用方忽略。
-    var onPick: ((SearchUser, Bool) -> Void)?
-    /// 旧面板内通知开关当前值；iCity 起开关行隐藏，本字段仅作初值占位保留。
-    var notifyRecipient = true
+    var onPick: ((SearchUser) -> Void)?
 
     private let headerTitle = UILabel()
     private let searchBox = UIView()
     private let searchIcon = UIImageView()
     private let searchField = UITextField()
-    /// A2：面板内通知开关（16 复选 + “通知对方”文案；iCity 起行隐藏，仅保留代码）。
-    private let notifyRow = UIStackView()
-    // 样式规格第 4 表：选人器通知复选框视觉 16×16、圆角 4 不动，热区扩到 44。
-    private let notifyCheckButton = BearyHit44Button(type: .custom)
-    private let notifyLabel = UILabel()
     /// 搜索框配色（编辑器批）：原 A2 自定义动态底色/边框已删——96 包真机上搜索框
     /// 整棵子树不画（帧 44pt 证实存在、预测区像素纯白），v2 黑白灰改走
     /// BearyColors.surface2 底＋边框 0、聚焦走聚焦阴影（视觉审计 08），圆角取精确半高 24（见 buildViews）。
@@ -141,12 +133,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // CGColor 只在赋值时解析一次：深浅切换时重刷通知开关描边。
+        // CGColor 只在赋值时解析一次：深浅切换时重刷搜索框阴影。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             // 视觉审计 08：深浅切换重刷阴影时走焦点态（聚焦仍是聚焦阴影、
             // 失焦清掉阴影），不再无条件写回 line 丢掉焦点态。
             updateSearchBoxShadow()
-            notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
         }
     }
 
@@ -192,28 +183,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         searchField.contentVerticalAlignment = .center
         searchField.delegate = self
         searchField.returnKeyType = .search
-        // A2：面板内通知开关（默认开；外观与编辑器 @ 行复选同款：16 圆角 6、
-        // 1.5 描边、开态 ink 底 + bg 色对勾）。
-        notifyRow.axis = .horizontal
-        notifyRow.spacing = 6
-        notifyRow.alignment = .center
-        // iCity：@ 提醒无按篇开关——通知行隐藏（约束与高度计算见下文同步改，不留空隙）。
-        notifyRow.isHidden = true
-        notifyCheckButton.layer.cornerRadius = 4
-        notifyCheckButton.layer.masksToBounds = true
-        notifyCheckButton.layer.borderWidth = 1
-        notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
-        notifyCheckButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 14))
-        notifyCheckButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
-        notifyCheckButton.bearyAddPressFeedback()
-        notifyLabel.text = "通知对方"
-        notifyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        notifyLabel.adjustsFontForContentSizeCategory = true
-        notifyLabel.textColor = BearyColors.ink
-        notifyRow.addArrangedSubview(notifyCheckButton)
-        notifyRow.addArrangedSubview(notifyLabel)
-        refreshNotifyCheck()
         searchField.addTarget(self, action: #selector(searchFieldChanged), for: .editingChanged)
         rowsStack.axis = .vertical
         rowsStack.spacing = 0
@@ -247,14 +216,13 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.isHidden = true
         stateRetryButton.addTarget(self, action: #selector(didTapStateRetry), for: .touchUpInside)
         stateRetryButton.bearyAddPressFeedback()
-        for v in [headerTitle, searchBox, searchIcon, searchField, notifyRow, notifyCheckButton, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
+        for v in [headerTitle, searchBox, searchIcon, searchField, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         view.addSubview(headerTitle)
         view.addSubview(searchBox)
         searchBox.addSubview(searchIcon)
         searchBox.addSubview(searchField)
-        view.addSubview(notifyRow)
         view.addSubview(listContainer)
         listContainer.addSubview(listScrollView)
         listScrollView.delaysContentTouches = false
@@ -297,13 +265,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             searchField.trailingAnchor.constraint(equalTo: searchBox.trailingAnchor, constant: -14),
             searchField.topAnchor.constraint(equalTo: searchBox.topAnchor, constant: 12),
             searchField.bottomAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: -12),
-            // iCity：通知行隐藏——列表直接贴搜索框下 10pt；通知行约束保留、
-            // 行本身隐藏（不绘图、不接手势），与列表区的少量重叠不可见、无害。
-            notifyRow.topAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: 8),
-            notifyRow.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            notifyRow.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
-            notifyCheckButton.widthAnchor.constraint(equalToConstant: 16),
-            notifyCheckButton.heightAnchor.constraint(equalToConstant: 16),
             listContainer.topAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: 10),
             listContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
             listContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
@@ -404,24 +365,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             preferredContentSize = preferred
             BearySystemSheet.refreshDetentsIfNeeded(for: self)
         }
-    }
-
-    /// A2：面板内通知开关只改本地值与自身外观（与编辑器 @ 行复选同款；iCity 起行隐藏），
-    /// 真正生效在点行回传时（onPick 第二参）。
-    private func refreshNotifyCheck() {
-        if notifyRecipient {
-            notifyCheckButton.backgroundColor = BearyColors.ink
-            notifyCheckButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
-            notifyCheckButton.tintColor = BearyColors.bg
-        } else {
-            notifyCheckButton.backgroundColor = UIColor.clear
-            notifyCheckButton.setImage(nil, for: .normal)
-        }
-    }
-
-    @objc private func didTapNotifyCheck() {
-        notifyRecipient.toggle()
-        refreshNotifyCheck()
     }
 
     @objc private func didTapStateRetry() {
@@ -929,7 +872,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             }
         }
         guard let user = picked else { return }
-        onPick?(user, notifyRecipient)
+        onPick?(user)
         dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
     }
 }

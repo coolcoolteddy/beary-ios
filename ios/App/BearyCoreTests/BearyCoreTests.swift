@@ -1265,7 +1265,7 @@ final class BearyDraftBackupTests: XCTestCase {
         // 坏数据拼成损坏库——文件里的好草稿保证是 BearyDraft 能解出的形状；
         // 写完当场自检：首条必须解出 BearyDraft，否则测试搭的库本身就不触发
         // “逐条恢复”分支（自检失败会在此报错，而不是在 loadAllResult 处误报）。
-        let goodDraft = BearyDraft(draftId: "d_good", content: "好草稿正文", images: [], clientReq: "req-1", updatedAt: 1762000000, notifyRecipient: false, quoteImages: [], quoteDeleted: false)
+        let goodDraft = BearyDraft(draftId: "d_good", content: "good draft body", images: [], clientReq: "req-1", updatedAt: 1762000000, quoteImages: [], quoteDeleted: false)
         let goodObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(goodDraft))
         let bad: [String: Any] = ["__notADraft": true]
         let data = try JSONSerialization.data(withJSONObject: [goodObject, bad])
@@ -1324,7 +1324,7 @@ final class BearyDraftBackupTests: XCTestCase {
         }
         XCTAssertEqual(drafts.count, 1)
         XCTAssertEqual(drafts.first?.draftId, "d_good")
-        XCTAssertEqual(drafts.first?.content, "好草稿正文")
+        XCTAssertEqual(drafts.first?.content, "good draft body")
         XCTAssertNil(BearyDraftStore.lastLoadError)
         // 好数据已回写（坏条目出库），原损坏内容只留在备份里。
         guard let backup = backupURLs.first else {
