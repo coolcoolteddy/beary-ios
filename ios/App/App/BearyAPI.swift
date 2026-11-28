@@ -1013,6 +1013,13 @@ final class BearyAPI {
         }
     }
 
+    /// 非当前账号移除时删设备登记：DELETE /beary/api/account/device-token
+    /// 走隔离请求，凭据固定为目标账号的保管库 token；只删（目标账号，
+    /// 本机 token）这一行。fire-and-forget：回包不论成败都不回调、不阻塞。
+    func deleteDeviceTokenWithToken(_ token: String, deviceToken: String) {
+        _ = performIsolated("/beary/api/account/device-token", method: "DELETE", jsonBody: ["device_token": deviceToken], token: token) { _, _, _ in }
+    }
+
     /// 导出专用分页取数：与 fetchEntries 同 query 口径（scope/limit/
     /// before/before_id），但走隔离请求、凭据固定为导出账号的 token。
     /// 导出链在每步边界另做账号变化检查（见设置页）；本方法本身不判
