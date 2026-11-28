@@ -39,6 +39,16 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         window?.backgroundColor = BearyColors.bg
         window?.rootViewController = BearyChromeViewController()
         window?.makeKeyAndVisible()
+        // 在途删除续传（数据同步审阅 #7）：上次确认删除后被杀／断网未落定
+        // 的，启动时重发 DELETE（404/409 算成功）；清理走 Chrome 的
+        // cleanupResumedDelete（本方法是 SceneDelegate 的，清理 helper
+        // 在 Chrome 上，须经 rootViewController 取）。
+        if let chrome = window?.rootViewController as? BearyChromeViewController {
+            BearyPendingDelete.resume(cleanup: { [weak chrome] entryId in
+                guard let chrome = chrome else { return }
+                chrome.cleanupResumedDelete(entryId: entryId)
+            })
+        }
         // 内购交易监听（2026-11-25）：冷启动挂一次，处理订阅续订与
         // 购买中途崩溃后未完成交易的重投递（验单＋finish）；只认三件 Plus 商品。
         BearyPlusStore.shared.startObservingTransactions()
@@ -231,6 +241,14 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate, UNUserNotificationCente
         (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
         // fixall-sync 5-27 集成接线：被守卫挡下的同步在回前台时重跑（内部去重已覆盖已同步/在途）。
         BearyEntrySync.shared.kickForCurrentUser()
+        // 在途删除续传（数据同步审阅 #7）：回前台再续一次未落定的删除
+        //（启动时会话未就绪会跳过；链内有在途守门，不会重发）。
+        if let chrome = window?.rootViewController as? BearyChromeViewController {
+            BearyPendingDelete.resume(cleanup: { [weak chrome] entryId in
+                guard let chrome = chrome else { return }
+                chrome.cleanupResumedDelete(entryId: entryId)
+            })
+        }
     }
 
     /// 栏显隐查找（#47 修正）：setChromeHidden 在容器 VC 上，不在 SceneDelegate 上；
@@ -3038,6 +3056,27 @@ final class BearyChromeViewController: UIViewController {
         let search: BearySearchViewController.SearchDeleteRemoval?
     }
 
+    /// 在途删除续传成功后的界面清理（数据同步审阅 #7）：按 id 摘行＋清缓存；
+    /// 时间线是内存日缓存，冷启动无残留、下次拉取即对齐，不单独处理。
+    /// fileprivate：续传触发点在 SceneDelegate（同文件），清理在 Chrome 上。
+    fileprivate func cleanupResumedDelete(entryId: String) {
+        _ = feedVC?.removeDeletedEntry(entryId: entryId)
+        _ = profileVC?.removeDeletedEntry(entryId: entryId)
+        _ = searchVC?.removeDeletedEntry(entryId: entryId)
+        BearyDetailCache.invalidate(bucket: BearyDetailCache.bucket(), entryId: entryId)
+        if let uid = SessionManager.shared.currentUser?.id {
+            let bucket = BearyFeedCache.bucket(userId: uid)
+            BearyFeedCache.load(bucket: bucket) { snap in
+                guard let snap = snap else { return }
+                let kept = snap.entries.filter { $0.id != entryId }
+                if kept.count != snap.entries.count {
+                    BearyFeedCache.save(bucket: bucket, entries: kept, hasMore: snap.hasMore)
+                }
+            }
+        }
+        BearyLocalNotifications.shared.refreshAll(force: true)
+    }
+
     private func confirmAndDeleteEntry(_ entry: Entry) {
         guard let entryId = entry.id else { return }
         // 审计 P2-23：删除是作者动作——非作者不弹确认（服务端同样校验作者，客户端先拦）。
@@ -3055,6 +3094,11 @@ final class BearyChromeViewController: UIViewController {
             guard let self = self else { return }
             // 在途即丢弃：不重发、不 toast（首请求回包自带成功／失败反馈）。
             guard self.deletingEntryIds.insert(entryId).inserted else { return }
+            // 在途删除落盘（数据同步审阅 #7）：确认即记一笔，收到回包再清——
+            // 被杀或断网时记录留着，下次启动／回前台续传。
+            if let accountId = viewerId {
+                BearyPendingDelete.record(entryId: entryId, accountId: accountId)
+            }
             // R22-B2：删除发起时钉住账号桶——快照住在删除者桶里，成功时按
             // 该桶失效，不按回包时当前账号取桶（其间切号也不错桶）。
             let deleteBucket = BearyDetailCache.bucket()
@@ -3076,6 +3120,10 @@ final class BearyChromeViewController: UIViewController {
                     self.deletingEntryIds.remove(entryId)
                     switch result {
                     case .success:
+                        // 在途删除落盘（数据同步审阅 #7）：回包即落定，清记录。
+                        if let accountId = viewerId {
+                            BearyPendingDelete.clear(entryId: entryId, accountId: accountId)
+                        }
                         // 静态性能修复：删帖成功即逐出该篇图片的本机缓存（此前只靠
                         // 24 小时 TTL 自然过期，TTL 内旧图仍可读）。只清本机缓存，
                         // 服务端数据不动；软删除进回收站，恢复后从网络重下。
@@ -3110,6 +3158,14 @@ final class BearyChromeViewController: UIViewController {
                         // 本地通知：删篇可能影响今晚提醒（删了当天唯一一篇）与限时到期提醒。
                         BearyLocalNotifications.shared.refreshAll(force: true)
                     case .failure(let error):
+                        // 在途删除落盘（数据同步审阅 #7）：传输层失败（断网）保留
+                        // 记录，下次启动续传；其余失败已落定、清记录（行已回滚，
+                        // 用户在界面可再次确认重删）。
+                        if case .network = error {
+                            // 保留记录，等下次启动／回前台续传。
+                        } else if let accountId = viewerId {
+                            BearyPendingDelete.clear(entryId: entryId, accountId: accountId)
+                        }
                         // 乐观删除失败回滚（本批 ①）：DELETE 没成功，服务端
                         // 没删——把该篇按原位插回四处行（行已不在时才插），
                         // 再按原有口径 toast；用户可再次确认重试（在途标记已清）。
