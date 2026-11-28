@@ -77,6 +77,9 @@ final class BearyOfflineSaveManager {
     // MARK: - 单篇保存
 
     /// 逐篇标记离线保存：先写文字 JSON（失败即整体失败），再逐张补图片原字节。
+    /// 清单两次写盘（pending 与 finalize 各一次 upsert）失败同样整体失败
+    /// （.entryWriteFailed），不报成功；调用方详情页已按 .failure 弹
+    /// “离线保存失败，请重试”，批量侧计 failed。
     /// 完成回调一律回主线程；成功也可能带 failedKeys（partial，文字已存、部分图缺失）。
     func save(entry: Entry, completion: @escaping (Result<BearyOfflineSaveOutcome, BearyOfflineSaveError>) -> Void) {
         queue.async { [weak self] in
@@ -106,9 +109,18 @@ final class BearyOfflineSaveManager {
                 imageCount: keys.count, downloadedCount: 0, failedKeys: [],
                 totalBytes: BearyOfflineSaveStore.entryJSONByteCount(accountId: accountId, entryId: entryId),
                 status: "pending")
-            _ = BearyOfflineSaveStore.upsertRecord(accountId: accountId, record: pending)
+            // G1：清单写失败即整体失败——pending 记不进去时不继续下载图片，
+            // 否则文字＋图片落了盘、清单里却没有，详情页 isSaved 为 false、
+            // 设置列表也不显示，用户以为没保存。
+            guard BearyOfflineSaveStore.upsertRecord(accountId: accountId, record: pending) else {
+                self.completeOnMain(.failure(.entryWriteFailed), completion: completion)
+                return
+            }
             if keys.isEmpty {
-                let outcome = self.finalize(accountId: accountId, entry: entry, downloadedKeys: [], failedKeys: [])
+                guard let outcome = self.finalize(accountId: accountId, entry: entry, downloadedKeys: [], failedKeys: []) else {
+                    self.completeOnMain(.failure(.entryWriteFailed), completion: completion)
+                    return
+                }
                 self.completeOnMain(.success(outcome), completion: completion)
                 return
             }
@@ -140,14 +152,20 @@ final class BearyOfflineSaveManager {
             }
             group.notify(queue: self.queue) { [weak self] in
                 guard let self = self else { return }
-                let outcome = self.finalize(accountId: accountId, entry: entry, downloadedKeys: downloadedKeys, failedKeys: failedKeys)
+                guard let outcome = self.finalize(accountId: accountId, entry: entry, downloadedKeys: downloadedKeys, failedKeys: failedKeys) else {
+                    self.completeOnMain(.failure(.entryWriteFailed), completion: completion)
+                    return
+                }
                 self.completeOnMain(.success(outcome), completion: completion)
             }
         }
     }
 
     /// 结算：按实际落盘情况写回清单记录（complete/partial）并算本篇总字节。
-    private func finalize(accountId: Int, entry: Entry, downloadedKeys: [String], failedKeys: [String]) -> BearyOfflineSaveOutcome {
+    /// 清单写不进去或复读不到记录时返回 nil（调用方按整体失败报 .entryWriteFailed），
+    /// 不按落盘图片结算 complete——否则清单里没有记录，详情页 isSaved 为 false、
+    /// 设置列表也不显示，用户以为没保存。
+    private func finalize(accountId: Int, entry: Entry, downloadedKeys: [String], failedKeys: [String]) -> BearyOfflineSaveOutcome? {
         guard let entryId = entry.id else {
             return BearyOfflineSaveOutcome(savedImages: 0, failedKeys: failedKeys, totalBytes: 0, status: "partial")
         }
@@ -168,7 +186,12 @@ final class BearyOfflineSaveManager {
             failedKeys: failedKeys,
             totalBytes: totalBytes,
             status: status)
-        _ = BearyOfflineSaveStore.upsertRecord(accountId: accountId, record: record)
+        // G1：清单写失败即整体失败；写完复读一次确认记录在位且状态一致，
+        // 写盘谎报成功（或写后清单仍读不到）也不结算 complete。
+        guard BearyOfflineSaveStore.upsertRecord(accountId: accountId, record: record),
+              BearyOfflineSaveStore.record(accountId: accountId, entryId: entryId)?.status == status else {
+            return nil
+        }
         return BearyOfflineSaveOutcome(savedImages: downloadedKeys.count, failedKeys: failedKeys, totalBytes: totalBytes, status: status)
     }
 
