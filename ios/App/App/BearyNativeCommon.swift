@@ -595,6 +595,31 @@ final class BearyHit44SegmentedControl: UISegmentedControl {
     }
 }
 
+// MARK: - 回滚前复核（数据同步审阅 #6）
+// 乐观写失败后、回滚前拉一次实体：若服务端态等于用户意图，说明写操作
+// 其实已落地（回包丢了、或另一设备已按同一意图写过），静默保留成功态，
+// 不回滚、不提示；否则按原样回滚＋失败反馈。只用于非 401 失败；
+// 401 走登录门，不复核。复核本身失败（拉取失败、或服务端态不等于意图）
+// 一律走回滚分支，不多弹提示。
+enum BearyRollbackRefetch {
+    /// fetch 拉实体；matches 判断服务端态是否等于用户意图。
+    /// 相等时 completion 带服务端值（调用点静默保留成功态）；
+    /// 否则 completion 带 nil（调用点按原样回滚＋失败反馈）。
+    static func refetch<T>(fetch: @escaping (@escaping (Result<T, APIError>) -> Void) -> Void,
+                           matches: @escaping (T) -> Bool,
+                           completion: @escaping (T?) -> Void) {
+        fetch { result in
+            DispatchQueue.main.async {
+                if case .success(let value) = result, matches(value) {
+                    completion(value)
+                } else {
+                    completion(nil)
+                }
+            }
+        }
+    }
+}
+
 // MARK: - 图片地址
 
 enum BearyImageURLs {

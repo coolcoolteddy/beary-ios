@@ -2989,14 +2989,37 @@ final class BearyDetailViewController: UIViewController {
                         self.noteMutualFriend(target == .mutual, forEntryId: self.entry.id)
                         BearyFriends.clearDiaryCachesAndNotify(userId: authorId)
                     case .failure(let error):
-                        // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
-                        self.followState = self.confirmedFollowState
-                        self.applyFollowButton()
                         if case .unauthorized = error {
+                            // 401 走登录门：回滚＋登录入口，不复核。
+                            self.followState = self.confirmedFollowState
+                            self.applyFollowButton()
                             self.onRequireLogin?()
                         } else {
-                            self.playFollowDenyShake()
-                            BearyToast.show(in: self.view, message: wasFollowedBy ? NSLocalizedString("follow.toast.followBackFailed", comment: "") : NSLocalizedString("follow.toast.followFailed", comment: ""))
+                            // 回滚前复核一次：服务端若已是目标态（回包丢了／
+                            // 别处已写），静默保留成功态，不回滚、不提示；
+                            // 否则回滚＋原失败反馈。
+                            BearyRollbackRefetch.refetch(
+                                fetch: { completion in BearyAPI.shared.fetchFollowState(userId: authorId, completion: completion) },
+                                matches: { BearyFollowState(response: $0) == target }
+                            ) { [weak self] server in
+                                guard let self = self,
+                                      requestSeq == self.followActionSeq,
+                                      authorId == self.entry.authorId else { return }
+                                if server != nil {
+                                    self.confirmedFollowState = target
+                                    if let viewerId = SessionManager.shared.currentUser?.id {
+                                        BearyFriends.BearyFollowStateCache.save(target, viewerId: viewerId, targetId: authorId)
+                                    }
+                                    self.noteMutualFriend(target == .mutual, forEntryId: self.entry.id)
+                                    BearyFriends.clearDiaryCachesAndNotify(userId: authorId)
+                                } else {
+                                    // 失败回滚到最后确认态（不是点按前的中间态），再走拒绝动效。
+                                    self.followState = self.confirmedFollowState
+                                    self.applyFollowButton()
+                                    self.playFollowDenyShake()
+                                    BearyToast.show(in: self.view, message: wasFollowedBy ? NSLocalizedString("follow.toast.followBackFailed", comment: "") : NSLocalizedString("follow.toast.followFailed", comment: ""))
+                                }
+                            }
                         }
                     }
                 }
@@ -3040,16 +3063,42 @@ final class BearyDetailViewController: UIViewController {
                                 self.retryFetchDetail()
                             }
                         case .failure(let error):
-                            // 失败回滚到最后确认态；401 走登录入口（onRequireLogin），
-                            // 登录后由用户重试取关，不弹失败 toast；其他失败仍走原
-                            // 拒绝动效＋“取关失败”toast。
-                            self.followState = self.confirmedFollowState
-                            self.applyFollowButton()
                             if case .unauthorized = error {
+                                // 401 走登录门：回滚＋登录入口，不复核。
+                                self.followState = self.confirmedFollowState
+                                self.applyFollowButton()
                                 self.onRequireLogin?()
                             } else {
-                                self.playFollowDenyShake()
-                                BearyToast.show(in: self.view, message: NSLocalizedString("follow.toast.unfollowFailed", comment: ""))
+                                // 回滚前复核一次：服务端若已是目标态（回包丢了／
+                                // 别处已写），静默保留成功态，不回滚、不提示；
+                                // 否则回滚＋原失败反馈。
+                                BearyRollbackRefetch.refetch(
+                                    fetch: { completion in BearyAPI.shared.fetchFollowState(userId: authorId, completion: completion) },
+                                    matches: { BearyFollowState(response: $0) == target }
+                                ) { [weak self] server in
+                                    guard let self = self,
+                                          requestSeq == self.followActionSeq,
+                                          authorId == self.entry.authorId else { return }
+                                    if server != nil {
+                                        self.confirmedFollowState = target
+                                        if let viewerId = SessionManager.shared.currentUser?.id {
+                                            BearyFriends.BearyFollowStateCache.save(target, viewerId: viewerId, targetId: authorId)
+                                        }
+                                        self.noteMutualFriend(target == .mutual, forEntryId: self.entry.id)
+                                        BearyFriends.clearDiaryCachesAndNotify(userId: authorId)
+                                        // 仅好友篇取关后可能不再可见：重走服务端裁决，必要时转占位。
+                                        if self.entry.isFriendsOnly {
+                                            self.retryFetchDetail()
+                                        }
+                                    } else {
+                                        // 失败回滚到最后确认态；其他失败仍走原
+                                        // 拒绝动效＋“取关失败”toast。
+                                        self.followState = self.confirmedFollowState
+                                        self.applyFollowButton()
+                                        self.playFollowDenyShake()
+                                        BearyToast.show(in: self.view, message: NSLocalizedString("follow.toast.unfollowFailed", comment: ""))
+                                    }
+                                }
                             }
                         }
                     }
@@ -4117,6 +4166,9 @@ final class BearyDetailViewController: UIViewController {
                 guard self.likeState.isCurrent(reqSeq) else { return }
                 self.likeState.markConfirmed(reqSeq)
                 BearyIconMotion.animateIconScale(on: self.likeButton, to: 1)
+                // 复核分支自己结算（清在途＋补发）：失败复核是异步的，
+                // switch 后的公共尾巴只给成功／401 走。
+                var deferSettle = false
                 switch result {
                 case .success(let resp):
                     let newLiked = resp.liked ?? targetLiked
@@ -4129,34 +4181,77 @@ final class BearyDetailViewController: UIViewController {
                     // 炸开已在点按时播过，成功回包不再重播；取消点赞不炸。
                     self.onInteractionChanged?(entryId, self.entry.likeCount, newLiked, nil, nil)
                 case .failure(let err):
-                    // 失败回滚到最后服务端确认态（不是本次点按前的中间态）。
-                    self.entry.likedByMe = self.likeState.confirmed.liked
-                    self.entry.likeCount = self.likeState.confirmed.count
-                    self.refreshActionRow()
-                    // 回滚到未填色：在飞的点赞微粒一并清掉。
-                    BearyIconMotion.clearLikeBurst(on: self.likeButton)
-                    BearyBurstParticles.clear(from: self.likeButton)
                     if case .unauthorized = err {
-                        self.onRequireLogin?()
-                    } else {
-                        self.playDenyShake(on: self.likeButton)
-                        BearyToast.show(in: self.view, message: "操作失败，请重试")
-                    }
-                }
-                self.likeInFlight = false
-                if let pending = self.pendingLikeTarget {
-                    self.pendingLikeTarget = nil
-                    if pending != self.likeState.confirmed.liked {
-                        // 按最新意图补发：先行反馈已在点按时给过，这里只同步
-                        // 字段与计数，不重播动效与音效。
-                        self.entry.likedByMe = pending
-                        self.entry.likeCount = max(0, self.likeState.confirmed.count + (pending ? 1 : -1))
-                        self.refreshActionRow()
-                        self.submitLike(entryId: entryId, targetLiked: pending)
-                    } else {
+                        // 401 走登录门：回滚＋登录入口，不复核。
                         self.entry.likedByMe = self.likeState.confirmed.liked
                         self.entry.likeCount = self.likeState.confirmed.count
                         self.refreshActionRow()
+                        // 回滚到未填色：在飞的点赞微粒一并清掉。
+                        BearyIconMotion.clearLikeBurst(on: self.likeButton)
+                        BearyBurstParticles.clear(from: self.likeButton)
+                        self.onRequireLogin?()
+                    } else {
+                        // 回滚前复核一次：服务端若已是目标态（回包丢了／别处
+                        // 已写），静默保留成功态，不回滚、不提示；否则回滚＋
+                        // 原失败反馈；结算等复核结果回来再做。
+                        deferSettle = true
+                        BearyRollbackRefetch.refetch(
+                            fetch: { completion in BearyAPI.shared.fetchEntry(id: entryId, completion: completion) },
+                            matches: { $0.likedByMe == targetLiked }
+                        ) { [weak self] server in
+                            guard let self = self, self.likeState.isCurrent(reqSeq) else { return }
+                            if let server = server {
+                                self.entry.likedByMe = server.likedByMe ?? targetLiked
+                                if let count = server.likeCount { self.entry.likeCount = count }
+                                self.likeState.confirm(reqSeq, value: BearyLikeState(liked: self.entry.likedByMe ?? targetLiked, count: self.entry.likeCount ?? 0))
+                                self.refreshActionRow()
+                                self.onInteractionChanged?(entryId, self.entry.likeCount, self.entry.likedByMe, nil, nil)
+                            } else {
+                                // 失败回滚到最后服务端确认态（不是本次点按前的中间态）。
+                                self.entry.likedByMe = self.likeState.confirmed.liked
+                                self.entry.likeCount = self.likeState.confirmed.count
+                                self.refreshActionRow()
+                                // 回滚到未填色：在飞的点赞微粒一并清掉。
+                                BearyIconMotion.clearLikeBurst(on: self.likeButton)
+                                BearyBurstParticles.clear(from: self.likeButton)
+                                self.playDenyShake(on: self.likeButton)
+                                BearyToast.show(in: self.view, message: NSLocalizedString("common.operation_failed_retry", comment: ""))
+                            }
+                            self.likeInFlight = false
+                            if let pending = self.pendingLikeTarget {
+                                self.pendingLikeTarget = nil
+                                if pending != self.likeState.confirmed.liked {
+                                    // 按最新意图补发：先行反馈已在点按时给过，这里只同步
+                                    // 字段与计数，不重播动效与音效。
+                                    self.entry.likedByMe = pending
+                                    self.entry.likeCount = max(0, self.likeState.confirmed.count + (pending ? 1 : -1))
+                                    self.refreshActionRow()
+                                    self.submitLike(entryId: entryId, targetLiked: pending)
+                                } else {
+                                    self.entry.likedByMe = self.likeState.confirmed.liked
+                                    self.entry.likeCount = self.likeState.confirmed.count
+                                    self.refreshActionRow()
+                                }
+                            }
+                        }
+                    }
+                }
+                if !deferSettle {
+                    self.likeInFlight = false
+                    if let pending = self.pendingLikeTarget {
+                        self.pendingLikeTarget = nil
+                        if pending != self.likeState.confirmed.liked {
+                            // 按最新意图补发：先行反馈已在点按时给过，这里只同步
+                            // 字段与计数，不重播动效与音效。
+                            self.entry.likedByMe = pending
+                            self.entry.likeCount = max(0, self.likeState.confirmed.count + (pending ? 1 : -1))
+                            self.refreshActionRow()
+                            self.submitLike(entryId: entryId, targetLiked: pending)
+                        } else {
+                            self.entry.likedByMe = self.likeState.confirmed.liked
+                            self.entry.likeCount = self.likeState.confirmed.count
+                            self.refreshActionRow()
+                        }
                     }
                 }
             }
@@ -4201,16 +4296,37 @@ final class BearyDetailViewController: UIViewController {
                     self.refreshActionRow()
                     self.onInteractionChanged?(entryId, nil, nil, newBookmarked, nil)
                 case .failure(let err):
-                    // 失败回滚到最后服务端确认态。
-                    self.entry.bookmarkedByMe = self.bookmarkState.confirmed
-                    self.refreshActionRow()
-                    // 回滚到未填色：在飞的收藏微粒一并清掉。
-                    BearyBurstParticles.clear(from: self.bookmarkButton)
                     if case .unauthorized = err {
+                        // 401 走登录门：回滚＋登录入口，不复核。
+                        self.entry.bookmarkedByMe = self.bookmarkState.confirmed
+                        self.refreshActionRow()
+                        // 回滚到未填色：在飞的收藏微粒一并清掉。
+                        BearyBurstParticles.clear(from: self.bookmarkButton)
                         self.onRequireLogin?()
                     } else {
-                        self.playDenyShake(on: self.bookmarkButton)
-                        BearyToast.show(in: self.view, message: "操作失败，请重试")
+                        // 回滚前复核一次：服务端若已是目标态（回包丢了／别处
+                        // 已写），静默保留成功态，不回滚、不提示；否则回滚＋
+                        // 原失败反馈。
+                        BearyRollbackRefetch.refetch(
+                            fetch: { completion in BearyAPI.shared.fetchEntry(id: entryId, completion: completion) },
+                            matches: { $0.bookmarkedByMe == flipped }
+                        ) { [weak self] server in
+                            guard let self = self, self.bookmarkState.isCurrent(reqSeq) else { return }
+                            if let server = server {
+                                self.entry.bookmarkedByMe = server.bookmarkedByMe ?? flipped
+                                self.bookmarkState.confirm(reqSeq, value: self.entry.bookmarkedByMe ?? flipped)
+                                self.refreshActionRow()
+                                self.onInteractionChanged?(entryId, nil, nil, self.entry.bookmarkedByMe, nil)
+                            } else {
+                                // 失败回滚到最后服务端确认态。
+                                self.entry.bookmarkedByMe = self.bookmarkState.confirmed
+                                self.refreshActionRow()
+                                // 回滚到未填色：在飞的收藏微粒一并清掉。
+                                BearyBurstParticles.clear(from: self.bookmarkButton)
+                                self.playDenyShake(on: self.bookmarkButton)
+                                BearyToast.show(in: self.view, message: NSLocalizedString("common.operation_failed_retry", comment: ""))
+                            }
+                        }
                     }
                 }
             }
