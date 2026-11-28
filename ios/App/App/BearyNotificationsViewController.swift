@@ -4488,8 +4488,8 @@ class BearyNotificationCell: UITableViewCell {
             avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.14)
             avatarIconView.tintColor = BearyColors.deepOrangeText
         } else if anyUnread {
-            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.12)
-            avatarIconView.tintColor = BearyColors.blue
+            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.gray, 0.12)
+            avatarIconView.tintColor = BearyColors.ink
         } else {
             avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.gray, 0.12)
             avatarIconView.tintColor = BearyColors.ink
