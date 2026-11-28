@@ -175,8 +175,6 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
     /// listStack 时随之一并摘掉，数据到达后不残留。
     private let loadingWrap = UIView()
     private let loadingSpinner = BearyWebRingSpinnerView()
-    private let hintWrap = UIView()
-    private let hintLabel = UILabel()
     private let bottomSpacer = UIView()
 
     /// 第 13 项：面板高度只按内容算，320 只作封顶（不再写死 320 高）。
@@ -195,9 +193,9 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
         buildViews()
         buildConstraints()
         // 弹窗审计 E1-19（未覆盖的一半）：数据未到先呈现面板框架 + 加载图标，
-        // 不等首轮 loadDrafts。副文案与“点任意一份”提示在数据到达前先藏起
-        // （无卡片可点时提示会误导），renderDrafts 按实际态（列表/空态/失败态）
-        // 再决定显隐；加载占位由 renderDrafts 清空 listStack 时一并摘掉。
+        // 不等首轮 loadDrafts。副文案在数据到达前先藏起（无卡片可点时提示会误导），
+        // renderDrafts 按实际态（列表/空态/失败态）再决定显隐；加载占位由 renderDrafts
+        // 清空 listStack 时一并摘掉。
         showLoadingState()
         NotificationCenter.default.addObserver(self, selector: #selector(handleDraftBoxUserChanged), name: .bearyUserDidChange, object: nil)
         loadDrafts { [weak self] in
@@ -213,7 +211,6 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
     /// 圆环不拦截点按（BearyWebRingSpinnerView 自带 isUserInteractionEnabled=false）。
     private func showLoadingState() {
         subWrap.isHidden = true
-        hintWrap.isHidden = true
         loadingWrap.translatesAutoresizingMaskIntoConstraints = false
         loadingWrap.addSubview(loadingSpinner)
         NSLayoutConstraint.activate([
@@ -463,22 +460,6 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
         ])
         contentStack.addArrangedSubview(listWrap)
 
-        hintLabel.text = "点任意一份，接着上次的地方继续写"
-        hintLabel.font = UIFont.systemFont(ofSize: 12)
-        hintLabel.textColor = BearyColors.gray
-        hintLabel.textAlignment = .center
-        hintLabel.numberOfLines = 0
-        hintWrap.translatesAutoresizingMaskIntoConstraints = false
-        hintWrap.addSubview(hintLabel)
-        hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            hintLabel.topAnchor.constraint(equalTo: hintWrap.topAnchor, constant: 14),
-            hintLabel.bottomAnchor.constraint(equalTo: hintWrap.bottomAnchor, constant: -2),
-            hintLabel.leadingAnchor.constraint(equalTo: hintWrap.leadingAnchor),
-            hintLabel.trailingAnchor.constraint(equalTo: hintWrap.trailingAnchor),
-        ])
-        contentStack.addArrangedSubview(hintWrap)
-
         bottomSpacer.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(bottomSpacer)
     }
@@ -706,7 +687,6 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
         if draftsLoadFailed {
             subLabel.text = nil
             subWrap.isHidden = true
-            hintWrap.isHidden = true
             let failedStateView = BearyStateView()
             failedStateView.translatesAutoresizingMaskIntoConstraints = false
             // 两种失败态文案分开：损坏态讲清清除结果（删坏 v3 文件、只留 .bak，
@@ -730,7 +710,6 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
         if drafts.isEmpty {
             subLabel.text = nil
             subWrap.isHidden = true
-            hintWrap.isHidden = true
             let emptyStateView = BearyStateView()
             emptyStateView.translatesAutoresizingMaskIntoConstraints = false
             emptyStateView.configure(kind: .empty, title: "还没有草稿", subtitle: "写下的内容会自动存在这里", iconName: nil, actionTitle: nil)
@@ -740,7 +719,6 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
             // Q10：App 草稿只存本机，副文案改“仅保存在本设备”
             //（原网页口径“仅保存在当前浏览器”不适用于 App 本机存储）。
             setSubLabelCountText("共 \(drafts.count) 份 · 仅保存在本设备")
-            hintWrap.isHidden = false
             for draftValue in drafts {
                 let card = makeCard(for: draftValue)
                 cardEntries.append((button: card, draftValue: draftValue))
@@ -1847,7 +1825,6 @@ final class BearyDraftBoxViewController: UIViewController, BearySystemSheetSizin
         cardEntries.insert((button: card, draftValue: draftValue), at: clamped)
         listStack.insertArrangedSubview(card, at: min(clamped, listStack.arrangedSubviews.count))
         subWrap.isHidden = false
-        hintWrap.isHidden = false
         subLabel.text = "共 \(drafts.count) 份 · 仅保存在本设备"
         restoreVisibleCardAnchor(anchor, restoredCard: card)
     }
