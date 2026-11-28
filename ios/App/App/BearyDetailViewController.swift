@@ -3345,13 +3345,18 @@ final class BearyDetailViewController: UIViewController {
         // 时正常显示，非作者看非公开篇仍压暗；分享不动，仍仅有效公开才有（私密不交出正文与链接），
         // 分享隐藏时留 24pt 槽位占位（首页 shareSlotSpacer 同款），行尾槽位不随分享显隐变化。
         // 限时已到期按私密算（与卡片同口径）。
-        // 注意：按钮不禁用（首页卡片禁用），点按仍走详情原有拒绝动效 + toast
-        // （审计 P2-11 口径），非作者的非公开互动有明确反馈而非静默无反应。
-        // 后端缺口见 PR 说明：后端目前仍以 published=1 拦私密互动，作者私密请求仍会 404 回滚。
+        // 注意：非作者的非公开互动按钮不禁用（首页卡片禁用），点按仍走详情原有拒绝动效 + toast
+        // （审计 P2-11 口径），有明确反馈而非静默无反应。
+        // 展示审计 G4-08：作者私密篇给诚实态——作者本人＋isPublic==false 时点赞／收藏
+        // 禁用＋置灰，不再先放行、点后等服务端 404 回滚。过期限时篇作者仍放行
+        // （published 仍为 1、服务端 expired-author-interact 已放行作者互动）。
         let publicOK = BearyEphemeral.isEffectivelyPublic(entry)
         let interactOK = publicOK || isAuthor
-        likeButton.alpha = interactOK ? 1.0 : 0.4
-        bookmarkButton.alpha = interactOK ? 1.0 : 0.4
+        let authorPrivate = isAuthor && entry.isPublic == false
+        likeButton.isEnabled = !authorPrivate
+        bookmarkButton.isEnabled = !authorPrivate
+        likeButton.alpha = (interactOK && !authorPrivate) ? 1.0 : 0.4
+        bookmarkButton.alpha = (interactOK && !authorPrivate) ? 1.0 : 0.4
         shareButton.isHidden = !publicOK
         shareSlotSpacer.isHidden = !shareButton.isHidden
     }

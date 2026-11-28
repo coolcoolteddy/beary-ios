@@ -2730,8 +2730,12 @@ class BearyDiaryCardCell: UITableViewCell {
         // 0 赞隐藏数字位，只剩爱心；非 0 按实测字宽给足整段标题宽。
         applyLikeButtonState(liked: entry.likedByMe ?? false, count: entry.likeCount ?? 0)
         applyProfileBookmarkState(bookmarked: entry.bookmarkedByMe ?? false)
-        likeButton.isEnabled = !interactionDisabled
-        bookmarkButton.isEnabled = !interactionDisabled
+        // 展示审计 G4-08：作者私密篇诚实态（见 isAuthorPrivate）——禁用＋置灰。
+        let authorPrivate = isAuthorPrivate(entry)
+        likeButton.isEnabled = !interactionDisabled && !authorPrivate
+        bookmarkButton.isEnabled = !interactionDisabled && !authorPrivate
+        likeButton.alpha = authorPrivate ? 0.4 : 1.0
+        bookmarkButton.alpha = authorPrivate ? 0.4 : 1.0
         shareButton.isEnabled = !interactionDisabled
         let publicOK = BearyEphemeral.isEffectivelyPublic(entry)
         shareButton.isHidden = publicOK == false
@@ -3530,16 +3534,23 @@ class BearyDiaryCardCell: UITableViewCell {
         return false
     }
 
-    /// 2026-10-31 私密自互动口径：点赞／收藏门控为“有效公开 或 作者本人”（详情同口径）；
-    /// 分享不动，仍仅有效公开才有。注意：后端目前仍以 published=1 拦私密互动（见 PR 说明），
-    /// 作者私密点赞／收藏的服务端请求仍会 404 并走既有失败回滚，本处只改 App 侧放行。
+    /// 展示审计 G4-08：作者私密篇诚实态判定——作者本人＋isPublic==false 时
+    /// 点赞／收藏不可点＋置灰（服务端以 published=1 拦互动，点后 404 回滚）。
+    /// 过期限时篇作者仍放行：published 仍为 1（isPublic==true）、服务端
+    /// expired-author-interact 已放行作者互动，与私密不同。
+
+    /// 2026-10-31 私密自互动口径：点赞／收藏门控为“有效公开 或 作者本人”（详情同口径），
+    /// 但作者私密篇除外（展示审计 G4-08：作者私密给诚实态，禁用＋置灰）；
+    /// 分享不动，仍仅有效公开才有。
     /// F7/F8（首页模式）：首页与详情互动门控统一为上述口径。
     private func updateActionInteractivity() {
         // 审计 P0-4：有效态门控（过期限时篇不放行点赞/收藏/分享；作者本人例外只放行点赞/收藏）。
         // 2026-10-29 及时性口径：在途请求不再禁用按钮——快连点每次都必须立即
-        // 落地，防重入只靠代次守卫，不靠按钮禁用。
+        // 落地，防重入只靠代次守卫，不靠按钮禁用。作者私密是例外：服务端必 404，
+        // 故此处禁用（见 isAuthorPrivate），不走乐观更新。
         let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
-        let interactOK = publicOK || (currentEntry.map(isEntryAuthor) ?? false)
+        let authorPrivate = currentEntry.map(isAuthorPrivate) ?? false
+        let interactOK = (publicOK || (currentEntry.map(isEntryAuthor) ?? false)) && !authorPrivate
         likeButton.isEnabled = interactOK
         bookmarkButton.isEnabled = interactOK
         likeButton.alpha = interactOK ? 1.0 : 0.4
@@ -3764,8 +3775,13 @@ class BearyDiaryCardCell: UITableViewCell {
         applyLikeButtonState(liked: cellLikedByMe, count: cellLikeCount)
         cellBookmarkedByMe = entry.bookmarkedByMe ?? false
         applyProfileBookmarkState(bookmarked: cellBookmarkedByMe)
-        likeButton.isEnabled = !interactionDisabled
-        bookmarkButton.isEnabled = !interactionDisabled
+        // 展示审计 G4-08：作者私密篇诚实态（见 isAuthorPrivate）——禁用＋置灰；
+        // 原地翻公开／私密也走这里，门控须与 configure 同口径，否则翻私密后按钮又被放行。
+        let authorPrivate = isAuthorPrivate(entry)
+        likeButton.isEnabled = !interactionDisabled && !authorPrivate
+        bookmarkButton.isEnabled = !interactionDisabled && !authorPrivate
+        likeButton.alpha = authorPrivate ? 0.4 : 1.0
+        bookmarkButton.alpha = authorPrivate ? 0.4 : 1.0
         shareButton.isEnabled = !interactionDisabled
         // 2026-10-29 100 包反馈第 4 项根因 B：就地同步此前不跟可见性走——
         // 个人页原地翻公开/私密后，分享钮显隐仍停在旧态（私密→公开仍藏、
