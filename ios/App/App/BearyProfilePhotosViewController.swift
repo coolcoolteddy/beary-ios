@@ -1637,20 +1637,15 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
     /// 三路递增都在此处。
     private var loadGeneration = 0
 
-    /// 灯箱先显缩略图：只读露出当前格已显示的图（未加载出为 nil，走转圈口径）。
+    /// 灯箱先显缩略图：只读露出当前格已显示的图（未加载出为 nil）。
     var displayedThumbnail: UIImage? { photoImageView.image }
 
     /// 单张三态（加载中／成功／失败）：失败格不留淡色空白，见 configure。
     /// VC 的 didSelectItemAt 读它判定“失败格点按重试、不进灯箱”。
     private(set) var isFailed = false
 
-    private let loadingIndicator: UIActivityIndicatorView = {
-        let indicatorValue = UIActivityIndicatorView(style: .medium)
-        indicatorValue.translatesAutoresizingMaskIntoConstraints = false
-        indicatorValue.color = BearyColors.gray
-        indicatorValue.hidesWhenStopped = true
-        return indicatorValue
-    }()
+    /// 本次请求代次的完整图是否已显示：小图回调凭它决定贴不贴占位。
+    private var fullImageShownGeneration = 0
 
     private let failedLabel: UILabel = {
         let labelValue = UILabel()
@@ -1672,18 +1667,14 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
         isAccessibilityElement = true
         accessibilityTraits = .button
         photoImageView.isAccessibilityElement = false
-        loadingIndicator.isAccessibilityElement = false
         failedLabel.isAccessibilityElement = false
         contentView.addSubview(photoImageView)
-        contentView.addSubview(loadingIndicator)
         contentView.addSubview(failedLabel)
         NSLayoutConstraint.activate([
             photoImageView.topAnchor.constraint(equalTo: contentView.topAnchor),
             photoImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             photoImageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             photoImageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            loadingIndicator.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            loadingIndicator.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             failedLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             failedLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             failedLabel.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 4),
@@ -1722,9 +1713,11 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
         accessibilityLabel = nil
         accessibilityHint = nil
         photoImageView.image = nil
-        // r22-A10：按压残留态一并复位（见上方 isHighlighted）。
+        // r22-A10：按压残留态一并复位（见上方 isHighlighted）；淡入
+        // 动画残留态（alpha/transform）也一并复位，防残留到下一格。
         photoImageView.transform = .identity
-        loadingIndicator.stopAnimating()
+        photoImageView.alpha = 1
+        photoImageView.layer.removeAllAnimations()
         failedLabel.isHidden = true
         // 审计动效组：错峰入场动的是 cell 本体（alpha/transform），复用时同步
         // 复位本体并清掉在途（含延迟未起播）动画，防残留到下一格。
@@ -1753,32 +1746,59 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
         }
     }
 
+    /// 照片墙缩略图去转圈（2026-11-22 定版口径）：格内不再挂居中转圈，
+    /// 改与大图同一套模糊占位＋淡入——先拉 32px 小图放大当模糊占位
+    /// （与原图共用一份磁盘字节，不另起下载），原图到后模糊变清晰、
+    /// 同时 1.04→1 缩放＋ BearyMotion.normal 淡入；瞬时命中缓存时直设不闪。
+    /// 小图失败不挡原图；小图只在完整图未到、未失败时才贴（防后到的小图
+    /// 盖掉完整图、或盖在失败占位上）。代次守卫与原来一致。
     func configure(imageKey: String, index: Int) {
         loadingKey = imageKey
         photoIndex = index
         isFailed = false
         photoImageView.image = nil
+        photoImageView.alpha = 1
+        photoImageView.transform = .identity
+        photoImageView.layer.removeAllAnimations()
         failedLabel.isHidden = true
-        loadingIndicator.startAnimating()
         updateAccessibility()
         loadGeneration += 1
         let requestGeneration = loadGeneration
         guard let url = BearyImageURLs.imageURL(key: imageKey, thumb: true) else {
             // 地址无效也是失败态：不直接 return 留淡色空白，显失败占位、可点按重试。
-            loadingIndicator.stopAnimating()
             isFailed = true
             failedLabel.isHidden = false
             updateAccessibility()
             return
         }
+        let startedAt = Date()
         let downsampleWidth = (bounds.width > 0 ? bounds.width : 120) * UIScreen.main.scale
+        BearyImageLoader.shared.load(url: url, downsampleToWidth: 32) { [weak self] tinyImage in
+            guard let strongSelf = self, strongSelf.loadingKey == imageKey, requestGeneration == strongSelf.loadGeneration,
+                  strongSelf.fullImageShownGeneration != requestGeneration, !strongSelf.isFailed, let tinyImage else { return }
+            strongSelf.photoImageView.image = tinyImage
+            strongSelf.updateAccessibility()
+        }
         BearyImageLoader.shared.load(url: url, downsampleToWidth: downsampleWidth) { [weak self] imageValue in
             guard let strongSelf = self, strongSelf.loadingKey == imageKey, requestGeneration == strongSelf.loadGeneration else { return }
-            strongSelf.loadingIndicator.stopAnimating()
             if let imageValue {
+                strongSelf.fullImageShownGeneration = requestGeneration
                 strongSelf.isFailed = false
                 strongSelf.failedLabel.isHidden = true
-                strongSelf.photoImageView.image = imageValue
+                let slowLoad = Date().timeIntervalSince(startedAt) >= 0.15
+                if slowLoad && strongSelf.photoImageView.alpha == 1 && BearyMotion.animated(true) {
+                    strongSelf.photoImageView.image = imageValue
+                    strongSelf.photoImageView.alpha = 0
+                    strongSelf.photoImageView.transform = CGAffineTransform(scaleX: 1.04, y: 1.04)
+                    UIView.animate(withDuration: BearyMotion.normal, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+                        strongSelf.photoImageView.alpha = 1
+                        strongSelf.photoImageView.transform = .identity
+                    })
+                } else {
+                    strongSelf.photoImageView.transform = .identity
+                    strongSelf.photoImageView.alpha = 1
+                    strongSelf.photoImageView.image = imageValue
+                }
             } else {
                 // 加载失败：保留原格尺寸（只换格内占位，不改布局），显失败占位。
                 strongSelf.isFailed = true
