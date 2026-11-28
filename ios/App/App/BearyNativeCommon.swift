@@ -4432,17 +4432,29 @@ enum BearyEphemeral {
     }
     /// 限时卡倒计时文案（预览口径）：≥1 小时“还剩X小时”／“还剩X小时Y分”，
     /// <1 小时每秒跳“还剩X分Y秒”，已到期“已到期 · 转私密”。
+    /// 共享 plumbing：三处跨面分叉作参数——showSeconds（<1 小时是否带秒）、
+    /// includeMinutesInHours（≥1 小时是否带分钟）、expiredText（过期文案）。
+    /// App 取现值（true／true／"已到期 · 转私密"），4 处调用点行为不变；
+    /// 网页 ephLeftHtml 同口径收时传 false／false／""（网页行为不变：
+    /// <1 小时“还剩X分钟”最少 1 分钟、≥1 小时只出小时、过期空串）。
     static func countdownText(until: Int, nowMs: Int? = nil) -> String {
+        countdownText(until: until, nowMs: nowMs, showSeconds: true, includeMinutesInHours: true, expiredText: "已到期 · 转私密")
+    }
+    /// 带参数的倒计时文案：showSeconds=false 时 <1 小时只出“还剩X分钟”
+    /// （向下取整，最少 1 分钟）；includeMinutesInHours=false 时 ≥1 小时
+    /// 只出“还剩X小时”；expiredText 为过期文案（传 "" 即过期返回空串）。
+    static func countdownText(until: Int, nowMs: Int? = nil, showSeconds: Bool, includeMinutesInHours: Bool, expiredText: String) -> String {
         let ms = until - (nowMs ?? BearyDevPreviewState.fakeNowMs() ?? Int(Date().timeIntervalSince1970 * 1000))
-        if ms <= 0 { return "已到期 · 转私密" }
+        if ms <= 0 { return expiredText }
         if ms < 3_600_000 {
             let minutes = ms / 60_000
+            if !showSeconds { return "还剩\(max(minutes, 1))分钟" }
             let seconds = (ms % 60_000) / 1_000
             return "还剩\(minutes)分\(seconds)秒"
         }
         let hours = ms / 3_600_000
         let minutes = (ms % 3_600_000) / 60_000
-        if minutes == 0 { return "还剩\(hours)小时" }
+        if minutes == 0 || !includeMinutesInHours { return "还剩\(hours)小时" }
         return "还剩\(hours)小时\(minutes)分"
     }
     /// 限时卡正文字号（预览口径）：短句（≤30 字）19pt、长文 16.5pt；非限时 16pt。
