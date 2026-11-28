@@ -2810,9 +2810,10 @@ class BearyDiaryCardCell: UITableViewCell {
             // 3× 机上宽图条要 1438px，缩略图拉大 3 倍必糊；全尺寸 1600px 够用。
             // 图到后按实测尺寸纠宽（imgDims 恒 nil，初宽恒 280 会裁竖图）；
             // 缓存已命中时加载层直接返回不回调，同步按现图纠一次。
-            // 流量节省程序开时只加载缩略图、不加载原图（画质下降换流量），
-            // 点开大图才加载原图；blurUp 也随之关掉（否则 blurUp 会接着拉原图）。
-            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: BearyDataSaver.isEnabled), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale, blurUp: !BearyDataSaver.isEnabled, onSuccess: { [weak self] image in
+            // 流量节省程序开、或当前网络是弱网档（蜂窝／低数据模式）时
+            // 只加载缩略图、不加载原图（画质下降换流量），点开大图才加载原图；
+            // blurUp 也随之关掉（否则 blurUp 会接着拉原图）。
+            bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: BearyConnectivity.shouldLoadThumbnailOnly), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale, blurUp: !BearyConnectivity.shouldLoadThumbnailOnly, onSuccess: { [weak self] image in
                 self?.applyStripWidthCorrection(imageIndex: imageIndex, imageKey: imageKey, image: image)
             })
             imageSlotWidthConstraints[imageIndex].constant = strip

@@ -607,12 +607,30 @@ enum BearyConnectivity {
     private static let monitor = NWPathMonitor()
     private static var started = false
     private static var offline = false
+    /// 首报是否已到；未到前按弱网保守处理（只拉缩略图），
+    /// 与图片预热口径一致：绝不在 monitor 首报前按 Wi-Fi 放量。
+    private static var pathKnown = false
+    private static var onWiFi = false
+    /// 低数据模式（isConstrained）：系统级省流信号，Wi-Fi 下也按弱网算。
+    private static var constrained = false
     /// 离线→在线时回调一次（供 outbox 补发）；在线→离线不回调。
     static var onBecameOnline: (() -> Void)?
 
     static var isOffline: Bool {
         startIfNeeded()
         return offline
+    }
+
+    /// 弱网档：蜂窝、低数据模式、离线，或首报未到。只按系统信号分档，
+    /// 不自己测速；只影响列表/详情的图片档位，点开大图仍拉原图。
+    static var isWeakNetwork: Bool {
+        startIfNeeded()
+        return offline || !pathKnown || !onWiFi || constrained
+    }
+
+    /// 列表/详情是否只拉缩略图：流量节省程序开，或当前网络是弱网档。
+    static var shouldLoadThumbnailOnly: Bool {
+        BearyDataSaver.isEnabled || isWeakNetwork
     }
 
     static func startIfNeeded() {
@@ -623,6 +641,9 @@ enum BearyConnectivity {
                 let nowOffline = path.status != .satisfied
                 let wasOffline = offline
                 offline = nowOffline
+                pathKnown = true
+                onWiFi = path.usesInterfaceType(.wifi)
+                constrained = path.isConstrained
                 if wasOffline && !nowOffline {
                     onBecameOnline?()
                 }
