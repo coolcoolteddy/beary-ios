@@ -446,15 +446,6 @@ final class BearyPlusPageViewController: UIViewController {
         }
     }
 
-    /// 设置页 fillPlusDetail 同款状态文案。
-    private static func grantsStatusText(detail: BearyPlusDetailResponse) -> String {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        if detail.permanent == true { return "Plus 会员 · 永久" }
-        if let effective = detail.effectiveUntil, effective > now {
-            return "Plus 会员 · 至 " + BearyAccountText.dateString(ms: effective)
-        }
-        return "普通用户"
-    }
 
     /// 来源明细页同款专属会员文案。
     private static func grantsPersonalText(detail: BearyPlusDetailResponse) -> String {
@@ -540,7 +531,6 @@ final class BearyPlusPageViewController: UIViewController {
             stack.addArrangedSubview(plusRowWrap(content: failedStack, isLast: true))
         } else if let detail = plusDetail {
             var contents: [UIView] = []
-            contents.append(grantsStatusContent(title: "当前状态", detail: Self.grantsStatusText(detail: detail)))
             contents.append(grantsStatusContent(title: "专属会员", detail: Self.grantsPersonalText(detail: detail)))
             if (detail.freeUntil ?? 0) > 0 {
                 contents.append(grantsStatusContent(title: "内测限免", detail: Self.grantsFreeText(detail: detail)))
