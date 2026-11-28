@@ -684,7 +684,7 @@ final class BearyPublishCenter {
     /// 暂存目录：succeed 的清稿会删原 .orig，补传前先把原图拷一份到这里；
     /// 换 key 成功／全部失败后删暂存；中途杀 App 的残留由下次发布起飞时清。
     private static var stagedOriginalsDirectory: URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent("beary-twostage", isDirectory: true)
+        FileManager.default.temporaryDirectory.appendingPathComponent("twostage-originals", isDirectory: true)
     }
 
     /// .orig 拷一份到暂存目录（新 UUID 名防串图）；失败返回 nil（只发压缩，不补传）。
