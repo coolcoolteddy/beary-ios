@@ -15,8 +15,8 @@ import Photos
 //    显示“0”、profile 隐藏数字位；未赞色 feed 爱心 ink + 计数灰、profile
 //    爱心与计数同灰；取消赞预态 feed ink / profile 灰；写给行字号 feed
 //    12 粗体 / profile 13 常规；心情行间距 feed 3 / profile 4；操作行
-//    feed 右上角公开小地球、profile 同款（A-2 补齐）；折叠 feed 实测溢出（300 字 +
-//    实测超 6 行）/ profile 只计 300 字；图片槽底色 feed line / profile surface2。
+//    feed 右上角公开小地球、profile 同款（A-2 补齐）；折叠两模式同口径：
+//    只按实测行数判定（超 6 行折叠，展示审计 G4-07，300 字门槛已去掉）；图片槽底色 feed line / profile surface2。
 //  - 统一项：回应流一律 Feed 流式换行 BearyEmoteFlowView（profile 单行横滑
 //    emoteScrollView 废弃）；图片失败重试一律 Feed 口径（头像/主图均有重试钮，
 //    profile 主图槽位补重试）；引用卡一律共享 BearyQuoteCardView（profile
@@ -680,7 +680,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private var likePressPreviewActive = false
     /// 点赞钮显式宽约束：见 updateLikeButton / applyLikeButtonState 的宽度算法。
     private var likeButtonWidthConstraint: NSLayoutConstraint?
-    /// 折叠溢出判定缓存（首页模式 nil = 未测）：300 字以上且实测超 6 行才溢出。
+    /// 折叠溢出判定缓存（首页模式 nil = 未测）：实测超 6 行才溢出（展示审计 G4-07，300 字门槛已去掉）。
     private var foldOverflow: Bool?
     /// 80 包 B12：折叠实测缓存（entryId + 宽度 + 字号 16 + 字号类别 + 字数 + 文本哈希），
     /// 跨复用命中，文本/宽度/字号类别变化即换键（审计第 27 项：字号档变了实测
@@ -776,7 +776,8 @@ class BearyDiaryCardCell: UITableViewCell {
     private var bodyStackTopFromAvatarConstraint: NSLayoutConstraint?
     private var bodyStackTopFromHeaderConstraint: NSLayoutConstraint?
     private var bodyStackTopPinConstraint: NSLayoutConstraint?
-    /// L21（91 包，个人主页模式）：本卡正文是否超过 300 字（折叠按钮是否适用），
+    /// L21（91 包，个人主页模式）：本卡正文是否实测超 6 行（折叠按钮是否适用；
+    /// 展示审计 G4-07：只按行数判定，300 字门槛已去掉），
     /// configure 时记下，供 setFoldDisplay 就地切换显示用，不再每次重算。
     private var foldApplies = false
     /// 就地同步用已显示态（个人主页模式；configure 写入、syncInteraction 维护）：
@@ -2707,10 +2708,13 @@ class BearyDiaryCardCell: UITableViewCell {
         refreshPinRow(entry: entry)
         // R4 App：日记标题在作者行（titleStack）与正文之间，空标题不占位。
         updateEntryTitle(entry.title)
-        // 正文 + 300 字折叠（网页 renderPublic foldLong 口径；折叠态收起 6 行）。
+        // 正文折叠只按行数判定（展示审计 G4-07：300 字前置门槛已去掉，
+        // 与首页同口径——超 6 行才折叠＋展开全文；宽度未落位时用列宽估算，
+        // 与 updateContentAndFold 同款回落）。
         let bodyText = entry.content ?? ""
         contentLabel.attributedText = bodyWithTrailingMood(bodyText, fontSize: currentBodyFontSize, moodKey: entry.mood)
-        foldApplies = bodyText.count > 300
+        let foldWidth = contentLabel.bounds.width > 0 ? contentLabel.bounds.width : bodyColumnWidthEstimate()
+        foldApplies = measuredFoldOverflow(contentWidth: foldWidth)
         foldButton.isHidden = !foldApplies
         if foldApplies {
             setFoldDisplay(expanded: isExpanded, animated: false)
@@ -2852,14 +2856,15 @@ class BearyDiaryCardCell: UITableViewCell {
         bearyFeedPerformRetry(sender)
     }
 
-    // MARK: - 折叠（首页实测溢出 / 个人主页 300 字门槛，各保各的）
+    // MARK: - 折叠（首页实测溢出，各保各的）
 
-    /// F5：按行判定折叠——先过 300 字门槛（网页 renderPublic foldLong 同口径），
-    /// 再实测行数：≤6 行摘按钮（网页 pruneFolds 同口径；网页 .txt-fold 10.5em ÷ 1.6 行高 ≈ 6 行）。
+    /// F5：只按行判定折叠——实测行数：≤6 行摘按钮（网页 pruneFolds 同口径；
+    /// 网页 .txt-fold 10.5em ÷ 1.6 行高 ≈ 6 行）。展示审计 G4-07：
+    /// 旧 300 字前置门槛已去掉，短文超 6 行也折叠（规范：超 6 行折叠＋展开全文）。
     /// 行高取实测（16pt × 1.6 段落样式），不硬编码 24，避免字体度量偏差。
     private func measuredFoldOverflow(contentWidth: CGFloat) -> Bool {
         let fullText = currentEntry?.content ?? ""
-        if fullText.isEmpty || fullText.count <= 300 || contentWidth <= 0 { return false }
+        if fullText.isEmpty || contentWidth <= 0 { return false }
         // 折叠量算与显示同字号（仅表情放大时也用放大字号量，缓存键带字号）。
         let foldCacheKey = "\(currentEntry?.id ?? "")|\(Int(contentWidth.rounded()))|\(currentBodyFontSize)|\(traitCollection.preferredContentSizeCategory.rawValue)|\(fullText.count)|\(fullText.hashValue)"
         if let cached = foldOverflowCache[foldCacheKey] { return cached }
@@ -4828,8 +4833,9 @@ extension BearyDiaryCardCell {
         let fullHeight = estimatedTextHeight(text, width: contentWidth, lineHeightMultiple: 1.6, font: bodyFont)
         let singleHeight = estimatedSingleLineHeight(lineHeightMultiple: 1.6, font: bodyFont)
         let lines = singleHeight > 0 ? Int(ceil(fullHeight / singleHeight - 0.01)) : 0
-        // 与 measuredFoldOverflow 同口径：≤300 字恒不折叠。
-        let overflow = text.count > 300 && lines > 6
+        // 与 measuredFoldOverflow 同口径：只按行数判定折叠（展示审计 G4-07，
+        // 300 字前置门槛已去掉，短文超 6 行也折叠）。
+        let overflow = lines > 6
         var textHeight = fullHeight
         // 只有心情缀尾、无正文时占一行（bodyWithTrailingMood 仍会缀一个附件）。
         if text.isEmpty, (entry.mood ?? "").isEmpty == false { textHeight = singleHeight }
