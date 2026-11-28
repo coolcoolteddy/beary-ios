@@ -85,6 +85,8 @@ final class BearyNineGridViewController: UIViewController {
             backButton.heightAnchor.constraint(equalToConstant: 44),
             titleLabel.centerXAnchor.constraint(equalTo: topBarView.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBarView.topAnchor, constant: 7),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBarView.bottomAnchor, constant: -7),
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: topBarView.leadingAnchor, constant: 52),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -52),
             collectionView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),

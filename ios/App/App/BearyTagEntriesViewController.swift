@@ -164,6 +164,8 @@ final class BearyTagEntriesViewController: UIViewController {
             topBackButton.heightAnchor.constraint(equalToConstant: 44),
             topTitleLabel.centerXAnchor.constraint(equalTo: topBarView.centerXAnchor),
             topTitleLabel.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
+            topTitleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBarView.topAnchor, constant: 7),
+            topTitleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBarView.bottomAnchor, constant: -7),
             topTitleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: topBackButton.trailingAnchor, constant: 8),
             topTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBarView.trailingAnchor, constant: -BearySpace.lg),
         ])
