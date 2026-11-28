@@ -2399,10 +2399,13 @@ final class BearyNotificationsViewController: UIViewController {
         guard let previousState = followCardStates[actorId] else { return }
         var wasFollowBack = false
         if case .canFollowBack = previousState { wasFollowBack = true }
-        followCardStates[actorId] = .busy
+        // 乐观更新：点按即写目标态（回关→互关，关注→已关注）并刷新行，
+        // 不再先写 .busy 等回包；失败分支写回 previousState 回滚（见下）。
+        // 在途二次点按由 .mutual／.following 早退挡住。
+        followCardStates[actorId] = wasFollowBack ? .mutual : .following
         refreshFollowCardRows(actorId: actorId)
         // 发起关注即 bump 按人操作代次：此前在途的 state 查询回包到
-        // fetchFollowCardState 时代次已不等，直接丢弃，不覆盖 .busy 与
+        // fetchFollowCardState 时代次已不等，直接丢弃，不覆盖乐观目标态与
         // 下面刚确认的结果；本请求回包同样凭代次核对后才写态。
         followCardOperationGeneration[actorId, default: 0] += 1
         let operationGen = followCardOperationGeneration[actorId] ?? 0
