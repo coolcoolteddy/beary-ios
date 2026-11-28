@@ -1792,7 +1792,18 @@ class BearyFeedViewController: UIViewController {
     /// 随后重拉——重拉可能被在途守卫跳过，跳过即复活。行删除先校验表
     /// 已渲染行数与旧模型一致，对不上时整表重载（模型已正确），不
     /// 带病发 deleteRows（连续删帖闪退同款成因）。
-    func removeDeletedEntry(entryId: String) {
+    /// 乐观删除回滚位点（本批 ①）：remove 时记下的原位；失败时
+    /// restoreDeletedEntry 按位插回（row／槽位 index 为 nil 表示当时不在该处）。
+    /// firstPageIds 不记位点——恢复时按首屏前缀重建（与可见性翻转回滚同口径）。
+    struct FeedDeleteRemoval {
+        let row: Int?
+        let plazaSlotIndex: Int?
+        let followingSlotIndex: Int?
+    }
+
+    /// 乐观删除（本批 ①）：返回摘行前的原位供失败回滚；调用方忽略返回值时行为不变。
+    @discardableResult
+    func removeDeletedEntry(entryId: String) -> FeedDeleteRemoval {
         // 第 7 轮属实项 3：首页切段已删日记回显。删除只改当前段 live 列表
         // （plazaRaw／firstPageIds）时，另一段槽位仍留着已删篇：同一篇可
         // 同时出现在广场段与关注段（被关注作者的公开篇），切段时
@@ -1802,6 +1813,9 @@ class BearyFeedViewController: UIViewController {
         //（与原 live 删除口径一致）。本篇不在当前 live 时只清槽位、不碰
         // 表——行号不存在，deleteRows 会闪退；在 live 时只删受影响的一行，
         // 行数对不上才整表重载（原防闪退兜底不动）。
+        let row = plazaRaw.firstIndex(where: { $0.id == entryId })
+        let plazaSlotIndex = plazaSegmentCache.entries.firstIndex(where: { $0.id == entryId })
+        let followingSlotIndex = followingSegmentCache.entries.firstIndex(where: { $0.id == entryId })
         plazaSegmentCache.entries.removeAll { $0.id == entryId }
         plazaSegmentCache.firstPageIds.removeAll { $0 == entryId }
         followingSegmentCache.entries.removeAll { $0.id == entryId }
@@ -1811,16 +1825,42 @@ class BearyFeedViewController: UIViewController {
         // 统一在此处调用一次：本篇不在当前 live 时同样要失效引用缓存，
         // 原先 early return 会跳过这一步。
         BearyDiaryCardCell.invalidateQuote(forQuoteId: entryId)
-        guard let row = plazaRaw.firstIndex(where: { $0.id == entryId }) else { return }
+        guard let row = row else { return FeedDeleteRemoval(row: nil, plazaSlotIndex: plazaSlotIndex, followingSlotIndex: followingSlotIndex) }
         let oldCount = plazaRaw.count
         plazaRaw.removeAll { $0.id == entryId }
         firstPageIds.removeAll { $0 == entryId }
-        guard isViewLoaded else { return }
+        guard isViewLoaded else { return FeedDeleteRemoval(row: row, plazaSlotIndex: plazaSlotIndex, followingSlotIndex: followingSlotIndex) }
         if tableView.numberOfRows(inSection: 0) == oldCount {
             tableView.deleteRows(at: [IndexPath(row: row, section: 0)], with: .fade)
         } else {
             tableView.reloadData()
         }
+        return FeedDeleteRemoval(row: row, plazaSlotIndex: plazaSlotIndex, followingSlotIndex: followingSlotIndex)
+    }
+
+    /// 乐观删除失败回滚（本批 ①）：按原位插回 live 与两段槽位（已在时不动，
+    /// 防重复恢复），首屏 id 按前缀重建、写盘头快照；失败路径走 reloadData，
+    /// 正确性优先于删行动画（与可见性翻转回滚同口径）。
+    func restoreDeletedEntry(_ entry: Entry, removal: FeedDeleteRemoval) {
+        guard let entryId = entry.id else { return }
+        var restoredLive = false
+        if let row = removal.row, !plazaRaw.contains(where: { $0.id == entryId }) {
+            plazaRaw.insert(entry, at: min(row, plazaRaw.count))
+            firstPageIds = plazaRaw.prefix(firstPageLimit).compactMap { $0.id }
+            persistFeedHead()
+            restoredLive = true
+        }
+        if let idx = removal.plazaSlotIndex, !plazaSegmentCache.entries.contains(where: { $0.id == entryId }) {
+            plazaSegmentCache.entries.insert(entry, at: min(idx, plazaSegmentCache.entries.count))
+            plazaSegmentCache.firstPageIds = plazaSegmentCache.entries.prefix(firstPageLimit).compactMap { $0.id }
+        }
+        if let idx = removal.followingSlotIndex, !followingSegmentCache.entries.contains(where: { $0.id == entryId }) {
+            followingSegmentCache.entries.insert(entry, at: min(idx, followingSegmentCache.entries.count))
+            followingSegmentCache.firstPageIds = followingSegmentCache.entries.prefix(firstPageLimit).compactMap { $0.id }
+        }
+        guard restoredLive, isViewLoaded else { return }
+        tableView.reloadData()
+        updateOverlayState()
     }
 
     func applyInteraction(entryId: String, likeCount: Int?, likedByMe: Bool?, bookmarkedByMe: Bool?, emotes: [EmoteCount]?) {

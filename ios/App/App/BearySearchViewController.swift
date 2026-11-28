@@ -560,13 +560,46 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         lastRenderedData = data
     }
 
+    /// 乐观删除回滚位点（本批 ①）：remove 时记下的原位；失败时
+    /// restoreDeletedEntry 按位插回（index 为 nil 表示当时不在该组）。
+    struct SearchDeleteRemoval {
+        let entriesIndex: Int?
+        let mineIndex: Int?
+    }
+
     /// 详情内删帖：按 id 摘行（引用缓存同清），空了走无结果态。
-    func removeDeletedEntry(entryId: String) {
-        guard var data = lastRenderedData, let query = lastRenderedQuery, showingResults else { return }
+    /// 乐观删除（本批 ①）：返回摘行前的原位供失败回滚；调用方忽略返回值时行为不变。
+    @discardableResult
+    func removeDeletedEntry(entryId: String) -> SearchDeleteRemoval {
+        guard var data = lastRenderedData, let query = lastRenderedQuery, showingResults else { return SearchDeleteRemoval(entriesIndex: nil, mineIndex: nil) }
+        let entriesIndex = data.entries?.firstIndex(where: { $0.id == entryId })
+        let mineIndex = data.mine?.firstIndex(where: { $0.id == entryId })
         data.entries?.removeAll { $0.id == entryId }
         data.mine?.removeAll { $0.id == entryId }
         lastRenderedData = data
         BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
+        renderResults(data: data, query: query)
+        return SearchDeleteRemoval(entriesIndex: entriesIndex, mineIndex: mineIndex)
+    }
+
+    /// 乐观删除失败回滚（本批 ①）：按原位插回两组（已在时不动，防重复恢复），
+    /// 再重渲染；搜索已清掉时不再复活旧结果（与 remove 的守卫同口径）。
+    func restoreDeletedEntry(_ entry: Entry, removal: SearchDeleteRemoval) {
+        guard let entryId = entry.id else { return }
+        guard var data = lastRenderedData, let query = lastRenderedQuery, showingResults else { return }
+        if let idx = removal.entriesIndex,
+           !(data.entries?.contains(where: { $0.id == entryId }) ?? false),
+           var entries = data.entries {
+            entries.insert(entry, at: min(idx, entries.count))
+            data.entries = entries
+        }
+        if let idx = removal.mineIndex,
+           !(data.mine?.contains(where: { $0.id == entryId }) ?? false),
+           var mine = data.mine {
+            mine.insert(entry, at: min(idx, mine.count))
+            data.mine = mine
+        }
+        lastRenderedData = data
         renderResults(data: data, query: query)
     }
 
