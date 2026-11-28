@@ -1677,13 +1677,8 @@ class BearyDiaryCardCell: UITableViewCell {
         recipientLabel.font = cardMode == .feed ? BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12)) : BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         recipientLabel.adjustsFontForContentSizeCategory = true
         recipientLabel.text = nil
-        // 首页皇冠带网页 drop-shadow（0 1px 1px 黑 30%），个人主页无阴影。
-        if cardMode == .feed {
-            crownView.layer.shadowColor = UIColor.black.cgColor
-            crownView.layer.shadowOpacity = 0.30
-            crownView.layer.shadowOffset = CGSize(width: 0, height: 1)
-            crownView.layer.shadowRadius = 1
-        }
+        // 展示审计 G1-19：首页皇冠投影已去掉（原网页 drop-shadow 0 1px 1px 黑 30%，
+        // 是卡片上唯一的投影效果、视觉上跳；其余元素一律扁平，皇冠与之对齐）。
         // 引用卡点按分流：首页 gone/locked 不动作、加载失败重试、公开/未公开分流；
         // 个人主页 gone 卡也透传（allowGoneTap），控制器弹提示。
         quoteView.allowGoneTap = (cardMode == .profile)
