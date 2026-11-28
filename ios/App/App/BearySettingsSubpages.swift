@@ -639,7 +639,6 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                 self.setLogoutOthersBusy(false)
                 switch result {
                 case .success:
-                    BearyToast.show(in: self.view, message: "已退出其他设备")
                     // 成功后重拉列表刷新显示（不走共享缓存，取最新），
                     // 再回调设置页刷新它的设备数。
                     self.reloadSessionsAfterRevoke()
