@@ -4335,6 +4335,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// drizzle/hail/overcast 无专属静态图与中文名，就近取 rain/snow/cloudy
     /// 的图与名，不再隐藏。图标只是视觉辅助：accessibilityLabel 一律保留
     /// 完整表述（“天气：晴”），不只靠图标传达信息。
+    /// 展示审计 G5-07：天气 chip 只留静态图标＋气温，不再叠加动态 Lottie
+    /// 表情（引用面板行的天气 Lottie 不动）；定位切换时的位移保留。
     private func refreshMetaRow(animated: Bool = false) {
         // 天气 chip 内容（原 refreshSelectedChips 的天气段，整段移入此处）。
         if let weather = selectedWeather, let name = BearyText.weatherNames[BearyText.weatherStaticKey(for: weather)] {
@@ -4347,16 +4349,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             weatherChipButton.setImage(icon, for: .normal)
             weatherChipButton.tintColor = BearyColors.ink
-            // 天气 chip 图标贴动态 Lottie（底层静态图作 fallback）。
-            if let host = weatherChipButton.imageView {
-                refreshWeatherEmoteOverlay(&weatherChipEmoteView, on: host, lottieKey: BearyText.weatherLottieKey(for: weather), fallbackImage: icon)
-            }
             weatherChipButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: icon == nil ? 0 : 5, bottom: 0, right: 0)
             weatherChipButton.accessibilityLabel = selectedTemperature != nil ? "天气：\(name) \(selectedTemperature!)°" : "天气：" + name
         } else {
             weatherChipButton.isHidden = true
             weatherChipButton.setImage(nil, for: .normal)
-            refreshWeatherEmoteOverlay(&weatherChipEmoteView, on: weatherChipButton, lottieKey: nil, fallbackImage: nil)
         }
         let hasLocation: Bool
         let locationName: String?
@@ -4568,36 +4565,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.selectedRange = NSRange(location: safeLocation + 1, length: 0)
     }
 
-    /// 天气动态图标覆盖层（BearyEmoteView，底层静态图作 fallback；与落点行同款）。
-    private var weatherChipEmoteView: BearyEmoteView?
+    /// 引用面板行天气图标覆盖层（BearyEmoteView，底层静态图作 fallback）。
     private var quoteWeatherEmoteViews: [BearyEmoteView] = []
-
-    /// 在宿主视图上贴／刷新天气 Lottie 覆盖层（落点行同款）：同 key 只重播、
-    /// 不重建；key 为 nil 或无 fallback 图时摘掉覆盖层。
-    private func refreshWeatherEmoteOverlay(_ stored: inout BearyEmoteView?, on host: UIView, lottieKey: String?, fallbackImage: UIImage?) {
-        if let lottieKey = lottieKey, let fallbackImage = fallbackImage {
-            if let existing = stored, existing.superview === host, existing.emoteKey == lottieKey {
-                existing.play()
-                return
-            }
-            stored?.stop()
-            stored?.removeFromSuperview()
-            let overlay = BearyEmoteView(key: lottieKey, animated: true, fallbackImage: fallbackImage)
-            overlay.translatesAutoresizingMaskIntoConstraints = false
-            host.addSubview(overlay)
-            NSLayoutConstraint.activate([
-                overlay.topAnchor.constraint(equalTo: host.topAnchor),
-                overlay.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-                overlay.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-                overlay.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-            ])
-            stored = overlay
-        } else {
-            stored?.stop()
-            stored?.removeFromSuperview()
-            stored = nil
-        }
-    }
 
     /// 引用面板行天气图标全部停播并摘掉（行重渲染／面板关闭时调）。
     private func clearQuoteWeatherEmotes() {
