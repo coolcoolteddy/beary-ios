@@ -5459,6 +5459,41 @@ extension BearyNotificationsViewController {
         return items.first(where: { $0.id == id })?.read
     }
 
+    /// 详情页进页标已读（2026-11-27 Li 定）：进互动消息／系统消息详情页即把该
+    /// 列表的未读全部标已读，不用逐条点进最深层。只标给定 id 集（本卡条目），
+    /// 不碰另一张卡的未读——服务端无批量接口（id=nil 会标全部），故逐条复用
+    /// markSingleRead（在途去重＋失败单条回滚，含角标与详情页本地拷贝回滚）；
+    /// 本地先整批乐观置已读（未读数／角标／快照／合并快照一次同步）。
+    /// 注意与点聚合行口径不同：点 follow 组行只标代表条（#1901），进页则
+    /// 全标——进列表等于已看过全部行。
+    func markItemsReadForDetail(ids: [Int]) {
+        var newlyReadCount = 0
+        var newlyReadSysCount = 0
+        var itemsToPost: [(item: NotificationItem, index: Int)] = []
+        for id in ids {
+            guard let index = items.firstIndex(where: { $0.id == id }),
+                  (items[index].read ?? true) == false else { continue }
+            items[index].read = true
+            newlyReadCount += 1
+            if items[index].type == "system" {
+                newlyReadSysCount += 1
+            }
+            itemsToPost.append((items[index], index))
+        }
+        guard newlyReadCount > 0 else { return }
+        unreadTotal = max(0, unreadTotal - newlyReadCount)
+        sysUnreadTotal = max(0, sysUnreadTotal - newlyReadSysCount)
+        publishUnread(unreadTotal)
+        updateReadAllButton()
+        recordFullLoadUnread()
+        rebuildDisplayRows()
+        applyReadAppearanceToVisibleRows()
+        notifyMergeSnapshotChanged()
+        for (item, index) in itemsToPost {
+            markSingleRead(item, at: index)
+        }
+    }
+
     /// 详情页高亮判定：与行 cell 同口径（未读且晚于 seen 水印）。
     func highlightForDetail(_ item: NotificationItem) -> Bool {
         return shouldHighlight(item: item)
@@ -5496,6 +5531,10 @@ extension BearyNotificationsViewController {
 // 见 onDetailWillDisappear）。
 // 翻页追加的新条目：本页打开期间不实时追（回列表重进即见最新），
 // 但从上层页返回时 viewWillAppear 重读卡快照补齐。
+// 进页即标已读（2026-11-27 Li 定）：进本页即把本卡未读全部标已读，
+// 不用逐条点进最深层；只标本卡 id 集（源页 markItemsReadForDetail），
+// 不碰另一张卡；「全部标为已读」按钮不进本页（进页已全清，按钮多余），
+// 独立通知页上的按钮保持原样不动。
 
 final class BearyNotificationDetailViewController: UIViewController, UITableViewDelegate, UITableViewDataSource {
 
@@ -5655,6 +5694,10 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         notifSource.onSingleReadRollback = { [weak self] notificationId in
             self?.applyLocalReadRollback(notificationId: notificationId)
         }
+        // 进页即标已读（2026-11-27 Li 定）：进本页即把本卡未读全部标已读，
+        // 不用逐条点进最深层；从上层页返回时同样触发（快照重读后新到的
+        // 未读一并消除）。
+        markVisibleItemsRead()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -5821,6 +5864,25 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
         let representative = items[row.representativeIndex]
         let isSystemStyle = (representative.type ?? "") == "system" || (representative.type ?? "") == "letter"
         cell.setReadAppearance(isUnread: anyUnread, isSystemStyle: isSystemStyle, highlight: anyHighlight)
+    }
+
+    /// 进页标已读（2026-11-27 Li 定）：进本页即把本卡未读全部标已读。
+    /// 本地拷贝先乐观置已读＋就地清点（与 applyLocalRead 同口径，不
+    /// reloadRows）；再让源页按同一批 id 标已读（服务端逐条 POST＋
+    /// 未读数／底栏角标同步，见 markItemsReadForDetail）。无 id 的行
+    /// 不标；失败单条回滚走源页 onSingleReadRollback（本页改回未读）。
+    private func markVisibleItemsRead() {
+        let unreadIds = items.compactMap { ($0.read ?? true) == false ? $0.id : nil }
+        guard !unreadIds.isEmpty else { return }
+        for row in items.indices where (items[row].read ?? true) == false && items[row].id != nil {
+            items[row].read = true
+            let indexPath = IndexPath(row: row, section: 0)
+            guard let cell = tableView.cellForRow(at: indexPath) as? BearyNotificationCell else { continue }
+            let item = items[row]
+            let isSystemStyle = item.type == "system" || item.type == "letter"
+            cell.setReadAppearance(isUnread: false, isSystemStyle: isSystemStyle, highlight: false)
+        }
+        notifSource.markItemsReadForDetail(ids: unreadIds)
     }
 
     /// 左滑删除单条通知：只给「删除」一个红色动作（卡片本身不加左滑）。
