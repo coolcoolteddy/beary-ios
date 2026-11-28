@@ -1651,13 +1651,13 @@ final class BearySettingsViewController: UIViewController {
             showToast("正在移除该账号，请稍后再切换")
             return
         }
-        if expiredSwitchUserIds.contains(accountIdValue) {
-            // 该号会话已被上次切换预检证实失效：不再发注定 401 的预检，
-            // 直走过期重登（与下面 .expired 分支同一入口）。
-            showToast("登录已过期，请重新登录")
-            openLoginForAccountSwitch()
-            return
-        }
+        // 2026-11-28 切换过期修法：已标记过期的行不再直走重登。标记只
+        // 在刷新时剪枝，一次 .expired 未必是终态（预检瞬间的 vault 状
+        // 态／服务端会话状态都可能已变），不应把整行砖掉一整个设置页
+        // 访问。点按仍走下面 switchToAccount 重发一次预检：成功就切
+        // 过去，再次 .expired 才标过期＋弹重登页（见下面 .expired 分支）。
+        // 本次 Li 报的正是这条：点按后登录页立刻弹（无 /me 等待），即
+        // 同次访问里早已被标过期、点的是第二下。
         isSwitchingAccount = true
         switchingAccountId = accountIdValue
         // 116 后扫查：切换要等一次 /me 网络往返，旧代码这段时间按钮毫无变化，
@@ -1680,12 +1680,15 @@ final class BearySettingsViewController: UIViewController {
                 self.refreshAccountSwitchSection()
             case .alreadyCurrent:
                 self.refreshAccountSwitchSection()
-            case .expired:
+            case .expired(let reason, let message):
                 // 会话已死：先把该号标成过期并刷新卡片（行上见“登录已过期”，
                 // 不再装成可直接切换），再弹重登页；取消回来时标记仍在。
+                // toast 按 401 原因分流（冷启动同款口径，见 SceneDelegate
+                // fireStartupMeIfNeeded）：服务端 message 优先，无 message
+                // 时 kicked 是别处退出、banned 是封禁，其余按过期。
                 self.expiredSwitchUserIds.insert(accountIdValue)
                 self.refreshAccountSwitchSection()
-                self.showToast("登录已过期，请重新登录")
+                self.showToast(self.expiredSwitchToastText(reason: reason, message: message))
                 self.openLoginForAccountSwitch()
             case .network:
                 self.showToast(NSLocalizedString("common.network_unstable", comment: ""))
@@ -1693,6 +1696,17 @@ final class BearySettingsViewController: UIViewController {
                 self.showToast("切换失败，请稍后再试")
             }
         }
+    }
+
+    /// 切换预检 401 原因 → toast 文案（冷启动同款口径，见 SceneDelegate
+    /// fireStartupMeIfNeeded）：服务端 message 优先；无 message 时按
+    /// reason 兜底——kicked（已在其他设备退出）、banned（账号被封禁），
+    /// 其余一律按登录过期。
+    private func expiredSwitchToastText(reason: String?, message: String?) -> String {
+        if let m = message, !m.isEmpty { return m }
+        if reason == "banned" { return NSLocalizedString("account.switch.banned", comment: "") }
+        if reason == "kicked" { return NSLocalizedString("account.switch.kicked", comment: "") }
+        return NSLocalizedString("account.switch.expired", comment: "")
     }
 
     @objc private func addAccountButtonTapped() {

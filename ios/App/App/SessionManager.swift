@@ -283,7 +283,9 @@ final class SessionManager {
                 // 自动进列表，无需迁移；添加账号时容器 refreshMe 同样走这里，
                 // 设置页添加前再显式快照一次旧号即可（见 snapshotCurrentAccount）。
                 if user != nil {
-                    self.snapshotCurrentAccount()
+                    // /me 成功即证实了当前 cookie 属于该用户：带 confirmed
+                    // 覆盖（登录成功换了新 token 时正在此处落盘）。
+                    self.snapshotCurrentAccount(confirmed: true)
                 }
                 self.notifyUserChanged(user)
                 completion?(.success(user))
@@ -602,10 +604,12 @@ final class SessionManager {
     // MARK: - 多账号切换（设置页账号分组，2026-10-31）
 
     /// 切换结果：调用方只按结果给 toast / 弹登录页，不另猜原因。
+    /// expired 带 401 原因（reason / message，源自 fetchMeWithToken
+    /// 的 .authFailure；无原因的 401 与 token 归属对不上时两值均为 nil）。
     enum AccountSwitchResult {
         case switched(MeUser)
         case alreadyCurrent
-        case expired
+        case expired(reason: String?, message: String?)
         case network
         case failed
         case unavailable
@@ -652,13 +656,25 @@ final class SessionManager {
     /// 不在库里时不写（不顶掉旧账号）；当前会话照常可用，腾出空位后
     /// 下次 refreshMe 成功时自动补进。调用方（设置页添加前）同样先调
     /// 本函数快照旧号，再弹登录页。
-    func snapshotCurrentAccount() {
+    /// 配对守卫（2026-11-28 切换过期修法）：共享 cookie 是单桶制，刚登
+    /// 录的新号 token 会先落进共享桶、而 currentUser 仍是旧号——此时
+    /// 盲目快照会把新号 token 写进旧号的保管库项，下次切回旧号预检
+    /// 拿新号 token 调 /me、id 对不上即 .expired。库里已有该号且 token
+    /// 不同时，只有 /me 成功证实的配对（confirmed）才覆盖；未证实
+    /// 的盲目调用直接跳过并记日志（旧 token 在服务端仍有效——登录
+    /// 从不杀旧会话，见诊断报告 §3；/me 成功后由证实路径重存新 token）。
+    func snapshotCurrentAccount(confirmed: Bool = false) {
         guard let user = currentUser, let userId = user.id,
               let cookie = currentSessionCookie(), !cookie.value.isEmpty else {
             return
         }
         let vault = BearyAccountVault.shared
         if vault.load(userId: userId) == nil && vault.loadAll().count >= BearyAccountVault.maxAccounts {
+            return
+        }
+        if !confirmed, let existing = vault.load(userId: userId), existing.token != cookie.value {
+            // 未证实的 token 变更：不覆盖旧项（见上），只记日志供诊断。
+            BearyAppLog.event("snapshot skip token mismatch userId=\(userId)")
             return
         }
         let expiresMs: Double? = cookie.expiresDate.map { $0.timeIntervalSince1970 * 1000 }
@@ -755,6 +771,8 @@ final class SessionManager {
     /// 稿桶/图片桶/时间线缓存，与现行账号变化路径同一条）；预检失败
     /// 或身份对不上时，共享 cookie 与 currentUser 一字不动——没有回
     /// 滚可做，也就不存在回滚窗口里后台请求错用临时 cookie 的问题。
+    /// 401 的原因（reason / message）随 .expired 带给调用方分流提示
+    /// 与日志（2026-11-28 切换过期修法），不再折成裸过期。
     /// 磁盘缓存口径：切换不走 signOutLocally 的磁盘清除，旧账号磁盘
     /// 保留、切回可复用（现行注释口径）；内存态由容器 onUserChanged
     /// 切桶时清掉，不跨账号。
@@ -790,8 +808,12 @@ final class SessionManager {
                 case .success(let user):
                     guard let user = user, user.id == userId else {
                         // 401 无原因回空（会话已死）或 token 归属对不上：
-                        // 原账号原样不动（无回滚），只报过期。
-                        finish(.expired)
+                        // 原账号原样不动（无回滚），只报过期。归属对不上
+                        // 与无原因 401 是两种死法，日志里区分（id_mismatch），
+                        // 结果里 reason 均为 nil（调用方一律按过期重登）。
+                        let reason = user == nil ? nil : "id_mismatch"
+                        BearyAppLog.event("account switch expired userId=\(userId) reason=\(reason ?? "none")")
+                        finish(.expired(reason: nil, message: nil))
                         return
                     }
                     // 第 18 轮 ⑯：三重核对——当前账号仍是发起时账号、且
@@ -826,8 +848,12 @@ final class SessionManager {
                     finish(.switched(user))
                 case .failure(let error):
                     switch error {
-                    case .authFailure:
-                        finish(.expired)
+                    case .authFailure(let reason, let message):
+                        // 带原因的 401 不再折成裸 .expired：原因随结果带给
+                        // 调用方分流 toast，并记日志（expired / kicked /
+                        // banned / 无 reason 是四种完全不同的死法）。
+                        BearyAppLog.event("account switch expired userId=\(userId) reason=\(reason ?? "none")")
+                        finish(.expired(reason: reason, message: message))
                     case .network, .cancelled, .http, .decoding:
                         // 网络/5xx/解析失败 = 未证实过期（G26 口径）：只
                         // 报告网络问题，不按游客处理、不清旧号、不动 cookie。
