@@ -72,9 +72,8 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     // 新行首次出现透明度过渡的已播记账（按对方 id/handle 键，已有行更新不重播）。
     private var fadedRowKeys = Set<String>()
     private let titleLabel = UILabel()
-    /// 嵌入态折叠用的顶栏视图与高度约束（独立页不受影响）。
+    /// 嵌入态折叠用的顶栏视图（独立页不受影响）。
     private var topBarView: UIView?
-    private var topBarHeightConstraint: NSLayoutConstraint?
     private var topBarTopConstraint: NSLayoutConstraint?
     private var backButton: UIButton?
     private var conversations: [BearyAPI.DMConversation] = []
@@ -174,8 +173,6 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         refreshFailedRetryButton.bearyAddPressFeedback()
         refreshFailedBanner.addSubview(refreshFailedRetryButton)
 
-        let topBarHeight = topBar.heightAnchor.constraint(equalToConstant: 44)
-        topBarHeightConstraint = topBarHeight
         topBarTopConstraint?.isActive = true
         NSLayoutConstraint.activate([
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -394,18 +391,19 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     }
 
     /// 嵌入消息页时调用：隐藏返回钮并把组头顶栏整条折叠（“私信”标题随顶栏去掉），
-    /// 表内滚动交外层滚动视图；顶栏高改 0 后高度上报不再含 44。
+    /// 表内滚动交外层滚动视图；顶栏隐藏后高度上报不再含顶栏高。
     func setEmbedded() {
         backButton?.isHidden = true
         topBarView?.isHidden = true
-        topBarHeightConstraint?.constant = 0
         tableView.isScrollEnabled = false
     }
 
     /// 嵌入态高度上报：在布局末尾算一次，高度不变不重复报（防布局循环）。
     private func reportEmbeddedContentHeight() {
         guard onContentHeightChanged != nil else { return }
-        let topPad = (topBarTopConstraint?.constant ?? 0) + (topBarHeightConstraint?.constant ?? 44)
+        // 顶栏在嵌入态隐藏、高度贡献为 0（此前读休眠定值约束的 constant，
+        // 该约束从未激活，折叠靠 isHidden；此处按 isHidden 等值折算）。
+        let topPad = (topBarTopConstraint?.constant ?? 0) + (topBarView?.isHidden == true ? 0 : 44)
         var height = topPad + tableView.contentSize.height
         if !conversationStateView.isHidden {
             height = max(height, topPad + adaptiveEmptyMinHeight)
