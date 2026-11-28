@@ -7602,6 +7602,9 @@ class BearyProfileViewController: UIViewController {
     /// 滚动结束时再算一次并应用。滚动结束前脚部又重建时以最新一次为准
     /// （直接覆盖，旧的作废，不叠加）。
     private var pendingPhotowallCompensation: (anchorOffsetY: CGFloat, oldWallBottomY: CGFloat, footerTopOld: CGFloat)?
+    /// 弱网滑动卡顿修复（2026-11-28）：滑行中到达的数据不立即重建脚部，
+    /// 只记脏，停稳后一次性重建；不滑时行为不变。
+    private var footerRebuildDirty = false
     /// 批 E 挪位：地图入口行内约束（图标/文案/箭头/热区）只激活一次；
     /// 行本身在 refreshFooter 里逐次重设 frame 并换进新脚部容器。
     private var mapEntryInternalConstraintsActivated = false
@@ -7613,6 +7616,13 @@ class BearyProfileViewController: UIViewController {
     private weak var profileErrorRetryButton: UIButton?
 
     private func refreshFooter() {
+        // 弱网滑动卡顿修复：滑行中（拖动／减速）到达的数据先记脏，停稳后
+        // 一次性重建；不滑时照常重建并清脏标记。脚部结构不动，只收敛触发时机。
+        if tableView.isDragging || tableView.isDecelerating {
+            footerRebuildDirty = true
+            return
+        }
+        footerRebuildDirty = false
         // 跳动修复：脚部重建前记锚点——视口顶在内容里的位置、旧脚部顶、
         // 旧墙底（内容坐标）。墙长高后，视口顶若在旧墙底之下，说明用户
         // 正在看墙下内容（地图/星图/状态行），重建后按墙底位移同量补
@@ -7922,6 +7932,14 @@ class BearyProfileViewController: UIViewController {
             let maxOffsetY = max(minOffsetY, tableView.contentSize.height - tableView.bounds.height + tableView.adjustedContentInset.bottom)
             tableView.contentOffset.y = min(max(currentOffsetY + wallShift, minOffsetY), maxOffsetY)
         }
+    }
+
+    /// 弱网滑动卡顿修复：滚动停稳后若脚部记脏，一次性重建（见
+    /// scrollViewDidEndDecelerating／DidEndDragging／DidEndScrollingAnimation）。
+    private func flushPendingFooterRebuildIfNeeded() {
+        guard footerRebuildDirty else { return }
+        footerRebuildDirty = false
+        refreshFooter()
     }
 
     /// 批 C：脚部视图的落地高度——已有 frame 高度的直接用（加载/末页脚部 56、
@@ -10702,6 +10720,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         }
         // 跳动修复（第 8 轮第 2 项）：减速结束，补算拖动期间跳过的墙底位移补偿。
         applyPendingPhotowallCompensation()
+        // 弱网滑动卡顿修复：减速结束即停稳，滑行中记脏的脚部在此一次性重建。
+        flushPendingFooterRebuildIfNeeded()
     }
 
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
@@ -10716,6 +10736,9 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         if scrollView.contentOffset.y <= -scrollView.contentInset.top && !isCustomPullRefreshing {
             resetCoverStretch()
         }
+        // 弱网滑动卡顿修复：程序化滚动结束也算停稳，顺带 flush 记脏的脚部
+        //（减速被程序化滚动打断时，DidEndDecelerating 可能不再触发）。
+        flushPendingFooterRebuildIfNeeded()
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
@@ -10749,6 +10772,11 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             // 跳动修复（第 8 轮第 2 项）：手指松开且不再减速，滚动真正结束，
             // 补算拖动期间跳过的墙底位移补偿；还要减速的等 didEndDecelerating。
             applyPendingPhotowallCompensation()
+        }
+        // 弱网滑动卡顿修复：手指松开且不再减速即停稳，滑行中记脏的脚部
+        // 在此一次性重建；下拉刷新期也不例外（脚部重建与刷新流程无冲突）。
+        if !decelerate {
+            flushPendingFooterRebuildIfNeeded()
         }
     }
 
