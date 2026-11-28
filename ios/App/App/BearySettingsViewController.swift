@@ -5106,28 +5106,84 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     private func performUnblock(userId: Int) {
         guard !unblockingIds.contains(userId) else { return }
         unblockingIds.insert(userId)
-        tableView.reloadData()
+        // 乐观更新：点按即先删行＋刷新，不等 DELETE 回包；行资料缓存
+        // blockedProfiles 保留在位，失败回滚只须把 id 插回原位、不须重拉。
+        // 全局拉黑标记 BearyBlockedStore 仍只在成功回包里清（各页的拉黑
+        // 清理只由拉黑广播驱动，见本页头注释），回滚不碰它。
+        let removedIndex = blockedIds.firstIndex(of: userId)
+        if let removedIndex {
+            blockedIds.remove(at: removedIndex)
+            updateBlockedEmptyState()
+            tableView.reloadData()
+        }
         // 第六轮审计 02：发起时拍身份快照，成功回包先校验——切号/退出/重登
         // 夹在请求与回包之间时，旧回包不得从新账号的拉黑缓存里删人、不得改
         // 本页 blockedIds、不得弹提示（在途标记照常清除，失败分支不动）。
         let identity = BearyIdentityGuard.capture()
+        sendUnblock(userId: userId, identity: identity, removedIndex: removedIndex, retried: false)
+    }
+
+    /// 解除拉黑请求发送＋失败分流（performUnblock 的续段）：
+    /// 4xx／业务错误立刻回滚；网络／超时／5xx 后台重试一次，行保持
+    /// 删掉的乐观态，仍失败再回滚。requestVoid 本身不重试（见 BearyAPI），
+    /// 此处的一次重试不会与底层重试叠加。
+    private func sendUnblock(userId: Int, identity: BearyIdentityGuard.Snapshot, removedIndex: Int?, retried: Bool) {
         BearyAPI.shared.unblockUser(userId: userId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.unblockingIds.remove(userId)
                 switch result {
                 case .success:
+                    self.unblockingIds.remove(userId)
                     guard BearyIdentityGuard.stillValid(identity) else { return }
                     BearyBlockedStore.removeBlocked(userId)
-                    self.blockedIds.removeAll { $0 == userId }
                     self.updateBlockedEmptyState()
                     self.tableView.reloadData()
-                    BearyToast.show(in: self.view, message: "已解除拉黑")
-                case .failure:
-                    BearyToast.show(in: self.view, message: "解除失败，请重试")
-                    self.tableView.reloadData()
+                    BearyToast.show(in: self.view, message: NSLocalizedString("settings.blocked.unblocked", comment: ""))
+                case .failure(let error):
+                    if !retried, Self.isTransientUnblockError(error) {
+                        self.sendUnblock(userId: userId, identity: identity, removedIndex: removedIndex, retried: true)
+                        return
+                    }
+                    self.unblockingIds.remove(userId)
+                    self.rollbackUnblock(userId: userId, identity: identity, removedIndex: removedIndex)
                 }
             }
+        }
+    }
+
+    /// 失败回滚：把 userId 插回原位（行资料仍在 blockedProfiles 里，
+    /// 不须重拉）＋失败 toast（复用原口径）。身份快照已失效时列表早
+    /// 已由 handleBlockedUserChanged 清掉，旧回包不再往新号列表里插人、
+    /// 也不弹属于旧号的失败提示。
+    private func rollbackUnblock(userId: Int, identity: BearyIdentityGuard.Snapshot, removedIndex: Int?) {
+        guard BearyIdentityGuard.stillValid(identity) else {
+            tableView.reloadData()
+            return
+        }
+        if let removedIndex, !blockedIds.contains(userId) {
+            blockedIds.insert(userId, at: min(removedIndex, blockedIds.count))
+        }
+        updateBlockedEmptyState()
+        tableView.reloadData()
+        BearyToast.show(in: self.view, message: NSLocalizedString("settings.blocked.unblock_failed_retry", comment: ""))
+    }
+
+    /// 解除拉黑可重试的失败：网络失败（.network，含超时）与 5xx／408／429
+    /// （.http 带状态；.server 带真实状态时同判，见 BearyAPI.mapAPIError）。
+    /// 其余（4xx、.unauthorized、.notFound、业务码、解析失败）立刻回滚，
+    /// 重发无意义。口径同 BearyAPI.isTransientPublishError（该方法是
+    /// 发布专用的 private，此处按解除 DELETE 的错误形态另写一份）。
+    private static func isTransientUnblockError(_ error: APIError) -> Bool {
+        switch error {
+        case .network:
+            return true
+        case .http(let status, _):
+            return status >= 500 || status == 408 || status == 429
+        case .server(_, let status):
+            guard let status else { return false }
+            return status >= 500 || status == 408 || status == 429
+        default:
+            return false
         }
     }
 
