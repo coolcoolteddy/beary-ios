@@ -2982,6 +2982,13 @@ final class BearyDetailViewController: UIViewController {
             let requestSeq = followActionSeq
             followState = target
             applyFollowButton(animated: true)
+            if BearyConnectivity.isOffline && !followInFlight {
+                // 无网且无在途请求：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+                // 有在途请求时不落盘，只在内存记最新意图，等在途回包时再落盘。
+                BearyOfflineOutbox.enqueueFollow(userId: authorId, target: target)
+                BearyToast.show(in: view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                return
+            }
             // 串行提交（点赞 submitLike 同款）：在途时只记最新意图，不并行发请求。
             if followInFlight {
                 pendingFollowTarget = (authorId: authorId, target: target)
@@ -3009,6 +3016,13 @@ final class BearyDetailViewController: UIViewController {
                 let requestSeq = self.followActionSeq
                 self.followState = target
                 self.applyFollowButton(animated: true)
+                if BearyConnectivity.isOffline && !self.followInFlight {
+                    // 无网且无在途请求：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+                    // 有在途请求时不落盘，只在内存记最新意图，等在途回包时再落盘。
+                    BearyOfflineOutbox.enqueueFollow(userId: authorId, target: target)
+                    BearyToast.show(in: self.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                    return
+                }
                 // 串行提交（点赞 submitLike 同款）：在途时只记最新意图，不并行发请求。
                 if self.followInFlight {
                     self.pendingFollowTarget = (authorId: authorId, target: target)
@@ -3048,6 +3062,19 @@ final class BearyDetailViewController: UIViewController {
                         self.retryFetchDetail()
                     }
                 case .failure(let error):
+                    if case .network = error {
+                        // 在途中断网：意图落盘排队，不回滚，先行态保留。
+                        // 有更新的点按意图时落盘该意图（更新的优先），否则落盘在途目标。
+                        if let pending = self.pendingFollowTarget {
+                            self.pendingFollowTarget = nil
+                            BearyOfflineOutbox.enqueueFollow(userId: pending.authorId, target: pending.target)
+                        } else {
+                            BearyOfflineOutbox.enqueueFollow(userId: authorId, target: target)
+                        }
+                        BearyToast.show(in: self.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                        self.followInFlight = false
+                        return
+                    }
                     // 失败回滚到最后确认态；401 走登录入口（onRequireLogin），
                     // 登录后由用户重试取关，不弹失败 toast；其他失败仍走原
                     // 拒绝动效＋失败 toast（回关／关注／取关按目标态分流）。
@@ -4150,6 +4177,12 @@ final class BearyDetailViewController: UIViewController {
     /// 更新的点按意图，按最新意图再发一次；意图与已确认态相同（两次点按
     /// 互相抵消）时不发，只把界面刷回已确认态。
     private func submitLike(entryId: String, targetLiked: Bool) {
+        if BearyConnectivity.isOffline {
+            // 无网：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+            BearyOfflineOutbox.enqueueLike(entryId: entryId, liked: targetLiked)
+            BearyToast.show(in: view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+            return
+        }
         let reqSeq = likeState.beginRequest()
         likeInFlight = true
         BearyAPI.shared.toggleLike(id: entryId, liked: targetLiked) { [weak self] result in
@@ -4171,18 +4204,33 @@ final class BearyDetailViewController: UIViewController {
                     // 炸开已在点按时播过，成功回包不再重播；取消点赞不炸。
                     self.onInteractionChanged?(entryId, self.entry.likeCount, newLiked, nil, nil)
                 case .failure(let err):
-                    // 失败回滚到最后服务端确认态（不是本次点按前的中间态）。
-                    self.entry.likedByMe = self.likeState.confirmed.liked
-                    self.entry.likeCount = self.likeState.confirmed.count
-                    self.refreshActionRow()
-                    // 回滚到未填色：在飞的点赞微粒一并清掉。
-                    BearyIconMotion.clearLikeBurst(on: self.likeButton)
-                    BearyBurstParticles.clear(from: self.likeButton)
-                    if case .unauthorized = err {
-                        self.onRequireLogin?()
+                    if case .network = err {
+                        // 在途中断网：意图落盘排队，不回滚，先行态保留；
+                        // 有更新的点按意图时落盘该意图（更新的优先），否则落盘在途目标。
+                        // 联网后补发最后一次（补发时仍走本函数，先行态已在点按时给过）。
+                        if let pending = self.pendingLikeTarget {
+                            self.pendingLikeTarget = nil
+                            BearyOfflineOutbox.enqueueLike(entryId: entryId, liked: pending)
+                        } else {
+                            BearyOfflineOutbox.enqueueLike(entryId: entryId, liked: targetLiked)
+                        }
+                        BearyToast.show(in: self.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                        self.likeInFlight = false
+                        return
                     } else {
-                        self.playDenyShake(on: self.likeButton)
-                        BearyToast.show(in: self.view, message: "操作失败，请重试")
+                        // 失败回滚到最后服务端确认态（不是本次点按前的中间态）。
+                        self.entry.likedByMe = self.likeState.confirmed.liked
+                        self.entry.likeCount = self.likeState.confirmed.count
+                        self.refreshActionRow()
+                        // 回滚到未填色：在飞的点赞微粒一并清掉。
+                        BearyIconMotion.clearLikeBurst(on: self.likeButton)
+                        BearyBurstParticles.clear(from: self.likeButton)
+                        if case .unauthorized = err {
+                            self.onRequireLogin?()
+                        } else {
+                            self.playDenyShake(on: self.likeButton)
+                            BearyToast.show(in: self.view, message: NSLocalizedString("common.operation_failed_retry", comment: ""))
+                        }
                     }
                 }
                 self.likeInFlight = false
@@ -4228,6 +4276,13 @@ final class BearyDetailViewController: UIViewController {
         // 收藏音随点按立即播（不等回包）；回包成功不再重播，失败只回滚、不补播。
         // 取消收藏用 deleteSwoosh（2026-11-14 Li 定，不与取消点赞共用 unlikeSoft）。
         BearySoundPlayer.play(flipped ? .bookmarkTick : .deleteSwoosh)
+        if BearyConnectivity.isOffline && !bookmarkInFlight {
+            // 无网且无在途请求：不发请求，意图落盘排队；先行态保留，联网后补发最后一次。
+            // 有在途请求时不落盘，只在内存记最新意图，等在途回包时再落盘。
+            BearyOfflineOutbox.enqueueBookmark(entryId: entryId, bookmarked: flipped)
+            BearyToast.show(in: view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+            return
+        }
         // 串行提交（点赞 submitLike 同款）：在途时只记最新意图，不并行发请求。
         if bookmarkInFlight {
             pendingBookmarkTarget = flipped
@@ -4261,16 +4316,31 @@ final class BearyDetailViewController: UIViewController {
                     self.refreshActionRow()
                     self.onInteractionChanged?(entryId, nil, nil, newBookmarked, nil)
                 case .failure(let err):
-                    // 失败回滚到最后服务端确认态。
-                    self.entry.bookmarkedByMe = self.bookmarkState.confirmed
-                    self.refreshActionRow()
-                    // 回滚到未填色：在飞的收藏微粒一并清掉。
-                    BearyBurstParticles.clear(from: self.bookmarkButton)
-                    if case .unauthorized = err {
-                        self.onRequireLogin?()
+                    if case .network = err {
+                        // 在途中断网：意图落盘排队，不回滚，先行态保留；
+                        // 有更新的点按意图时落盘该意图（更新的优先），否则落盘在途目标。
+                        // 联网后补发最后一次。
+                        if let pending = self.pendingBookmarkTarget {
+                            self.pendingBookmarkTarget = nil
+                            BearyOfflineOutbox.enqueueBookmark(entryId: entryId, bookmarked: pending)
+                        } else {
+                            BearyOfflineOutbox.enqueueBookmark(entryId: entryId, bookmarked: target)
+                        }
+                        BearyToast.show(in: self.view, message: NSLocalizedString("offline.toast.queued", comment: ""))
+                        self.bookmarkInFlight = false
+                        return
                     } else {
-                        self.playDenyShake(on: self.bookmarkButton)
-                        BearyToast.show(in: self.view, message: "操作失败，请重试")
+                        // 失败回滚到最后服务端确认态。
+                        self.entry.bookmarkedByMe = self.bookmarkState.confirmed
+                        self.refreshActionRow()
+                        // 回滚到未填色：在飞的收藏微粒一并清掉。
+                        BearyBurstParticles.clear(from: self.bookmarkButton)
+                        if case .unauthorized = err {
+                            self.onRequireLogin?()
+                        } else {
+                            self.playDenyShake(on: self.bookmarkButton)
+                            BearyToast.show(in: self.view, message: NSLocalizedString("common.operation_failed_retry", comment: ""))
+                        }
                     }
                 }
                 self.bookmarkInFlight = false

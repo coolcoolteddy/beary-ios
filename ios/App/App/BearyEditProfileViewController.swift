@@ -1246,6 +1246,12 @@ class BearyEditProfileViewController: UIViewController {
                 return
             }
         }
+        // 非幂等不进队（审阅 #3）：无网直接 toast，不改界面（不冻结表单、
+        // 不置 isSaving）；联网后用户再点保存。
+        if BearyConnectivity.isOffline {
+            BearyToast.show(in: view, message: NSLocalizedString("offline.toast.no_network", comment: ""))
+            return
+        }
         // 三件套第 2 项：点按时一次性定格完整提交快照（名字、签名、头像、
         // 封面全在此时取值），后续两步只读快照；校验用的也是同一批点按时读到的值。
         let snapshot = SaveSnapshot(
