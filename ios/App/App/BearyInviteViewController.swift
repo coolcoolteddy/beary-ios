@@ -82,7 +82,6 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
     /// 失配直接丢弃，不写邀请码/统计/plusUntil、不碰 isLoading（新请求已接管）。
     private var inviteLoadGeneration = 0
     private var isBinding = false
-    private var copyTimer: Timer?
     /// 上次写入的弹窗高度（updatePreferredSheetHeight 的幂等守卫）。
     private var lastPreferredSheetHeight: CGFloat = 0
     /// 升起动画中途算出的弹窗高度（/me 回包改内容时）：先记下不写，
@@ -99,7 +98,6 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
     }
 
     deinit {
-        copyTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -766,13 +764,7 @@ final class BearyInviteViewController: UIViewController, BearySystemSheetSizing 
             return
         }
         UIPasteboard.general.string = code
-        copyButton.setTitle("已复制", for: .normal)
-        // 审计登录杂项：复制成功只改按钮文案 1.6 秒时 VoiceOver 用户无从得知，补播报。
-        UIAccessibility.post(notification: .announcement, argument: "邀请码已复制")
-        copyTimer?.invalidate()
-        copyTimer = Timer.scheduledTimer(withTimeInterval: 1.6, repeats: false) { [weak self] _ in
-            self?.copyButton.setTitle("复制", for: .normal)
-        }
+        BearyCopyFlash.flashCopied(on: copyButton, originalTitle: "复制", announce: "邀请码已复制")
     }
 
     @objc private func bindTapped() {

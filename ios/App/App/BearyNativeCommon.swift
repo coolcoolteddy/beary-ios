@@ -3129,6 +3129,22 @@ enum BearyRepeatedCopy {
     static let publishFailedRestoreFailed = "公开失败，原日记恢复失败，请检查"
 }
 
+/// 复制按钮「已复制」闪回：邀请码／诊断日志／主页链接三处共用。
+/// 口径：统一闪 1.5 秒后恢复原标题，三处都有 VoiceOver 播报。
+enum BearyCopyFlash {
+    /// 三处统一的闪回时长。
+    static let defaultDuration: TimeInterval = 1.5
+
+    /// 点复制后按钮改「已复制」、播报、到时恢复原标题。
+    static func flashCopied(on button: UIButton, originalTitle: String, duration: TimeInterval = defaultDuration, announce: String) {
+        button.setTitle("已复制", for: .normal)
+        UIAccessibility.post(notification: .announcement, argument: announce)
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak button] in
+            button?.setTitle(originalTitle, for: .normal)
+        }
+    }
+}
+
 // MARK: - 写接口响应模型（BearyAPI 用 convertFromSnakeCase 解码）
 
 struct LikeResponse: Decodable {

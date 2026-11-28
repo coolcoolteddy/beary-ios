@@ -4863,9 +4863,8 @@ private final class BearyDiagnosticsViewController: UIViewController {
                 return
             }
             UIPasteboard.general.string = lines.joined(separator: "\n")
-            self?.copyButton.setTitle("已复制", for: .normal)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                self?.copyButton.setTitle("复制全部", for: .normal)
+            if let copyButton = self?.copyButton {
+                BearyCopyFlash.flashCopied(on: copyButton, originalTitle: "复制全部", announce: "诊断日志已复制")
             }
         }
     }

@@ -1189,10 +1189,7 @@ class BearyEditProfileViewController: UIViewController {
             presentSimpleAlert(message: "请先登录")
             return
         }
-        copyLinkButton.setTitle("已复制", for: .normal)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.copyLinkButton.setTitle("复制", for: .normal)
-        }
+        BearyCopyFlash.flashCopied(on: copyLinkButton, originalTitle: "复制", announce: "主页链接已复制")
     }
 
     /// 2026-10-29 第 13 项：老式 UIImagePickerController 进程内加载图库才出界面，
