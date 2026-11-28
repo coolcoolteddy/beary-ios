@@ -1,8 +1,8 @@
 import UIKit
 
-/// 写作热力图模块：GitHub 式 27 周 × 7 天格子（预览 v5 定版）。
+/// 写作热力图模块：GitHub 式热力格子（预览 v5 定版）。
 ///
-/// 布局：列 = 周（最左为 26 周前的周首日，最右为本周）、行 = 周首日起的 7 天
+/// 布局：列 = 周（最左为窗口首周的周首日，最右为本周）、行 = 周首日起的 7 天
 ///（地区首日：跟随系统地区，语言行「中国大陆」固定周一）；
 /// 今天在最右列，未来的格子不画、不可点。颜色橙色五档（0 篇为空格，
 /// 1 / 2 / 3 / 4+ 篇逐档加深）；右上角月份名、左侧星期名、标题行右侧“少 → 多”
@@ -15,8 +15,12 @@ import UIKit
 /// UIKit 自画，不引入 HorizonCalendar 依赖。
 final class BearyHeatmapView: UIView {
 
-    /// 周数（列数）与每周天数（行数），GitHub 同款 27 × 7。
+    /// 周数上限（列数）与每周天数（行数），GitHub 同款 27 × 7。
+    /// 实际列数见 visibleWeeks：只显示有数据的范围，最少 12 周（不足向前补），
+    /// 最多 27 周（早于 27 周前的数据只看最近 27 周）。
     static let weeks = 27
+    /// 窗口最少周数。
+    static let minWeeks = 12
     static let daysPerWeek = 7
     /// 格间距（横向与纵向同值）。
     private static let gap: CGFloat = 3
@@ -49,6 +53,9 @@ final class BearyHeatmapView: UIView {
     private var dayButtons: [UIButton] = []
     /// 与 dayButtons 一一对应：该格的北京日 key；未来格为空串（按钮隐藏、不可点）。
     private var buttonDayKeys: [String] = []
+    /// 当前窗口实际列数（configure 按有数据的范围算出，最少 12、最多 27；
+    /// layoutSubviews 与转子都按它排，setup 预建的 27 列是容量上限）。
+    private var visibleWeeks = BearyHeatmapView.weeks
     /// layoutSubviews 算出的格边长（点按最近中心命中时算 pitch 用）。
     private var gridCellSize: CGFloat = 0
 
@@ -110,7 +117,7 @@ final class BearyHeatmapView: UIView {
             gridArea.addSubview(label)
             weekdayLabels.append(label)
         }
-        // 189 个格按钮一次建好复用（小方块、圆角 2、无文字），逐次 configure 只改
+        // 189 个格按钮一次建好复用（27 列容量，窗口缩小时多余列藏起；小方块、圆角 2、无文字），逐次 configure 只改
         // 颜色、显隐与无障碍文案，不重建视图。
         for _ in 0..<(Self.weeks * Self.daysPerWeek) {
             let button = UIButton(type: .custom)
@@ -199,10 +206,10 @@ final class BearyHeatmapView: UIView {
         return counts
     }
 
-    /// 橙色五档：0 篇为空格（line 灰，与 surface1 卡底可区分），1 / 2 / 3 / 4+ 篇逐档加深（品牌橙 #ff9500）。
+    /// 橙色五档：0 篇为空格（surface2，与 surface1 卡底以微明度区分），1 / 2 / 3 / 4+ 篇逐档加深（品牌橙 #ff9500）。
     static func color(forLevel level: Int) -> UIColor {
         switch level {
-        case 0: return BearyColors.line
+        case 0: return BearyColors.surface2
         case 1: return BearyColors.alpha(BearyColors.orange, 0.3)
         case 2: return BearyColors.alpha(BearyColors.orange, 0.55)
         case 3: return BearyColors.alpha(BearyColors.orange, 0.8)
@@ -221,22 +228,41 @@ final class BearyHeatmapView: UIView {
     }
 
     /// 按可见日记重算每格颜色与文案；visible 为空时调用方直接藏卡，不调这里。
-    /// 窗口：今天所在周的周首日（跟系统地区）往前推 26 周（共 27 列），最早一周不丢——
-    /// 首列是完整一周（即使其中几天在账号首篇之前，也画 line 空格，不截掉）。
+    /// 窗口：终点仍为本周，起点取最早有数据的那一周；总周数不少于 12 周
+    ///（不足向前补到 12 周），最多 27 周。首列是完整一周（即使其中几天在
+    /// 账号首篇之前，也画 surface2 空格，不截掉）。
     func configure(entries: [Entry]) {
         guard let today = BearyBeijingDay.todayComponents(),
               let todayNumber = BearyBeijingDay.todayNumber(),
               let weekStart = BearyBeijingDay.weekStartOf(year: today.year, month: today.month, day: today.day, firstWeekday: Self.regionFirstWeekday()),
-              let windowStart = BearyBeijingDay.shifted(year: weekStart.0, month: weekStart.1, day: weekStart.2, byDays: -26 * 7),
+              let weekStartNumber = BearyBeijingDay.dayNumber(year: weekStart.0, month: weekStart.1, day: weekStart.2) else { return }
+        // 最早有数据的那一周：最早一篇的北京日所在周的周首日；无 dated 篇时
+        // 回落到 12 周窗口。
+        var visibleWeeks = Self.minWeeks
+        if let earliestMs = entries.compactMap({ $0.createdAt }).min(),
+           let earliest = BearyBeijingDay.components(ofMs: earliestMs),
+           let earliestWeekStart = BearyBeijingDay.weekStartOf(year: earliest.year, month: earliest.month, day: earliest.day, firstWeekday: Self.regionFirstWeekday()),
+           let earliestWeekStartNumber = BearyBeijingDay.dayNumber(year: earliestWeekStart.0, month: earliestWeekStart.1, day: earliestWeekStart.2) {
+            let spanWeeks = (weekStartNumber - earliestWeekStartNumber) / Self.daysPerWeek + 1
+            visibleWeeks = min(Self.weeks, max(Self.minWeeks, spanWeeks))
+        }
+        self.visibleWeeks = visibleWeeks
+        guard let windowStart = BearyBeijingDay.shifted(year: weekStart.0, month: weekStart.1, day: weekStart.2, byDays: -(visibleWeeks - 1) * Self.daysPerWeek),
               let windowStartNumber = BearyBeijingDay.dayNumber(year: windowStart.0, month: windowStart.1, day: windowStart.2) else { return }
-        // 只算窗口内 27 周 × 7 天：窗口外的篇不换算日期、不入表。
+        // 只算窗口内（visibleWeeks 周 × 7 天）：窗口外的篇不换算日期、不入表。
         let counts = Self.counts(from: entries, windowStartNumber: windowStartNumber, windowEndNumber: todayNumber)
         for col in 0..<Self.weeks {
             for row in 0..<Self.daysPerWeek {
                 let index = col * Self.daysPerWeek + row
+                let button = dayButtons[index]
+                guard col < visibleWeeks else {
+                    // 窗口外的列不画、不可点（列数缩小时多余的预建格藏起）。
+                    button.isHidden = true
+                    buttonDayKeys[index] = ""
+                    continue
+                }
                 guard let cell = BearyBeijingDay.shifted(year: windowStart.0, month: windowStart.1, day: windowStart.2, byDays: col * 7 + row),
                       let cellNumber = BearyBeijingDay.dayNumber(year: cell.0, month: cell.1, day: cell.2) else { continue }
-                let button = dayButtons[index]
                 if cellNumber > todayNumber {
                     // 未来的格子不画、不可点。
                     button.isHidden = true
@@ -261,7 +287,7 @@ final class BearyHeatmapView: UIView {
         let areaWidth = bounds.width - 28
         guard areaWidth > 0 else { return }
         let gridWidth = areaWidth - Self.weekdayWidth - Self.gridLeadingGap
-        let cell = (gridWidth - CGFloat(Self.weeks - 1) * Self.gap) / CGFloat(Self.weeks)
+        let cell = (gridWidth - CGFloat(visibleWeeks - 1) * Self.gap) / CGFloat(visibleWeeks)
         guard cell > 0 else { return }
         gridCellSize = cell
         let gridHeight = Self.monthRowHeight + Self.monthGridGap + CGFloat(Self.daysPerWeek) * cell + CGFloat(Self.daysPerWeek - 1) * Self.gap
@@ -272,11 +298,11 @@ final class BearyHeatmapView: UIView {
         let gridTop = Self.monthRowHeight + Self.monthGridGap
         guard let today = BearyBeijingDay.todayComponents(),
               let weekStart = BearyBeijingDay.weekStartOf(year: today.year, month: today.month, day: today.day, firstWeekday: Self.regionFirstWeekday()),
-              let windowStart = BearyBeijingDay.shifted(year: weekStart.0, month: weekStart.1, day: weekStart.2, byDays: -26 * 7) else { return }
+              let windowStart = BearyBeijingDay.shifted(year: weekStart.0, month: weekStart.1, day: weekStart.2, byDays: -(visibleWeeks - 1) * Self.daysPerWeek) else { return }
         // 月份名：每列首日换月时一个，标在该列 x 上；超出右缘的不标（不裁字）。
         var monthLabelIndex = 0
         var previousMonth: Int?
-        for col in 0..<Self.weeks {
+        for col in 0..<visibleWeeks {
             guard let cellDate = BearyBeijingDay.shifted(year: windowStart.0, month: windowStart.1, day: windowStart.2, byDays: col * 7) else { continue }
             if previousMonth == cellDate.1 { continue }
             previousMonth = cellDate.1
@@ -296,7 +322,7 @@ final class BearyHeatmapView: UIView {
         for row in 0..<Self.daysPerWeek {
             let y = gridTop + CGFloat(row) * (cell + Self.gap)
             weekdayLabels[row].frame = CGRect(x: 0, y: y, width: Self.weekdayWidth, height: cell + Self.gap)
-            for col in 0..<Self.weeks {
+            for col in 0..<visibleWeeks {
                 let button = dayButtons[col * Self.daysPerWeek + row]
                 button.frame = CGRect(x: gridX + CGFloat(col) * (cell + Self.gap), y: y, width: cell, height: cell)
             }
@@ -350,7 +376,7 @@ final class BearyHeatmapView: UIView {
                let index = self.dayButtons.firstIndex(of: current) {
                 currentWeek = index / Self.daysPerWeek
             } else {
-                currentWeek = predicate.searchDirection == .next ? -1 : Self.weeks
+                currentWeek = predicate.searchDirection == .next ? -1 : self.visibleWeeks
             }
             let targetWeek: Int
             switch predicate.searchDirection {
@@ -358,7 +384,7 @@ final class BearyHeatmapView: UIView {
             case .previous: targetWeek = currentWeek - 1
             @unknown default: return nil
             }
-            guard (0..<Self.weeks).contains(targetWeek) else { return nil }
+            guard (0..<self.visibleWeeks).contains(targetWeek) else { return nil }
             // 每周首日恒为过去或今天，一定可见、可达。
             let target = self.dayButtons[targetWeek * Self.daysPerWeek]
             return UIAccessibilityCustomRotorItemResult(targetElement: target, targetRange: nil)
