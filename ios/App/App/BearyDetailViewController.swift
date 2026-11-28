@@ -896,6 +896,24 @@ final class BearyDetailViewController: UIViewController {
         showPlaceholder()
     }
 
+    /// 拉黑双向提示 B：占位态解除拉黑——调现有 unblock 接口；成功后同步本地
+    /// 拉黑缓存并重拉本篇（对方日记恢复可见即显全文）；失败只 toast，不动占位。
+    private func unblockEntryAuthor() {
+        guard let authorId = entry.authorId else { return }
+        BearyAPI.shared.unblockUser(userId: authorId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success:
+                    BearyBlockedStore.removeBlocked(authorId)
+                    self.retryFetchDetail()
+                case .failure:
+                    BearyToast.show(in: self.view, message: NSLocalizedString("common.operation_failed_retry", comment: ""))
+                }
+            }
+        }
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 内联 GIF：入页即播（覆盖层按页显隐，不跟滚动）。
@@ -1616,7 +1634,23 @@ final class BearyDetailViewController: UIViewController {
     /// 审计 2026-11-02 第十节：占位文案按回包 visibility 区分——friends 显仅好友句，
     /// private 显私密句；无字段（nil）时显通用占位“该日记不可见”，不误标为私密。
     /// 拉黑/举报本地转占位仍走默认私密句（调用方不传参， moderation 占位口径不变）。
+    /// 拉黑双向提示（2026-11-28）：占位带方向标记时优先于 visibility 文案（见函数内分支）。
     private func showPlaceholder(visibility: String? = "private") {
+        // 拉黑双向提示（2026-11-28）：占位回包带方向标记时优先于 visibility 文案——
+        // A（对方拉黑了我）只显提示；B（我拉黑了对方）附解除拉黑动作；两者同时成立时 A 优先。
+        // 无标记时沿用现行 visibility 文案；本地拉黑/举报转占位（无标记）口径不变。
+        if entry.blockedByAuthor == true {
+            placeholderStateView.configure(kind: .empty, title: nil, subtitle: NSLocalizedString("detail.blocked_by_author", comment: ""), iconName: nil, actionTitle: nil)
+            setContentVisible(false)
+            placeholderStateView.isHidden = false
+            return
+        }
+        if entry.blockedByMe == true {
+            placeholderStateView.configure(kind: .empty, title: nil, subtitle: NSLocalizedString("detail.blocked_by_me", comment: ""), iconName: nil, actionTitle: NSLocalizedString("detail.unblock", comment: ""), onAction: { [weak self] in self?.unblockEntryAuthor() })
+            setContentVisible(false)
+            placeholderStateView.isHidden = false
+            return
+        }
         // 私密占位：仅一句文案，不带标题／封面／时间／作者名；内容栈整藏。
         // 文案每次显式配齐：同一视图多态共用，配齐防串味。
         // 副文案灰色多行居中（原 16pt 灰字 → 组件 12.5pt 灰色副文案，统一组件口径）；
@@ -2223,9 +2257,13 @@ final class BearyDetailViewController: UIViewController {
         if fetched.placeholder == true {
             // 占位优先：只立占位旗，不整体覆盖模型（在途先行态不受占位回包冲掉；
             // 内容栈已整藏，占位期间模型其余字段不可见；后续内容回包再按合并恢复）。
+            // 拉黑双向提示（2026-11-28）：占位回包的方向标记一并写进模型，
+            // showPlaceholder 据此出拉黑提示；带标记时直接显拉黑提示，不走过渡占位。
+            entry.blockedByAuthor = fetched.blockedByAuthor
+            entry.blockedByMe = fetched.blockedByMe
             // B1：曾有内容在屏时，回包明确不可见即撤下全文并显过渡占位
             // “这篇日记现在看不到了”；已是占位时仍走 visibility 文案。
-            if entry.placeholder != true {
+            if entry.placeholder != true, fetched.blockedByAuthor != true, fetched.blockedByMe != true {
                 showBecameInvisible()
             } else {
                 ephemeralExpiryTimer?.invalidate()

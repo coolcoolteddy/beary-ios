@@ -72,6 +72,13 @@ struct BearyUserProfile: Decodable {
     /// 编辑资料页签名行，见 BearyEditProfileViewController；写口为 accounts
     /// Worker PUT /api/account/profile 的 signature 字段，分支待补，见 PR 说明）。
     var signature: String?
+    /// 拉黑双向提示（2026-11-28）：个人页 payload 恒带两个方向标记——
+    /// blocked_by_author（对方拉黑了我）／blocked_by_me（我拉黑了对方），
+    /// 可能同时为 true；本人自看与游客恒为 false。convertFromSnakeCase 直解。
+    var blockedByAuthor: Bool?
+    var blockedByMe: Bool?
+    /// 任一方向拉黑即不显示对方日记列表（见 showsBlockedPlaceholder）。
+    var isBlockedEither: Bool { (blockedByAuthor ?? false) || (blockedByMe ?? false) }
     /// 32 注销口径：已注销判定（App 侧唯一信号，后端 profile 不下发 deleted 字段）。
     /// 注销 sweep 把 display_name 精确写成“已注销用户”，profilePayload 对
     /// deleted 用户恒置 handle/avatar 为 null；活号 handle 永不为空，故
@@ -104,6 +111,8 @@ struct BearyUserProfile: Decodable {
         case movedFrom
         case movedTo
         case signature
+        case blockedByAuthor
+        case blockedByMe
     }
 }
 
@@ -4039,6 +4048,12 @@ class BearyProfileViewController: UIViewController {
                 refreshFooter()
                 return
             }
+            if !isOwnProfile, profileValue.isBlockedEither {
+                // 拉黑双向提示：任一方向拉黑即不显示对方日记列表——服务端已过滤，
+                // 此处只清本地快照/旧模型残留，不闪一下旧列表；提示行由
+                // showsBlockedPlaceholder 按 profile 标记出。
+                diaryEntries = []
+            }
             applyProfile()
             // handle 目标的本人页在资料解析后才确定是本人：此时再试一次快照
             // （viewDidLoad 时 isOwnProfile 仍为假，快照没贴上）。
@@ -7583,6 +7598,14 @@ class BearyProfileViewController: UIViewController {
         return displayedEntries.isEmpty
     }
 
+    /// 拉黑双向提示（2026-11-28）：他人页日记 tab 任一方向拉黑时出提示行。
+    /// 仅日记 tab、仅他人页（本人页与游客标记恒 false）；日记列表本身已被
+    /// 服务端过滤清空，handleProfileResult 里另清本地旧模型防闪旧列表。
+    private var showsBlockedPlaceholder: Bool {
+        guard !isOwnProfile, currentTab == .diary, profile?.isBlockedEither == true else { return false }
+        return displayedEntries.isEmpty
+    }
+
     /// 109：占位行文案，复用现行空态脚部（makeEmptyFooter）的本人页文案，
     /// 不造新文案。日记 tab 的“还没有日记”沿用脚部原话（脚部亦如此写）。
     private var ownEmptyPlaceholderText: (title: String, subtitle: String) {
@@ -7656,7 +7679,7 @@ class BearyProfileViewController: UIViewController {
             // 不出重试，顶部只剩“—”。
             stateView = makeErrorFooter()
             kind = "error"
-        } else if displayedEntries.isEmpty && !showsOwnEmptyPlaceholder {
+        } else if displayedEntries.isEmpty && !showsOwnEmptyPlaceholder && !showsBlockedPlaceholder {
             // 批 C：空态按展示层判——日记 tab 全被过滤时（只剩纯心情项等）
             // 也应出空态脚部，而不是留一片空白。
             // 109：本人页空 tab 已由表格行区占位行承载空态提示，脚部不再
@@ -9297,6 +9320,25 @@ class BearyProfileViewController: UIViewController {
         openChat(peer)
     }
 
+    /// 拉黑双向提示 B：他人页解除拉黑——调现有 unblock 接口；成功后同步本地
+    /// 拉黑缓存并重拉资料与日记 tab（对方日记恢复可见）；失败只 toast，不动本页。
+    private func unblockProfileAuthor() {
+        guard let targetId = profile?.profileIdValue ?? targetUserIdValue else { return }
+        BearyAPI.shared.unblockUser(userId: targetId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success:
+                    BearyBlockedStore.removeBlocked(targetId)
+                    self.loadProfile()
+                    self.loadTab(forceReload: true)
+                case .failure:
+                    BearyToast.show(in: self.view, message: NSLocalizedString("common.operation_failed_retry", comment: ""))
+                }
+            }
+        }
+    }
+
     // MARK: - iCity 他人主页“更多”：举报与拉黑
 
     /// 个人页级举报目标：举报 API 需要 entry_id。取已落点的直接条目，次取首篇公开日记；
@@ -9319,6 +9361,15 @@ class BearyProfileViewController: UIViewController {
                 guard let strongSelf = self else { return }
                 BearyReportFlow.present(from: strongSelf, entryId: targetId, entryLabel: nil)
             })
+        }
+        // 拉黑双向提示 B：已是我拉黑对方时菜单只出解除拉黑（与提示行按钮同一入口），
+        // 不再出“拉黑”。
+        if profile?.blockedByMe == true {
+            actions.append(BearyConfirmSheet.Action(title: NSLocalizedString("detail.unblock", comment: ""), style: .default) { [weak self] in
+                self?.unblockProfileAuthor()
+            })
+            BearyConfirmSheet.show(from: self, title: "", message: nil, actions: actions)
+            return
         }
         actions.append(BearyConfirmSheet.Action(title: "拉黑", style: .destructive) { [weak self] in
             guard let strongSelf = self else { return }
@@ -9898,12 +9949,22 @@ final class BearyProfileEmptyPlaceholderCell: UITableViewCell {
         return label
     }()
 
+    /// 拉黑双向提示：B 方向解除拉黑按钮（仅 blocked 提示行用；本人页空态不用）。
+    private let actionButton: BearyButton = {
+        let button = BearyButton(style: .secondaryOutline(.compact))
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: BearySpace.xl, bottom: 0, right: BearySpace.xl)
+        button.isHidden = true
+        return button
+    }()
+    private var onAction: (() -> Void)?
+
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         backgroundColor = .clear
         contentView.backgroundColor = .clear
         selectionStyle = .none
-        let stack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
+        let stack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel, actionButton])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.alignment = .center
@@ -9915,6 +9976,9 @@ final class BearyProfileEmptyPlaceholderCell: UITableViewCell {
             stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
             stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -56),
         ])
+        actionButton.heightAnchor.constraint(greaterThanOrEqualToConstant: BearyButtonStyle.secondaryOutline(.compact).height).isActive = true
+        actionButton.addTarget(self, action: #selector(actionButtonTapped), for: .touchUpInside)
+        actionButton.bearyAddPressFeedback()
     }
 
     required init?(coder: NSCoder) {
@@ -9924,12 +9988,36 @@ final class BearyProfileEmptyPlaceholderCell: UITableViewCell {
     func configure(title: String, subtitle: String) {
         titleLabel.text = title
         subtitleLabel.text = subtitle
+        subtitleLabel.isHidden = false
+        actionButton.isHidden = true
+        onAction = nil
+    }
+
+    /// 拉黑双向提示行：标题即提示句（副文案不用，整行隐藏）；B 方向附解除拉黑按钮。
+    func configureBlocked(title: String, actionTitle: String?, onAction: (() -> Void)?) {
+        titleLabel.text = title
+        subtitleLabel.text = nil
+        subtitleLabel.isHidden = true
+        self.onAction = onAction
+        if let actionTitle = actionTitle {
+            actionButton.setTitle(actionTitle, for: .normal)
+            actionButton.isHidden = false
+        } else {
+            actionButton.isHidden = true
+        }
+    }
+
+    @objc private func actionButtonTapped() {
+        onAction?()
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
         titleLabel.text = nil
         subtitleLabel.text = nil
+        subtitleLabel.isHidden = false
+        actionButton.isHidden = true
+        onAction = nil
     }
 }
 
@@ -9944,7 +10032,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         // 赞过/收藏 tab 行数一字不动。
         // 109：本人页空 tab 另加 1 行占位（空时 displayedEntries.count 为 0、
         // 更多按钮行亦不出现，故占位行即唯一行）；他人页不加。
-        return displayedEntries.count + (diaryMoreButtonVisible ? 1 : 0) + (showsOwnEmptyPlaceholder ? 1 : 0)
+        // 拉黑双向提示：他人页日记 tab 任一方向拉黑时另加 1 行提示（见 showsBlockedPlaceholder）。
+        return displayedEntries.count + (diaryMoreButtonVisible ? 1 : 0) + (showsOwnEmptyPlaceholder ? 1 : 0) + (showsBlockedPlaceholder ? 1 : 0)
     }
 
     func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
@@ -9952,6 +10041,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         // 200pt，滚动中 contentSize 不断修正会漂移；按模型逐行估算。
         if showingProfileSkeleton { return 370 }
         if showsOwnEmptyPlaceholder { return 160 }
+        if showsBlockedPlaceholder { return 160 }
         if diaryMoreButtonVisible && indexPath.row == displayedEntries.count { return 50 }
         guard indexPath.row >= 0, indexPath.row < displayedEntries.count else { return 220 }
         let entry = displayedEntries[indexPath.row]
@@ -9974,6 +10064,24 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
                 return cell
             }
             return BearySkeletonCell(style: .default, reuseIdentifier: BearySkeletonCell.reuseIdentifier)
+        }
+        // 拉黑双向提示：他人页日记 tab 任一方向拉黑时出提示行（A 只显提示，
+        // B 附解除拉黑按钮；两者同时成立时 A 优先）；点按行本身无动作
+        // （didSelectRowAt 的 row < displayedEntries.count 守卫会直接返回）。
+        if showsBlockedPlaceholder {
+            let blockedCell: BearyProfileEmptyPlaceholderCell
+            if let reused = tableView.dequeueReusableCell(withIdentifier: "BearyProfileEmptyPlaceholderCell") as? BearyProfileEmptyPlaceholderCell {
+                blockedCell = reused
+            } else {
+                blockedCell = BearyProfileEmptyPlaceholderCell(style: .default, reuseIdentifier: "BearyProfileEmptyPlaceholderCell")
+            }
+            let isBlockedByAuthor = profile?.blockedByAuthor == true
+            let isBlockedByMe = profile?.blockedByMe == true
+            let blockedTitleKey = isBlockedByAuthor ? "detail.blocked_by_author" : "detail.blocked_by_me"
+            let blockedActionTitle: String? = (!isBlockedByAuthor && isBlockedByMe) ? NSLocalizedString("detail.unblock", comment: "") : nil
+            let blockedAction: (() -> Void)? = blockedActionTitle == nil ? nil : { [weak self] in self?.unblockProfileAuthor() }
+            blockedCell.configureBlocked(title: NSLocalizedString(blockedTitleKey, comment: ""), actionTitle: blockedActionTitle, onAction: blockedAction)
+            return blockedCell
         }
         // 109：占位行优先返回——不走日记卡创建与更多按钮分支；点按时
         // didSelectRowAt 的 row < displayedEntries.count 守卫会直接返回，无动作。
