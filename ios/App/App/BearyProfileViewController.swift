@@ -9024,21 +9024,45 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// 乐观删除回滚位点（本批 ①）：remove 时记下的原位；失败时
+    /// restoreDeletedEntry 按位插回（各 index 为 nil 表示当时不在该表）。
+    /// diaryCountDecremented 记公开计数是否 -1 过（公开篇才 -1，私密篇不动）。
+    struct ProfileDeleteRemoval {
+        let diaryIndex: Int?
+        let likedIndex: Int?
+        let savedIndex: Int?
+        let photoOverflowIndex: Int?
+        let modulesIndex: Int?
+        let diaryCountDecremented: Bool
+        let mapRemoval: BearyDiaryMapViewController.MapDeleteRemoval?
+        let starRemoval: BearyDiaryStarMapViewController.StarMapDeleteRemoval?
+        let photosRemoval: BearyProfilePhotosViewController.PhotosDeleteRemoval?
+    }
+
     /// 删帖同步清模型：删帖成功后立即从个人页各页签模型摘掉本篇，
     /// 不只依赖随后重拉——重拉可能被 tabLoading 守卫跳过，跳过即复活。
     /// 个人页列表更新走 reloadData，不发行级批更新（无下标可错）。
-    func removeDeletedEntry(entryId: String) {
+    /// 乐观删除（本批 ①）：返回摘行前的原位供失败回滚；调用方忽略返回值时行为不变。
+    @discardableResult
+    func removeDeletedEntry(entryId: String) -> ProfileDeleteRemoval {
+        // 乐观回滚位点：摘行前先记各表原位与公开计数是否会 -1。
+        let diaryIndex = diaryEntries.firstIndex(where: { $0.id == entryId })
+        let likedIndex = likedEntries.firstIndex(where: { $0.id == entryId })
+        let savedIndex = savedEntries.firstIndex(where: { $0.id == entryId })
+        let photoOverflowIndex = photoOverflowEntries.firstIndex(where: { $0.id == entryId })
+        let modulesIndex = modulesCorpus.firstIndex(where: { $0.id == entryId })
+        let diaryCountDecremented = !profileDeleted
+            && (diaryEntries.first(where: { $0.id == entryId }).map { BearyEphemeral.isEffectivelyPublic($0) } ?? false)
         // C4：删帖同步调“公开日记”计数（公开篇才 -1，私密篇不动），
         // 与 applyEditedEntry 的翻转计数同口径；子页在栈上时按 id 转发。
-        if !profileDeleted, let deleted = diaryEntries.first(where: { $0.id == entryId }),
-           BearyEphemeral.isEffectivelyPublic(deleted), var p = profile {
+        if diaryCountDecremented, var p = profile {
             p.diaryCount = max(0, (p.diaryCount ?? 0) - 1)
             profile = p
             setLabelTextFaded(publicCountLabel, p.diaryCount.map { "\($0)" } ?? "—")
         }
-        presentedMapVC?.removeDeletedEntry(entryId: entryId)
-        presentedStarVC?.removeDeletedEntry(entryId: entryId)
-        presentedPhotosVC?.removeDeletedEntry(entryId: entryId)
+        let mapRemoval = presentedMapVC?.removeDeletedEntry(entryId: entryId)
+        let starRemoval = presentedStarVC?.removeDeletedEntry(entryId: entryId)
+        let photosRemoval = presentedPhotosVC?.removeDeletedEntry(entryId: entryId)
         diaryEntries.removeAll { $0.id == entryId }
         likedEntries.removeAll { $0.id == entryId }
         savedEntries.removeAll { $0.id == entryId }
@@ -9046,6 +9070,46 @@ class BearyProfileViewController: UIViewController {
         // 照片墙里照片残留、直到下次重拉才消失；溢出集一并清掉。
         photoOverflowEntries.removeAll { $0.id == entryId }
         modulesCorpus.removeAll { $0.id == entryId }
+        guard isViewLoaded else {
+            return ProfileDeleteRemoval(diaryIndex: diaryIndex, likedIndex: likedIndex, savedIndex: savedIndex, photoOverflowIndex: photoOverflowIndex, modulesIndex: modulesIndex, diaryCountDecremented: diaryCountDecremented, mapRemoval: mapRemoval, starRemoval: starRemoval, photosRemoval: photosRemoval)
+        }
+        tableView.reloadData()
+        return ProfileDeleteRemoval(diaryIndex: diaryIndex, likedIndex: likedIndex, savedIndex: savedIndex, photoOverflowIndex: photoOverflowIndex, modulesIndex: modulesIndex, diaryCountDecremented: diaryCountDecremented, mapRemoval: mapRemoval, starRemoval: starRemoval, photosRemoval: photosRemoval)
+    }
+
+    /// 乐观删除失败回滚（本批 ①）：按原位插回各表（已在时不动，防重复恢复），
+    /// 公开计数 +1 复位，子页在栈上时同样按位插回，再整表重载。
+    func restoreDeletedEntry(_ entry: Entry, removal: ProfileDeleteRemoval) {
+        guard let entryId = entry.id else { return }
+        if let idx = removal.diaryIndex, !diaryEntries.contains(where: { $0.id == entryId }) {
+            diaryEntries.insert(entry, at: min(idx, diaryEntries.count))
+        }
+        if let idx = removal.likedIndex, !likedEntries.contains(where: { $0.id == entryId }) {
+            likedEntries.insert(entry, at: min(idx, likedEntries.count))
+        }
+        if let idx = removal.savedIndex, !savedEntries.contains(where: { $0.id == entryId }) {
+            savedEntries.insert(entry, at: min(idx, savedEntries.count))
+        }
+        if let idx = removal.photoOverflowIndex, !photoOverflowEntries.contains(where: { $0.id == entryId }) {
+            photoOverflowEntries.insert(entry, at: min(idx, photoOverflowEntries.count))
+        }
+        if let idx = removal.modulesIndex, !modulesCorpus.contains(where: { $0.id == entryId }) {
+            modulesCorpus.insert(entry, at: min(idx, modulesCorpus.count))
+        }
+        if removal.diaryCountDecremented, var p = profile {
+            p.diaryCount = (p.diaryCount ?? 0) + 1
+            profile = p
+            setLabelTextFaded(publicCountLabel, p.diaryCount.map { "\($0)" } ?? "—")
+        }
+        if let mapRemoval = removal.mapRemoval {
+            presentedMapVC?.restoreDeletedEntry(entry, removal: mapRemoval)
+        }
+        if let starRemoval = removal.starRemoval {
+            presentedStarVC?.restoreDeletedEntry(entry, removal: starRemoval)
+        }
+        if let photosRemoval = removal.photosRemoval {
+            presentedPhotosVC?.restoreDeletedEntry(entry, removal: photosRemoval)
+        }
         guard isViewLoaded else { return }
         tableView.reloadData()
     }

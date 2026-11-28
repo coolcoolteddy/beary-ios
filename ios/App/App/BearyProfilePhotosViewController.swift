@@ -1146,10 +1146,27 @@ final class BearyProfilePhotosViewController: UIViewController {
         }
     }
 
+    /// 乐观删除回滚位点（本批 ①）：remove 时记下的原位；失败时
+    /// restoreDeletedEntry 按位插回（index 为 nil 表示当时不在本页）。
+    struct PhotosDeleteRemoval {
+        let index: Int?
+    }
+
     /// 详情内删帖：按 id 摘日记并重算照片索引，签名变了才 reload。
-    func removeDeletedEntry(entryId: String) {
-        guard diaryEntriesValue.contains(where: { $0.id == entryId }) else { return }
+    /// 乐观删除（本批 ①）：返回摘行前的原位供失败回滚；调用方忽略返回值时行为不变。
+    @discardableResult
+    func removeDeletedEntry(entryId: String) -> PhotosDeleteRemoval {
+        guard let index = diaryEntriesValue.firstIndex(where: { $0.id == entryId }) else { return PhotosDeleteRemoval(index: nil) }
         diaryEntriesValue.removeAll { $0.id == entryId }
+        refreshPhotosFromDiaryEntriesIfChanged()
+        return PhotosDeleteRemoval(index: index)
+    }
+
+    /// 乐观删除失败回滚（本批 ①）：按原位插回（已在时不动，防重复恢复），再重算照片索引。
+    func restoreDeletedEntry(_ entry: Entry, removal: PhotosDeleteRemoval) {
+        guard let entryId = entry.id, let index = removal.index,
+              !diaryEntriesValue.contains(where: { $0.id == entryId }) else { return }
+        diaryEntriesValue.insert(entry, at: min(index, diaryEntriesValue.count))
         refreshPhotosFromDiaryEntriesIfChanged()
     }
 

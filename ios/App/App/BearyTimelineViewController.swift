@@ -3225,8 +3225,37 @@ class BearyTimelineViewController: UIViewController {
     /// 面板变空只 deleteRows，随后 pendingFixSelCheck + 强制月份重拉走既有
     /// 选区跳转/取消逻辑。P1-8：本方法仅由删帖成功分支调用（容器 API 成功后），
     /// 故此处即删帖成功点，回收站计数 +1 并立即刷新 pill。
-    func removeDeletedEntry(_ entry: Entry) {
-        guard let entryId = entry.id else { return }
+    /// 乐观删除回滚位点（本批 ①）：remove 时记下的原位；失败时
+    /// restoreDeletedEntry 按位插回。timelineIndex／dayIndex／日缓存位点
+    /// 为 nil 表示当时不在该处；countsDecremented 记总数／公私计数是否
+    /// -1 过；removedFromModel 为 false 时模型没动（只加了回收站计数），
+    /// 回滚只复位计数与快照。
+    struct TimelineDeleteRemoval {
+        let timelineIndex: Int?
+        let dayIndex: Int?
+        let dayCacheKey: String?
+        let dayCacheIndex: Int?
+        let countsDecremented: Bool
+        let removedFromModel: Bool
+    }
+
+    /// 乐观删除（本批 ①）：返回摘行前的原位供失败回滚；调用方忽略返回值时行为不变。
+    @discardableResult
+    func removeDeletedEntry(_ entry: Entry) -> TimelineDeleteRemoval {
+        guard let entryId = entry.id else { return TimelineDeleteRemoval(timelineIndex: nil, dayIndex: nil, dayCacheKey: nil, dayCacheIndex: nil, countsDecremented: false, removedFromModel: false) }
+        // 乐观回滚位点：摘行前先记原位（行在时间线／当日面板／日缓存各一处）。
+        let timelineIndex = timelineEntries.firstIndex(where: { $0.id == entryId })
+        let dayIndex = dayEntries.firstIndex(where: { $0.id == entryId })
+        var dayCacheKey: String?
+        var dayCacheIndex: Int?
+        for (key, list) in dayEntriesCache {
+            if let idx = list.firstIndex(where: { $0.id == entryId }) {
+                dayCacheKey = key
+                dayCacheIndex = idx
+                break
+            }
+        }
+        let countsDecremented = countsValue != nil
         // 连续删帖防撞：删帖即作废在途首屏回包——在途回包的 oldSections
         // 仍含本篇，其 diff 若在删帖批更新后到达，会对已删行再发
         // deleteRows（Invalid update 闪退）。seq 守卫会把这类旧回包
@@ -3257,7 +3286,7 @@ class BearyTimelineViewController: UIViewController {
                 BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
             }
             refreshAfterDetailChange()
-            return
+            return TimelineDeleteRemoval(timelineIndex: timelineIndex, dayIndex: dayIndex, dayCacheKey: dayCacheKey, dayCacheIndex: dayCacheIndex, countsDecremented: countsDecremented, removedFromModel: false)
         }
         timelineEntries.removeAll { $0.id == entryId }
         dayEntries.removeAll { $0.id == entryId }
@@ -3355,6 +3384,59 @@ class BearyTimelineViewController: UIViewController {
         for key in monthKeysForCurrentView() {
             fetchCalendarMonth(key: key, force: true)
         }
+        return TimelineDeleteRemoval(timelineIndex: timelineIndex, dayIndex: dayIndex, dayCacheKey: dayCacheKey, dayCacheIndex: dayCacheIndex, countsDecremented: countsDecremented, removedFromModel: true)
+    }
+
+    /// 乐观删除失败回滚（本批 ①）：把该篇按原位插回时间线／当日面板／
+    /// 日缓存（已在时不动，防重复恢复）；落盘逆操作与 remove 的写走同一
+    /// 同步队列，先删后补、顺序有保证；总数／公私计数与回收站计数按
+    /// remove 的算术对称复位；快照重写回；表整表重载（失败路径正确性优先）。
+    /// 注意：seq 守卫已作废的在途回包不恢复（下次刷新重拉）；月份重拉是
+    /// 服务端计数、与回滚后的模型一致，不用撤回。
+    func restoreDeletedEntry(_ entry: Entry, removal: TimelineDeleteRemoval) {
+        guard let entryId = entry.id else { return }
+        if removal.removedFromModel {
+            if let idx = removal.timelineIndex, !timelineEntries.contains(where: { $0.id == entryId }) {
+                timelineEntries.insert(entry, at: min(idx, timelineEntries.count))
+            }
+            if let idx = removal.dayIndex, !dayEntries.contains(where: { $0.id == entryId }) {
+                dayEntries.insert(entry, at: min(idx, dayEntries.count))
+            }
+            if let key = removal.dayCacheKey, let idx = removal.dayCacheIndex,
+               !(dayEntriesCache[key]?.contains(where: { $0.id == entryId }) ?? false),
+               var cachedDay = dayEntriesCache[key] {
+                cachedDay.insert(entry, at: min(idx, cachedDay.count))
+                dayEntriesCache[key] = cachedDay
+            }
+            // 落盘逆操作：upsert 补回日文件、removeItem 撤出回收站桶。
+            if let uid = SessionManager.shared.currentUser?.id {
+                BearyEntrySync.shared.runDiaryDiskWrite(accountId: uid) {
+                    _ = BearyEntrySyncStore.upsertEntry(accountId: uid, entry: entry)
+                }
+                BearyEntrySync.shared.runTrashDiskWrite(accountId: uid) {
+                    _ = BearyTrashSyncStore.removeItem(accountId: uid, entryId: entryId)
+                }
+            }
+            if removal.countsDecremented, var counts = countsValue {
+                counts.total = (counts.total ?? 0) + 1
+                if entry.isPublic == true {
+                    counts.pub = (counts.pub ?? 0) + 1
+                } else {
+                    counts.priv = (counts.priv ?? 0) + 1
+                }
+                countsValue = counts
+                updateCountsLabel()
+                refreshHeaderHeight()
+            }
+        }
+        // 回收站计数与 remove 的 +1 对称复位（模型在与不在都 + 过 1）。
+        trashCountValue = max(0, trashCountValue - 1)
+        updateTrashTitle()
+        if let uid = SessionManager.shared.currentUser?.id {
+            BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
+        }
+        guard isViewLoaded else { return }
+        tableView.reloadData()
     }
 
     /// B5：彻底删除成功后只更新回收站计数（与删帖进回收站的 +1 对称）：

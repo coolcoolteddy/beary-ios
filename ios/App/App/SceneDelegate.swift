@@ -3027,6 +3027,17 @@ final class BearyChromeViewController: UIViewController {
     /// 在关框后、首请求在途时重开确认框再点，故按日记 id 记在途
     /// （deletingEntryIds），在途重按直接丢弃、不重发 DELETE。
     /// 删除成功后的快照清理与段快照逻辑一字不动（未合入 #734 的范围）。
+    /// 乐观删除（本批 ①）：点确认后行立即退场——先调各页现成的
+    /// removeDeletedEntry 把该篇从时间线／首页／个人页／搜索摘掉，
+    /// 内存留 Entry＋原位供失败回滚；DELETE 放后台跑，失败时按原位
+    /// 插回＋toast。图片逐出与快照失效仍在成功分支，不提前做。
+    private struct OptimisticDeleteRemoval {
+        let timeline: BearyTimelineViewController.TimelineDeleteRemoval?
+        let feed: BearyFeedViewController.FeedDeleteRemoval?
+        let profile: BearyProfileViewController.ProfileDeleteRemoval?
+        let search: BearySearchViewController.SearchDeleteRemoval?
+    }
+
     private func confirmAndDeleteEntry(_ entry: Entry) {
         guard let entryId = entry.id else { return }
         // 审计 P2-23：删除是作者动作——非作者不弹确认（服务端同样校验作者，客户端先拦）。
@@ -3047,6 +3058,16 @@ final class BearyChromeViewController: UIViewController {
             // R22-B2：删除发起时钉住账号桶——快照住在删除者桶里，成功时按
             // 该桶失效，不按回包时当前账号取桶（其间切号也不错桶）。
             let deleteBucket = BearyDetailCache.bucket()
+            // 乐观删除（本批 ①）：点确认后行立即退场——先调各页现成的
+            // removeDeletedEntry 摘行（时间线行级退场、首页／个人页／搜索
+            // 按 id 摘篇）；行已不在时各 helper 自行 no-op。删帖复活修口径
+            // 不变：模型与广场快照在此处同步清掉，重拉只是后续对齐。
+            let removal = OptimisticDeleteRemoval(
+                timeline: self.timelineVC?.removeDeletedEntry(entry),
+                feed: self.feedVC?.removeDeletedEntry(entryId: entryId),
+                profile: self.profileVC?.removeDeletedEntry(entryId: entryId),
+                search: self.searchVC?.removeDeletedEntry(entryId: entryId)
+            )
             BearyAPI.shared.deleteEntry(id: entryId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
@@ -3060,18 +3081,9 @@ final class BearyChromeViewController: UIViewController {
                         // 服务端数据不动；软删除进回收站，恢复后从网络重下。
                         BearyImageLoader.shared.evictEntryImages(keys: entry.images ?? [])
                         BearySoundPlayer.play(.deleteSwoosh)
-                        // 88 包 M14：时间线走行级退场，不再整页首拉重载；
-                        // 首页与个人主页仍用原有重拉同步（其列表非日期分区，
-                        // 且个人主页无删除入口，只是跟随同步）。
-                        self.timelineVC?.removeDeletedEntry(entry)
-                        // 删帖复活修：首页重拉可能被在途守卫跳过、个人页重拉
-                        // 可能被 tabLoading 守卫跳过，且广场快照此前删帖时从不
-                        // 清——重进 App 先渲染快照，已删篇就复活。此处删帖即同
-                        // 步清掉两处模型与广场快照，重拉只是后续对齐，不再是
-                        // 唯一纠错路径。
-                        self.feedVC?.removeDeletedEntry(entryId: entryId)
-                        self.profileVC?.removeDeletedEntry(entryId: entryId)
-                        self.searchVC?.removeDeletedEntry(entryId: entryId)
+                        // 乐观删除（本批 ①）：行已在确认时摘掉，此处不再调
+                        // removeDeletedEntry；成功分支只做成功才做的事（图片
+                        // 逐出、引用失效、详情快照失效、广场快照过滤、重拉对齐）。
                         // 审计 2026-11-02 第十节：被引篇删除时定向失效引用缓存，
                         // 旧引用卡不再按删除前拉到的全文渲染。
                         BearyDiaryCardCell.invalidateQuote(id: entryId)
@@ -3098,6 +3110,10 @@ final class BearyChromeViewController: UIViewController {
                         // 本地通知：删篇可能影响今晚提醒（删了当天唯一一篇）与限时到期提醒。
                         BearyLocalNotifications.shared.refreshAll(force: true)
                     case .failure(let error):
+                        // 乐观删除失败回滚（本批 ①）：DELETE 没成功，服务端
+                        // 没删——把该篇按原位插回四处行（行已不在时才插），
+                        // 再按原有口径 toast；用户可再次确认重试（在途标记已清）。
+                        self.restoreEntryAfterDeleteFailed(entry, removal: removal)
                         if case .unauthorized = error {
                             // 401 走统一登录入口，不在此处另弹登录页、不自动重删：
                             // BearyAPI 回包时已触发全局 onUnauthorized（SessionManager
@@ -3118,6 +3134,23 @@ final class BearyChromeViewController: UIViewController {
                 },
             ]
         )
+    }
+
+    /// 乐观删除失败回滚（本批 ①）：把该篇按原位插回时间线／首页／
+    /// 个人页／搜索（各页 restore 内含“已在则不动”守卫，重复回滚不插重）。
+    private func restoreEntryAfterDeleteFailed(_ entry: Entry, removal: OptimisticDeleteRemoval) {
+        if let timelineRemoval = removal.timeline {
+            timelineVC?.restoreDeletedEntry(entry, removal: timelineRemoval)
+        }
+        if let feedRemoval = removal.feed {
+            feedVC?.restoreDeletedEntry(entry, removal: feedRemoval)
+        }
+        if let profileRemoval = removal.profile {
+            profileVC?.restoreDeletedEntry(entry, removal: profileRemoval)
+        }
+        if let searchRemoval = removal.search {
+            searchVC?.restoreDeletedEntry(entry, removal: searchRemoval)
+        }
     }
 
     private func ensureTimelineVC() -> BearyTimelineViewController {

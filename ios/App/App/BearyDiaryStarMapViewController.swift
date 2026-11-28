@@ -1124,15 +1124,33 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
     }
 
+    /// 乐观删除回滚位点（本批 ①）：remove 时记下的原位；失败时
+    /// restoreDeletedEntry 按位插回（index 为 nil 表示当时不在本页）。
+    struct StarMapDeleteRemoval {
+        let index: Int?
+    }
+
     /// 删除按 id 退场：本地摘篇、重建模型，不重拉网络。
-    func removeDeletedEntry(entryId: String) {
-        guard allEntries.contains(where: { $0.id == entryId }) else { return }
+    /// 乐观删除（本批 ①）：返回摘行前的原位供失败回滚；调用方忽略返回值时行为不变。
+    @discardableResult
+    func removeDeletedEntry(entryId: String) -> StarMapDeleteRemoval {
+        guard let index = allEntries.firstIndex(where: { $0.id == entryId }) else { return StarMapDeleteRemoval(index: nil) }
         allEntries.removeAll { $0.id == entryId }
         if selectedStarId == entryId || (selectedEdgeId != nil && model.edges.contains(where: {
             $0.id == selectedEdgeId && ($0.firstId == entryId || $0.secondId == entryId)
         })) {
             clearSelection()
         }
+        recompute()
+        return StarMapDeleteRemoval(index: index)
+    }
+
+    /// 乐观删除失败回滚（本批 ①）：按原位插回（已在时不动，防重复恢复），
+    /// 再重建模型；选中态不恢复（删除时已清选，失败后用户重选即可）。
+    func restoreDeletedEntry(_ entry: Entry, removal: StarMapDeleteRemoval) {
+        guard let entryId = entry.id, let index = removal.index,
+              !allEntries.contains(where: { $0.id == entryId }) else { return }
+        allEntries.insert(entry, at: min(index, allEntries.count))
         recompute()
     }
 
