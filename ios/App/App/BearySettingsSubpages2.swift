@@ -445,7 +445,6 @@ final class BearyStorageSettingsViewController: BearySettingsSubpageViewControll
             BearyConfirmSheet.Action(title: "清除", style: .destructive, handler: { [weak self] in
                 self?.confirmClear()
             }),
-            BearyConfirmSheet.Action(title: "取消", style: .cancel),
         ])
     }
 
@@ -525,7 +524,6 @@ final class BearyDataUsageSettingsViewController: BearySettingsSubpageViewContro
                 self?.render()
             }, isSelected: option.value == current)
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: self, title: "高画质图片", message: "选择在什么网络下拉取原图", actions: actions)
     }
 }
@@ -642,7 +640,6 @@ final class BearyPrivacySettingsViewController: BearySettingsSubpageViewControll
                 self?.render()
             }, isSelected: precision == current)
         }
-        actions.append(BearyConfirmSheet.Action(title: "取消", style: .cancel))
         BearyConfirmSheet.show(from: self, title: "定位地址精度", message: "国外按当地同级对应；精度由后端截断存储与展示，不只是本机显示", actions: actions)
     }
 
