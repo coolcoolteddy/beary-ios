@@ -1606,6 +1606,7 @@ final class BearyNotificationsViewController: UIViewController {
 
     /// 互动行分组：槽位按首次出现顺序（即时间倒序）——单条占一槽，一组占一槽，
     /// 组按组内最新一条时间排序；组内下标按时间倒序（最新在前）；单人组仍为单条。
+    /// 2026-11-28 Li 定：只有没看过的才聚合，看过的单条不动。
     private func groupedActRows(from actIndices: [Int]) -> [NotificationDisplayRow] {
         enum Slot {
             case single(Int)
@@ -1614,7 +1615,8 @@ final class BearyNotificationsViewController: UIViewController {
         var slots: [Slot] = []
         var groups: [String: [Int]] = [:]
         for index in actIndices {
-            guard let key = notificationGroupKey(for: index) else {
+            guard (items[index].read ?? true) == false,
+                  let key = notificationGroupKey(for: index) else {
                 slots.append(.single(index))
                 continue
             }
@@ -5573,11 +5575,13 @@ final class BearyNotificationDetailViewController: UIViewController, UITableView
 
     /// 详情页行表重建：与子页 groupedActRows 同口径——组按首次出现顺序
     /// （即时间倒序），组内下标按时间倒序（最新在前）；只出现一次的键仍为单条。
+    /// 2026-11-28 Li 定：只有没看过的才聚合，看过的单条不动。
     private func rebuildDisplayRows() {
         var rows: [DetailDisplayRow] = []
         var groupRowPosition: [String: Int] = [:]
         for index in items.indices {
-            guard let key = BearyNotificationsViewController.groupKey(for: items[index]) else {
+            guard (items[index].read ?? true) == false,
+                  let key = BearyNotificationsViewController.groupKey(for: items[index]) else {
                 rows.append(DetailDisplayRow(representativeIndex: index, memberIndices: nil))
                 continue
             }
