@@ -3068,72 +3068,140 @@ final class BearyChromeViewController: UIViewController {
                 profile: self.profileVC?.removeDeletedEntry(entryId: entryId),
                 search: self.searchVC?.removeDeletedEntry(entryId: entryId)
             )
-            BearyAPI.shared.deleteEntry(id: entryId) { [weak self] result in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    // 成功／失败一律先清在途标记：失败后用户可再次确认重删，
-                    // 不会被标记永久卡住；成功后篇目已退场，标记本就无意义。
-                    self.deletingEntryIds.remove(entryId)
-                    switch result {
-                    case .success:
-                        // 静态性能修复：删帖成功即逐出该篇图片的本机缓存（此前只靠
-                        // 24 小时 TTL 自然过期，TTL 内旧图仍可读）。只清本机缓存，
-                        // 服务端数据不动；软删除进回收站，恢复后从网络重下。
-                        BearyImageLoader.shared.evictEntryImages(keys: entry.images ?? [])
-                        BearySoundPlayer.play(.deleteSwoosh)
-                        // 乐观删除（本批 ①）：行已在确认时摘掉，此处不再调
-                        // removeDeletedEntry；成功分支只做成功才做的事（图片
-                        // 逐出、引用失效、详情快照失效、广场快照过滤、重拉对齐）。
-                        // 审计 2026-11-02 第十节：被引篇删除时定向失效引用缓存，
-                        // 旧引用卡不再按删除前拉到的全文渲染。
-                        BearyDiaryCardCell.invalidateQuote(id: entryId)
-                        // R22-B2：删除成功即失效该篇详情快照（发起时账号桶＋
-                        // 日记 ID），代次＋1 同时拦住删除前已排队的写盘；断网
-                        // 再点原链接不再读回旧正文，恢复后新回包重建快照。
-                        BearyDetailCache.invalidate(bucket: deleteBucket, entryId: entryId)
-                        if let uid = SessionManager.shared.currentUser?.id {
-                            let bucket = BearyFeedCache.bucket(userId: uid)
-                            // 审计 13：快照读盘异步化后的机械适配——读 + 过滤 +
-                            // 写回仍走同一缓存 IO 队列，写后读顺序有保证，语义不变。
-                            BearyFeedCache.load(bucket: bucket) { snap in
-                                guard let snap = snap else { return }
-                                let kept = snap.entries.filter { $0.id != entryId }
-                                if kept.count != snap.entries.count {
-                                    BearyFeedCache.save(bucket: bucket, entries: kept, hasMore: snap.hasMore)
-                                }
-                            }
-                        }
-                        self.feedVC?.refreshAll()
-                        // C4：个人页不再整页重拉——removeDeletedEntry 已按 id 摘篇、
-                        // 调公开计数、转发地图/星图子页并刷表；广场 refreshAll
-                        // 保留（广场不在 C4 范围，其分页态仍靠重拉对齐）。
-                        // 本地通知：删篇可能影响今晚提醒（删了当天唯一一篇）与限时到期提醒。
-                        BearyLocalNotifications.shared.refreshAll(force: true)
-                    case .failure(let error):
-                        // 乐观删除失败回滚（本批 ①）：DELETE 没成功，服务端
-                        // 没删——把该篇按原位插回四处行（行已不在时才插），
-                        // 再按原有口径 toast；用户可再次确认重试（在途标记已清）。
-                        self.restoreEntryAfterDeleteFailed(entry, removal: removal)
-                        if case .unauthorized = error {
-                            // 401 走统一登录入口，不在此处另弹登录页、不自动重删：
-                            // BearyAPI 回包时已触发全局 onUnauthorized（SessionManager
-                            // 清态 → 容器 toast“请先登录”+ 1.2s 后统一弹登录）；
-                            // 重新登录后用户须再次确认删除（在途标记已清，确认框可重开）。
-                            // 例外：回包时仍是登录态（旧账号在途请求的 401 被 epoch
-                            // 压住全局回调、或用户已重登），全局入口不会再弹，
-                            // 才落本地 toast 提示重试。
-                            if SessionManager.shared.isLoggedIn {
-                                self.showToast(message: "删除失败，请重试")
-                            }
-                        } else {
-                            self.showToast(message: "删除失败，请重试")
-                        }
-                    }
-                }
-            }
+            self.requestDeleteEntry(entry: entry, entryId: entryId, removal: removal, deleteBucket: deleteBucket, retryUsed: false)
                 },
             ]
         )
+    }
+
+    /// 乐观删除重试（本批 ① 补）：4xx 立刻回滚；5xx/超时后台重试一次
+    /// （BearyRetryPolicy.publishBackoffInitialDelay，1 秒），重试成功
+    /// 不再回滚，仍失败再插回原位＋toast。
+    /// 在途标记只在落定时清：重试窗口内重按确认仍丢弃，不会重发 DELETE。
+    private func requestDeleteEntry(entry: Entry, entryId: String, removal: OptimisticDeleteRemoval, deleteBucket: String, retryUsed: Bool) {
+        BearyAPI.shared.deleteEntry(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success:
+                    // 成功／失败一律先清在途标记：失败后用户可再次确认重删，
+                    // 不会被标记永久卡住；成功后篇目已退场，标记本就无意义。
+                    self.deletingEntryIds.remove(entryId)
+                    self.handleDeleteEntrySuccess(entry: entry, entryId: entryId, deleteBucket: deleteBucket)
+                case .failure(let error):
+                    if Self.isRetryableDeleteError(error), !retryUsed {
+                        // 可重试且未试过：1 秒后重发一次，在途标记先不清，
+                        // 重试窗口内重按确认仍丢弃。
+                        DispatchQueue.main.asyncAfter(deadline: .now() + BearyRetryPolicy.publishBackoffInitialDelay) { [weak self] in
+                            guard let self = self else { return }
+                            self.requestDeleteEntry(entry: entry, entryId: entryId, removal: removal, deleteBucket: deleteBucket, retryUsed: true)
+                        }
+                    } else if retryUsed, Self.isDeleteAlreadyGone(error) {
+                        // 重试回包 404/409：首请求超时但服务端已执行，篇目
+                        // 已在回收站（DELETE 重发撞上“已删”），按成功处理，
+                        // 不把行插回来——否则删过的篇目会复活且再删仍 404。
+                        self.deletingEntryIds.remove(entryId)
+                        self.handleDeleteEntrySuccess(entry: entry, entryId: entryId, deleteBucket: deleteBucket)
+                    } else {
+                        // 成功／失败一律先清在途标记：失败后用户可再次确认重删，
+                        // 不会被标记永久卡住。
+                        self.deletingEntryIds.remove(entryId)
+                        self.handleDeleteEntryFailure(entry: entry, removal: removal, error: error)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 本乐观写点专用的重试判定（与许愿提交同款）：5xx 与超时／连接
+    /// 丢失可重试一次；4xx、401、离线、取消、解析失败立刻回滚。
+    private static func isRetryableDeleteError(_ error: APIError) -> Bool {
+        switch error {
+        case .server(_, let status):
+            return (status ?? 0) >= 500
+        case .http(let status, _):
+            return status >= 500
+        case .network:
+            return error.isTimeoutOrUnknownResult
+        default:
+            return false
+        }
+    }
+
+    /// 重试回包“已删”：404（篇目已不在库里）或 409 changed（已在
+    /// 回收站）都说明首请求已执行，篇目已删，按成功处理。
+    private static func isDeleteAlreadyGone(_ error: APIError) -> Bool {
+        switch error {
+        case .notFound:
+            return true
+        case .server(let code, _):
+            return code == "changed"
+        case .http(let status, _):
+            return status == 409
+        default:
+            return false
+        }
+    }
+
+    /// 乐观删除成功分支（本批 ① 原样抽出）：图片逐出、引用失效、
+    /// 详情快照失效、广场快照过滤、重拉对齐、通知刷新。
+    private func handleDeleteEntrySuccess(entry: Entry, entryId: String, deleteBucket: String) {
+        // 静态性能修复：删帖成功即逐出该篇图片的本机缓存（此前只靠
+        // 24 小时 TTL 自然过期，TTL 内旧图仍可读）。只清本机缓存，
+        // 服务端数据不动；软删除进回收站，恢复后从网络重下。
+        BearyImageLoader.shared.evictEntryImages(keys: entry.images ?? [])
+        BearySoundPlayer.play(.deleteSwoosh)
+        // 乐观删除（本批 ①）：行已在确认时摘掉，此处不再调
+        // removeDeletedEntry；成功分支只做成功才做的事（图片
+        // 逐出、引用失效、详情快照失效、广场快照过滤、重拉对齐）。
+        // 审计 2026-11-02 第十节：被引篇删除时定向失效引用缓存，
+        // 旧引用卡不再按删除前拉到的全文渲染。
+        BearyDiaryCardCell.invalidateQuote(id: entryId)
+        // R22-B2：删除成功即失效该篇详情快照（发起时账号桶＋
+        // 日记 ID），代次＋1 同时拦住删除前已排队的写盘；断网
+        // 再点原链接不再读回旧正文，恢复后新回包重建快照。
+        BearyDetailCache.invalidate(bucket: deleteBucket, entryId: entryId)
+        if let uid = SessionManager.shared.currentUser?.id {
+            let bucket = BearyFeedCache.bucket(userId: uid)
+            // 审计 13：快照读盘异步化后的机械适配——读 + 过滤 +
+            // 写回仍走同一缓存 IO 队列，写后读顺序有保证，语义不变。
+            BearyFeedCache.load(bucket: bucket) { snap in
+                guard let snap = snap else { return }
+                let kept = snap.entries.filter { $0.id != entryId }
+                if kept.count != snap.entries.count {
+                    BearyFeedCache.save(bucket: bucket, entries: kept, hasMore: snap.hasMore)
+                }
+            }
+        }
+        self.feedVC?.refreshAll()
+        // C4：个人页不再整页重拉——removeDeletedEntry 已按 id 摘篇、
+        // 调公开计数、转发地图/星图子页并刷表；广场 refreshAll
+        // 保留（广场不在 C4 范围，其分页态仍靠重拉对齐）。
+        // 本地通知：删篇可能影响今晚提醒（删了当天唯一一篇）与限时到期提醒。
+        BearyLocalNotifications.shared.refreshAll(force: true)
+    }
+
+    /// 乐观删除失败分支（本批 ① 原样抽出）：按原位插回四处行＋
+    /// 原有口径 toast；401 走统一登录入口，不在此处另弹登录页。
+    private func handleDeleteEntryFailure(entry: Entry, removal: OptimisticDeleteRemoval, error: APIError) {
+        // 乐观删除失败回滚（本批 ①）：DELETE 没成功，服务端
+        // 没删——把该篇按原位插回四处行（行已不在时才插），
+        // 再按原有口径 toast；用户可再次确认重试（在途标记已清）。
+        self.restoreEntryAfterDeleteFailed(entry, removal: removal)
+        if case .unauthorized = error {
+            // 401 走统一登录入口，不在此处另弹登录页、不自动重删：
+            // BearyAPI 回包时已触发全局 onUnauthorized（SessionManager
+            // 清态 → 容器 toast“请先登录”+ 1.2s 后统一弹登录）；
+            // 重新登录后用户须再次确认删除（在途标记已清，确认框可重开）。
+            // 例外：回包时仍是登录态（旧账号在途请求的 401 被 epoch
+            // 压住全局回调、或用户已重登），全局入口不会再弹，
+            // 才落本地 toast 提示重试。
+            if SessionManager.shared.isLoggedIn {
+                self.showToast(message: "删除失败，请重试")
+            }
+        } else {
+            self.showToast(message: "删除失败，请重试")
+        }
     }
 
     /// 乐观删除失败回滚（本批 ①）：把该篇按原位插回时间线／首页／
