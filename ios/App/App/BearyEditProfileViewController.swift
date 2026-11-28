@@ -22,8 +22,9 @@ import PhotosUI
 // 占位“写一句属于你的话”，60 字）；保存与名字同走 PUT /api/account/profile
 // （字段 signature，清空发 null）。调用方不改：初值由本页经 /me 取 id 后调
 // 既有 fetchUserProfile 自取；个人页签名编辑同步移除、只留展示。
-// 后端缺口（本 PR 不改后端、不部署）：现行 accounts Worker 的 PUT 分支不处理
-// signature 字段，成功回包也不持久化；补分支后 App 无需再改，见 PR 说明。
+// 签名服务端存（2026-10-31 批，后端已修；本文件旧注“PUT 不处理 signature”
+// 已过期）：PUT 写 users.signature，清空发 null，超 60 字报 signature_too_long，
+// 回包前回读当前行原样 echo；/me 不下发 signature，编辑页初值走公开资料口取。
 
 private struct BearyHandleUpdateResponse: Decodable {
     var ok: Bool?
@@ -33,8 +34,8 @@ private struct BearyHandleUpdateResponse: Decodable {
 private struct BearyProfileUpdateResponse: Decodable {
     var ok: Bool?
     /// 服务端回包是否原样带回 signature（审计-个人页设置：签名诚实口径）。
-    /// 后端 PUT 分支未补之前回包不带该键，本页据此判定“未确认落库”，
-    /// 不写本地已提交态、不调 onSaved；键存在但值为 null = 已确认清空。
+    /// 后端 PUT 回包前回读当前行原样 echo 该键；回包不带该键即“未确认落库”，
+    /// 不写本地已提交态；键存在但值为 null = 已确认清空。
     var signature: String?
     var signatureKeyPresent: Bool = false
 
@@ -135,6 +136,32 @@ class BearyEditProfileViewController: UIViewController {
         let signatureChanged: Bool
     }
     private var savingSnapshot: SaveSnapshot?
+    /// 乐观保存（2026-11-28 ②）：点保存时先把新值写进 currentUser 快照并调
+    /// onSaved，个人页立刻变新；保存前的旧值留一份，失败写回。签名不在
+    /// currentUser 里（/me 不下发、初值走公开资料口），无本地快照可写——
+    /// 与名字/头像同款乐观：点按即调 onSaved、不等回包 echo，echo 核对仍在
+    /// finishSavingSuccess 里做，未确认走 verifySignatureAfterSave 复核。
+    /// 封面同样不在 currentUser 里（只有 coverVer），乐观写不进快照，成功后
+    /// 仍由 refreshMe 同步新 ver（见 finishSavingSuccess）。
+    private struct OptimisticProfileBackup {
+        let displayName: String
+        let handle: String
+        let avatar: String?
+    }
+    private var optimisticBackup: OptimisticProfileBackup?
+    /// 乐观保存已调 onSaved（页已关）：失败走 toast，不再弹 alert（无处贴）。
+    private var optimisticDismissed = false
+    /// 失败 toast 的落点：onSaved 关页后本页 view 已不在窗口，失败时 toast
+    /// 须贴在关页后仍可见的底层 view 上；点按时先记下 presentingViewController
+    /// 的 view，失败回滚与签名复核都贴它。
+    private var optimisticToastContainer: UIView?
+    /// 自持：onSaved 关页后无任何对象强持有本页，请求闭包只持 weak self；
+    /// 保存落定前自持一次，成功/失败/签名复核落定即放掉，否则失败回滚与
+    /// 成功复核跑不到。
+    private var optimisticSaveRetainer: BearyEditProfileViewController?
+    /// 5xx/超时后台重试一次的用掉标记（两步各一次；4xx 立刻回滚，不重试）。
+    private var handleRetryUsed = false
+    private var profileRetryUsed = false
     /// 成功后提交的基线：initialDisplayName 是 let，成功后改名仍需新的
     /// 比较基线（容器不 dismiss 的兜底下，再点关闭不再误判未保存）。
     private var committedDisplayName: String?
@@ -1236,25 +1263,99 @@ class BearyEditProfileViewController: UIViewController {
         savingSnapshot = snapshot
         isSaving = true
         updateSaveButtonState()
+        handleRetryUsed = false
+        profileRetryUsed = false
+        // 乐观保存：先把新值写进 currentUser 快照并调 onSaved，个人页立刻变新；
+        // 旧值已留进 optimisticBackup，失败写回（见 finishSavingWithError）。
+        applyOptimisticProfile(snapshot: snapshot)
         if snapshot.handleChanged {
-            BearyAPI.shared.request("/api/account/handle", method: "POST", jsonBody: ["handle": handleValue]) { [weak self] (result: Result<BearyHandleUpdateResponse, APIError>) in
-                DispatchQueue.main.async {
-                    guard let strongSelf = self else { return }
-                    switch result {
-                    case .success:
-                        // G3：handle 成功后立即记下已提交 handle；第二步资料失败时
-                        // 重试以它为准，跳过已成功的 handle 步，不再重发同一 handle。
-                        strongSelf.submittedHandle = handleValue
-                        // 5-3：改名成功后立即刷新链接行，否则复制新链、显示旧链分裂。
-                        strongSelf.updateLinkRow()
-                        strongSelf.saveProfile(snapshot: snapshot)
-                    case .failure(let err):
+            requestHandleChange(handleValue: handleValue, snapshot: snapshot)
+        } else {
+            saveProfile(snapshot: snapshot)
+        }
+    }
+
+    /// 乐观写点：先把新值写进 SessionManager.currentUser 快照并调 onSaved。
+    /// onSaved 的容器接线会关掉本页并刷新个人页与信息流，故先记好失败 toast
+    /// 的底层落点、再自持本页到保存落定（关页后请求闭包只持 weak self，
+    /// 不自持则失败回滚跑不到）。
+    private func applyOptimisticProfile(snapshot: SaveSnapshot) {
+        let user = SessionManager.shared.currentUser
+        optimisticBackup = OptimisticProfileBackup(
+            displayName: user?.displayName ?? initialDisplayName ?? "",
+            handle: effectiveHandle,
+            avatar: user?.avatar)
+        optimisticToastContainer = presentingViewController?.view
+        optimisticSaveRetainer = self
+        SessionManager.shared.applyEditedProfile(
+            displayName: snapshot.displayName,
+            handle: snapshot.handle,
+            avatarDataURL: snapshot.avatarChanged ? snapshot.avatarDataURL : nil)
+        optimisticDismissed = onSaved != nil
+        onSaved?()
+    }
+
+    /// 乐观回滚：把点按前留下的旧值写回 currentUser 快照（顶栏/信息流不再
+    /// 顶着没落库的新值）。旧头像为 nil 时 applyEditedProfile 无法清回（只在
+    /// 非 nil 时覆盖）：个人页本身按服务端资料渲染、显示仍正确，顶栏/信息流
+    /// 里的头像待下次 /me 回包收敛，属瞬时残留。
+    private func restoreOptimisticProfile() {
+        guard let backup = optimisticBackup else { return }
+        optimisticBackup = nil
+        SessionManager.shared.applyEditedProfile(
+            displayName: backup.displayName,
+            handle: backup.handle,
+            avatarDataURL: backup.avatar)
+    }
+
+    /// 后台结果的 toast 落点：乐观关页后贴底层 view，未关页仍贴本页 view。
+    private var backgroundToastContainer: UIView {
+        if optimisticDismissed, let container = optimisticToastContainer {
+            return container
+        }
+        return view
+    }
+
+    /// 5xx/超时才后台重试一次；4xx/401/解析失败立刻回滚，不重试。
+    private func isRetryableSaveError(err: APIError) -> Bool {
+        switch err {
+        case .network:
+            return true
+        case .http(let status, _):
+            return status >= 500
+        case .server(_, let status):
+            return (status ?? 0) >= 500
+        default:
+            return false
+        }
+    }
+
+    /// 第一步改名（POST /api/account/handle）：抽出来供 5xx/超时重试复用。
+    /// 同 handle 重发安全（服务端已是该 handle 时直接回 ok，不触发冷却）。
+    private func requestHandleChange(handleValue: String, snapshot: SaveSnapshot) {
+        BearyAPI.shared.request("/api/account/handle", method: "POST", jsonBody: ["handle": handleValue]) { [weak self] (result: Result<BearyHandleUpdateResponse, APIError>) in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                switch result {
+                case .success:
+                    // G3：handle 成功后立即记下已提交 handle；第二步资料失败时
+                    // 重试以它为准，跳过已成功的 handle 步，不再重发同一 handle。
+                    strongSelf.submittedHandle = handleValue
+                    // 5-3：改名成功后立即刷新链接行，否则复制新链、显示旧链分裂。
+                    strongSelf.updateLinkRow()
+                    strongSelf.saveProfile(snapshot: snapshot)
+                case .failure(let err):
+                    if strongSelf.isRetryableSaveError(err: err), !strongSelf.handleRetryUsed {
+                        strongSelf.handleRetryUsed = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                            guard let strongSelf = self, strongSelf.isSaving else { return }
+                            strongSelf.requestHandleChange(handleValue: handleValue, snapshot: snapshot)
+                        }
+                    } else {
                         strongSelf.finishSavingWithError(message: strongSelf.handleErrorMessage(err: err))
                     }
                 }
             }
-        } else {
-            saveProfile(snapshot: snapshot)
         }
     }
 
@@ -1291,11 +1392,10 @@ class BearyEditProfileViewController: UIViewController {
         }
         // 批 D 签名：与名字/头像/封面同走 PUT /api/account/profile，字段名
         // signature，清空发 null（与原个人页弹框口径一致）；只在有改动时发，
-        // 未改动不发，避免无意义写。注意后端缺口（见本文件顶注与 PR 说明）：
-        // 现行 accounts Worker 的 PUT 分支不处理 signature，成功回包也不持久化；
-        // 本页仍按字段名透传，后端补分支后 App 无需再改；回包未原样带回
-        // signature 时走 finishSavingSuccess 的诚实分支（不写已提交态、不调
-        // onSaved、只给中性提示），不本地谎报已改。
+        // 未改动不发，避免无意义写。服务端已存 signature（2026-10-31 批）：
+        // PUT 写 users.signature、回包前回读当前行原样 echo；回包未原样带回
+        // 时走 finishSavingSuccess 的诚实分支（不写已提交态、只给中性提示），
+        // 不本地谎报已改。
         if snapshot.signatureChanged {
             if snapshot.signatureValue.isEmpty {
                 body["signature"] = NSNull()
@@ -1318,6 +1418,12 @@ class BearyEditProfileViewController: UIViewController {
             finishSavingSuccess()
             return
         }
+        requestProfileSave(body: body, snapshot: snapshot)
+    }
+
+    /// 第二步资料保存的 PUT 请求：抽出来供 5xx/超时重试复用（同 body 重发
+    /// 幂等；handle 步已成功时重试不再重发 handle，见 G3）。
+    private func requestProfileSave(body: [String: Any], snapshot: SaveSnapshot) {
         BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: body) { [weak self] (result: Result<BearyProfileUpdateResponse, APIError>) in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -1325,15 +1431,23 @@ class BearyEditProfileViewController: UIViewController {
                 case .success(let response):
                     strongSelf.finishSavingSuccess(profileResponse: response)
                 case .failure(let err):
-                    // 审计-个人页设置：两步保存分裂态提示区分——handle 步已成功、
-                    // 资料步失败时明示用户名已保存，重试不再重发 handle（G3 已跳过），
-                    // 避免用户误以为两步全失败而重复改名。
-                    var message = strongSelf.profileErrorMessage(err: err)
-                    if let snapshot = strongSelf.savingSnapshot, snapshot.handleChanged,
-                       strongSelf.submittedHandle == snapshot.handle {
-                        message += "，用户名已保存"
+                    if strongSelf.isRetryableSaveError(err: err), !strongSelf.profileRetryUsed {
+                        strongSelf.profileRetryUsed = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                            guard let strongSelf = self, strongSelf.isSaving else { return }
+                            strongSelf.requestProfileSave(body: body, snapshot: snapshot)
+                        }
+                    } else {
+                        // 审计-个人页设置：两步保存分裂态提示区分——handle 步已成功、
+                        // 资料步失败时明示用户名已保存，重试不再重发 handle（G3 已跳过），
+                        // 避免用户误以为两步全失败而重复改名。
+                        var message = strongSelf.profileErrorMessage(err: err)
+                        if let snapshot = strongSelf.savingSnapshot, snapshot.handleChanged,
+                           strongSelf.submittedHandle == snapshot.handle {
+                            message += NSLocalizedString("editprofile.handle_saved_suffix", comment: "")
+                        }
+                        strongSelf.finishSavingWithError(message: message)
                     }
-                    strongSelf.finishSavingWithError(message: message)
                 }
             }
         }
@@ -1348,11 +1462,13 @@ class BearyEditProfileViewController: UIViewController {
         // 统一快照（名字 / 用户名 / 头像），再走 onSaved 通知容器刷新个人页
         // 与信息流——下次打开编辑资料的初值即新值，不再是旧值。
         // 快照缺失时（理论上到不了：两步入口都先置快照）只做原有成功路径。
-        // 审计-个人页设置（签名“假成功”诚实口径，根治在后端 PUT 分支）：
+        // 审计-个人页设置（签名诚实口径；后端 PUT 回包原样 echo 提交值）：
         // 签名有改动时，只有回包原样带回提交值才算确认落库；未确认时不写
         // 签名已提交态（initialSignature 不动、输入框原样保留），先由
         // verifySignatureAfterSave 后台读一次公开资料核对：核对上即按确认
         // 处理并调 onSaved，核对不上/读失败才提示——不再让用户回个人页确认。
+        // 乐观保存已在点按时调过 onSaved（页已关），这里的 onSaved 是成功后
+        // 的再次刷新，不再是关页的唯一触发点。
         // 名字 / 头像 / 封面仍按原口径写已提交态（不在本条审计范围内）。
         if let snapshot = savingSnapshot {
             // 静态性能修复：头像替换落库成功即逐出旧头像的本机缓存（此前只靠
@@ -1403,12 +1519,14 @@ class BearyEditProfileViewController: UIViewController {
                 verifySignatureAfterSave(expected: snapshot.signatureValue.isEmpty ? nil : snapshot.signatureValue)
                 return
             }
+            optimisticSaveRetainer = nil
             onSaved?()
             return
         }
         savingSnapshot = nil
         isSaving = false
         updateSaveButtonState()
+        optimisticSaveRetainer = nil
         onSaved?()
     }
 
@@ -1418,12 +1536,14 @@ class BearyEditProfileViewController: UIViewController {
     /// 不调 onSaved，可直接重试。
     private func verifySignatureAfterSave(expected: String?) {
         guard let id = fetchedUserId ?? SessionManager.shared.currentUser?.id else {
-            BearyToast.show(in: view, message: "资料已提交，签名同步状态未确认，请稍后查看")
+            BearyToast.show(in: backgroundToastContainer, message: NSLocalizedString("editprofile.signature_sync_unconfirmed", comment: ""))
+            optimisticSaveRetainer = nil
             return
         }
         BearyAPI.shared.fetchUserProfile(userIdValue: id) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
+                strongSelf.optimisticSaveRetainer = nil
                 switch result {
                 case .success(let profile):
                     if profile.signature == expected {
@@ -1432,10 +1552,10 @@ class BearyEditProfileViewController: UIViewController {
                         strongSelf.signatureEdited = false
                         strongSelf.onSaved?()
                     } else {
-                        BearyToast.show(in: strongSelf.view, message: "签名尚未同步，请稍后再试")
+                        BearyToast.show(in: strongSelf.backgroundToastContainer, message: NSLocalizedString("editprofile.signature_not_synced", comment: ""))
                     }
                 case .failure:
-                    BearyToast.show(in: strongSelf.view, message: "资料已提交，签名同步状态未确认，请稍后查看")
+                    BearyToast.show(in: strongSelf.backgroundToastContainer, message: NSLocalizedString("editprofile.signature_sync_unconfirmed", comment: ""))
                 }
             }
         }
@@ -1443,14 +1563,27 @@ class BearyEditProfileViewController: UIViewController {
 
     private func finishSavingWithError(message: String) {
         // 失败恢复：快照丢弃（重试时按当前输入重新定格），但待存标记与
-        // 已提交 handle 保留（G3：重试跳过已成功的 handle 步）；输入框内容
-        // 全程未被清空或回滚，解冻后原样保留，可直接重试。
+        // 已提交 handle 保留（G3：重试跳过已成功的 handle 步）。
         savingSnapshot = nil
         isSaving = false
         updateSaveButtonState()
-        // 保存失败：拒绝动效（卡片同款摇头 + warning 震动，减动效只跳过视觉抖动）；
-        // 本地草稿保留在输入框内（不清空、不回滚输入），服务端未写入，可直接重试，
-        // 改动不静默丢失；登录失效仍走 onRequireLogin（见 profileErrorMessage）。
+        // 乐观回滚：点按时已把新值写进 currentUser，失败须把旧值写回（否则
+        // 顶栏/信息流一直顶着没落库的新值）。已调 onSaved 关页时，再在底层
+        // toast 一句说明保存失败、可重试（通用失败即“保存失败，请重试”；
+        // 页已关，旧 alert/shake 无处贴，不再走）。登录失效仍走 onRequireLogin
+        // （见 profileErrorMessage）。
+        restoreOptimisticProfile()
+        if optimisticDismissed {
+            let container = backgroundToastContainer
+            optimisticDismissed = false
+            optimisticSaveRetainer = nil
+            BearyToast.show(in: container, message: message)
+            return
+        }
+        optimisticSaveRetainer = nil
+        // 未关页（onSaved 未接线）的旧口径：拒绝动效（卡片同款摇头 + warning
+        // 震动，减动效只跳过视觉抖动）；本地草稿保留在输入框内（不清空、不回滚
+        // 输入），服务端未写入，可直接重试，改动不静默丢失。
         playDenyShake(on: saveButton)
         presentSimpleAlert(message: message)
     }
